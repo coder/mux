@@ -16,6 +16,7 @@
  */
 
 import * as fs from "fs/promises";
+import * as os from "os";
 import * as path from "path";
 import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "./setup";
 import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
@@ -87,7 +88,7 @@ describe("Background Bash Direct Integration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -151,37 +152,35 @@ describe("Background Bash Direct Integration", () => {
     const marker1 = `INCR_1_${testId}`;
     const marker2 = `INCR_2_${testId}`;
 
+    // Git Bash process startup + file flushing can be slower on Windows CI.
+    // Give ourselves a wide gap between marker1 and marker2 to avoid races.
+    const markerDelaySecs = process.platform === "win32" ? 3 : 1;
+
     const spawnResult = await manager.spawn(
       runtime,
       workspaceId,
-      `echo "${marker1}"; sleep 1; echo "${marker2}"`,
+      `echo "${marker1}"; sleep ${markerDelaySecs}; echo "${marker2}"`,
       { cwd: workspacePath, displayName: testId }
     );
     expect(spawnResult.success).toBe(true);
     if (!spawnResult.success) return;
 
-    // Wait longer for output to be flushed to file (CI can be slow)
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    // First read gets marker1
-    const output1 = await manager.getOutput(spawnResult.processId);
+    // First read: block until we see output (marker1)
+    const output1 = await manager.getOutput(spawnResult.processId, undefined, undefined, 5);
     expect(output1.success).toBe(true);
     if (output1.success) {
       expect(output1.output).toContain(marker1);
     }
 
-    // Second read immediately - no new content
+    // Second read: should be empty (marker2 shouldn't be available yet)
     const output2 = await manager.getOutput(spawnResult.processId);
     expect(output2.success).toBe(true);
     if (output2.success) {
       expect(output2.output).toBe("");
     }
 
-    // Wait for marker2
-    await new Promise((resolve) => setTimeout(resolve, 1200));
-
-    // Third read gets marker2 only
-    const output3 = await manager.getOutput(spawnResult.processId);
+    // Third read: block until marker2 arrives
+    const output3 = await manager.getOutput(spawnResult.processId, undefined, undefined, 10);
     expect(output3.success).toBe(true);
     if (output3.success) {
       expect(output3.output).toContain(marker2);
@@ -402,7 +401,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -492,7 +491,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -554,7 +553,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };
@@ -603,7 +602,7 @@ describe("Foreground to Background Migration", () => {
       runtime,
       secrets: {},
       muxEnv: {},
-      runtimeTempDir: "/tmp",
+      runtimeTempDir: os.tmpdir(),
       backgroundProcessManager: manager,
       workspaceId,
     };

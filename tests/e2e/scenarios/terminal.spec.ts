@@ -16,6 +16,7 @@ test("terminal tab opens without error", async ({ ui }) => {
 
   // Verify the terminal opens without the "isOpen" error
   await ui.metaSidebar.expectTerminalNoError();
+  await ui.metaSidebar.expectTerminalFocused();
 });
 
 test("terminal tab handles workspace switching", async ({ ui, page }) => {

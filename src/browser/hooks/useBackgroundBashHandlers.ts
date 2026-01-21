@@ -40,6 +40,19 @@ export function useBackgroundBashHandlers(
   const [foregroundToolCallIds, setForegroundToolCallIds] = useState<Set<string>>(EMPTY_SET);
   // Process IDs currently being terminated (for visual feedback)
   const [terminatingIds, setTerminatingIds] = useState<Set<string>>(EMPTY_SET);
+  const previousWorkspaceIdRef = useRef<string | null>(workspaceId);
+
+  useEffect(() => {
+    if (previousWorkspaceIdRef.current === workspaceId) {
+      return;
+    }
+
+    previousWorkspaceIdRef.current = workspaceId;
+    setProcesses(EMPTY_PROCESSES);
+    setForegroundToolCallIds(EMPTY_SET);
+    setTerminatingIds(EMPTY_SET);
+  }, [workspaceId]);
+
   // Keep a ref for handleMessageSentBackground to avoid recreating on every change
   const foregroundIdsRef = useRef<Set<string>>(EMPTY_SET);
   const error = usePopoverError();

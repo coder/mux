@@ -6,18 +6,11 @@ import {
   type TutorialState,
   type TutorialSequence,
 } from "@/common/constants/storage";
+import { useIsSplashScreenActive } from "@/browser/components/splashScreens/SplashScreenProvider";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 // Tutorial step definitions for each sequence
 const TUTORIAL_SEQUENCES: Record<TutorialSequence, TutorialStep[]> = {
-  settings: [
-    {
-      target: "settings-button",
-      title: "Settings",
-      content: "Configure providers, models and other settings here.",
-      position: "bottom",
-    },
-  ],
   creation: [
     {
       target: "model-selector",
@@ -81,6 +74,7 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
   const [tutorialState, setTutorialState] = useState<TutorialState>(() =>
     readPersistedState(TUTORIAL_STATE_KEY, DEFAULT_TUTORIAL_STATE)
   );
+  const isSplashScreenActive = useIsSplashScreenActive();
   const [activeSequence, setActiveSequence] = useState<TutorialSequence | null>(null);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
@@ -166,7 +160,7 @@ export function TutorialProvider({ children }: TutorialProviderProps) {
   return (
     <TutorialContext.Provider value={contextValue}>
       {children}
-      {currentStep && activeSteps && (
+      {!isSplashScreenActive && currentStep && activeSteps && (
         <TutorialTooltip
           step={currentStep}
           currentStep={currentStepIndex + 1}

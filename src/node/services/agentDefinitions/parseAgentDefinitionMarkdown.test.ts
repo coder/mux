@@ -64,6 +64,24 @@ Body
     expect(result.frontmatter.ui?.selectable).toBe(false);
   });
 
+  test("parses subagent.skip_init_hook", () => {
+    const content = `---
+name: Skip Init
+subagent:
+  runnable: true
+  skip_init_hook: true
+---
+Body
+`;
+
+    const result = parseAgentDefinitionMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf-8"),
+    });
+
+    expect(result.frontmatter.subagent?.skip_init_hook).toBe(true);
+  });
+
   test("throws on missing frontmatter", () => {
     expect(() =>
       parseAgentDefinitionMarkdown({

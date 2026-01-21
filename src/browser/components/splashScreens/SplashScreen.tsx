@@ -21,6 +21,10 @@ interface SplashScreenProps {
   dismissOnPrimaryAction?: boolean;
   /** Defaults to "Got it". Set to null to hide the dismiss button entirely. */
   dismissLabel?: string | null;
+  /** Optional custom footer content (replaces primary + dismiss buttons). */
+  footer?: React.ReactNode;
+  /** Optional class name for the DialogFooter container. */
+  footerClassName?: string;
 }
 
 export function SplashScreen(props: SplashScreenProps) {
@@ -43,16 +47,23 @@ export function SplashScreen(props: SplashScreenProps) {
           <DialogTitle>{props.title}</DialogTitle>
         </DialogHeader>
         {props.children}
-        <DialogFooter>
-          {props.primaryAction && (
-            <Button onClick={handlePrimaryAction} disabled={props.primaryAction.disabled === true}>
-              {props.primaryAction.label}
-            </Button>
-          )}
-          {props.dismissLabel !== null && (
-            <Button variant="secondary" onClick={props.onDismiss}>
-              {props.dismissLabel ?? "Got it"}
-            </Button>
+        <DialogFooter className={props.footerClassName}>
+          {props.footer ?? (
+            <>
+              {props.primaryAction && (
+                <Button
+                  onClick={handlePrimaryAction}
+                  disabled={props.primaryAction.disabled === true}
+                >
+                  {props.primaryAction.label}
+                </Button>
+              )}
+              {props.dismissLabel !== null && (
+                <Button variant="secondary" onClick={props.onDismiss}>
+                  {props.dismissLabel ?? "Got it"}
+                </Button>
+              )}
+            </>
           )}
         </DialogFooter>
       </DialogContent>

@@ -79,6 +79,17 @@ export {
   MCPTestResultSchema,
 } from "./schemas/mcp";
 
+// UI Layouts schemas
+export {
+  KeybindSchema,
+  LayoutPresetSchema,
+  LayoutPresetsConfigSchema,
+  LayoutSlotSchema,
+  RightSidebarLayoutPresetNodeSchema,
+  RightSidebarLayoutPresetStateSchema,
+  RightSidebarPresetTabSchema,
+  RightSidebarWidthPresetSchema,
+} from "./schemas/uiLayouts";
 // Terminal schemas
 export {
   TerminalCreateParamsSchema,
@@ -113,6 +124,7 @@ export {
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,
   RestoreToInputEventSchema,
+  RuntimeStatusEventSchema,
   SendMessageOptionsSchema,
   StreamAbortEventSchema,
   StreamDeltaEventSchema,
@@ -133,11 +145,20 @@ export {
 export {
   ApiServerStatusSchema,
   AWSCredentialStatusSchema,
+  coder,
+  CoderInfoSchema,
+  CoderPresetSchema,
+  CoderTemplateSchema,
+  CoderWorkspaceConfigSchema,
+  CoderWorkspaceSchema,
+  CoderWorkspaceStatusSchema,
   config,
+  uiLayouts,
   debug,
   features,
   general,
   menu,
+  agentSkills,
   agents,
   nameGeneration,
   projects,

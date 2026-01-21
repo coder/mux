@@ -19,8 +19,6 @@ HEADER
 # Process each .md file
 for file in "$AGENT_DIR"/*.md; do
   name=$(basename "$file" .md)
-  # Read content and escape for JS string
-  content=$(cat "$file")
   # Use node to properly escape the string
   escaped=$(node -e "console.log(JSON.stringify(require('fs').readFileSync('$file', 'utf8')))")
   echo "  \"$name\": $escaped," >>"$OUTPUT"

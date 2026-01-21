@@ -9,6 +9,7 @@
 export {
   TAB_CONFIGS,
   TERMINAL_TAB_CONFIG,
+  FILE_TAB_CONFIG,
   getTabConfig,
   getTabName,
   getTabContentClassName,
@@ -20,4 +21,11 @@ export {
   type ReviewStats,
 } from "./registry";
 
-export { CostsTabLabel, ReviewTabLabel, StatsTabLabel, TerminalTabLabel } from "./TabLabels";
+export {
+  CostsTabLabel,
+  ExplorerTabLabel,
+  FileTabLabel,
+  ReviewTabLabel,
+  StatsTabLabel,
+  TerminalTabLabel,
+} from "./TabLabels";

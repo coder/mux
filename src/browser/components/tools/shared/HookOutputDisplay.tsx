@@ -53,7 +53,7 @@ export const HookOutputDisplay: React.FC<HookOutputDisplayProps> = ({
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className={cn("mt-1.5", className)}>
+    <div className={cn("mt-1.5 px-3", className)}>
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}

@@ -15,6 +15,9 @@ declare global {
       chrome?: string;
       electron?: string;
     };
+    // Debug flags (dev-only, passed through preload)
+    debugShowAllMessages?: boolean;
+    debugLlmRequest?: boolean;
     // Allow maintainers to opt into telemetry while running the dev server.
     enableTelemetryInDev?: boolean;
     // E2E test mode flag - used to adjust UI behavior (e.g., longer toast durations)
@@ -23,6 +26,10 @@ declare global {
     isRosetta?: boolean;
     // Async getter (used in Electron) for environments where preload cannot use Node builtins
     getIsRosetta?: () => Promise<boolean>;
+    // True if Windows appears to be configured to use WSL as the default shell.
+    isWindowsWslShell?: boolean;
+    // Async getter (Electron) for Windows environments where WSL may win PATH.
+    getIsWindowsWslShell?: () => Promise<boolean>;
     // Register a callback for notification clicks (navigates to workspace)
     // Returns an unsubscribe function.
     onNotificationClicked?: (callback: (data: { workspaceId: string }) => void) => () => void;

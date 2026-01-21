@@ -1,4 +1,5 @@
 import React from "react";
+import { Check, Circle, Loader2 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { TodoItem } from "@/common/types/tools";
 
@@ -69,15 +70,15 @@ interface TodoListProps {
   todos: TodoItem[];
 }
 
-function getStatusIcon(status: TodoItem["status"]): string {
+function getStatusIcon(status: TodoItem["status"]): React.ReactNode {
   switch (status) {
     case "completed":
-      return "✓";
+      return <Check aria-hidden="true" className="h-3 w-3" />;
     case "in_progress":
-      return "⏳";
+      return <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />;
     case "pending":
     default:
-      return "○";
+      return <Circle aria-hidden="true" className="h-3 w-3" />;
   }
 }
 

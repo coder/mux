@@ -5,6 +5,7 @@ import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
 import type { AgentMode } from "@/common/types/mode";
 import type { z } from "zod";
+import type { AgentSkillScope } from "./agentSkill";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
 /**
@@ -39,6 +40,8 @@ export type ContinueMessage = UserMessageContent & {
   model?: string;
   /** Agent ID for the continue message (determines tool policy via agent definitions). Defaults to 'exec'. */
   agentId?: string;
+  /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
+  muxMetadata?: MuxFrontendMetadata;
   /** Brand marker - not present at runtime, enforces factory usage at compile time */
   readonly [ContinueMessageBrand]: true;
 };
@@ -51,6 +54,8 @@ export interface BuildContinueMessageOptions {
   text?: string;
   imageParts?: ImagePart[];
   reviews?: ReviewNoteDataForDisplay[];
+  /** Optional frontend metadata to carry through to the queued follow-up user message */
+  muxMetadata?: MuxFrontendMetadata;
   model: string;
   agentId: string;
 }
@@ -75,6 +80,7 @@ export function buildContinueMessage(
     text: opts.text ?? "",
     imageParts: opts.imageParts,
     reviews: opts.reviews,
+    muxMetadata: opts.muxMetadata,
     model: opts.model,
     agentId: opts.agentId,
   } as ContinueMessage;
@@ -91,6 +97,18 @@ export type PersistedContinueMessage =
   Partial<Omit<ContinueMessage, typeof ContinueMessageBrand>> & {
     mode?: "exec" | "plan";
   };
+
+/**
+ * True when the continue message is the default resume sentinel ("Continue")
+ * with no attachments.
+ */
+export function isDefaultContinueMessage(message?: Partial<UserMessageContent>): boolean {
+  if (!message) return false;
+  const text = typeof message.text === "string" ? message.text.trim() : "";
+  const hasImages = (message.imageParts?.length ?? 0) > 0;
+  const hasReviews = (message.reviews?.length ?? 0) > 0;
+  return text === "Continue" && !hasImages && !hasReviews;
+}
 
 /**
  * Rebuild a ContinueMessage from persisted data.
@@ -119,6 +137,7 @@ export function rebuildContinueMessage(
     text: persisted.text,
     imageParts: persisted.imageParts,
     reviews: persisted.reviews,
+    muxMetadata: persisted.muxMetadata,
     model: persisted.model ?? defaults.model,
     agentId: persistedAgentId ?? legacyAgentId ?? defaults.agentId,
   });
@@ -185,6 +204,13 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         displayStatus?: DisplayStatus;
       }
     | {
+        type: "agent-skill";
+        /** The original /{skillName} invocation as typed by user (for display) */
+        rawCommand: string;
+        skillName: string;
+        scope: "project" | "global" | "built-in";
+      }
+    | {
         type: "plan-display"; // Ephemeral plan display from /plan command
         path: string;
       }
@@ -225,6 +251,15 @@ export interface MuxMetadata {
    * preserving prompt cache stability across turns.
    */
   fileAtMentionSnapshot?: string[];
+
+  /**
+   * Agent skill snapshot metadata for synthetic messages that inject skill bodies.
+   */
+  agentSkillSnapshot?: {
+    skillName: string;
+    scope: AgentSkillScope;
+    sha256: string;
+  };
 }
 
 // Extended tool part type that supports interrupted tool calls (input-available state)
@@ -289,6 +324,7 @@ export type DisplayedMessage =
       content: string;
       imageParts?: ImagePart[]; // Optional image attachments
       historySequence: number; // Global ordering across all messages
+      isSynthetic?: boolean;
       timestamp?: number;
       compactionRequest?: {
         // Present if this is a /compact command

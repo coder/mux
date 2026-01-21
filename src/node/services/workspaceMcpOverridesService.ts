@@ -20,14 +20,16 @@ const MCP_OVERRIDES_GITIGNORE_PATTERNS = [
 
 function joinForRuntime(runtimeConfig: RuntimeConfig | undefined, ...parts: string[]): string {
   assert(parts.length > 0, "joinForRuntime requires at least one path segment");
-  // For SSH runtimes, paths must remain POSIX even on Windows.
-  return runtimeConfig?.type === "ssh" ? path.posix.join(...parts) : path.join(...parts);
+
+  // Remote runtimes run inside a POSIX shell (SSH host, Docker container), even if the user is
+  // running mux on Windows. Use POSIX joins so we don't accidentally introduce backslashes.
+  const usePosix = runtimeConfig?.type === "ssh" || runtimeConfig?.type === "docker";
+  return usePosix ? path.posix.join(...parts) : path.join(...parts);
 }
 
 function isAbsoluteForRuntime(runtimeConfig: RuntimeConfig | undefined, filePath: string): boolean {
-  return runtimeConfig?.type === "ssh"
-    ? path.posix.isAbsolute(filePath)
-    : path.isAbsolute(filePath);
+  const usePosix = runtimeConfig?.type === "ssh" || runtimeConfig?.type === "docker";
+  return usePosix ? path.posix.isAbsolute(filePath) : path.isAbsolute(filePath);
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -228,15 +230,16 @@ export class WorkspaceMcpOverridesService {
 
   private async ensureOverridesDir(
     runtime: ReturnType<typeof createRuntime>,
-    workspacePath: string
+    workspacePath: string,
+    runtimeConfig: RuntimeConfig | undefined
   ): Promise<void> {
-    const result = await execBuffered(runtime, `mkdir -p "${MCP_OVERRIDES_DIR}"`, {
-      cwd: workspacePath,
-      timeout: 10,
-    });
+    const overridesDirPath = joinForRuntime(runtimeConfig, workspacePath, MCP_OVERRIDES_DIR);
 
-    if (result.exitCode !== 0) {
-      throw new Error(`Failed to create ${MCP_OVERRIDES_DIR} directory: ${result.stderr}`);
+    try {
+      await runtime.ensureDir(overridesDirPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to create ${MCP_OVERRIDES_DIR} directory: ${msg}`);
     }
   }
 
@@ -361,7 +364,7 @@ export class WorkspaceMcpOverridesService {
     }
 
     try {
-      await this.ensureOverridesDir(runtime, workspacePath);
+      await this.ensureOverridesDir(runtime, workspacePath, metadata.runtimeConfig);
       await writeFileString(runtime, jsoncPath, JSON.stringify(normalizedLegacy, null, 2) + "\n");
       await this.ensureOverridesGitignored(runtime, workspacePath, metadata.runtimeConfig);
       await this.clearLegacyOverridesInConfig(workspaceId);
@@ -404,7 +407,7 @@ export class WorkspaceMcpOverridesService {
       return;
     }
 
-    await this.ensureOverridesDir(runtime, workspacePath);
+    await this.ensureOverridesDir(runtime, workspacePath, metadata.runtimeConfig);
     await writeFileString(runtime, jsoncPath, JSON.stringify(normalized, null, 2) + "\n");
     await this.ensureOverridesGitignored(runtime, workspacePath, metadata.runtimeConfig);
   }

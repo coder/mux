@@ -1,11 +1,11 @@
-import { COMPACTED_EMOJI, IDLE_COMPACTED_EMOJI } from "@/common/constants/ui";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import type { DisplayedMessage } from "@/common/types/message";
 import { copyToClipboard } from "@/browser/utils/clipboard";
-import { Clipboard, ClipboardCheck, FileText, ListStart } from "lucide-react";
+import { Clipboard, ClipboardCheck, FileText, ListStart, Moon, Package } from "lucide-react";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { Button } from "../ui/button";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
 import { CompactionBackground } from "./CompactionBackground";
@@ -61,15 +61,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
   // Keep only Copy button visible (most common action)
   // Kebab menu saves horizontal space by collapsing less-used actions into a single ⋮ button
-  const buttons: ButtonConfig[] = isStreaming
-    ? []
-    : [
-        {
-          label: copied ? "Copied" : "Copy",
-          onClick: () => void copyToClipboard(content),
-          icon: copied ? <ClipboardCheck /> : <Clipboard />,
-        },
-      ];
+  const copyButton: ButtonConfig = {
+    label: copied ? "Copied" : "Copy",
+    onClick: () => void copyToClipboard(content),
+    icon: copied ? <ClipboardCheck /> : <Clipboard />,
+  };
+
+  const buttons: ButtonConfig[] = isStreaming ? [] : [copyButton];
 
   if (!isStreaming) {
     buttons.push({
@@ -120,9 +118,23 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     // Completed text renders as static content
     return content ? (
       showRaw ? (
-        <pre className="text-text bg-code-bg m-0 rounded-sm p-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-          {content}
-        </pre>
+        <div className="relative">
+          <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+            {content}
+          </pre>
+          <div className="absolute right-2 bottom-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
+              onClick={() => void copyToClipboard(content)}
+            >
+              {copied ? <ClipboardCheck /> : <Clipboard />}
+              {copied ? "Copied" : "Copy to clipboard"}
+            </Button>
+          </div>
+        </div>
       ) : (
         <MarkdownRenderer content={content} />
       )
@@ -139,10 +151,13 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       <div className="flex items-center gap-2">
         {modelName && <ModelDisplay modelString={modelName} />}
         {isCompacted && (
-          <span className="text-plan-mode bg-plan-mode/10 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
-            {isIdleCompacted
-              ? `${IDLE_COMPACTED_EMOJI} idle-compacted`
-              : `${COMPACTED_EMOJI} compacted`}
+          <span className="text-plan-mode bg-plan-mode/10 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
+            {isIdleCompacted ? (
+              <Moon aria-hidden="true" className="h-3 w-3" />
+            ) : (
+              <Package aria-hidden="true" className="h-3 w-3" />
+            )}
+            <span>{isIdleCompacted ? "idle-compacted" : "compacted"}</span>
           </span>
         )}
       </div>

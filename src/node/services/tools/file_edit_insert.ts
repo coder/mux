@@ -5,6 +5,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { generateDiff, validateAndCorrectPath, validatePlanModeAccess } from "./fileCommon";
 import { executeFileEditOperation } from "./file_edit_operation";
+import { convertNewlines, detectFileEol } from "./eol";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { writeFileString } from "@/node/utils/runtime/helpers";
 import { RuntimeError } from "@/node/runtime/Runtime";
@@ -145,7 +146,10 @@ function insertContent(
     return guardFailure("Provide either a before or after guard when editing existing files.");
   }
 
-  return insertWithGuards(originalContent, contentToInsert, { before, after });
+  const fileEol = detectFileEol(originalContent);
+  const normalizedContentToInsert = convertNewlines(contentToInsert, fileEol);
+
+  return insertWithGuards(originalContent, normalizedContentToInsert, { before, after });
 }
 
 function insertWithGuards(
@@ -194,20 +198,53 @@ function resolveGuardAnchor(
   originalContent: string,
   { before, after }: GuardAnchors
 ): GuardResolutionSuccess | InsertOperationFailure {
+  const fileEol = detectFileEol(originalContent);
+
   if (before !== undefined) {
-    const beforeIndexResult = findUniqueSubstringIndex(originalContent, before, "before");
-    if (!beforeIndexResult.success) {
-      return beforeIndexResult;
+    const exactBeforeIndexResult = findUniqueSubstringIndex(originalContent, before, "before");
+    if (exactBeforeIndexResult.success) {
+      return { success: true, index: exactBeforeIndexResult.index + before.length };
     }
-    return { success: true, index: beforeIndexResult.index + before.length };
+
+    const normalizedBefore = convertNewlines(before, fileEol);
+    if (normalizedBefore !== before) {
+      const normalizedBeforeIndexResult = findUniqueSubstringIndex(
+        originalContent,
+        normalizedBefore,
+        "before"
+      );
+      if (!normalizedBeforeIndexResult.success) {
+        return normalizedBeforeIndexResult;
+      }
+      return {
+        success: true,
+        index: normalizedBeforeIndexResult.index + normalizedBefore.length,
+      };
+    }
+
+    return exactBeforeIndexResult;
   }
 
   if (after !== undefined) {
-    const afterIndexResult = findUniqueSubstringIndex(originalContent, after, "after");
-    if (!afterIndexResult.success) {
-      return afterIndexResult;
+    const exactAfterIndexResult = findUniqueSubstringIndex(originalContent, after, "after");
+    if (exactAfterIndexResult.success) {
+      return { success: true, index: exactAfterIndexResult.index };
     }
-    return { success: true, index: afterIndexResult.index };
+
+    const normalizedAfter = convertNewlines(after, fileEol);
+    if (normalizedAfter !== after) {
+      const normalizedAfterIndexResult = findUniqueSubstringIndex(
+        originalContent,
+        normalizedAfter,
+        "after"
+      );
+      if (!normalizedAfterIndexResult.success) {
+        return normalizedAfterIndexResult;
+      }
+      return { success: true, index: normalizedAfterIndexResult.index };
+    }
+
+    return exactAfterIndexResult;
   }
 
   return guardFailure("Unable to determine insertion point from guards.");

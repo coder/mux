@@ -33,9 +33,15 @@ contextBridge.exposeInMainWorld("api", {
   },
   isE2E: process.env.MUX_E2E === "1",
   enableTelemetryInDev: process.env.MUX_ENABLE_TELEMETRY_IN_DEV === "1",
+  // Note: When debugging LLM requests, we also want to see synthetic/request-only
+  // messages in the chat history so the UI matches what was sent to the provider.
+  debugShowAllMessages:
+    process.env.MUX_DEBUG_SHOW_ALL_MESSAGES === "1" || process.env.MUX_DEBUG_LLM_REQUEST === "1",
+  debugLlmRequest: process.env.MUX_DEBUG_LLM_REQUEST === "1",
   // NOTE: This is intentionally async so the preload script does not rely on Node builtins
   // like `child_process` (which can break in hardened/sandboxed environments).
   getIsRosetta: () => ipcRenderer.invoke("mux:get-is-rosetta"),
+  getIsWindowsWslShell: () => ipcRenderer.invoke("mux:get-is-windows-wsl-shell"),
   // Register a callback for notification clicks (navigates to workspace)
   // Returns an unsubscribe function.
   onNotificationClicked: (callback: (data: { workspaceId: string }) => void) => {

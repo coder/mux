@@ -1,12 +1,12 @@
 import { parseCommand } from "./parser";
 
 describe("/idle command", () => {
-  it("should return unknown-command for /idle without arguments", () => {
+  it("should return command-missing-args for /idle without arguments", () => {
     const result = parseCommand("/idle");
     expect(result).toEqual({
-      type: "unknown-command",
+      type: "command-missing-args",
       command: "idle",
-      subcommand: undefined,
+      usage: "/idle <hours> or /idle off",
     });
   });
 
@@ -34,21 +34,23 @@ describe("/idle command", () => {
     });
   });
 
-  it("should return unknown-command for invalid number", () => {
+  it("should return command-invalid-args for invalid number", () => {
     const result = parseCommand("/idle abc");
     expect(result).toEqual({
-      type: "unknown-command",
+      type: "command-invalid-args",
       command: "idle",
-      subcommand: "abc",
+      input: "abc",
+      usage: "/idle <hours> or /idle off",
     });
   });
 
-  it("should return unknown-command for negative number", () => {
+  it("should return command-invalid-args for negative number", () => {
     const result = parseCommand("/idle -5");
     expect(result).toEqual({
-      type: "unknown-command",
+      type: "command-invalid-args",
       command: "idle",
-      subcommand: "-5",
+      input: "-5",
+      usage: "/idle <hours> or /idle off",
     });
   });
 });

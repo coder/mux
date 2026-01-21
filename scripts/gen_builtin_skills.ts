@@ -39,12 +39,15 @@ function readFileLines(filePath: string): string[] {
   return normalizeNewlines(fs.readFileSync(filePath, "utf-8")).split("\n");
 }
 
-
 function oneLine(input: string): string {
   return input.replace(/\s+/g, " ").trim();
 }
 
-function injectBetweenHtmlCommentMarkers(content: string, markerName: string, block: string): string {
+function injectBetweenHtmlCommentMarkers(
+  content: string,
+  markerName: string,
+  block: string
+): string {
   const beginMarker = `<!-- BEGIN ${markerName} -->`;
   const endMarker = `<!-- END ${markerName} -->`;
 
@@ -119,7 +122,6 @@ function extractDocsPagesFromNav(node: unknown, out: string[], seen: Set<string>
   }
 }
 
-
 interface DocsPageInfo {
   page: string;
   route: string;
@@ -143,9 +145,7 @@ function renderDocsTreeNode(
     }
 
     const suffix = info.description ? ` — ${info.description}` : "";
-    lines.push(
-      `${prefix}- ${info.title} (\`${info.route}\`) → \`${info.referencePath}\`${suffix}`
-    );
+    lines.push(`${prefix}- ${info.title} (\`${info.route}\`) → \`${info.referencePath}\`${suffix}`);
     return;
   }
 
@@ -209,6 +209,27 @@ function extractDocsPages(docsJson: unknown): string[] {
 }
 
 function resolveDocsPageFilePath(page: string): string {
+  function pathExistsWithExactCase(baseDir: string, relativePath: string): boolean {
+    // macOS and Windows filesystems are commonly case-insensitive. `fs.existsSync()` will return
+    // true even when the requested path casing does not match what's actually on disk.
+    //
+    // This matters for mux docs generation because the docs tree is indexed by exact page IDs
+    // (e.g. "agents" vs "AGENTS"). If we accept case-insensitive matches, we can accidentally
+    // resolve the wrong file (and produce platform-dependent output).
+    let current = baseDir;
+    const parts = relativePath.split(path.sep).filter(Boolean);
+
+    for (const part of parts) {
+      const entries = fs.readdirSync(current);
+      if (!entries.includes(part)) {
+        return false;
+      }
+      current = path.join(current, part);
+    }
+
+    return true;
+  }
+
   const candidates = [
     path.join(DOCS_DIR, `${page}.mdx`),
     path.join(DOCS_DIR, `${page}.md`),
@@ -217,12 +238,16 @@ function resolveDocsPageFilePath(page: string): string {
   ];
 
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+    if (!fs.existsSync(candidate)) continue;
+
+    const rel = path.relative(DOCS_DIR, candidate);
+    if (pathExistsWithExactCase(DOCS_DIR, rel)) {
+      return candidate;
+    }
   }
 
   throw new Error(`docs/docs.json references '${page}' but no file found under docs/`);
 }
-
 
 interface GenerateResult {
   output: string;
@@ -286,7 +311,11 @@ function generate(): GenerateResult {
       }
 
       const docsTree = renderDocsTree(docsConfig, pageInfoByPage);
-      const updatedSkillContent = injectBetweenHtmlCommentMarkers(skillContent, "DOCS_TREE", docsTree);
+      const updatedSkillContent = injectBetweenHtmlCommentMarkers(
+        skillContent,
+        "DOCS_TREE",
+        docsTree
+      );
       files["SKILL.md"] = updatedSkillContent.split("\n");
 
       if (SYNC_MUX_DOCS_SKILL && updatedSkillContent !== skillContent) {

@@ -159,6 +159,27 @@ describe("MessageQueue", () => {
     });
   });
 
+  describe("addOnce", () => {
+    it("should dedupe repeated entries by key", () => {
+      const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
+      const addedFirst = queue.addOnce(
+        "Follow up",
+        { model: "gpt-4", imageParts: [image] },
+        "follow-up"
+      );
+      const addedSecond = queue.addOnce(
+        "Follow up",
+        { model: "gpt-4", imageParts: [image] },
+        "follow-up"
+      );
+
+      expect(addedFirst).toBe(true);
+      expect(addedSecond).toBe(false);
+      expect(queue.getMessages()).toEqual(["Follow up"]);
+      expect(queue.getImageParts()).toEqual([image]);
+    });
+  });
+
   describe("multi-message batching", () => {
     it("should batch multiple follow-up messages", () => {
       queue.add("First message");
@@ -196,6 +217,46 @@ describe("MessageQueue", () => {
       if (muxMeta.type === "compaction-request") {
         expect(muxMeta.rawCommand).toBe("/compact");
       }
+    });
+
+    it("should throw when adding agent-skill invocation after normal message", () => {
+      queue.add("First message");
+
+      const metadata: MuxFrontendMetadata = {
+        type: "agent-skill",
+        rawCommand: "/init",
+        skillName: "init",
+        scope: "built-in",
+      };
+
+      const options: SendMessageOptions = {
+        model: "claude-3-5-sonnet-20241022",
+        muxMetadata: metadata,
+      };
+
+      expect(() => queue.add('Run the "init" skill.', options)).toThrow(
+        /Cannot queue agent skill invocation/
+      );
+    });
+
+    it("should throw when adding normal message after agent-skill invocation", () => {
+      const metadata: MuxFrontendMetadata = {
+        type: "agent-skill",
+        rawCommand: "/init",
+        skillName: "init",
+        scope: "built-in",
+      };
+
+      queue.add('Run the "init" skill.', {
+        model: "claude-3-5-sonnet-20241022",
+        muxMetadata: metadata,
+      });
+
+      expect(queue.getDisplayText()).toBe("/init");
+
+      expect(() => queue.add("Follow-up message")).toThrow(
+        /agent skill invocation is already queued/
+      );
     });
 
     it("should produce combined message for API call", () => {

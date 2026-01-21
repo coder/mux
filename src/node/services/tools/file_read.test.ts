@@ -390,6 +390,38 @@ describe("file_read tool", () => {
     }
   });
 
+  it("should hint plan file path when in plan mode and reading outside cwd", async () => {
+    const planDir = await fs.mkdtemp(path.join(os.tmpdir(), "planFile-plan-hint-"));
+    const planPath = path.join(planDir, "plan.md");
+
+    try {
+      await fs.writeFile(planPath, "# Plan\n");
+
+      const tool = createFileReadTool({
+        ...getTestDeps(),
+        cwd: testDir,
+        runtime: new LocalRuntime(testDir),
+        runtimeTempDir: testDir,
+        mode: "plan",
+        planFilePath: planPath,
+      });
+
+      const result = (await tool.execute!(
+        { filePath: "/etc/passwd" },
+        mockToolCallOptions
+      )) as FileReadToolResult;
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("restricted to the workspace directory");
+        expect(result.error).toContain("use the exact plan file path string as provided");
+        expect(result.error).toContain(planPath);
+      }
+    } finally {
+      await fs.rm(planDir, { recursive: true, force: true });
+    }
+  });
+
   it("should allow reading files with relative paths within cwd", async () => {
     // Setup - create a subdirectory and file
     const subDir = path.join(testDir, "subdir");

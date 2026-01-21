@@ -5,8 +5,9 @@
  */
 
 import React from "react";
-import { ExternalLink, Terminal as TerminalIcon, X } from "lucide-react";
+import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
+import { FileIcon } from "../../FileIcon";
 import { formatTabDuration, type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
@@ -62,6 +63,52 @@ export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ sessionDuration })
   </>
 );
 
+/** Explorer tab label with folder tree icon */
+export const ExplorerTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <FolderTree className="h-3 w-3 shrink-0" />
+    Explorer
+  </span>
+);
+
+interface FileTabLabelProps {
+  /** File path (relative to workspace) */
+  filePath: string;
+  /** Callback when close button is clicked */
+  onClose: () => void;
+}
+
+/** File tab label with file icon, filename, and close button */
+export const FileTabLabel: React.FC<FileTabLabelProps> = ({ filePath, onClose }) => {
+  // Extract just the filename for display
+  const fileName = filePath.split("/").pop() ?? filePath;
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <FileIcon fileName={fileName} style={{ fontSize: 14 }} className="h-3.5 w-3.5 shrink-0" />
+      <span className="max-w-[120px] truncate" title={filePath}>
+        {fileName}
+      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="text-muted hover:text-destructive -my-0.5 rounded p-0.5 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+            aria-label="Close file"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Close ({formatKeybind(KEYBINDS.CLOSE_TAB)})</TooltipContent>
+      </Tooltip>
+    </span>
+  );
+};
+
 interface TerminalTabLabelProps {
   /** Dynamic title from OSC sequences, if available */
   dynamicTitle?: string;
@@ -86,7 +133,7 @@ export const TerminalTabLabel: React.FC<TerminalTabLabelProps> = ({
   return (
     <span className="inline-flex items-center gap-1">
       <TerminalIcon className="h-3 w-3 shrink-0" />
-      <span className="truncate">{displayName}</span>
+      <span className="max-w-[20ch] min-w-0 truncate">{displayName}</span>
       <Tooltip>
         <TooltipTrigger asChild>
           <button

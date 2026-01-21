@@ -1,4 +1,5 @@
 import React from "react";
+import { AlertTriangle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 
 interface EditCutoffBarrierProps {
@@ -19,7 +20,7 @@ export const EditCutoffBarrier: React.FC<EditCutoffBarrierProps> = ({ className 
         }}
       />
       <div className="border-edit-mode/30 bg-edit-mode/10 text-edit-mode flex items-center gap-2 rounded-md border px-3 py-1.5 text-[11px] font-medium">
-        <span className="text-sm">⚠️</span>
+        <AlertTriangle aria-hidden="true" className="h-4 w-4" />
         <span>Messages below will be removed when you submit</span>
       </div>
       <div

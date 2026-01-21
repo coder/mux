@@ -14,7 +14,16 @@ import {
   HelpIndicator,
 } from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
-import { Check, ExternalLink, Link2, Loader2, Trash2, PenTool } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ExternalLink,
+  Link2,
+  Loader2,
+  Lock,
+  PenTool,
+  Trash2,
+} from "lucide-react";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
@@ -49,7 +58,10 @@ const EncryptionBadge = () => (
       <HelpIndicator className="text-[11px]">?</HelpIndicator>
     </TooltipTrigger>
     <TooltipContent className="max-w-[240px]">
-      <p className="font-medium">🔒 End-to-end encrypted</p>
+      <p className="flex items-center gap-1.5 font-medium">
+        <Lock aria-hidden="true" className="h-3 w-3" />
+        End-to-end encrypted
+      </p>
       <p className="text-muted-foreground mt-1 text-[11px]">
         Content is encrypted in your browser (AES-256-GCM). The key stays in the URL fragment and is
         never sent to the server.
@@ -100,11 +112,25 @@ const SigningBadge = ({
   const isActive = signed || (signingEnabled && hasKey);
   const iconColor = isActive ? "text-blue-400" : hasEncryptedKey ? "text-yellow-500" : "text-muted";
 
-  // Determine status header text
-  const getStatusHeader = () => {
-    if (signed) return "✓ Signed";
+  // Determine status header content
+  const getStatusHeader = (): React.ReactNode => {
+    if (signed) {
+      return (
+        <span className="flex items-center gap-1.5">
+          <Check aria-hidden="true" className="h-3 w-3" />
+          Signed
+        </span>
+      );
+    }
     if (signingEnabled && hasKey) return "Signing enabled";
-    if (hasEncryptedKey) return "⚠ Key requires passphrase";
+    if (hasEncryptedKey) {
+      return (
+        <span className="flex items-center gap-1.5">
+          <AlertTriangle aria-hidden="true" className="h-3 w-3" />
+          Key requires passphrase
+        </span>
+      );
+    }
     return "Signing disabled";
   };
 

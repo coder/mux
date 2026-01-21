@@ -11,12 +11,29 @@ import {
 import type { CommandHandlerContext } from "./chatCommands";
 import type { ReviewNoteData } from "@/common/types/review";
 
-// Simple mock for localStorage to satisfy resolveCompactionModel
+// Simple mock for localStorage to satisfy resolveCompactionModel.
+// Note: resolveCompactionModel reads from window.localStorage (via readPersistedString),
+// so we set both globalThis.localStorage and window.localStorage for test isolation.
 beforeEach(() => {
-  globalThis.localStorage = {
+  const storage = {
     getItem: () => null,
     setItem: () => undefined,
+    removeItem: () => undefined,
+    clear: () => undefined,
+    key: () => null,
+    length: 0,
   } as unknown as Storage;
+
+  globalThis.localStorage = storage;
+
+  if (typeof window !== "undefined") {
+    try {
+      Object.defineProperty(window, "localStorage", { value: storage, configurable: true });
+    } catch {
+      // Some test DOM environments expose localStorage as a readonly getter.
+      (window as unknown as { localStorage?: Storage }).localStorage = storage;
+    }
+  }
 });
 
 describe("parseRuntimeString", () => {
@@ -594,31 +611,15 @@ describe("handlePlanOpenCommand", () => {
     expect(context.api.workspace.getInfo).toHaveBeenCalledWith({
       workspaceId: "test-workspace-id",
     });
-    expect(context.api.general.openInEditor).toHaveBeenCalledWith({
-      workspaceId: "test-workspace-id",
-      targetPath: "/path/to/plan.md",
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      editorConfig: expect.any(Object),
-    });
+    // Note: Built-in editors (VS Code/Cursor/Zed) now use deep links directly
+    // via window.open(), not the backend API. The backend API is only used
+    // for custom editors.
   });
 
-  test("shows error toast when editor fails to open", async () => {
-    const context = createMockContext(
-      { success: true, data: { content: "# My Plan", path: "/path/to/plan.md" } },
-      { success: false, error: "No editor configured" }
-    );
-
-    const result = await handlePlanOpenCommand(context);
-
-    expect(result.clearInput).toBe(true);
-    expect(result.toastShown).toBe(true);
-    expect(context.setToast).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "error",
-        message: "No editor configured",
-      })
-    );
-  });
+  // Note: The "editor fails to open" test was removed because built-in editors
+  // (VS Code/Cursor/Zed) now use deep links that open via window.open() and
+  // always succeed from the app's perspective. Failures happen in the external
+  // editor, not in our code path.
 });
 
 describe("handleCompactCommand", () => {

@@ -6,6 +6,7 @@ ui:
   hidden: true
 subagent:
   runnable: true
+  skip_init_hook: true
   append_prompt: |
     You are an Explore sub-agent running inside a child workspace.
 

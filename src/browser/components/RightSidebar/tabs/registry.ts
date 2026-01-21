@@ -78,13 +78,17 @@ export interface TabConfig {
 }
 
 /** Static tab configurations (non-terminal tabs) */
-export const TAB_CONFIGS: Record<"costs" | "review" | "stats", TabConfig> = {
+export const TAB_CONFIGS: Record<"costs" | "review" | "explorer" | "stats", TabConfig> = {
   costs: {
     name: "Costs",
     contentClassName: "overflow-y-auto p-[15px]",
   },
   review: {
     name: "Review",
+    contentClassName: "overflow-y-auto p-0",
+  },
+  explorer: {
+    name: "Explorer",
     contentClassName: "overflow-y-auto p-0",
   },
   stats: {
@@ -101,10 +105,21 @@ export const TERMINAL_TAB_CONFIG: TabConfig = {
   keepAlive: true,
 };
 
+/** File viewer tab configuration */
+export const FILE_TAB_CONFIG: TabConfig = {
+  name: "File",
+  contentClassName: "overflow-auto p-0",
+  keepAlive: false, // No need to keep rendered when hidden
+};
+
 /** Get config for a tab type */
 export function getTabConfig(tab: TabType): TabConfig {
-  if (tab === "costs" || tab === "review" || tab === "stats") {
+  if (tab === "costs" || tab === "review" || tab === "explorer" || tab === "stats") {
     return TAB_CONFIGS[tab];
+  }
+  // File tabs
+  if (tab.startsWith("file:")) {
+    return FILE_TAB_CONFIG;
   }
   // All terminal tabs (including "terminal" placeholder)
   return TERMINAL_TAB_CONFIG;

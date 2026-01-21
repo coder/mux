@@ -1,3 +1,7 @@
+import type { RuntimeConfig } from "@/common/types/runtime";
+import type { RuntimeStatusEvent as StreamRuntimeStatusEvent } from "@/common/types/stream";
+import type { Result } from "@/common/types/result";
+
 /**
  * Runtime abstraction for executing tools in different environments.
  *
@@ -99,6 +103,12 @@ export interface BackgroundHandle {
   writeMeta(metaJson: string): Promise<void>;
 
   /**
+   * Get the current size of output.log in bytes.
+   * Used to tail output without reading the entire file.
+   */
+  getOutputFileSize(): Promise<number>;
+
+  /**
    * Read output from output.log at the given byte offset.
    * Returns the content read and the new offset (for incremental reads).
    * Works on both local and SSH runtimes by using runtime.exec() internally.
@@ -195,6 +205,13 @@ export interface WorkspaceInitParams {
   abortSignal?: AbortSignal;
   /** Environment variables to inject (MUX_ vars + secrets) */
   env?: Record<string, string>;
+
+  /**
+   * When true, skip running the project's .mux/init hook.
+   *
+   * NOTE: This skips only hook execution, not runtime provisioning.
+   */
+  skipInitHook?: boolean;
 }
 
 /**
@@ -237,7 +254,72 @@ export interface WorkspaceForkResult {
   sourceBranch?: string;
   /** Error message (if failed) */
   error?: string;
+  /** Runtime config for the forked workspace (if different from source) */
+  forkedRuntimeConfig?: RuntimeConfig;
+  /** Updated runtime config for source workspace (e.g., mark as shared) */
+  sourceRuntimeConfig?: RuntimeConfig;
 }
+
+/**
+ * Flags that control workspace creation behavior in WorkspaceService.
+ * Allows runtimes to customize the create flow without WorkspaceService
+ * needing runtime-specific conditionals.
+ */
+export interface RuntimeCreateFlags {
+  /**
+   * Skip srcBaseDir resolution before createWorkspace.
+   * Use when host doesn't exist until postCreateSetup (e.g., Coder).
+   */
+  deferredHost?: boolean;
+
+  /**
+   * Use config-level collision detection instead of runtime.createWorkspace.
+   * Use when createWorkspace can't detect existing workspaces (host doesn't exist).
+   */
+  configLevelCollisionDetection?: boolean;
+}
+
+/**
+ * Runtime status update payload for ensureReady progress.
+ *
+ * Derived from the stream schema type to keep phase/runtimeType/detail consistent
+ * across backend + frontend.
+ */
+export type RuntimeStatusEvent = Pick<StreamRuntimeStatusEvent, "phase" | "runtimeType" | "detail">;
+
+/**
+ * Callback for runtime status updates during ensureReady().
+ */
+export type RuntimeStatusSink = (status: RuntimeStatusEvent) => void;
+
+/**
+ * Options for ensureReady().
+ */
+export interface EnsureReadyOptions {
+  /**
+   * Callback to emit runtime-status events for UX feedback.
+   * Coder uses this to show "Starting Coder workspace..." during boot.
+   */
+  statusSink?: RuntimeStatusSink;
+
+  /**
+   * Abort signal to cancel long-running operations.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * Result of ensureReady().
+ * Distinguishes between permanent failures (runtime_not_ready) and
+ * transient failures (runtime_start_failed) for retry logic.
+ */
+export type EnsureReadyResult =
+  | { ready: true }
+  | {
+      ready: false;
+      error: string;
+      errorType: "runtime_not_ready" | "runtime_start_failed";
+    };
 
 /**
  * Runtime interface - minimal, low-level abstraction for tool execution environments.
@@ -246,6 +328,11 @@ export interface WorkspaceForkResult {
  * Use helpers in utils/runtime/ for convenience wrappers (e.g., readFileString, execBuffered).
  */
 export interface Runtime {
+  /**
+   * Flags that control workspace creation behavior.
+   * If not provided, defaults to standard behavior (no flags set).
+   */
+  readonly createFlags?: RuntimeCreateFlags;
   /**
    * Execute a bash command with streaming I/O
    * @param command The bash script to execute
@@ -281,6 +368,14 @@ export interface Runtime {
    * @throws RuntimeError if path does not exist or cannot be accessed
    */
   stat(path: string, abortSignal?: AbortSignal): Promise<FileStat>;
+
+  /**
+   * Ensure a directory exists (mkdir -p semantics).
+   *
+   * This intentionally lives on the Runtime abstraction so local runtimes can use
+   * Node fs APIs (Windows-safe) while remote runtimes can use shell commands.
+   */
+  ensureDir(path: string): Promise<void>;
 
   /**
    * Resolve a path to its absolute, canonical form (expanding tildes, resolving symlinks, etc.).
@@ -346,6 +441,62 @@ export interface Runtime {
   createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult>;
 
   /**
+   * Finalize runtime config after collision handling.
+   * Called with final branch name (may have collision suffix).
+   *
+   * Use cases:
+   * - Coder: derive workspace name from branch, compute SSH host
+   *
+   * @param finalBranchName Branch name after collision handling
+   * @param config Current runtime config
+   * @returns Updated runtime config, or error
+   */
+  finalizeConfig?(
+    finalBranchName: string,
+    config: RuntimeConfig
+  ): Promise<Result<RuntimeConfig, string>>;
+
+  /**
+   * Validate before persisting workspace metadata.
+   * Called after finalizeConfig, before editConfig.
+   * May make network calls for external validation.
+   *
+   * Use cases:
+   * - Coder: check if workspace name already exists
+   *
+   * IMPORTANT: This hook runs AFTER createWorkspace(). Only implement this if:
+   * - createWorkspace() is side-effect-free for this runtime, OR
+   * - The runtime can tolerate/clean up side effects on validation failure
+   *
+   * If your runtime's createWorkspace() has side effects (e.g., creates directories)
+   * and validation failure would leave orphaned resources, consider whether those
+   * checks belong in createWorkspace() itself instead.
+   *
+   * @param finalBranchName Branch name after collision handling
+   * @param config Finalized runtime config
+   * @returns Success, or error message
+   */
+  validateBeforePersist?(
+    finalBranchName: string,
+    config: RuntimeConfig
+  ): Promise<Result<void, string>>;
+
+  /**
+   * Optional long-running setup that runs after mux persists workspace metadata.
+   * Used for provisioning steps that must happen before initWorkspace but after
+   * the workspace is registered (e.g., creating Coder workspaces, pulling Docker images).
+   *
+   * Contract:
+   * - MAY take minutes (streams progress via initLogger)
+   * - MUST NOT call initLogger.logComplete() - that's handled by the caller
+   * - On failure: throw; caller will log error and mark init failed
+   * - Runtimes with this hook expect callers to use runFullInit/runBackgroundInit
+   *
+   * @param params Same as initWorkspace params
+   */
+  postCreateSetup?(params: WorkspaceInitParams): Promise<void>;
+
+  /**
    * Initialize workspace asynchronously (may be slow, streams progress)
    * - LocalRuntime: Runs init hook if present
    * - SSHRuntime: Syncs files, checks out branch, runs init hook
@@ -403,10 +554,14 @@ export interface Runtime {
    * - LocalRuntime: Always returns ready (no-op)
    * - DockerRuntime: Starts container if stopped
    * - SSHRuntime: Could verify connection (future)
+   * - CoderSSHRuntime: Checks workspace status, starts if stopped, waits for ready
    *
-   * Called automatically by executeBash handler before first operation.
+   * Called automatically by AIService before streaming.
+   *
+   * @param options Optional config: statusSink for progress events, signal for cancellation
+   * @returns Result indicating ready or failure with error type for retry decisions
    */
-  ensureReady(): Promise<{ ready: boolean; error?: string }>;
+  ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult>;
 
   /**
    * Fork an existing workspace to create a new one

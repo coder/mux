@@ -33,6 +33,9 @@ const AgentDefinitionSubagentSchema = z
     runnable: z.boolean().optional(),
     // Instructions appended when this agent runs as a subagent (child workspace)
     append_prompt: z.string().min(1).optional(),
+    // When true, do not run the project's .mux/init hook for this sub-agent.
+    // NOTE: This skips only the hook execution, not runtime provisioning (e.g. SSH sync, Docker setup).
+    skip_init_hook: z.boolean().optional(),
   })
   .strip();
 
@@ -77,6 +80,7 @@ export const AgentDefinitionFrontmatterSchema = z
     prompt: AgentDefinitionPromptSchema.optional(),
 
     subagent: AgentDefinitionSubagentSchema.optional(),
+
     ai: AgentDefinitionAiDefaultsSchema.optional(),
 
     // Tool configuration: add/remove patterns (regex).

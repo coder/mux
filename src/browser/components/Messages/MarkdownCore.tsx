@@ -83,9 +83,14 @@ const REHYPE_PLUGINS: Pluggable[] = [
   [
     harden, // Additional URL filtering for links and images
     {
-      allowedImagePrefixes: ["*"],
+      // SECURITY: Treat markdown content as untrusted. We rely on rehype-harden to
+      // block dangerous URL schemes (e.g. javascript:, file:, vbscript:, data: in
+      // links). Data images are allowed explicitly below.
+      allowedImagePrefixes: ["*", "/"],
       allowedLinkPrefixes: ["*"],
-      defaultOrigin: undefined,
+      // rehype-harden requires a defaultOrigin when any allowlist is provided.
+      // We use a stable placeholder origin so relative URLs can be resolved.
+      defaultOrigin: "https://mux.invalid",
       allowDataImages: true,
     },
   ],

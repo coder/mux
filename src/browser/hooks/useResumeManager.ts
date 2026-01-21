@@ -105,7 +105,9 @@ export function useResumeManager() {
     // 1. Must have interrupted stream that's eligible for auto-retry (not currently streaming)
     if (state.canInterrupt) return false; // Currently streaming
 
-    if (!isEligibleForAutoRetry(state.messages, state.pendingStreamStartTime)) {
+    if (
+      !isEligibleForAutoRetry(state.messages, state.pendingStreamStartTime, state.runtimeStatus)
+    ) {
       return false;
     }
 

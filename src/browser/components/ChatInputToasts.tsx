@@ -130,6 +130,34 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
         ),
       };
 
+    case "command-missing-args":
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Missing Arguments",
+        message: `/${parsed.command} requires arguments`,
+        solution: (
+          <>
+            <SolutionLabel>Usage:</SolutionLabel>
+            {parsed.usage}
+          </>
+        ),
+      };
+
+    case "command-invalid-args":
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "Invalid Argument",
+        message: `'${parsed.input}' is not valid for /${parsed.command}`,
+        solution: (
+          <>
+            <SolutionLabel>Usage:</SolutionLabel>
+            {parsed.usage}
+          </>
+        ),
+      };
+
     case "unknown-command": {
       const cmd = "/" + parsed.command + (parsed.subcommand ? " " + parsed.subcommand : "");
       return {

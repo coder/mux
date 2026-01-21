@@ -88,6 +88,63 @@ describe("LocalRuntime", () => {
     });
   });
 
+  describe("initWorkspace", () => {
+    it("runs init hook by default, but skips when skipInitHook=true", async () => {
+      const runtime = new LocalRuntime(testDir);
+
+      const muxDir = path.join(testDir, ".mux");
+      await fs.mkdir(muxDir, { recursive: true });
+
+      const markerPath = path.join(testDir, ".init-marker");
+      await fs.rm(markerPath, { force: true });
+
+      const hookPath = path.join(muxDir, "init");
+      await fs.writeFile(hookPath, "#!/usr/bin/env bash\n\necho ran > .init-marker\n");
+      await fs.chmod(hookPath, 0o755);
+
+      {
+        const logger = createMockLogger();
+        const result = await runtime.initWorkspace({
+          projectPath: testDir,
+          branchName: "main",
+          trunkBranch: "main",
+          workspacePath: testDir,
+          initLogger: logger,
+        });
+        expect(result.success).toBe(true);
+      }
+
+      const ranMarkerExists = await fs.access(markerPath).then(
+        () => true,
+        () => false
+      );
+      expect(ranMarkerExists).toBe(true);
+
+      // Remove marker and re-run init with skip flag.
+      await fs.rm(markerPath, { force: true });
+
+      {
+        const logger = createMockLogger();
+        const result = await runtime.initWorkspace({
+          projectPath: testDir,
+          branchName: "main",
+          trunkBranch: "main",
+          workspacePath: testDir,
+          initLogger: logger,
+          skipInitHook: true,
+        });
+        expect(result.success).toBe(true);
+        expect(logger.steps).toContain("Skipping .mux/init hook (disabled for this task)");
+      }
+
+      const skippedMarkerExists = await fs.access(markerPath).then(
+        () => true,
+        () => false
+      );
+      expect(skippedMarkerExists).toBe(false);
+    });
+  });
+
   describe("deleteWorkspace", () => {
     it("returns success without deleting anything", async () => {
       const runtime = new LocalRuntime(testDir);
@@ -147,7 +204,7 @@ describe("LocalRuntime", () => {
   });
 
   describe("forkWorkspace", () => {
-    it("returns error - operation not supported", async () => {
+    it("succeeds and returns project path (no worktree isolation)", async () => {
       const runtime = new LocalRuntime(testDir);
       const logger = createMockLogger();
 
@@ -158,14 +215,49 @@ describe("LocalRuntime", () => {
         initLogger: logger,
       });
 
+      expect(result.success).toBe(true);
+      expect(result.workspacePath).toBe(testDir);
+      // sourceBranch is undefined for LocalRuntime (no git operations)
+      expect(result.sourceBranch).toBeUndefined();
+      // Should have logged steps
+      expect(logger.steps.some((s) => s.includes("fork"))).toBe(true);
+      expect(logger.steps.some((s) => s.includes("verified"))).toBe(true);
+    });
+
+    it("fails when project directory does not exist", async () => {
+      const nonExistentPath = path.join(testDir, "does-not-exist");
+      const runtime = new LocalRuntime(nonExistentPath);
+      const logger = createMockLogger();
+
+      const result = await runtime.forkWorkspace({
+        projectPath: nonExistentPath,
+        sourceWorkspaceName: "main",
+        newWorkspaceName: "feature",
+        initLogger: logger,
+      });
+
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Cannot fork");
-      expect(result.error).toContain("project-dir");
+      expect(result.error).toContain("does not exist");
     });
   });
 
   // Note: exec, stat, resolvePath, normalizePath are tested in the shared Runtime
   // interface tests (tests/runtime/runtime.test.ts matrix)
+
+  describe("ensureDir", () => {
+    it("creates directories recursively", async () => {
+      const runtime = new LocalRuntime(testDir);
+
+      const dirPath = path.join(testDir, "ensure-dir", "a", "b", "c");
+      await runtime.ensureDir(dirPath);
+
+      const stat = await fs.stat(dirPath);
+      expect(stat.isDirectory()).toBe(true);
+
+      // Should be idempotent
+      await runtime.ensureDir(dirPath);
+    });
+  });
 
   describe("tilde expansion in file operations", () => {
     it("stat expands tilde paths", async () => {

@@ -15,6 +15,7 @@ import {
 } from "./shared/ToolPrimitives";
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
+import { Button } from "../ui/button";
 import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
@@ -28,7 +29,16 @@ import { PopoverError } from "../PopoverError";
 import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import { Clipboard, ClipboardCheck, FileText, ListStart, Pencil, Play, X } from "lucide-react";
+import {
+  Clipboard,
+  ClipboardCheck,
+  ClipboardList,
+  FileText,
+  ListStart,
+  Pencil,
+  Play,
+  X,
+} from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
 
 /**
@@ -285,7 +295,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       : { top: 100, left: 100 };
 
     try {
-      const result = await openInEditor(workspaceId, planPath, runtimeConfig);
+      const result = await openInEditor(workspaceId, planPath, runtimeConfig, { isFile: true });
       if (!result.success && result.error) {
         editorError.showError("plan-editor", result.error, anchorPosition);
       }
@@ -298,12 +308,14 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const statusDisplay = getStatusDisplay(status);
 
   // Build action buttons array (similar to AssistantMessage)
+  const copyButton: ButtonConfig = {
+    label: copied ? "Copied" : "Copy",
+    onClick: () => void copyToClipboard(planContent),
+    icon: copied ? <ClipboardCheck /> : <Clipboard />,
+  };
+
   const actionButtons: ButtonConfig[] = [
-    {
-      label: copied ? "Copied" : "Copy",
-      onClick: () => void copyToClipboard(planContent),
-      icon: copied ? <ClipboardCheck /> : <Clipboard />,
-    },
+    copyButton,
     {
       label: "Share",
       component: (
@@ -371,7 +383,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     <div className="plan-surface rounded-md p-3 shadow-md">
       {/* Header: title only */}
       <div className="plan-divider mb-3 flex items-center gap-2 border-b pb-2">
-        <div className="text-base">📋</div>
+        <ClipboardList aria-hidden="true" className="h-4 w-4" />
         <div className="text-plan-mode font-mono text-[13px] font-semibold">{planTitle}</div>
         {isEphemeralPreview && (
           <div className="text-muted font-mono text-[10px] italic">preview only</div>
@@ -382,9 +394,23 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       {errorMessage ? (
         <div className="text-error rounded-sm p-2 font-mono text-xs">{errorMessage}</div>
       ) : showRaw ? (
-        <pre className="text-text bg-code-bg m-0 rounded-sm p-2 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
-          {planContent}
-        </pre>
+        <div className="relative">
+          <pre className="text-text bg-code-bg m-0 rounded-sm p-2 pb-8 font-mono text-xs leading-relaxed break-words whitespace-pre-wrap">
+            {planContent}
+          </pre>
+          <div className="absolute right-2 bottom-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
+              onClick={() => void copyToClipboard(planContent)}
+            >
+              {copied ? <ClipboardCheck /> : <Clipboard />}
+              {copied ? "Copied" : "Copy to clipboard"}
+            </Button>
+          </div>
+        </div>
       ) : (
         <div className="plan-content">
           <MarkdownRenderer content={planContent} />

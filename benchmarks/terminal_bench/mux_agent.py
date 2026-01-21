@@ -3,20 +3,18 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
-from terminal_bench.agents.base_agent import AgentResult
-from terminal_bench.agents.installed_agents.abstract_installed_agent import (
-    AbstractInstalledAgent,
-)
-from terminal_bench.terminal.models import TerminalCommand
-from terminal_bench.terminal.tmux_session import TmuxSession
+from harbor.agents.installed.base import BaseInstalledAgent, ExecInput
+from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
 
-from .mux_payload import build_app_archive, stage_payload
+from .mux_payload import build_app_archive
 
 
-class MuxAgent(AbstractInstalledAgent):
+class MuxAgent(BaseInstalledAgent):
     """
     Minimal Terminal-Bench adapter that installs mux into the task container and
     forwards the benchmark instruction to the mux headless runner.
@@ -69,13 +67,18 @@ class MuxAgent(AbstractInstalledAgent):
 
     def __init__(
         self,
+        logs_dir: Path,
         model_name: str = "anthropic:claude-sonnet-4-5",
         mode: str | None = None,
         thinking_level: str | None = None,
         experiments: str | None = None,
+        timeout: int | str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__(logs_dir=logs_dir, **kwargs)
+        # Set MUX_TIMEOUT_MS if timeout is provided via agent kwargs
+        if timeout is not None:
+            os.environ["MUX_TIMEOUT_MS"] = str(int(timeout) * 1000)
         repo_root_env = os.environ.get("MUX_AGENT_REPO_ROOT")
         repo_root = (
             Path(repo_root_env).resolve()
@@ -92,11 +95,11 @@ class MuxAgent(AbstractInstalledAgent):
         self._runner_path = runner_path
         self._repo_root = repo_root
         self._archive_bytes: bytes | None = None
-        self._staged_container_id: str | None = None
         self._mode = mode.lower() if mode else None
         self._thinking_level = thinking_level.lower() if thinking_level else None
         self._model_name = (model_name or "").strip()
         self._experiments = (experiments or "").strip() if experiments else None
+        self._last_environment: BaseEnvironment | None = None
 
     @staticmethod
     def name() -> str:
@@ -131,8 +134,10 @@ class MuxAgent(AbstractInstalledAgent):
 
         thinking_value = self._thinking_level or env["MUX_THINKING_LEVEL"]
         normalized_thinking = thinking_value.strip().lower()
-        if normalized_thinking not in {"off", "low", "medium", "high"}:
-            raise ValueError("MUX_THINKING_LEVEL must be one of off, low, medium, high")
+        if normalized_thinking not in {"off", "low", "medium", "high", "xhigh"}:
+            raise ValueError(
+                "MUX_THINKING_LEVEL must be one of off, low, medium, high, xhigh"
+            )
         env["MUX_THINKING_LEVEL"] = normalized_thinking
 
         mode_value = self._mode or env["MUX_MODE"]
@@ -168,65 +173,99 @@ class MuxAgent(AbstractInstalledAgent):
         return env
 
     @property
-    def _install_agent_script_path(self) -> Path:
-        return self._get_templated_script_path("mux_setup.sh.j2")
+    def _install_agent_template_path(self) -> Path:
+        return Path(__file__).with_name("mux_setup.sh.j2")
 
     _TOKEN_FILE_PATH = "/tmp/mux-tokens.json"
 
-    def perform_task(
-        self,
-        instruction: str,
-        session: TmuxSession,
-        logging_dir=None,
-    ) -> AgentResult:
-        if not instruction.strip():
-            raise ValueError("instruction must be a non-empty string")
-        self._ensure_payload_staged(session)
+    async def setup(self, environment: BaseEnvironment) -> None:
+        """Override setup to stage payload first, then run install template."""
+        # Create /installed-agent directory (normally done by super().setup(),
+        # but we need it to exist before uploading files)
+        await environment.exec(command="mkdir -p /installed-agent")
 
-        # Run agent via parent (returns hardcoded 0 tokens)
-        super().perform_task(instruction, session, logging_dir)
-
-        # Read tokens from file written by mux-run.sh (best-effort)
-        input_tokens = 0
-        output_tokens = 0
-        try:
-            result = session.container.exec_run(f"cat {self._TOKEN_FILE_PATH}")
-            if result.exit_code == 0:
-                data = json.loads(result.output.decode())
-                input_tokens = data.get("input", 0)
-                output_tokens = data.get("output", 0)
-        except Exception:
-            pass  # Token extraction is best-effort
-
-        return AgentResult(
-            total_input_tokens=input_tokens,
-            total_output_tokens=output_tokens,
-        )
-
-    def _ensure_payload_staged(self, session: TmuxSession) -> None:
-        container_id = getattr(session.container, "id", None)
-        if container_id == self._staged_container_id:
-            return
-
+        # Build and stage the mux app archive BEFORE super().setup() runs the
+        # install template, which extracts the archive and runs chmod on runner
         if not self._archive_bytes:
             self._archive_bytes = build_app_archive(
                 self._repo_root, self._INCLUDE_PATHS
             )
 
-        stage_payload(
-            session, self._archive_bytes, self._ARCHIVE_NAME, self._runner_path
+        # Write archive to logs_dir and upload
+        archive_path = self.logs_dir / self._ARCHIVE_NAME
+        archive_path.write_bytes(self._archive_bytes)
+        await environment.upload_file(
+            source_path=archive_path,
+            target_path=f"/installed-agent/{self._ARCHIVE_NAME}",
         )
-        self._staged_container_id = container_id
 
-    def _run_agent_commands(self, instruction: str) -> list[TerminalCommand]:
+        # Upload runner script
+        await environment.upload_file(
+            source_path=self._runner_path,
+            target_path=f"/installed-agent/{self._RUNNER_NAME}",
+        )
+
+        # Now run parent setup which executes mux_setup.sh.j2 template
+        # (extracts archive, installs bun/deps, chmod +x runner)
+        await super().setup(environment)
+
+        # Store environment reference for token extraction later
+        self._last_environment = environment
+
+    def create_run_agent_commands(self, instruction: str) -> list[ExecInput]:
         escaped = shlex.quote(instruction)
         command = f"bash /installed-agent/{self._RUNNER_NAME} {escaped}"
         return [
-            TerminalCommand(
+            ExecInput(
                 command=command,
-                min_timeout_sec=0.0,
-                max_timeout_sec=float("inf"),  # Let global timeout handle this
-                block=True,
-                append_enter=True,
+                env=self._env,
             )
         ]
+
+    async def run(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
+        """Run agent commands, download token file, then populate context."""
+        # Execute commands (from base class logic, but without calling populate_context)
+        for i, exec_input in enumerate(self.create_run_agent_commands(instruction)):
+            command_dir = self.logs_dir / f"command-{i}"
+            command_dir.mkdir(parents=True, exist_ok=True)
+            (command_dir / "command.txt").write_text(exec_input.command)
+
+            result = await environment.exec(
+                command=exec_input.command,
+                cwd=exec_input.cwd,
+                env=exec_input.env,
+                timeout_sec=exec_input.timeout_sec,
+            )
+
+            (command_dir / "return-code.txt").write_text(str(result.return_code))
+            if result.stdout:
+                (command_dir / "stdout.txt").write_text(result.stdout)
+            if result.stderr:
+                (command_dir / "stderr.txt").write_text(result.stderr)
+
+        # Download token file from container BEFORE populating context
+        # Clear any stale token file first to avoid reading outdated data if download fails
+        token_file = self.logs_dir / "mux-tokens.json"
+        token_file.unlink(missing_ok=True)
+        try:
+            await environment.download_file(self._TOKEN_FILE_PATH, token_file)
+        except Exception:
+            pass  # Token file may not exist if agent crashed early
+
+        self.populate_context_post_run(context)
+
+    def populate_context_post_run(self, context: AgentContext) -> None:
+        """Extract token usage from the token file written by mux-run.sh."""
+        token_file = self.logs_dir / "mux-tokens.json"
+        if token_file.exists():
+            try:
+                data = json.loads(token_file.read_text())
+                context.n_input_tokens = data.get("input", 0)
+                context.n_output_tokens = data.get("output", 0)
+            except Exception:
+                pass  # Token extraction is best-effort

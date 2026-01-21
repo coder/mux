@@ -13,6 +13,7 @@ import type {
   ReasoningDeltaEvent,
   ReasoningEndEvent,
   UsageDeltaEvent,
+  RuntimeStatusEvent,
 } from "@/common/types/stream";
 
 export type BranchListResult = z.infer<typeof schemas.BranchListResultSchema>;
@@ -130,4 +131,8 @@ export function isRestoreToInput(
   msg: WorkspaceChatMessage
 ): msg is Extract<WorkspaceChatMessage, { type: "restore-to-input" }> {
   return (msg as { type?: string }).type === "restore-to-input";
+}
+
+export function isRuntimeStatus(msg: WorkspaceChatMessage): msg is RuntimeStatusEvent {
+  return (msg as { type?: string }).type === "runtime-status";
 }

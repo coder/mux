@@ -44,11 +44,13 @@ export function WorktreeIcon({ size = 10, className }: IconProps) {
       className={className}
     >
       {/* Simplified git branch: vertical line with branch off */}
-      <circle cx="8" cy="3" r="2" />
-      <circle cx="8" cy="13" r="2" />
-      <line x1="8" y1="5" x2="8" y2="11" />
-      <circle cx="12" cy="7" r="2" />
-      <path d="M10 7 L8 9" />
+      <g transform="translate(-1 0)">
+        <circle cx="7" cy="3" r="2" />
+        <circle cx="7" cy="13" r="2" />
+        <line x1="7" y1="5" x2="7" y2="11" />
+        <circle cx="13" cy="7" r="2" />
+        <path d="M11 7 L7 9" />
+      </g>
     </svg>
   );
 }
@@ -70,6 +72,24 @@ export function LocalIcon({ size = 10, className }: IconProps) {
     >
       {/* Folder icon */}
       <path d="M2 4 L2 13 L14 13 L14 5 L8 5 L7 3 L2 3 L2 4" />
+    </svg>
+  );
+}
+
+/** Coder logo icon for Coder-backed SSH runtime */
+export function CoderIcon({ size = 10, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 425.93 200"
+      fill="currentColor"
+      aria-label="Coder Runtime"
+      className={className}
+    >
+      {/* Coder shorthand logo: stylized "C" with cursor block */}
+      <rect x="263.75" y="5.41" width="162.18" height="189.24" />
+      <path d="M0,100C0,38.92,51.89,0,123.25,0s111.35,33.78,112.7,83.51l-61.62,1.89c-1.62-27.57-26.03-45.68-51.08-45.14-34.32.74-59.73,23.51-59.73,59.73s25.41,58.65,59.73,58.65c25.05,0,48.91-17.3,51.62-44.86l61.62,1.35c-1.62,50.54-44.05,84.87-113.24,84.87S0,160.81,0,100Z" />
     </svg>
   );
 }

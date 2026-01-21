@@ -25,6 +25,7 @@ fi
 if [ -n "${AC_APIKEY_ID:-}" ]; then
   echo "Setting up notarization credentials..."
   echo "$AC_APIKEY_P8_BASE64" | base64 -D >/tmp/AuthKey.p8
+  # shellcheck disable=SC2129 # Multiple appends are clearer than a grouped block here
   echo "APPLE_API_KEY=/tmp/AuthKey.p8" >>"$GITHUB_ENV"
   echo "APPLE_API_KEY_ID=$AC_APIKEY_ID" >>"$GITHUB_ENV"
   echo "APPLE_API_ISSUER=$AC_APIKEY_ISSUER_ID" >>"$GITHUB_ENV"

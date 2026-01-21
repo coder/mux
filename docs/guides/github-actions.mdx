@@ -8,11 +8,11 @@ description: Automate your workflows with mux run in GitHub Actions
 ## Prerequisites
 
 1. **API Key**: Add your `ANTHROPIC_API_KEY` (or other provider key) to your repository's secrets. See [Providers](/config/providers) for details on configuring API keys.
-2. **npm/bun**: The workflow will install mux via `bunx` or `npx`
+2. **npm/bun**: The workflow will install Mux via `bunx` or `npx`
 
 ## Basic Usage
 
-Here's a minimal example that runs mux in a GitHub Action:
+Here's a minimal example that runs Mux in a GitHub Action:
 
 ```yaml
 - name: Mux Review
@@ -60,8 +60,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.actor != 'dependabot[bot]'
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@b7a1c7ccf290d58743029c4f6903da283811b979 # v2.1.0
 
       - name: Label with mux
         env:

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import * as fsPromises from "fs/promises";
 import * as path from "path";
 import * as os from "os";
@@ -8,6 +8,8 @@ import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
 import { TaskService } from "@/node/services/taskService";
+import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
+import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -481,6 +483,120 @@ describe("TaskService", () => {
     internal.resolveWaiters(childTask.data.taskId, { reportMarkdown: "ok" });
     const report = await waiter;
     expect(report.reportMarkdown).toBe("ok");
+  }, 20_000);
+
+  test("persists forked runtime config updates when dequeuing tasks", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa", "bbbbbbbbbb"], "cccccccccc");
+
+    const projectPath = await createTestProject(rootDir);
+
+    const runtimeConfig = { type: "worktree" as const, srcBaseDir: config.srcDir };
+    const runtime = createRuntime(runtimeConfig, { projectPath });
+    const initLogger = createNullInitLogger();
+
+    const parentName = "parent";
+    await runtime.createWorkspace({
+      projectPath,
+      branchName: parentName,
+      trunkBranch: "main",
+      directoryName: parentName,
+      initLogger,
+    });
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: runtime.getWorkspacePath(projectPath, parentName),
+                id: parentId,
+                name: parentName,
+                createdAt: new Date().toISOString(),
+                runtimeConfig,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 1, maxTaskNestingDepth: 3 },
+    });
+
+    const forkedSrcBaseDir = path.join(config.srcDir, "forked-runtime");
+    const sourceSrcBaseDir = path.join(config.srcDir, "source-runtime");
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- intentionally capturing prototype method for spy
+    const originalFork = WorktreeRuntime.prototype.forkWorkspace;
+    let forkCallCount = 0;
+    const forkSpy = spyOn(WorktreeRuntime.prototype, "forkWorkspace").mockImplementation(
+      async function (this: WorktreeRuntime, params: WorkspaceForkParams) {
+        const result = await originalFork.call(this, params);
+        if (!result.success) return result;
+        forkCallCount += 1;
+        if (forkCallCount === 2) {
+          return {
+            ...result,
+            forkedRuntimeConfig: { ...runtimeConfig, srcBaseDir: forkedSrcBaseDir },
+            sourceRuntimeConfig: { ...runtimeConfig, srcBaseDir: sourceSrcBaseDir },
+          };
+        }
+        return result;
+      }
+    );
+
+    try {
+      const { taskService } = createTaskServiceHarness(config);
+
+      const running = await taskService.create({
+        parentWorkspaceId: parentId,
+        kind: "agent",
+        agentType: "explore",
+        prompt: "task 1",
+        title: "Test task",
+      });
+      expect(running.success).toBe(true);
+      if (!running.success) return;
+
+      const queued = await taskService.create({
+        parentWorkspaceId: parentId,
+        kind: "agent",
+        agentType: "explore",
+        prompt: "task 2",
+        title: "Test task",
+      });
+      expect(queued.success).toBe(true);
+      if (!queued.success) return;
+      expect(queued.data.status).toBe("queued");
+
+      await config.editConfig((cfg) => {
+        for (const [_project, project] of cfg.projects) {
+          const ws = project.workspaces.find((w) => w.id === running.data.taskId);
+          if (ws) {
+            ws.taskStatus = "reported";
+          }
+        }
+        return cfg;
+      });
+
+      await taskService.initialize();
+
+      const postCfg = config.loadConfigOrDefault();
+      const workspaces = Array.from(postCfg.projects.values()).flatMap((p) => p.workspaces);
+      const parentEntry = workspaces.find((w) => w.id === parentId);
+      const childEntry = workspaces.find((w) => w.id === queued.data.taskId);
+      expect(parentEntry?.runtimeConfig).toMatchObject({
+        type: "worktree",
+        srcBaseDir: sourceSrcBaseDir,
+      });
+      expect(childEntry?.runtimeConfig).toMatchObject({
+        type: "worktree",
+        srcBaseDir: forkedSrcBaseDir,
+      });
+    } finally {
+      forkSpy.mockRestore();
+    }
   }, 20_000);
 
   test("does not run init hooks for queued tasks until they start", async () => {

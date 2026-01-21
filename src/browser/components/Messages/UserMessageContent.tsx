@@ -2,6 +2,7 @@ import React from "react";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { ImagePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface UserMessageContentProps {
   content: string;
@@ -11,15 +12,29 @@ interface UserMessageContentProps {
   variant: "sent" | "queued";
 }
 
-const textStyles = {
-  sent: "font-primary m-0 leading-6 break-words whitespace-pre-wrap text-[var(--color-user-text)]",
-  queued: "text-subtle m-0 font-mono text-xs leading-4 break-words whitespace-pre-wrap opacity-90",
-} as const;
+const markdownStyles: Record<UserMessageContentProps["variant"], React.CSSProperties> = {
+  sent: {
+    color: "var(--color-user-text)",
+    overflowWrap: "break-word",
+    wordBreak: "break-word",
+  },
+  queued: {
+    color: "var(--color-subtle)",
+    fontFamily: "var(--font-monospace)",
+    fontSize: "12px",
+    lineHeight: "16px",
+    overflowWrap: "break-word",
+    wordBreak: "break-word",
+    opacity: 0.9,
+  },
+};
 
 const imageContainerStyles = {
   sent: "mt-3 flex flex-wrap gap-3",
   queued: "mt-2 flex flex-wrap gap-2",
 } as const;
+
+const markdownClassName = "user-message-markdown";
 
 const imageStyles = {
   sent: "max-h-[300px] max-w-72 rounded-xl border border-[var(--color-attachment-border)] object-cover",
@@ -50,10 +65,22 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
           {reviews.map((review, idx) => (
             <ReviewBlockFromData key={idx} data={review} />
           ))}
-          {textContent && <pre className={textStyles[variant]}>{textContent}</pre>}
+          {textContent && (
+            <MarkdownRenderer
+              content={textContent}
+              className={markdownClassName}
+              style={markdownStyles[variant]}
+            />
+          )}
         </div>
       ) : (
-        content && <pre className={textStyles[variant]}>{content}</pre>
+        content && (
+          <MarkdownRenderer
+            content={content}
+            className={markdownClassName}
+            style={markdownStyles[variant]}
+          />
+        )
       )}
       {imageParts && imageParts.length > 0 && (
         <div className={imageContainerStyles[variant]}>

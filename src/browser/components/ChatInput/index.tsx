@@ -8,6 +8,8 @@ import type { Toast } from "../ChatInputToast";
 import { ConnectionStatusToast } from "../ConnectionStatusToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
+import { ConfirmationModal } from "../ConfirmationModal";
+import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import {
   readPersistedState,
@@ -24,7 +26,6 @@ import { ModelSettings } from "../ModelSettings";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
@@ -49,7 +50,7 @@ import {
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
   getSlashCommandSuggestions,
@@ -69,6 +70,7 @@ import {
   KEYBINDS,
   isEditableElement,
 } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal, X } from "lucide-react";
@@ -81,7 +83,9 @@ import {
   processImageFiles,
 } from "@/browser/utils/imageHandling";
 
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import type { ParsedRuntime } from "@/common/types/runtime";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
 import { prepareUserMessageForSend } from "@/common/types/message";
@@ -92,6 +96,7 @@ import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
+import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
@@ -101,16 +106,63 @@ import {
 } from "./draftImagesStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
-import initMessage from "@/browser/assets/initMessage.txt?raw";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
 const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
 
+// Unknown slash commands are used for agent-skill invocations (/{skillName} ...).
+type UnknownSlashCommand = Extract<ParsedCommand, { type: "unknown-command" }>;
+
+function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashCommand {
+  return value !== null && value.type === "unknown-command";
+}
+
 // Import types from local types file
 import type { ChatInputProps, ChatInputAPI } from "./types";
-import type { ImagePart } from "@/common/orpc/types";
+import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
 
+type CreationRuntimeValidationError =
+  | { mode: "docker"; kind: "missingImage" }
+  | { mode: "ssh"; kind: "missingHost" }
+  | { mode: "ssh"; kind: "missingCoderWorkspace" }
+  | { mode: "ssh"; kind: "missingCoderTemplate" }
+  | { mode: "ssh"; kind: "missingCoderPreset" };
+
+function validateCreationRuntime(
+  runtime: ParsedRuntime,
+  coderPresetCount: number
+): CreationRuntimeValidationError | null {
+  if (runtime.mode === "docker") {
+    return runtime.image.trim() ? null : { mode: "docker", kind: "missingImage" };
+  }
+
+  if (runtime.mode === "ssh") {
+    if (runtime.coder) {
+      if (runtime.coder.existingWorkspace) {
+        // Existing mode: workspace name is required
+        if (!(runtime.coder.workspaceName ?? "").trim()) {
+          return { mode: "ssh", kind: "missingCoderWorkspace" };
+        }
+      } else {
+        // New mode: template is required
+        if (!(runtime.coder.template ?? "").trim()) {
+          return { mode: "ssh", kind: "missingCoderTemplate" };
+        }
+        // Preset required when 2+ presets exist
+        const requiresPreset = coderPresetCount >= 2;
+        if (requiresPreset && !(runtime.coder.preset ?? "").trim()) {
+          return { mode: "ssh", kind: "missingCoderPreset" };
+        }
+      }
+      return null;
+    }
+
+    return runtime.host.trim() ? null : { mode: "ssh", kind: "missingHost" };
+  }
+
+  return null;
+}
 function imagePartsToAttachments(imageParts: ImagePart[], idPrefix: string): ImageAttachment[] {
   return imageParts.map((img, index) => ({
     id: `${idPrefix}-${index}`,
@@ -159,6 +211,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
+  const agentSkillsRequestIdRef = useRef(0);
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
   const lastAtMentionScopeIdRef = useRef<string | null>(null);
@@ -167,8 +220,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
+  const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
+  // State for destructive command confirmation modal
+  const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState<{
+    type: "clear" | "truncate";
+    percentage?: number;
+  } | null>(null);
   const pushToast = useCallback(
     (nextToast: Omit<Toast, "id">) => {
       setToast({ id: Date.now().toString(), ...nextToast });
@@ -388,8 +447,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         return;
       }
 
-      const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, thinkingLevel);
-
       const normalizedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0
           ? agentId.trim().toLowerCase()
@@ -402,7 +459,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [normalizedAgentId]: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+            [normalizedAgentId]: { model: canonicalModel, thinkingLevel },
           };
         },
         {}
@@ -419,7 +476,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         .updateModeAISettings({
           workspaceId,
           mode,
-          aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
+          aiSettings: { model: canonicalModel, thinkingLevel },
         })
         .catch(() => {
           // Best-effort only. If offline or backend is old, sendMessage will persist.
@@ -463,7 +520,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const creationSections = creationProject?.sections ?? [];
 
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(() => pendingSectionId);
-  const [runtimeFieldError, setRuntimeFieldError] = useState<"docker" | "ssh" | null>(null);
+  const [hasAttemptedCreateSend, setHasAttemptedCreateSend] = useState(false);
 
   // Keep local selection in sync with the URL-driven pending section (sidebar "+" button).
   useEffect(() => {
@@ -515,6 +572,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const isSendInFlight = variant === "creation" ? creationState.isSending : isSending;
 
+  // Coder workspace state - config is owned by selectedRuntime.coder, this hook manages async data
+  const currentRuntime = creationState.selectedRuntime;
+  const coderState = useCoderWorkspace({
+    coderConfig: currentRuntime.mode === "ssh" ? (currentRuntime.coder ?? null) : null,
+    onCoderConfigChange: (config) => {
+      if (currentRuntime.mode !== "ssh") return;
+      // Compute host from workspace name for "existing" mode.
+      // For "new" mode, workspaceName is omitted/undefined and backend derives it later.
+      const computedHost = config?.workspaceName
+        ? `${config.workspaceName}.coder`
+        : currentRuntime.host;
+      creationState.setSelectedRuntime({
+        mode: "ssh",
+        host: computedHost,
+        coder: config ?? undefined,
+      });
+    },
+  });
+
+  const creationRuntimeError =
+    variant === "creation"
+      ? validateCreationRuntime(creationState.selectedRuntime, coderState.presets.length)
+      : null;
+
+  const runtimeFieldError =
+    variant === "creation" && hasAttemptedCreateSend ? (creationRuntimeError?.mode ?? null) : null;
+
   const creationControlsProps =
     variant === "creation"
       ? ({
@@ -527,6 +611,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
           onSetDefaultRuntime: creationState.setDefaultRuntimeMode,
           disabled: isSendInFlight,
+          projectPath: props.projectPath,
           projectName: props.projectName,
           nameState: creationState.nameState,
           runtimeAvailability: creationState.runtimeAvailability,
@@ -534,38 +619,40 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           selectedSectionId,
           onSectionChange: setSelectedSectionId,
           runtimeFieldError,
+          // Pass coderProps when CLI is available/outdated, Coder is enabled, or still checking (so "Checking…" UI renders)
+          coderProps:
+            coderState.coderInfo === null ||
+            coderState.enabled ||
+            coderState.coderInfo?.state !== "unavailable"
+              ? {
+                  enabled: coderState.enabled,
+                  onEnabledChange: coderState.setEnabled,
+                  coderInfo: coderState.coderInfo,
+                  coderConfig: coderState.coderConfig,
+                  onCoderConfigChange: coderState.setCoderConfig,
+                  templates: coderState.templates,
+                  presets: coderState.presets,
+                  existingWorkspaces: coderState.existingWorkspaces,
+                  loadingTemplates: coderState.loadingTemplates,
+                  loadingPresets: coderState.loadingPresets,
+                  loadingWorkspaces: coderState.loadingWorkspaces,
+                }
+              : undefined,
         } satisfies React.ComponentProps<typeof CreationControls>)
       : null;
   const hasTypedText = input.trim().length > 0;
   const hasImages = imageAttachments.length > 0;
   const hasReviews = attachedReviews.length > 0;
-  const isDockerMissingImage =
-    variant === "creation" &&
-    creationState.selectedRuntime.mode === "docker" &&
-    !creationState.selectedRuntime.image.trim();
-  const isSshMissingHost =
-    variant === "creation" &&
-    creationState.selectedRuntime.mode === "ssh" &&
-    !creationState.selectedRuntime.host.trim();
-  const canSend = (hasTypedText || hasImages || hasReviews) && !disabled && !isSendInFlight;
+  // Disable send while Coder presets are loading (user could bypass preset validation)
+  const coderPresetsLoading =
+    coderState.enabled && !coderState.coderConfig?.existingWorkspace && coderState.loadingPresets;
+  const canSend =
+    (hasTypedText || hasImages || hasReviews) &&
+    !disabled &&
+    !isSendInFlight &&
+    !coderPresetsLoading;
 
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
-
-  // Clear runtime field error when runtime mode changes or field becomes valid
-  useEffect(() => {
-    if (variant !== "creation" || !runtimeFieldError) {
-      return;
-    }
-    const rt = creationState.selectedRuntime;
-    // Clear if mode changed or if the relevant field is now filled
-    if (rt.mode !== runtimeFieldError) {
-      setRuntimeFieldError(null);
-    } else if (rt.mode === "docker" && rt.image.trim()) {
-      setRuntimeFieldError(null);
-    } else if (rt.mode === "ssh" && rt.host.trim()) {
-      setRuntimeFieldError(null);
-    }
-  }, [variant, runtimeFieldError, creationState.selectedRuntime]);
 
   // Creation variant: keep the project-scoped model/thinking in sync with global per-mode defaults
   // so switching Plan/Exec uses the configured defaults (and respects "inherit" semantics).
@@ -590,14 +677,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const candidateThinking = modeAiDefaults[mode]?.thinkingLevel ?? existingThinking ?? "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
-    const effectiveThinking = enforceThinkingPolicy(resolvedModel, resolvedThinking);
 
     if (existingModel !== resolvedModel) {
       updatePersistedState(modelKey, resolvedModel);
     }
 
-    if (existingThinking !== effectiveThinking) {
-      updatePersistedState(thinkingKey, effectiveThinking);
+    if (existingThinking !== resolvedThinking) {
+      updatePersistedState(thinkingKey, resolvedThinking);
     }
   }, [creationProjectPath, defaultModel, mode, modeAiDefaults, variant]);
 
@@ -656,6 +742,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
 
   // Method to restore images to input (used by queued message edit)
+
+  const handleSendRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const send = useCallback(() => {
+    return handleSendRef.current();
+  }, []);
   const restoreImages = useCallback(
     (images: ImagePart[]) => {
       setImageAttachments(imagePartsToAttachments(images, `restored-${Date.now()}`));
@@ -670,13 +761,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (onReady) {
       onReady({
         focus: focusMessageInput,
+        send,
         restoreText,
         appendText,
         prependText,
         restoreImages,
       });
     }
-  }, [onReady, focusMessageInput, restoreText, appendText, prependText, restoreImages]);
+  }, [onReady, focusMessageInput, send, restoreText, appendText, prependText, restoreImages]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
@@ -864,10 +956,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Watch input for slash commands
   useEffect(() => {
-    const suggestions = getSlashCommandSuggestions(input, { providerNames, variant });
+    const suggestions = getSlashCommandSuggestions(input, {
+      providerNames,
+      agentSkills: agentSkillDescriptors,
+      variant,
+    });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames, variant]);
+  }, [input, providerNames, agentSkillDescriptors, variant]);
 
   // Load provider names for suggestions
   useEffect(() => {
@@ -891,8 +987,61 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
   }, [api]);
 
-  // Check if OpenAI API key is configured (for voice input)
-  // Subscribe to config changes so key status updates immediately when set in Settings
+  // Load agent skills for suggestions
+  useEffect(() => {
+    let isMounted = true;
+    const requestId = ++agentSkillsRequestIdRef.current;
+
+    const loadAgentSkills = async () => {
+      if (!api) {
+        if (isMounted && agentSkillsRequestIdRef.current === requestId) {
+          setAgentSkillDescriptors([]);
+        }
+        return;
+      }
+
+      const discoveryInput =
+        variant === "workspace" && workspaceId
+          ? {
+              workspaceId,
+              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+            }
+          : variant === "creation" && atMentionProjectPath
+            ? { projectPath: atMentionProjectPath }
+            : null;
+
+      if (!discoveryInput) {
+        if (isMounted && agentSkillsRequestIdRef.current === requestId) {
+          setAgentSkillDescriptors([]);
+        }
+        return;
+      }
+
+      try {
+        const skills = await api.agentSkills.list(discoveryInput);
+        if (!isMounted || agentSkillsRequestIdRef.current !== requestId) {
+          return;
+        }
+        if (Array.isArray(skills)) {
+          setAgentSkillDescriptors(skills);
+        }
+      } catch (error) {
+        console.error("Failed to load agent skills:", error);
+        if (!isMounted || agentSkillsRequestIdRef.current !== requestId) {
+          return;
+        }
+        setAgentSkillDescriptors([]);
+      }
+    };
+
+    void loadAgentSkills();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [api, variant, workspaceId, atMentionProjectPath, sendMessageOptions.disableWorkspaceAgents]);
+
+  // Voice input: track whether OpenAI API key is configured (subscribe to provider config changes)
   useEffect(() => {
     if (!api) return;
     const abortController = new AbortController();
@@ -1088,7 +1237,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // When editing an existing message, we only allow changing the text.
       // Don't preventDefault here so any clipboard text can still paste normally.
       if (editingMessage) {
-        pushToast({ type: "error", message: "Images cannot be changed while editing a message." });
+        pushToast({ type: "error", message: "Images cannot be added while editing a message." });
         return;
       }
 
@@ -1114,6 +1263,46 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setImageAttachments]
   );
 
+  // Handle destructive command confirmation
+  const handleDestructiveCommandConfirm = useCallback(async () => {
+    if (!pendingDestructiveCommand || variant !== "workspace") return;
+
+    const { type, percentage } = pendingDestructiveCommand;
+    setPendingDestructiveCommand(null);
+
+    // Save the original input in case we need to restore on error
+    const originalInput = input;
+    setInput("");
+    if (inputRef.current) {
+      inputRef.current.style.height = "";
+    }
+
+    try {
+      if (type === "clear") {
+        await props.onTruncateHistory(1.0);
+        pushToast({ type: "success", message: "Chat history cleared" });
+      } else if (type === "truncate" && percentage !== undefined) {
+        await props.onTruncateHistory(percentage);
+        pushToast({
+          type: "success",
+          message: `Chat history truncated by ${Math.round(percentage * 100)}%`,
+        });
+      }
+    } catch (error) {
+      console.error("Failed to execute destructive command:", error);
+      pushToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to modify chat history",
+      });
+      // Restore the input so user can retry
+      setInput(originalInput);
+    }
+  }, [pendingDestructiveCommand, variant, props, pushToast, setInput, input]);
+
+  const handleDestructiveCommandCancel = useCallback(() => {
+    setPendingDestructiveCommand(null);
+  }, []);
+
   // Handle drag over to allow drop
   const handleDragOver = useCallback(
     (e: React.DragEvent<HTMLTextAreaElement>) => {
@@ -1135,7 +1324,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (imageFiles.length === 0) return;
 
       if (editingMessage) {
-        pushToast({ type: "error", message: "Images cannot be changed while editing a message." });
+        pushToast({ type: "error", message: "Images cannot be added while editing a message." });
         return;
       }
 
@@ -1205,31 +1394,81 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
-      // Validate runtime fields before creating workspace
-      if (isDockerMissingImage) {
-        setRuntimeFieldError("docker");
-        return;
-      }
-      if (isSshMissingHost) {
-        setRuntimeFieldError("ssh");
-        return;
-      }
+      let creationMessageTextForSend = messageText;
+      let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
-      // Handle /init command in creation variant - populate input with init message
       if (messageText.startsWith("/")) {
         const parsed = parseCommand(messageText);
-        if (parsed?.type === "init") {
-          setInput(initMessage);
-          focusMessageInput();
-          return;
+
+        if (isUnknownSlashCommand(parsed)) {
+          const command = parsed.command;
+          const prefix = `/${command}`;
+          const afterPrefix = messageText.slice(prefix.length);
+          const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
+
+          if (hasSeparator) {
+            let skill: AgentSkillDescriptor | undefined = agentSkillDescriptors.find(
+              (candidate) => candidate.name === command
+            );
+
+            if (!skill && api && atMentionProjectPath) {
+              try {
+                const pkg = await api.agentSkills.get({
+                  projectPath: atMentionProjectPath,
+                  skillName: command,
+                });
+                skill = {
+                  name: pkg.frontmatter.name,
+                  description: pkg.frontmatter.description,
+                  scope: pkg.scope,
+                };
+              } catch {
+                // Not a skill (or not available yet) - fall through.
+              }
+            }
+
+            if (skill) {
+              const userText = afterPrefix.trimStart() || `Run the "${skill.name}" skill.`;
+
+              if (!api) {
+                pushToast({ type: "error", message: "Not connected to server" });
+                return;
+              }
+
+              creationMessageTextForSend = userText;
+              creationOptionsOverride = {
+                muxMetadata: {
+                  type: "agent-skill",
+                  rawCommand: messageText,
+                  skillName: skill.name,
+                  scope: skill.scope,
+                },
+                // In the creation flow, skills are discovered from the project path. If the skill is
+                // project-scoped (often untracked in git), it may not exist in the new worktree.
+                // Force project-path discovery for this send so resolution matches suggestions.
+                ...(skill.scope === "project" ? { disableWorkspaceAgents: true } : {}),
+              };
+            }
+          }
         }
+      }
+
+      setHasAttemptedCreateSend(true);
+
+      const runtimeError = validateCreationRuntime(
+        creationState.selectedRuntime,
+        coderState.presets.length
+      );
+      if (runtimeError) {
+        return;
       }
 
       // Creation variant: simple message send + workspace creation
       const creationImageParts = imageAttachmentsToImageParts(imageAttachments);
       const ok = await creationState.handleSend(
-        messageText,
-        creationImageParts.length > 0 ? creationImageParts : undefined
+        creationMessageTextForSend,
+        creationImageParts.length > 0 ? creationImageParts : undefined,
+        creationOptionsOverride
       );
       if (ok) {
         setInput("");
@@ -1248,31 +1487,57 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     try {
       // Parse command
-      const parsed = parseCommand(messageText);
+      let parsed = parseCommand(messageText);
+
+      let skillInvocation: { descriptor: AgentSkillDescriptor; userText: string } | null = null;
+
+      if (isUnknownSlashCommand(parsed)) {
+        const command = parsed.command;
+        const prefix = `/${command}`;
+        const afterPrefix = messageText.slice(prefix.length);
+        const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
+
+        if (hasSeparator) {
+          let skill: AgentSkillDescriptor | undefined = agentSkillDescriptors.find(
+            (candidate) => candidate.name === command
+          );
+
+          if (!skill && api && workspaceId) {
+            try {
+              const pkg = await api.agentSkills.get({
+                workspaceId,
+                disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+                skillName: command,
+              });
+              skill = {
+                name: pkg.frontmatter.name,
+                description: pkg.frontmatter.description,
+                scope: pkg.scope,
+              };
+            } catch {
+              // Not a skill (or not available yet) - fall through.
+            }
+          }
+
+          if (skill) {
+            const userText = afterPrefix.trimStart() || `Run the "${skill.name}" skill.`;
+
+            skillInvocation = { descriptor: skill, userText };
+            parsed = null;
+          }
+        }
+      }
 
       if (parsed) {
-        // Handle /clear command
+        // Handle /clear command - show confirmation modal
         if (parsed.type === "clear") {
-          setInput("");
-          if (inputRef.current) {
-            inputRef.current.style.height = "";
-          }
-          await props.onTruncateHistory(1.0);
-          pushToast({ type: "success", message: "Chat history cleared" });
+          setPendingDestructiveCommand({ type: "clear" });
           return;
         }
 
-        // Handle /truncate command
+        // Handle /truncate command - show confirmation modal
         if (parsed.type === "truncate") {
-          setInput("");
-          if (inputRef.current) {
-            inputRef.current.style.height = "";
-          }
-          await props.onTruncateHistory(parsed.percentage);
-          pushToast({
-            type: "success",
-            message: `Chat history truncated by ${Math.round(parsed.percentage * 100)}%`,
-          });
+          setPendingDestructiveCommand({ type: "truncate", percentage: parsed.percentage });
           return;
         }
 
@@ -1316,16 +1581,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           return;
         }
 
-        if (parsed.type === "vim-toggle") {
-          setInput(""); // Clear input immediately
-          setVimEnabled((prev) => !prev);
+        if (parsed.type === "debug-llm-request") {
+          setInput("");
+          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST));
           return;
         }
 
-        // Handle /init command - populate input with init message
-        if (parsed.type === "init") {
-          setInput(initMessage);
-          focusMessageInput();
+        if (parsed.type === "vim-toggle") {
+          setInput(""); // Clear input immediately
+          setVimEnabled((prev) => !prev);
           return;
         }
 
@@ -1544,6 +1808,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       // Regular message - send directly via API
+      const messageTextForSend = skillInvocation?.userText ?? messageText;
+
       if (!api) {
         pushToast({ type: "error", message: "Not connected to server" });
         return;
@@ -1580,6 +1846,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // Clear input immediately for responsive UX
         setInput("");
+
+        const compactionSendMessageOptions: SendMessageOptions = {
+          ...sendMessageOptions,
+        };
+
         setImageAttachments([]);
         setHideReviewsDuringSend(true);
 
@@ -1588,13 +1859,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             api,
             workspaceId: props.workspaceId,
             continueMessage: buildContinueMessage({
-              text: messageText,
+              text: messageTextForSend,
               imageParts,
               reviews: reviewsData,
+              muxMetadata: skillInvocation
+                ? {
+                    type: "agent-skill",
+                    rawCommand: messageText,
+                    skillName: skillInvocation.descriptor.name,
+                    scope: skillInvocation.descriptor.scope,
+                  }
+                : undefined,
               model: sendMessageOptions.model,
               agentId: sendMessageOptions.agentId ?? "exec",
             }),
-            sendMessageOptions,
+            sendMessageOptions: compactionSendMessageOptions,
           });
 
           if (!result.success) {
@@ -1636,17 +1915,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       try {
         // Prepare image parts if any
         const imageParts = imageAttachmentsToImageParts(imageAttachments, { validate: true });
+        const sendImageParts = editingMessage
+          ? imageParts
+          : imageParts.length > 0
+            ? imageParts
+            : undefined;
 
         // Prepare reviews data (used for both compaction continueMessage and normal send)
         const reviewsData =
           attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
 
         // When editing a /compact command, regenerate the actual summarization request
-        let actualMessageText = messageText;
-        let muxMetadata: MuxFrontendMetadata | undefined;
-        let compactionOptions = {};
+        let actualMessageText = messageTextForSend;
+        let muxMetadata: MuxFrontendMetadata | undefined = skillInvocation
+          ? {
+              type: "agent-skill",
+              rawCommand: messageText,
+              skillName: skillInvocation.descriptor.name,
+              scope: skillInvocation.descriptor.scope,
+            }
+          : undefined;
+        let compactionOptions: Partial<SendMessageOptions> = {};
 
-        if (editingMessage && messageText.startsWith("/")) {
+        if (editingMessage && actualMessageText.startsWith("/")) {
           const parsed = parseCommand(messageText);
           if (parsed?.type === "compact") {
             const {
@@ -1679,6 +1970,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           { text: actualMessageText, reviews: reviewsData },
           muxMetadata
         );
+        // When editing /compact, compactionOptions already includes the base sendMessageOptions.
+        // Avoid duplicating additionalSystemInstructions.
+        const additionalSystemInstructions =
+          compactionOptions.additionalSystemInstructions ??
+          sendMessageOptions.additionalSystemInstructions;
+
         muxMetadata = reviewMetadata;
 
         // Capture review IDs before clearing (for marking as checked on success)
@@ -1701,8 +1998,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           options: {
             ...sendMessageOptions,
             ...compactionOptions,
+            additionalSystemInstructions,
             editMessageId: editingMessage?.id,
-            imageParts: imageParts.length > 0 ? imageParts : undefined,
+            imageParts: sendImageParts,
             muxMetadata,
           },
         });
@@ -1759,6 +2057,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
   };
 
+  // Keep the imperative API pointing at the latest send handler.
+  handleSendRef.current = handleSend;
+
   // Handler for Escape in vim normal mode - cancels edit if editing
   const handleEscapeInNormalMode = () => {
     if (variant === "workspace" && editingMessage && props.onCancelEdit) {
@@ -1810,7 +2111,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (matchesKeybind(e, KEYBINDS.CANCEL_EDIT)) {
       if (variant === "workspace" && editingMessage && props.onCancelEdit && !vimEnabled) {
         e.preventDefault();
-        e.stopPropagation(); // Prevent global handler from interrupting stream
+        stopKeyboardPropagation(e);
         setDraft(preEditDraftRef.current);
         props.onCancelEdit();
         const isFocused = document.activeElement === inputRef.current;
@@ -2087,10 +2388,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           </div>
 
           {/* Image attachments */}
-          <ImageAttachments
-            images={imageAttachments}
-            onRemove={editingMessage ? undefined : handleRemoveImage}
-          />
+          <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
 
           <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
             {/* Editing indicator - workspace only */}
@@ -2199,6 +2497,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           </div>
         </div>
       </div>
+
+      {/* Confirmation modal for destructive commands */}
+      <ConfirmationModal
+        isOpen={pendingDestructiveCommand !== null}
+        title={
+          pendingDestructiveCommand?.type === "clear"
+            ? "Clear Chat History?"
+            : `Truncate ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of Chat History?`
+        }
+        description={
+          pendingDestructiveCommand?.type === "clear"
+            ? "This will remove all messages from the conversation."
+            : `This will remove approximately ${Math.round((pendingDestructiveCommand?.percentage ?? 0) * 100)}% of the oldest messages.`
+        }
+        warning="This action cannot be undone."
+        confirmLabel={pendingDestructiveCommand?.type === "clear" ? "Clear" : "Truncate"}
+        onConfirm={handleDestructiveCommandConfirm}
+        onCancel={handleDestructiveCommandCancel}
+      />
     </Wrapper>
   );
 };

@@ -140,6 +140,18 @@ describe("mux CLI", () => {
       expect(result.output).toContain("No message provided");
     });
 
+    test("xhigh thinking level is accepted", async () => {
+      const result = await runRunDirect([
+        "--thinking",
+        "xhigh",
+        "--dir",
+        "/nonexistent/path/for/thinking/test",
+        "test message",
+      ]);
+      expect(result.output).not.toContain("Invalid thinking level");
+      expect(result.exitCode).toBe(1);
+    });
+
     test("invalid thinking level shows error", async () => {
       const result = await runRunDirect(["--thinking", "extreme", "test message"]);
       expect(result.exitCode).toBe(1);

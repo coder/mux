@@ -18,6 +18,7 @@ import {
   normalizeTaskSettings,
 } from "@/common/types/tasks";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
+import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
@@ -120,10 +121,12 @@ export class Config {
           serverSshHost?: string;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
+          layoutPresets?: unknown;
           taskSettings?: unknown;
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           modeAiDefaults?: unknown;
+          useSSH2Transport?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -157,6 +160,11 @@ export class Config {
                   ...(legacyModeAiDefaults as Record<string, unknown>),
                 });
 
+          const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
+          const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
+            ? undefined
+            : layoutPresetsRaw;
+
           return {
             projects: projectsMap,
             apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -168,12 +176,14 @@ export class Config {
             mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
             viewedSplashScreens: parsed.viewedSplashScreens,
+            layoutPresets,
             taskSettings,
             agentAiDefaults,
             // Legacy fields are still parsed and returned for downgrade compatibility.
             subagentAiDefaults: legacySubagentAiDefaults,
             modeAiDefaults: legacyModeAiDefaults,
             featureFlagOverrides: parsed.featureFlagOverrides,
+            useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
           };
         }
       }
@@ -206,11 +216,13 @@ export class Config {
         mdnsServiceName?: string;
         serverSshHost?: string;
         viewedSplashScreens?: string[];
+        layoutPresets?: ProjectsConfig["layoutPresets"];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
         taskSettings?: ProjectsConfig["taskSettings"];
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         modeAiDefaults?: ProjectsConfig["modeAiDefaults"];
+        useSSH2Transport?: boolean;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -245,6 +257,12 @@ export class Config {
       }
       if (config.featureFlagOverrides) {
         data.featureFlagOverrides = config.featureFlagOverrides;
+      }
+      if (config.layoutPresets) {
+        const normalized = normalizeLayoutPresetsConfig(config.layoutPresets);
+        if (!isLayoutPresetsConfigEmpty(normalized)) {
+          data.layoutPresets = normalized;
+        }
       }
       if (config.viewedSplashScreens) {
         data.viewedSplashScreens = config.viewedSplashScreens;
@@ -281,6 +299,10 @@ export class Config {
         if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
           data.subagentAiDefaults = config.subagentAiDefaults;
         }
+      }
+
+      if (config.useSSH2Transport !== undefined) {
+        data.useSSH2Transport = config.useSSH2Transport;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -781,13 +803,14 @@ export class Config {
    */
   async updateWorkspaceMetadata(
     workspaceId: string,
-    updates: Partial<Pick<WorkspaceMetadata, "name">>
+    updates: Partial<Pick<WorkspaceMetadata, "name" | "runtimeConfig">>
   ): Promise<void> {
     await this.editConfig((config) => {
       for (const [_projectPath, projectConfig] of config.projects) {
         const workspace = projectConfig.workspaces.find((w) => w.id === workspaceId);
         if (workspace) {
           if (updates.name !== undefined) workspace.name = updates.name;
+          if (updates.runtimeConfig !== undefined) workspace.runtimeConfig = updates.runtimeConfig;
           return config;
         }
       }

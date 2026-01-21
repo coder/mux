@@ -35,9 +35,7 @@ import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { stripInternalToolResultFields } from "@/common/utils/tools/internalToolResultFields";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { StreamingTokenTracker } from "@/node/utils/main/StreamingTokenTracker";
-import { shescape } from "@/node/runtime/streamUtils";
 import type { Runtime } from "@/node/runtime/Runtime";
-import { execBuffered } from "@/node/utils/runtime/helpers";
 import {
   createCachedSystemMessage,
   applyCacheControlToTools,
@@ -63,9 +61,33 @@ interface ReasoningDeltaPart {
   };
 }
 
-// Branded types for compile-time safety
+// Tool-call tracking + branded types
+interface ToolCallState {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  output?: unknown;
+}
+
+type ToolCallMap = Map<string, ToolCallState>;
+
 type WorkspaceId = string & { __brand: "WorkspaceId" };
 type StreamToken = string & { __brand: "StreamToken" };
+
+// Stream request config for start/retry
+
+type StreamToolChoice = { type: "tool"; toolName: string } | "required" | undefined;
+
+interface StreamRequestConfig {
+  model: LanguageModel;
+  messages: ModelMessage[];
+  system?: string;
+  tools?: Record<string, Tool>;
+  toolChoice?: StreamToolChoice;
+  providerOptions?: Record<string, unknown>;
+  maxOutputTokens?: number;
+  hasQueuedMessage?: () => boolean;
+}
 
 // Stream state enum for exhaustive checking
 enum StreamState {
@@ -122,6 +144,7 @@ interface WorkspaceStreamInfo {
   startTime: number;
   model: string;
   initialMetadata?: Partial<MuxMetadata>;
+  request: StreamRequestConfig;
   historySequence: number;
   // Track accumulated parts for partial message (includes reasoning, text, and tools)
   parts: CompletedMessagePart[];
@@ -209,6 +232,12 @@ export class StreamManager extends EventEmitter {
     }, remainingTime);
   }
 
+  private async awaitPendingPartialWrite(streamInfo: WorkspaceStreamInfo): Promise<void> {
+    if (streamInfo.partialWritePromise) {
+      await streamInfo.partialWritePromise;
+    }
+  }
+
   /**
    * Flush any pending partial write and write immediately
    * Serializes writes to prevent races - waits for any in-flight write before starting new one
@@ -218,9 +247,7 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo
   ): Promise<void> {
     // Wait for any in-flight write to complete first (serialization)
-    if (streamInfo.partialWritePromise) {
-      await streamInfo.partialWritePromise;
-    }
+    await this.awaitPendingPartialWrite(streamInfo);
 
     // Clear throttle timer
     if (streamInfo.partialWriteTimer) {
@@ -309,16 +336,11 @@ export class StreamManager extends EventEmitter {
       resolvedPath = resolvedPath.replace(/\\/g, "/");
     }
 
-    // Create directory on target runtime (local/SSH/Docker)
-    const result = await execBuffered(runtime, `mkdir -p ${shescape.quote(resolvedPath)}`, {
-      cwd: "/",
-      timeout: 10,
-    });
-
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Failed to create temp directory ${resolvedPath}: exit code ${result.exitCode}`
-      );
+    try {
+      await runtime.ensureDir(resolvedPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to create temp directory ${resolvedPath}: ${msg}`);
     }
 
     return resolvedPath;
@@ -558,6 +580,19 @@ export class StreamManager extends EventEmitter {
     }
   }
 
+  private async appendPartAndEmit(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    part: CompletedMessagePart,
+    schedulePartialWrite = false
+  ): Promise<void> {
+    streamInfo.parts.push(part);
+    await this.emitPartAsEvent(workspaceId, streamInfo.messageId, part);
+    if (schedulePartialWrite) {
+      void this.schedulePartialWrite(workspaceId, streamInfo);
+    }
+  }
+
   private async cancelStreamSafely(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
@@ -648,64 +683,69 @@ export class StreamManager extends EventEmitter {
 
     // Record session usage for aborted streams (mirrors stream-end path)
     // This ensures tokens consumed before abort are tracked for cost display
-    if (this.sessionUsageService && usage) {
-      const messageUsage = createDisplayUsage(usage, streamInfo.model, providerMetadata);
-      if (messageUsage) {
-        const normalizedModel = normalizeGatewayModel(streamInfo.model);
-        try {
-          await this.sessionUsageService.recordUsage(
-            workspaceId as string,
-            normalizedModel,
-            messageUsage
-          );
-        } catch (usageError) {
-          log.error("Failed to record session usage on abort", { workspaceId, error: usageError });
-        }
-      }
-    }
+    await this.recordSessionUsage(
+      workspaceId,
+      streamInfo.model,
+      usage,
+      providerMetadata,
+      "Failed to record session usage on abort",
+      "error"
+    );
 
     // Emit abort event with usage if available
-    this.emit("stream-abort", {
-      type: "stream-abort",
-      workspaceId: workspaceId as string,
-      messageId: streamInfo.messageId,
-      metadata: { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
-      abandonPartial,
-    });
+    this.emitStreamAbort(
+      workspaceId,
+      streamInfo.messageId,
+      { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
+      abandonPartial
+    );
 
     // Clean up immediately
     this.workspaceStreams.delete(workspaceId);
   }
 
-  /**
-   * Atomically creates a new stream with all necessary setup
-   */
-  private createStreamAtomically(
+  private async recordSessionUsage(
     workspaceId: WorkspaceId,
-    streamToken: StreamToken,
-    runtimeTempDir: string,
-    runtime: Runtime,
-    messages: ModelMessage[],
+    model: string,
+    usage: LanguageModelV2Usage | undefined,
+    providerMetadata: Record<string, unknown> | undefined,
+    logMessage: string,
+    logLevel: "warn" | "error"
+  ): Promise<void> {
+    if (!this.sessionUsageService || !usage) {
+      return;
+    }
+    const messageUsage = createDisplayUsage(usage, model, providerMetadata);
+    if (!messageUsage) {
+      return;
+    }
+    try {
+      await this.sessionUsageService.recordUsage(
+        workspaceId as string,
+        normalizeGatewayModel(model),
+        messageUsage
+      );
+    } catch (error) {
+      (logLevel === "error" ? log.error : log.warn)(logMessage, { workspaceId, error });
+    }
+  }
+
+  private buildStreamRequestConfig(
     model: LanguageModel,
     modelString: string,
-    abortController: AbortController,
+    messages: ModelMessage[],
     system: string,
-    historySequence: number,
-    messageId: string,
     tools?: Record<string, Tool>,
-    initialMetadata?: Partial<MuxMetadata>,
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean
-  ): WorkspaceStreamInfo {
-    // abortController is created and linked to the caller-provided abortSignal in startStream().
-
+  ): StreamRequestConfig {
     // Determine toolChoice based on toolPolicy.
     //
     // If a tool is required (tools object has exactly one tool after applyToolPolicy),
     // force the model to use it using the AI SDK tool choice shape.
-    let toolChoice: { type: "tool"; toolName: string } | "required" | undefined;
+    let toolChoice: StreamToolChoice;
     if (tools && toolPolicy) {
       const hasRequireAction = toolPolicy.some((filter) => filter.action === "require");
       if (hasRequireAction && Object.keys(tools).length === 1) {
@@ -759,37 +799,92 @@ export class StreamManager extends EventEmitter {
       finalTools = applyCacheControlToTools(tools, modelString);
     }
 
+    return {
+      model,
+      messages: finalMessages,
+      system: finalSystem,
+      tools: finalTools,
+      toolChoice,
+      providerOptions: finalProviderOptions,
+      maxOutputTokens,
+      hasQueuedMessage,
+    };
+  }
+
+  private createStreamResult(
+    request: StreamRequestConfig,
+    abortController: AbortController
+  ): Awaited<ReturnType<typeof streamText>> {
+    return streamText({
+      model: request.model,
+      messages: request.messages,
+      system: request.system,
+      abortSignal: abortController.signal,
+      prepareStep: ({ messages: stepMessages }) => {
+        // streamText runs multiple internal LLM calls (steps) when tools are enabled.
+        // Extract base64 images out of tool-result JSON so providers don't treat them as text.
+        const rewritten = extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
+        if (rewritten === stepMessages) return undefined;
+        return { messages: rewritten };
+      },
+      tools: request.tools,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
+      toolChoice: request.toolChoice as any, // Force tool use when required by policy
+      // When toolChoice is set (required tool), limit to 1 step to prevent infinite loops
+      // Otherwise allow effectively unlimited steps (100k) for autonomous multi-turn workflows.
+      // IMPORTANT: Models should be able to run for hours or even days calling tools repeatedly
+      // to complete complex tasks. The stopWhen condition allows the model to decide when it's done.
+      // Also stop at step boundaries when a message is queued to allow immediate handling.
+      ...(request.toolChoice
+        ? { maxSteps: 1 }
+        : { stopWhen: [stepCountIs(100000), () => request.hasQueuedMessage?.() ?? false] }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
+      providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
+      // Default to 32000 tokens if not specified (Anthropic defaults to 4096)
+      maxOutputTokens: request.maxOutputTokens ?? 32000,
+    });
+  }
+
+  /**
+   * Atomically creates a new stream with all necessary setup
+   */
+  private createStreamAtomically(
+    workspaceId: WorkspaceId,
+    streamToken: StreamToken,
+    runtimeTempDir: string,
+    runtime: Runtime,
+    messages: ModelMessage[],
+    model: LanguageModel,
+    modelString: string,
+    abortController: AbortController,
+    system: string,
+    historySequence: number,
+    messageId: string,
+    tools?: Record<string, Tool>,
+    initialMetadata?: Partial<MuxMetadata>,
+    providerOptions?: Record<string, unknown>,
+    maxOutputTokens?: number,
+    toolPolicy?: ToolPolicy,
+    hasQueuedMessage?: () => boolean
+  ): WorkspaceStreamInfo {
+    // abortController is created and linked to the caller-provided abortSignal in startStream().
+
+    const request = this.buildStreamRequestConfig(
+      model,
+      modelString,
+      messages,
+      system,
+      tools,
+      providerOptions,
+      maxOutputTokens,
+      toolPolicy,
+      hasQueuedMessage
+    );
+
     // Start streaming - this can throw immediately if API key is missing
     let streamResult;
     try {
-      streamResult = streamText({
-        model,
-        messages: finalMessages,
-        system: finalSystem,
-        abortSignal: abortController.signal,
-        prepareStep: ({ messages: stepMessages }) => {
-          // streamText runs multiple internal LLM calls (steps) when tools are enabled.
-          // Extract base64 images out of tool-result JSON so providers don't treat them as text.
-          const rewritten = extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
-          if (rewritten === stepMessages) return undefined;
-          return { messages: rewritten };
-        },
-        tools: finalTools,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-        toolChoice: toolChoice as any, // Force tool use when required by policy
-        // When toolChoice is set (required tool), limit to 1 step to prevent infinite loops
-        // Otherwise allow effectively unlimited steps (100k) for autonomous multi-turn workflows.
-        // IMPORTANT: Models should be able to run for hours or even days calling tools repeatedly
-        // to complete complex tasks. The stopWhen condition allows the model to decide when it's done.
-        // Also stop at step boundaries when a message is queued to allow immediate handling.
-        ...(toolChoice
-          ? { maxSteps: 1 }
-          : { stopWhen: [stepCountIs(100000), () => hasQueuedMessage?.() ?? false] }),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
-        providerOptions: finalProviderOptions as any, // Pass provider-specific options (thinking/reasoning config)
-        // Default to 32000 tokens if not specified (Anthropic defaults to 4096)
-        maxOutputTokens: maxOutputTokens ?? 32000,
-      });
+      streamResult = this.createStreamResult(request, abortController);
     } catch (error) {
       // Clean up abort controller if stream creation fails
       abortController.abort();
@@ -806,6 +901,7 @@ export class StreamManager extends EventEmitter {
       startTime: Date.now(),
       model: modelString,
       initialMetadata,
+      request,
       historySequence,
       parts: [], // Initialize empty parts array
       lastPartialWriteTime: 0, // Initialize to 0 to allow immediate first write
@@ -833,10 +929,7 @@ export class StreamManager extends EventEmitter {
   private async completeToolCall(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
-    toolCalls: Map<
-      string,
-      { toolCallId: string; toolName: string; input: unknown; output?: unknown }
-    >,
+    toolCalls: ToolCallMap,
     toolCallId: string,
     toolName: string,
     output: unknown
@@ -887,6 +980,18 @@ export class StreamManager extends EventEmitter {
       result: output,
       timestamp: Date.now(),
     } as ToolCallEndEvent);
+  }
+
+  private async finishToolCall(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    toolCalls: ToolCallMap,
+    toolCallId: string,
+    toolName: string,
+    output: unknown
+  ): Promise<void> {
+    await this.completeToolCall(workspaceId, streamInfo, toolCalls, toolCallId, toolName, output);
+    await this.checkSoftCancelStream(workspaceId, streamInfo);
   }
 
   /**
@@ -977,6 +1082,44 @@ export class StreamManager extends EventEmitter {
     // Console events are not streamed (appear in final result only)
   }
 
+  private getStreamMode(initialMetadata?: Partial<MuxMetadata>): "plan" | "exec" | undefined {
+    const rawMode = initialMetadata?.mode;
+    // Stats schema only accepts "plan" | "exec".
+    return rawMode === "plan" || rawMode === "exec" ? rawMode : undefined;
+  }
+
+  private emitStreamStart(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    historySequence: number
+  ): void {
+    const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
+    this.emit("stream-start", {
+      type: "stream-start",
+      workspaceId: workspaceId as string,
+      messageId: streamInfo.messageId,
+      model: streamInfo.model,
+      historySequence,
+      startTime: streamInfo.startTime,
+      ...(streamStartMode && { mode: streamStartMode }),
+    } as StreamStartEvent);
+  }
+
+  private emitStreamAbort(
+    workspaceId: WorkspaceId,
+    messageId: string,
+    metadata: Record<string, unknown>,
+    abandonPartial?: boolean
+  ): void {
+    this.emit("stream-abort", {
+      type: "stream-abort",
+      workspaceId: workspaceId as string,
+      messageId,
+      metadata,
+      abandonPartial,
+    });
+  }
+
   /**
    * Processes a stream with guaranteed cleanup, regardless of success or failure
    */
@@ -990,488 +1133,414 @@ export class StreamManager extends EventEmitter {
       streamInfo.state = StreamState.STREAMING;
 
       // Emit stream start event (include mode from initialMetadata if available)
-      // Validate mode - stats schema only accepts "plan" | "exec" for now
-      const rawMode = streamInfo.initialMetadata?.mode;
-      const streamStartMode = rawMode === "plan" || rawMode === "exec" ? rawMode : undefined;
-      this.emit("stream-start", {
-        type: "stream-start",
-        workspaceId: workspaceId as string,
-        messageId: streamInfo.messageId,
-        model: streamInfo.model,
-        historySequence,
-        startTime: streamInfo.startTime,
-        ...(streamStartMode && { mode: streamStartMode }),
-      } as StreamStartEvent);
+      this.emitStreamStart(workspaceId, streamInfo, historySequence);
 
       // Initialize token tracker for this model
       await this.tokenTracker.setModel(streamInfo.model);
 
-      // Use fullStream to capture all events including tool calls
-      const toolCalls = new Map<
-        string,
-        { toolCallId: string; toolName: string; input: unknown; output?: unknown }
-      >();
+      let didRetryPreviousResponseId = false;
 
-      for await (const part of streamInfo.streamResult.fullStream) {
-        // Check if stream was cancelled BEFORE processing any parts
-        // This improves interruption responsiveness by catching aborts earlier
-        if (streamInfo.abortController.signal.aborted) {
-          break;
-        }
+      while (true) {
+        // Use fullStream to capture all events including tool calls
+        const toolCalls: ToolCallMap = new Map();
 
-        // Log all stream parts to debug reasoning (commented out - too spammy)
-        // console.log("[DEBUG streamManager]: Stream part", {
-        //   type: part.type,
-        //   hasText: "text" in part,
-        //   preview: "text" in part ? (part as StreamPartWithText).text?.substring(0, 50) : undefined,
-        // });
-
-        switch (part.type) {
-          case "text-delta": {
-            // Append each delta as a new part (merging happens at display time)
-            const textPart = {
-              type: "text" as const,
-              text: part.text,
-              timestamp: Date.now(),
-            };
-            streamInfo.parts.push(textPart);
-
-            // Emit using shared logic (ensures replay consistency)
-            await this.emitPartAsEvent(workspaceId, streamInfo.messageId, textPart);
-
-            // Schedule partial write (throttled, fire-and-forget to not block stream)
-            void this.schedulePartialWrite(workspaceId, streamInfo);
-            break;
-          }
-
-          default: {
-            if (await this.emitToolCallDeltaIfPresent(workspaceId, streamInfo, part)) {
+        try {
+          for await (const part of streamInfo.streamResult.fullStream) {
+            // Check if stream was cancelled BEFORE processing any parts
+            // This improves interruption responsiveness by catching aborts earlier
+            if (streamInfo.abortController.signal.aborted) {
               break;
             }
-            break;
-          }
 
-          case "reasoning-delta": {
-            // Both Anthropic and OpenAI use reasoning-delta for streaming reasoning content
-            const reasoningPart = part as ReasoningDeltaPart;
-            const delta = reasoningPart.text ?? reasoningPart.delta ?? "";
-            const signature = reasoningPart.providerMetadata?.anthropic?.signature;
+            // Log all stream parts to debug reasoning (commented out - too spammy)
+            // console.log("[DEBUG streamManager]: Stream part", {
+            //   type: part.type,
+            //   hasText: "text" in part,
+            //   preview: "text" in part ? (part as StreamPartWithText).text?.substring(0, 50) : undefined,
+            // });
 
-            // Signature deltas come separately with empty text - attach to last reasoning part
-            if (signature && !delta) {
-              const lastPart = streamInfo.parts.at(-1);
-              if (lastPart?.type === "reasoning") {
-                lastPart.signature = signature;
-                // Also set providerOptions for SDK compatibility when converting to ModelMessages
-                lastPart.providerOptions = { anthropic: { signature } };
-                // Emit signature update event
-                this.emit("reasoning-delta", {
-                  type: "reasoning-delta",
+            switch (part.type) {
+              case "text-delta": {
+                // Append each delta as a new part (merging happens at display time)
+                const textPart = {
+                  type: "text" as const,
+                  text: part.text,
+                  timestamp: Date.now(),
+                };
+                await this.appendPartAndEmit(workspaceId, streamInfo, textPart, true);
+                break;
+              }
+
+              default: {
+                if (await this.emitToolCallDeltaIfPresent(workspaceId, streamInfo, part)) {
+                  break;
+                }
+                break;
+              }
+
+              case "reasoning-delta": {
+                // Both Anthropic and OpenAI use reasoning-delta for streaming reasoning content
+                const reasoningPart = part as ReasoningDeltaPart;
+                const delta = reasoningPart.text ?? reasoningPart.delta ?? "";
+                const signature = reasoningPart.providerMetadata?.anthropic?.signature;
+
+                // Signature deltas come separately with empty text - attach to last reasoning part
+                if (signature && !delta) {
+                  const lastPart = streamInfo.parts.at(-1);
+                  if (lastPart?.type === "reasoning") {
+                    lastPart.signature = signature;
+                    // Also set providerOptions for SDK compatibility when converting to ModelMessages
+                    lastPart.providerOptions = { anthropic: { signature } };
+                    // Emit signature update event
+                    this.emit("reasoning-delta", {
+                      type: "reasoning-delta",
+                      workspaceId: workspaceId as string,
+                      messageId: streamInfo.messageId,
+                      delta: "",
+                      tokens: 0,
+                      timestamp: Date.now(),
+                      signature,
+                    });
+                    void this.schedulePartialWrite(workspaceId, streamInfo);
+                  }
+                  break;
+                }
+
+                // Append each delta as a new part (merging happens at display time)
+                // Include providerOptions for SDK compatibility when converting to ModelMessages
+                const newPart = {
+                  type: "reasoning" as const,
+                  text: delta,
+                  timestamp: Date.now(),
+                  signature, // May be undefined, will be filled by subsequent signature delta
+                  providerOptions: signature ? { anthropic: { signature } } : undefined,
+                };
+                await this.appendPartAndEmit(workspaceId, streamInfo, newPart, true);
+                break;
+              }
+
+              case "reasoning-end": {
+                // Reasoning-end is just a signal - no state to update
+                this.emit("reasoning-end", {
+                  type: "reasoning-end",
                   workspaceId: workspaceId as string,
                   messageId: streamInfo.messageId,
-                  delta: "",
-                  tokens: 0,
-                  timestamp: Date.now(),
-                  signature,
                 });
-                void this.schedulePartialWrite(workspaceId, streamInfo);
+                await this.checkSoftCancelStream(workspaceId, streamInfo);
+                break;
               }
-              break;
-            }
 
-            // Append each delta as a new part (merging happens at display time)
-            // Include providerOptions for SDK compatibility when converting to ModelMessages
-            const newPart = {
-              type: "reasoning" as const,
-              text: delta,
-              timestamp: Date.now(),
-              signature, // May be undefined, will be filled by subsequent signature delta
-              providerOptions: signature ? { anthropic: { signature } } : undefined,
-            };
-            streamInfo.parts.push(newPart);
+              case "tool-call": {
+                // Tool call started - store in map for later lookup
+                toolCalls.set(part.toolCallId, {
+                  toolCallId: part.toolCallId,
+                  toolName: part.toolName,
+                  input: part.input,
+                });
 
-            // Emit using shared logic (ensures replay consistency)
-            await this.emitPartAsEvent(workspaceId, streamInfo.messageId, newPart);
+                // Note: Tool availability is handled by the SDK, which emits tool-error events
+                // for unavailable tools. No need to check here.
 
-            void this.schedulePartialWrite(workspaceId, streamInfo);
-            break;
-          }
+                // IMPORTANT: Add tool part to streamInfo.parts immediately (not just on completion)
+                // This ensures in-progress tool calls are saved to partial.json if stream is interrupted
+                const toolPart = {
+                  type: "dynamic-tool" as const,
+                  toolCallId: part.toolCallId,
+                  toolName: part.toolName,
+                  state: "input-available" as const,
+                  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                  input: part.input,
+                  timestamp: Date.now(),
+                };
 
-          case "reasoning-end": {
-            // Reasoning-end is just a signal - no state to update
-            this.emit("reasoning-end", {
-              type: "reasoning-end",
-              workspaceId: workspaceId as string,
-              messageId: streamInfo.messageId,
-            });
-            await this.checkSoftCancelStream(workspaceId, streamInfo);
-            break;
-          }
+                // Emit using shared logic (ensures replay consistency)
+                const inputText = JSON.stringify(part.input);
+                log.debug(
+                  `[StreamManager] tool-call: toolName=${part.toolName}, input length=${inputText.length}`
+                );
+                await this.appendPartAndEmit(workspaceId, streamInfo, toolPart);
 
-          case "tool-call": {
-            // Tool call started - store in map for later lookup
-            toolCalls.set(part.toolCallId, {
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              input: part.input,
-            });
+                // CRITICAL: Flush partial immediately for ask_user_question
+                // This tool blocks waiting for user input, and if the app restarts during
+                // that wait, the partial must be persisted so it can be restored.
+                // Without this, the throttled write might not complete before app shutdown.
+                if (part.toolName === "ask_user_question") {
+                  await this.flushPartialWrite(workspaceId, streamInfo);
+                }
+                break;
+              }
 
-            // Note: Tool availability is handled by the SDK, which emits tool-error events
-            // for unavailable tools. No need to check here.
+              case "tool-result": {
+                // Tool call completed successfully
+                const toolCall = toolCalls.get(part.toolCallId);
+                if (toolCall) {
+                  // Strip encrypted content from web search results before storing
+                  const strippedOutput = stripInternalToolResultFields(
+                    stripEncryptedContent(part.output)
+                  );
+                  toolCall.output = strippedOutput;
 
-            // IMPORTANT: Add tool part to streamInfo.parts immediately (not just on completion)
-            // This ensures in-progress tool calls are saved to partial.json if stream is interrupted
-            const toolPart = {
-              type: "dynamic-tool" as const,
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              state: "input-available" as const,
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-              input: part.input,
-              timestamp: Date.now(),
-            };
-            streamInfo.parts.push(toolPart);
+                  // Use shared completion logic (await to ensure partial is flushed before event)
+                  await this.finishToolCall(
+                    workspaceId,
+                    streamInfo,
+                    toolCalls,
+                    part.toolCallId,
+                    part.toolName,
+                    strippedOutput
+                  );
+                }
+                break;
+              }
 
-            // Emit using shared logic (ensures replay consistency)
-            const inputText = JSON.stringify(part.input);
-            log.debug(
-              `[StreamManager] tool-call: toolName=${part.toolName}, input length=${inputText.length}`
-            );
-            await this.emitPartAsEvent(workspaceId, streamInfo.messageId, toolPart);
+              // Handle tool-error parts from the stream (AI SDK 5.0+)
+              // These are emitted when tool execution fails (e.g., tool doesn't exist)
+              case "tool-error": {
+                const toolErrorPart = part as {
+                  toolCallId: string;
+                  toolName: string;
+                  error: unknown;
+                };
 
-            // CRITICAL: Flush partial immediately for ask_user_question
-            // This tool blocks waiting for user input, and if the app restarts during
-            // that wait, the partial must be persisted so it can be restored.
-            // Without this, the throttled write might not complete before app shutdown.
-            if (part.toolName === "ask_user_question") {
-              await this.flushPartialWrite(workspaceId, streamInfo);
-            }
-            break;
-          }
+                const logLevel = streamInfo.abortController.signal.aborted ? log.debug : log.error;
+                logLevel(`Tool execution error for '${toolErrorPart.toolName}'`, {
+                  toolCallId: toolErrorPart.toolCallId,
+                  error: toolErrorPart.error,
+                });
 
-          case "tool-result": {
-            // Tool call completed successfully
-            const toolCall = toolCalls.get(part.toolCallId);
-            if (toolCall) {
-              // Strip encrypted content from web search results before storing
-              const strippedOutput = stripInternalToolResultFields(
-                stripEncryptedContent(part.output)
-              );
-              toolCall.output = strippedOutput;
+                // Format error output
+                const errorOutput = {
+                  success: false,
+                  error:
+                    typeof toolErrorPart.error === "string"
+                      ? toolErrorPart.error
+                      : toolErrorPart.error instanceof Error
+                        ? toolErrorPart.error.message
+                        : JSON.stringify(toolErrorPart.error),
+                };
 
-              // Use shared completion logic (await to ensure partial is flushed before event)
-              await this.completeToolCall(
-                workspaceId,
-                streamInfo,
-                toolCalls,
-                part.toolCallId,
-                part.toolName,
-                strippedOutput
-              );
-            }
-            await this.checkSoftCancelStream(workspaceId, streamInfo);
-            break;
-          }
+                // Use shared completion logic (await to ensure partial is flushed before event)
+                await this.finishToolCall(
+                  workspaceId,
+                  streamInfo,
+                  toolCalls,
+                  toolErrorPart.toolCallId,
+                  toolErrorPart.toolName,
+                  errorOutput
+                );
+                break;
+              }
 
-          // Handle tool-error parts from the stream (AI SDK 5.0+)
-          // These are emitted when tool execution fails (e.g., tool doesn't exist)
-          case "tool-error": {
-            const toolErrorPart = part as {
-              toolCallId: string;
-              toolName: string;
-              error: unknown;
-            };
+              // Handle error parts from the stream (e.g., OpenAI context_length_exceeded)
+              case "error": {
+                // Capture the error and immediately throw to trigger error handling
+                // Error parts are structured errors from the AI SDK
+                const errorPart = part as { error: unknown };
 
-            const logLevel = streamInfo.abortController.signal.aborted ? log.debug : log.error;
-            logLevel(`Tool execution error for '${toolErrorPart.toolName}'`, {
-              toolCallId: toolErrorPart.toolCallId,
-              error: toolErrorPart.error,
-            });
+                // Try to extract error message from various possible structures
+                let errorMessage: string | undefined;
 
-            // Format error output
-            const errorOutput = {
-              success: false,
-              error:
-                typeof toolErrorPart.error === "string"
-                  ? toolErrorPart.error
-                  : toolErrorPart.error instanceof Error
-                    ? toolErrorPart.error.message
-                    : JSON.stringify(toolErrorPart.error),
-            };
+                if (errorPart.error instanceof Error) {
+                  throw errorPart.error;
+                } else if (typeof errorPart.error === "object" && errorPart.error !== null) {
+                  const errorObj = errorPart.error as Record<string, unknown>;
 
-            // Use shared completion logic (await to ensure partial is flushed before event)
-            await this.completeToolCall(
-              workspaceId,
-              streamInfo,
-              toolCalls,
-              toolErrorPart.toolCallId,
-              toolErrorPart.toolName,
-              errorOutput
-            );
-            await this.checkSoftCancelStream(workspaceId, streamInfo);
-            break;
-          }
+                  // Check for nested error object with message (OpenAI format)
+                  if (
+                    errorObj.error &&
+                    typeof errorObj.error === "object" &&
+                    errorObj.error !== null
+                  ) {
+                    const nestedError = errorObj.error as Record<string, unknown>;
+                    if (typeof nestedError.message === "string") {
+                      errorMessage = nestedError.message;
+                    }
+                  }
 
-          // Handle error parts from the stream (e.g., OpenAI context_length_exceeded)
-          case "error": {
-            // Capture the error and immediately throw to trigger error handling
-            // Error parts are structured errors from the AI SDK
-            const errorPart = part as { error: unknown };
+                  // Fallback to direct message property
+                  errorMessage ??=
+                    typeof errorObj.message === "string" ? errorObj.message : undefined;
 
-            // Try to extract error message from various possible structures
-            let errorMessage: string | undefined;
+                  // Last resort: stringify the error
+                  errorMessage ??= JSON.stringify(errorObj);
 
-            if (errorPart.error instanceof Error) {
-              throw errorPart.error;
-            } else if (typeof errorPart.error === "object" && errorPart.error !== null) {
-              const errorObj = errorPart.error as Record<string, unknown>;
-
-              // Check for nested error object with message (OpenAI format)
-              if (errorObj.error && typeof errorObj.error === "object" && errorObj.error !== null) {
-                const nestedError = errorObj.error as Record<string, unknown>;
-                if (typeof nestedError.message === "string") {
-                  errorMessage = nestedError.message;
+                  const error = new Error(errorMessage);
+                  // Preserve original error as cause for debugging
+                  Object.assign(error, { cause: errorObj });
+                  throw error;
+                } else {
+                  throw new Error(String(errorPart.error));
                 }
               }
 
-              // Fallback to direct message property
-              errorMessage ??= typeof errorObj.message === "string" ? errorObj.message : undefined;
+              // Handle other event types as needed
+              case "start":
+              case "start-step":
+              case "text-start":
+              case "finish":
+                // These events can be logged or handled if needed
+                break;
 
-              // Last resort: stringify the error
-              errorMessage ??= JSON.stringify(errorObj);
+              case "finish-step": {
+                // Emit usage-delta event with usage from this step
+                const finishStepPart = part as {
+                  type: "finish-step";
+                  usage: LanguageModelV2Usage;
+                  providerMetadata?: Record<string, unknown>;
+                };
 
-              const error = new Error(errorMessage);
-              // Preserve original error as cause for debugging
-              Object.assign(error, { cause: errorObj });
-              throw error;
-            } else {
-              throw new Error(String(errorPart.error));
+                // Update cumulative totals for this stream
+                streamInfo.cumulativeUsage = addUsage(
+                  streamInfo.cumulativeUsage,
+                  finishStepPart.usage
+                );
+                streamInfo.cumulativeProviderMetadata = accumulateProviderMetadata(
+                  streamInfo.cumulativeProviderMetadata,
+                  finishStepPart.providerMetadata
+                );
+
+                // Track last step's data for context window display
+                streamInfo.lastStepUsage = finishStepPart.usage;
+                streamInfo.lastStepProviderMetadata = finishStepPart.providerMetadata;
+
+                const usageEvent: UsageDeltaEvent = {
+                  type: "usage-delta",
+                  workspaceId: workspaceId as string,
+                  messageId: streamInfo.messageId,
+                  // Step-level (for context window display)
+                  usage: finishStepPart.usage,
+                  providerMetadata: finishStepPart.providerMetadata,
+                  // Cumulative (for live cost display)
+                  cumulativeUsage: streamInfo.cumulativeUsage,
+                  cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
+                };
+                this.emit("usage-delta", usageEvent);
+                await this.checkSoftCancelStream(workspaceId, streamInfo);
+                break;
+              }
+
+              case "text-end": {
+                await this.checkSoftCancelStream(workspaceId, streamInfo);
+                break;
+              }
             }
           }
 
-          // Handle other event types as needed
-          case "start":
-          case "start-step":
-          case "text-start":
-          case "finish":
-            // These events can be logged or handled if needed
-            break;
+          // No need to save remaining text - text-delta handler already maintains parts array
+          // (Removed duplicate push that was causing double text parts)
 
-          case "finish-step": {
-            // Emit usage-delta event with usage from this step
-            const finishStepPart = part as {
-              type: "finish-step";
-              usage: LanguageModelV2Usage;
-              providerMetadata?: Record<string, unknown>;
-            };
+          // Flush final state to partial.json for crash resilience
+          // This happens regardless of abort status to ensure the final state is persisted to disk
+          // On abort: second flush after cancelStreamSafely, ensures all streamed content is saved
+          // On normal completion: provides crash resilience before AIService writes to chat.jsonl
+          await this.flushPartialWrite(workspaceId, streamInfo);
 
-            // Update cumulative totals for this stream
-            streamInfo.cumulativeUsage = addUsage(streamInfo.cumulativeUsage, finishStepPart.usage);
-            streamInfo.cumulativeProviderMetadata = accumulateProviderMetadata(
-              streamInfo.cumulativeProviderMetadata,
-              finishStepPart.providerMetadata
-            );
+          // Check if stream completed successfully
+          if (!streamInfo.abortController.signal.aborted) {
+            // Get all metadata from stream result in one call
+            // - totalUsage: sum of all steps (for cost calculation)
+            // - contextUsage: last step only (for context window display)
+            // - contextProviderMetadata: last step (for context window cache tokens)
+            // Falls back to tracked values from finish-step if streamResult fails/times out
+            const streamMeta = await this.getStreamMetadata(streamInfo);
+            const totalUsage = streamMeta.totalUsage;
+            const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
+            const contextProviderMetadata =
+              streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
+            const duration = streamMeta.duration;
+            // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
+            const providerMetadata = await this.getAggregatedProviderMetadata(streamInfo);
 
-            // Track last step's data for context window display
-            streamInfo.lastStepUsage = finishStepPart.usage;
-            streamInfo.lastStepProviderMetadata = finishStepPart.providerMetadata;
-
-            const usageEvent: UsageDeltaEvent = {
-              type: "usage-delta",
+            // Emit stream end event with parts preserved in temporal order
+            const streamEndEvent: StreamEndEvent = {
+              type: "stream-end",
               workspaceId: workspaceId as string,
               messageId: streamInfo.messageId,
-              // Step-level (for context window display)
-              usage: finishStepPart.usage,
-              providerMetadata: finishStepPart.providerMetadata,
-              // Cumulative (for live cost display)
-              cumulativeUsage: streamInfo.cumulativeUsage,
-              cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
+              metadata: {
+                ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
+                model: streamInfo.model,
+                usage: totalUsage, // Total across all steps (for cost calculation)
+                contextUsage, // Last step only (for context window display)
+                providerMetadata, // Aggregated (for cost calculation)
+                contextProviderMetadata, // Last step (for context window display)
+                duration,
+              },
+              parts: streamInfo.parts, // Parts array with temporal ordering (includes reasoning)
             };
-            this.emit("usage-delta", usageEvent);
-            await this.checkSoftCancelStream(workspaceId, streamInfo);
-            break;
-          }
 
-          case "text-end": {
-            await this.checkSoftCancelStream(workspaceId, streamInfo);
-            break;
-          }
-        }
-      }
+            // Update history with final message BEFORE emitting stream-end
+            // This prevents a race condition where compaction (triggered by stream-end)
+            // clears history while updateHistory is still running, causing old messages
+            // to be written back after compaction completes.
+            if (streamInfo.parts && streamInfo.parts.length > 0) {
+              const finalAssistantMessage: MuxMessage = {
+                id: streamInfo.messageId,
+                role: "assistant",
+                metadata: {
+                  ...streamEndEvent.metadata,
+                  historySequence: streamInfo.historySequence,
+                },
+                parts: streamInfo.parts,
+              };
 
-      // No need to save remaining text - text-delta handler already maintains parts array
-      // (Removed duplicate push that was causing double text parts)
+              // CRITICAL: Delete partial.json before updating chat.jsonl
+              // On successful completion, partial.json becomes stale and must be removed
+              await this.partialService.deletePartial(workspaceId as string);
 
-      // Flush final state to partial.json for crash resilience
-      // This happens regardless of abort status to ensure the final state is persisted to disk
-      // On abort: second flush after cancelStreamSafely, ensures all streamed content is saved
-      // On normal completion: provides crash resilience before AIService writes to chat.jsonl
-      await this.flushPartialWrite(workspaceId, streamInfo);
+              // Update the placeholder message in chat.jsonl with final content
+              await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
 
-      // Check if stream completed successfully
-      if (!streamInfo.abortController.signal.aborted) {
-        // Get all metadata from stream result in one call
-        // - totalUsage: sum of all steps (for cost calculation)
-        // - contextUsage: last step only (for context window display)
-        // - contextProviderMetadata: last step (for context window cache tokens)
-        // Falls back to tracked values from finish-step if streamResult fails/times out
-        const streamMeta = await this.getStreamMetadata(streamInfo);
-        const totalUsage = streamMeta.totalUsage;
-        const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
-        const contextProviderMetadata =
-          streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
-        const duration = streamMeta.duration;
-        // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
-        const providerMetadata = await this.getAggregatedProviderMetadata(streamInfo);
-
-        // Emit stream end event with parts preserved in temporal order
-        const streamEndEvent: StreamEndEvent = {
-          type: "stream-end",
-          workspaceId: workspaceId as string,
-          messageId: streamInfo.messageId,
-          metadata: {
-            ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
-            model: streamInfo.model,
-            usage: totalUsage, // Total across all steps (for cost calculation)
-            contextUsage, // Last step only (for context window display)
-            providerMetadata, // Aggregated (for cost calculation)
-            contextProviderMetadata, // Last step (for context window display)
-            duration,
-          },
-          parts: streamInfo.parts, // Parts array with temporal ordering (includes reasoning)
-        };
-
-        // Update history with final message BEFORE emitting stream-end
-        // This prevents a race condition where compaction (triggered by stream-end)
-        // clears history while updateHistory is still running, causing old messages
-        // to be written back after compaction completes.
-        if (streamInfo.parts && streamInfo.parts.length > 0) {
-          const finalAssistantMessage: MuxMessage = {
-            id: streamInfo.messageId,
-            role: "assistant",
-            metadata: {
-              ...streamEndEvent.metadata,
-              historySequence: streamInfo.historySequence,
-            },
-            parts: streamInfo.parts,
-          };
-
-          // CRITICAL: Delete partial.json before updating chat.jsonl
-          // On successful completion, partial.json becomes stale and must be removed
-          await this.partialService.deletePartial(workspaceId as string);
-
-          // Update the placeholder message in chat.jsonl with final content
-          await this.historyService.updateHistory(workspaceId as string, finalAssistantMessage);
-
-          // Update cumulative session usage (if service is available)
-          // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
-          if (this.sessionUsageService && totalUsage) {
-            try {
-              const messageUsage = createDisplayUsage(
-                totalUsage,
-                streamInfo.model,
-                providerMetadata
-              );
-              if (messageUsage) {
-                const normalizedModel = normalizeGatewayModel(streamInfo.model);
-                await this.sessionUsageService.recordUsage(
-                  workspaceId as string,
-                  normalizedModel,
-                  messageUsage
-                );
-              }
-            } catch (usageError) {
-              // Log but don't fail the stream - usage is tracking data, not critical state
-              log.warn("Failed to record session usage (stream completion unaffected)", {
+              // Update cumulative session usage (if service is available)
+              // Wrapped in try-catch: usage recording is non-critical and shouldn't block stream completion
+              await this.recordSessionUsage(
                 workspaceId,
-                error: usageError,
-              });
+                streamInfo.model,
+                totalUsage,
+                providerMetadata,
+                "Failed to record session usage (stream completion unaffected)",
+                "warn"
+              );
             }
+
+            // Mark as completed right before emitting stream-end.
+            // This must happen AFTER async I/O (deletePartial, updateHistory) completes.
+            // If we set COMPLETED earlier, isStreaming() returns false during cleanup,
+            // allowing new messages (e.g., force-compaction) to bypass queuing and write
+            // to history before stream-end fires - causing compaction to use wrong parts.
+            streamInfo.state = StreamState.COMPLETED;
+
+            // Emit stream-end AFTER history is updated to prevent race with compaction
+            // Compaction handler listens to this event and clears history - if we emit
+            // before updateHistory completes, compaction can clear the file and then
+            // updateHistory writes stale data back.
+            this.emit("stream-end", streamEndEvent);
           }
+          break;
+        } catch (error) {
+          let handledError: unknown = error;
+          let retried = false;
+          try {
+            retried = await this.retryStreamWithoutPreviousResponseId(
+              workspaceId,
+              streamInfo,
+              error,
+              didRetryPreviousResponseId
+            );
+          } catch (retryError) {
+            handledError = retryError;
+          }
+
+          if (retried) {
+            didRetryPreviousResponseId = true;
+            continue;
+          }
+
+          await this.handleStreamFailure(workspaceId, streamInfo, handledError);
+          break;
         }
-
-        // Mark as completed right before emitting stream-end.
-        // This must happen AFTER async I/O (deletePartial, updateHistory) completes.
-        // If we set COMPLETED earlier, isStreaming() returns false during cleanup,
-        // allowing new messages (e.g., force-compaction) to bypass queuing and write
-        // to history before stream-end fires - causing compaction to use wrong parts.
-        streamInfo.state = StreamState.COMPLETED;
-
-        // Emit stream-end AFTER history is updated to prevent race with compaction
-        // Compaction handler listens to this event and clears history - if we emit
-        // before updateHistory completes, compaction can clear the file and then
-        // updateHistory writes stale data back.
-        this.emit("stream-end", streamEndEvent);
       }
     } catch (error) {
-      streamInfo.state = StreamState.ERROR;
-
-      // Log the actual error for debugging
-      log.error("Stream processing error:", error);
-
-      // Check if this is a lost previousResponseId error and record it
-      // Frontend will automatically retry, and buildProviderOptions will filter it out
-      this.recordLostResponseIdIfApplicable(error, streamInfo);
-
-      // Extract error message (errors thrown from 'error' parts already have the correct message)
-      let errorMessage: string = error instanceof Error ? error.message : String(error);
-      let actualError: unknown = error;
-
-      // For categorization, use the cause if available (preserves the original error structure)
-      if (error instanceof Error && error.cause) {
-        actualError = error.cause;
-      }
-
-      let errorType = this.categorizeError(actualError);
-
-      // Enhance model-not-found error messages
-      if (errorType === "model_not_found") {
-        // Extract model name from model string (e.g., "anthropic:sonnet-1m" -> "sonnet-1m")
-        const [, modelName] = streamInfo.model.split(":");
-        errorMessage = `Model '${modelName || streamInfo.model}' does not exist or is not available. Please check your model selection.`;
-      }
-
-      // If we detect API key issues in the error message, override the type
-      if (
-        errorMessage.toLowerCase().includes("api key") ||
-        errorMessage.toLowerCase().includes("api_key") ||
-        errorMessage.toLowerCase().includes("anthropic_api_key")
-      ) {
-        errorType = "authentication";
-      }
-
-      // Write error metadata to partial.json for persistence across reloads
-      const errorPartialMessage: MuxMessage = {
-        id: streamInfo.messageId,
-        role: "assistant",
-        metadata: {
-          historySequence: streamInfo.historySequence,
-          timestamp: streamInfo.startTime,
-          model: streamInfo.model,
-          partial: true,
-          error: errorMessage,
-          errorType,
-          ...streamInfo.initialMetadata,
-        },
-        parts: streamInfo.parts,
-      };
-      // Wait for any in-flight partial write to complete before writing error state
-      // This prevents race conditions where the error write and a throttled flush
-      // write at the same time, causing inconsistent partial.json state
-      if (streamInfo.partialWritePromise) {
-        await streamInfo.partialWritePromise;
-      }
-      // Write error state to disk - await to ensure consistent state before any resume
-      await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
-
-      // Emit error event
-      this.emit("error", {
-        type: "error",
-        workspaceId: workspaceId as string,
-        messageId: streamInfo.messageId,
-        error: errorMessage,
-        errorType: errorType,
-      } as ErrorEvent);
+      await this.handleStreamFailure(workspaceId, streamInfo, error);
     } finally {
       // Guaranteed cleanup in all code paths
       // Clear any pending timers to prevent keeping process alive
@@ -1487,26 +1556,230 @@ export class StreamManager extends EventEmitter {
       // Don't block stream completion waiting for directory deletion
       // This is especially important for SSH where rm -rf can take 500ms-2s
       if (streamInfo.runtimeTempDir) {
-        // Use parent directory as cwd for safety - if runtimeTempDir is malformed,
-        // we won't accidentally run rm -rf from root
-        const tempDirBasename = PlatformPaths.basename(streamInfo.runtimeTempDir);
-        const tempDirParent = path.dirname(streamInfo.runtimeTempDir);
-        void streamInfo.runtime
-          .exec(`rm -rf "${tempDirBasename}"`, {
-            cwd: tempDirParent,
-            timeout: 10,
-          })
-          .then(async (result) => {
-            await result.exitCode;
-            log.debug(`Cleaned up temp dir: ${streamInfo.runtimeTempDir}`);
-          })
-          .catch((error) => {
-            log.error(`Failed to cleanup temp dir ${streamInfo.runtimeTempDir}:`, error);
-          });
+        this.cleanupStreamTempDir(streamInfo.runtime, streamInfo.runtimeTempDir);
       }
 
       this.workspaceStreams.delete(workspaceId);
     }
+  }
+
+  /**
+   * Persist error state and emit error events for failed streams.
+   */
+  private async handleStreamFailure(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    error: unknown
+  ): Promise<void> {
+    streamInfo.state = StreamState.ERROR;
+
+    // Log the actual error for debugging
+    log.error("Stream processing error:", error);
+
+    // Record lost previousResponseId so future requests can filter it out
+    this.recordLostResponseIdIfApplicable(error, streamInfo);
+
+    // Extract error message (errors thrown from 'error' parts already have the correct message)
+    let errorMessage: string = error instanceof Error ? error.message : String(error);
+    let actualError: unknown = error;
+
+    // For categorization, use the cause if available (preserves the original error structure)
+    if (error instanceof Error && error.cause) {
+      actualError = error.cause;
+    }
+
+    let errorType = this.categorizeError(actualError);
+
+    // Enhance model-not-found error messages
+    if (errorType === "model_not_found") {
+      // Extract model name from model string (e.g., "anthropic:sonnet-1m" -> "sonnet-1m")
+      const [, modelName] = streamInfo.model.split(":");
+      errorMessage = `Model '${modelName || streamInfo.model}' does not exist or is not available. Please check your model selection.`;
+    }
+
+    // If we detect API key issues in the error message, override the type
+    if (
+      errorMessage.toLowerCase().includes("api key") ||
+      errorMessage.toLowerCase().includes("api_key") ||
+      errorMessage.toLowerCase().includes("anthropic_api_key")
+    ) {
+      errorType = "authentication";
+    }
+
+    await this.persistErrorState(workspaceId, streamInfo, errorMessage, errorType);
+  }
+
+  /**
+   * Write error metadata to partial.json and emit the corresponding error event.
+   */
+  private async persistErrorState(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    errorMessage: string,
+    errorType: StreamErrorType
+  ): Promise<void> {
+    const errorPartialMessage: MuxMessage = {
+      id: streamInfo.messageId,
+      role: "assistant",
+      metadata: {
+        historySequence: streamInfo.historySequence,
+        timestamp: streamInfo.startTime,
+        model: streamInfo.model,
+        partial: true,
+        error: errorMessage,
+        errorType,
+        ...streamInfo.initialMetadata,
+      },
+      parts: streamInfo.parts,
+    };
+
+    // Wait for any in-flight partial write to complete before writing error state.
+    // This prevents race conditions where the error write and a throttled flush
+    // write at the same time, causing inconsistent partial.json state.
+    await this.awaitPendingPartialWrite(streamInfo);
+
+    // Write error state to disk - await to ensure consistent state before any resume.
+    await this.partialService.writePartial(workspaceId as string, errorPartialMessage);
+
+    // Emit error event.
+    this.emit("error", {
+      type: "error",
+      workspaceId: workspaceId as string,
+      messageId: streamInfo.messageId,
+      error: errorMessage,
+      errorType,
+    } as ErrorEvent);
+  }
+
+  private getOpenAIPreviousResponseId(
+    providerOptions?: Record<string, unknown>
+  ): string | undefined {
+    if (!providerOptions || typeof providerOptions !== "object" || !("openai" in providerOptions)) {
+      return undefined;
+    }
+
+    const openaiOptions = providerOptions.openai;
+    if (!openaiOptions || typeof openaiOptions !== "object") {
+      return undefined;
+    }
+
+    const previousResponseId = (openaiOptions as Record<string, unknown>).previousResponseId;
+    return typeof previousResponseId === "string" ? previousResponseId : undefined;
+  }
+
+  private clearOpenAIPreviousResponseId(
+    providerOptions?: Record<string, unknown>
+  ): Record<string, unknown> | undefined {
+    if (!providerOptions || typeof providerOptions !== "object" || !("openai" in providerOptions)) {
+      return providerOptions;
+    }
+
+    const openaiOptions = providerOptions.openai;
+    if (!openaiOptions || typeof openaiOptions !== "object") {
+      return providerOptions;
+    }
+
+    if (!("previousResponseId" in openaiOptions)) {
+      return providerOptions;
+    }
+
+    const { previousResponseId: _prev, ...rest } = openaiOptions as Record<string, unknown>;
+    return {
+      ...providerOptions,
+      openai: rest,
+    };
+  }
+
+  private async resetStreamStateForRetry(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo
+  ): Promise<void> {
+    if (streamInfo.partialWriteTimer) {
+      clearTimeout(streamInfo.partialWriteTimer);
+      streamInfo.partialWriteTimer = undefined;
+    }
+
+    await this.awaitPendingPartialWrite(streamInfo);
+    streamInfo.partialWritePromise = undefined;
+
+    streamInfo.parts = [];
+    streamInfo.lastPartialWriteTime = 0;
+    streamInfo.cumulativeUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+    streamInfo.cumulativeProviderMetadata = undefined;
+    streamInfo.lastStepUsage = undefined;
+    streamInfo.lastStepProviderMetadata = undefined;
+
+    try {
+      await this.partialService.deletePartial(workspaceId as string);
+    } catch (deleteError) {
+      log.warn("Failed to clear partial state before retry", { workspaceId, error: deleteError });
+    }
+  }
+
+  private async retryStreamWithoutPreviousResponseId(
+    workspaceId: WorkspaceId,
+    streamInfo: WorkspaceStreamInfo,
+    error: unknown,
+    hasRetried: boolean
+  ): Promise<boolean> {
+    if (hasRetried) {
+      return false;
+    }
+
+    if (streamInfo.abortController.signal.aborted || streamInfo.softInterrupt.pending) {
+      return false;
+    }
+
+    if (streamInfo.parts.length > 0) {
+      return false;
+    }
+
+    const responseId = this.extractPreviousResponseIdFromError(error);
+    if (!responseId) {
+      return false;
+    }
+
+    const errorCode = this.extractErrorCode(error);
+    const statusCode = this.extractStatusCode(error);
+    const shouldRetry =
+      errorCode === "previous_response_not_found" || statusCode === 404 || statusCode === 500;
+    if (!shouldRetry) {
+      return false;
+    }
+
+    const previousResponseId = this.getOpenAIPreviousResponseId(streamInfo.request.providerOptions);
+    if (!previousResponseId || previousResponseId !== responseId) {
+      return false;
+    }
+
+    const providerOptions = this.clearOpenAIPreviousResponseId(streamInfo.request.providerOptions);
+    if (providerOptions === streamInfo.request.providerOptions) {
+      return false;
+    }
+
+    this.recordLostResponseIdIfApplicable(error, streamInfo);
+
+    log.info("Retrying stream without invalid previousResponseId", {
+      workspaceId,
+      messageId: streamInfo.messageId,
+      model: streamInfo.model,
+      previousResponseId,
+      errorCode,
+      statusCode,
+    });
+
+    await this.resetStreamStateForRetry(workspaceId, streamInfo);
+
+    streamInfo.request = {
+      ...streamInfo.request,
+      providerOptions,
+    };
+    streamInfo.streamResult = this.createStreamResult(
+      streamInfo.request,
+      streamInfo.abortController
+    );
+
+    return true;
   }
 
   /**
@@ -1811,8 +2084,8 @@ export class StreamManager extends EventEmitter {
   }
 
   /**
-   * Record a previousResponseId as lost if the error indicates OpenAI no longer has it
-   * Frontend will automatically retry, and buildProviderOptions will filter it out
+   * Record a previousResponseId as lost if the error indicates OpenAI no longer has it.
+   * StreamManager retries once automatically, and buildProviderOptions filters it for future requests.
    */
   private recordLostResponseIdIfApplicable(error: unknown, streamInfo: WorkspaceStreamInfo): void {
     const responseId = this.extractPreviousResponseIdFromError(error);
@@ -1874,6 +2147,9 @@ export class StreamManager extends EventEmitter {
 
   private extractErrorCode(error: unknown): string | undefined {
     const candidates: unknown[] = [];
+    if (error instanceof Error && error.cause) {
+      candidates.push(error.cause);
+    }
     if (APICallError.isInstance(error)) {
       candidates.push(error.data);
     }
@@ -1895,6 +2171,13 @@ export class StreamManager extends EventEmitter {
   }
 
   private extractStatusCode(error: unknown): number | undefined {
+    if (error instanceof Error && error.cause) {
+      const statusCode = this.extractStatusCode(error.cause);
+      if (typeof statusCode === "number") {
+        return statusCode;
+      }
+    }
+
     if (APICallError.isInstance(error) && typeof error.statusCode === "number") {
       return error.statusCode;
     }
@@ -1936,7 +2219,11 @@ export class StreamManager extends EventEmitter {
     try {
       const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
       if (!streamInfo) {
-        return Ok(undefined); // No active stream
+        // Emit abort event so frontend clears pending stream state.
+        // This handles the case where user interrupts before stream-start arrives.
+        // Use empty messageId - frontend handles gracefully (just clears pendingStreamStartTime).
+        this.emitStreamAbort(typedWorkspaceId, "", {}, options?.abandonPartial);
+        return Ok(undefined);
       }
 
       const soft = options?.soft ?? false;
@@ -2032,19 +2319,7 @@ export class StreamManager extends EventEmitter {
     await this.tokenTracker.setModel(streamInfo.model);
 
     // Emit stream-start event (include mode from initialMetadata if available)
-    // Validate mode - stats schema only accepts "plan" | "exec" for now
-    const rawReplayMode = streamInfo.initialMetadata?.mode;
-    const replayMode =
-      rawReplayMode === "plan" || rawReplayMode === "exec" ? rawReplayMode : undefined;
-    this.emit("stream-start", {
-      type: "stream-start",
-      workspaceId,
-      messageId: streamInfo.messageId,
-      model: streamInfo.model,
-      historySequence: streamInfo.historySequence,
-      startTime: streamInfo.startTime,
-      ...(replayMode && { mode: replayMode }),
-    });
+    this.emitStreamStart(typedWorkspaceId, streamInfo, streamInfo.historySequence);
 
     // Replay accumulated parts as events using shared emission logic.
     // IMPORTANT: Snapshot the parts array up-front.
@@ -2096,34 +2371,7 @@ export class StreamManager extends EventEmitter {
     };
 
     // Write error state to partial.json (same as real error handling)
-    // Wait for any in-flight partial write to complete first
-    if (streamInfo.partialWritePromise) {
-      await streamInfo.partialWritePromise;
-    }
-    const errorPartialMessage: MuxMessage = {
-      id: streamInfo.messageId,
-      role: "assistant",
-      metadata: {
-        historySequence: streamInfo.historySequence,
-        timestamp: streamInfo.startTime,
-        model: streamInfo.model,
-        partial: true,
-        error: errorMessage,
-        errorType: "network", // Test errors are network-like
-        ...streamInfo.initialMetadata,
-      },
-      parts: streamInfo.parts,
-    };
-    await this.partialService.writePartial(workspaceId, errorPartialMessage);
-
-    // Emit error event (same as real error handling)
-    this.emit("error", {
-      type: "error",
-      workspaceId,
-      messageId: streamInfo.messageId,
-      error: errorMessage,
-      errorType: "network",
-    } as ErrorEvent);
+    await this.persistErrorState(typedWorkspaceId, streamInfo, errorMessage, "network");
 
     // Wait for the stream processing to complete (cleanup)
     await streamInfo.processingPromise;

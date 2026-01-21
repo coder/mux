@@ -8,6 +8,7 @@ import {
   injectModeTransition,
   filterEmptyAssistantMessages,
   injectFileChangeNotifications,
+  stripOrphanedToolCalls,
 } from "./modelMessageTransform";
 import type { MuxMessage } from "@/common/types/message";
 
@@ -755,6 +756,105 @@ describe("modelMessageTransform", () => {
         { type: "text", text: "Final answer" },
       ]);
     });
+  });
+});
+
+describe("stripOrphanedToolCalls", () => {
+  it("drops tool calls without results and orphaned tool results", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Run it" }] },
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call1", toolName: "bash", input: {} }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call2",
+            toolName: "bash",
+            output: { type: "json", value: { stdout: "orphan" } },
+          },
+        ],
+      },
+    ];
+
+    const result = stripOrphanedToolCalls(messages);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("user");
+  });
+
+  it("keeps tool results embedded in assistant messages when paired", () => {
+    const messages: ModelMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "call1", toolName: "bash", input: {} },
+          {
+            type: "tool-result",
+            toolCallId: "call1",
+            toolName: "bash",
+            output: { type: "json", value: { stdout: "inline" } },
+          },
+        ],
+      },
+    ];
+
+    const result = stripOrphanedToolCalls(messages);
+
+    expect(result).toEqual(messages);
+  });
+
+  it("drops orphaned tool results embedded in assistant messages", () => {
+    const messages: ModelMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "No tool call" },
+          {
+            type: "tool-result",
+            toolCallId: "call2",
+            toolName: "bash",
+            output: { type: "json", value: { stdout: "inline" } },
+          },
+        ],
+      },
+    ];
+
+    const result = stripOrphanedToolCalls(messages);
+
+    expect(result).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "No tool call" }],
+      },
+    ]);
+  });
+
+  it("keeps tool calls and results when they match", () => {
+    const messages: ModelMessage[] = [
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call1", toolName: "bash", input: {} }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call1",
+            toolName: "bash",
+            output: { type: "json", value: { stdout: "ok" } },
+          },
+        ],
+      },
+    ];
+
+    const result = stripOrphanedToolCalls(messages);
+
+    expect(result).toEqual(messages);
   });
 });
 

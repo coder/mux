@@ -30,6 +30,7 @@ const dom = new GlobalWindow();
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 (global as any).window = dom.window;
 (global as any).document = dom.window.document;
+(global as any).location = new URL("https://example.com/");
 
 // Ensure globals exist for instanceof checks inside usePersistedState
 (globalThis as any).StorageEvent = dom.window.StorageEvent;

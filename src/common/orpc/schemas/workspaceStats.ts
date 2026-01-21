@@ -95,7 +95,7 @@ export const WorkspaceStatsSnapshotSchema = z.object({
 });
 
 export const SessionTimingFileSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   lastRequest: CompletedStreamStatsSchema.optional(),
   session: SessionTimingStatsSchema,
 });

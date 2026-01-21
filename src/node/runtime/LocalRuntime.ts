@@ -17,7 +17,7 @@ import { LocalBaseRuntime } from "./LocalBaseRuntime";
  * - Does NOT create git worktrees or isolate workspaces
  * - Uses the project directory as the workspace path
  * - Cannot delete the project directory (deleteWorkspace is a no-op)
- * - Cannot rename or fork workspaces
+ * - Supports forking (creates new workspace entries pointing to same project directory)
  *
  * This is useful for users who want to work directly in their project
  * without the overhead of worktree management.
@@ -70,9 +70,15 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, env } = params;
+    const { projectPath, branchName, workspacePath, initLogger, env, skipInitHook } = params;
 
     try {
+      if (skipInitHook) {
+        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+        initLogger.logComplete(0);
+        return { success: true };
+      }
+
       // Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
@@ -128,13 +134,37 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   /**
-   * Forking is not supported for LocalRuntime since there's no worktree to fork.
+   * Fork for LocalRuntime creates a new workspace entry pointing to the same project directory.
+   * Since LocalRuntime doesn't create separate directories, "forking" just means:
+   * 1. A new workspace ID with the new name
+   * 2. Copied chat history (handled by workspaceService)
+   * 3. Same project directory as source
+   *
+   * This enables conversation branching without git worktree overhead.
    */
-  // eslint-disable-next-line @typescript-eslint/require-await
-  async forkWorkspace(_params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
+  async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
+    const { initLogger } = params;
+
+    initLogger.logStep("Creating conversation fork (no worktree isolation)");
+
+    // Verify the project directory exists (same check as createWorkspace)
+    try {
+      await this.stat(this.projectPath);
+    } catch {
+      return {
+        success: false,
+        error: `Project directory does not exist: ${this.projectPath}`,
+      };
+    }
+
+    initLogger.logStep("Project directory verified");
+
+    // Return success - the workspace service will copy chat history
+    // and create a new workspace entry pointing to this project directory
     return {
-      success: false,
-      error: "Cannot fork a local project-dir workspace. Use worktree runtime for branching.",
+      success: true,
+      workspacePath: this.projectPath,
+      // sourceBranch is optional for LocalRuntime since no git operations are involved
     };
   }
 }

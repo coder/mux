@@ -1,4 +1,6 @@
 import { describe, test, expect, beforeEach, mock } from "bun:test";
+import * as fs from "node:fs/promises";
+
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamManager } from "./streamManager";
 import { APICallError, RetryError } from "ai";
@@ -6,6 +8,7 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { shouldRunIntegrationTests, validateApiKeys } from "../../../tests/testUtils";
+import { DisposableTempDir } from "@/node/services/tempDir";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 // Skip integration tests if TEST_INTEGRATION is not set
@@ -36,6 +39,49 @@ const createMockPartialService = (): PartialService => {
     commitToHistory: mock(() => Promise.resolve({ success: true })),
   } as unknown as PartialService;
 };
+
+describe("StreamManager - createTempDirForStream", () => {
+  test("creates ~/.mux-tmp/<token> under the runtime's home", async () => {
+    using home = new DisposableTempDir("stream-home");
+
+    const prevHome = process.env.HOME;
+    const prevUserProfile = process.env.USERPROFILE;
+
+    process.env.HOME = home.path;
+    process.env.USERPROFILE = home.path;
+
+    try {
+      const streamManager = new StreamManager(
+        createMockHistoryService(),
+        createMockPartialService()
+      );
+      const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+
+      const token = streamManager.generateStreamToken();
+      const resolved = await streamManager.createTempDirForStream(token, runtime);
+
+      // StreamManager normalizes Windows paths to forward slashes.
+      const normalizedHomePath = home.path.replace(/\\/g, "/");
+      expect(resolved.startsWith(normalizedHomePath)).toBe(true);
+      expect(resolved).toContain(`/.mux-tmp/${token}`);
+
+      const stat = await fs.stat(resolved);
+      expect(stat.isDirectory()).toBe(true);
+    } finally {
+      if (prevHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = prevHome;
+      }
+
+      if (prevUserProfile === undefined) {
+        delete process.env.USERPROFILE;
+      } else {
+        process.env.USERPROFILE = prevUserProfile;
+      }
+    }
+  });
+});
 
 describe("StreamManager - Concurrent Stream Prevention", () => {
   let streamManager: StreamManager;
@@ -757,6 +803,29 @@ describe("StreamManager - ask_user_question Partial Persistence", () => {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const flushMethod = Reflect.get(streamManager, "flushPartialWrite");
     expect(typeof flushMethod).toBe("function");
+  });
+});
+
+describe("StreamManager - stopStream", () => {
+  test("emits stream-abort when stopping non-existent stream", async () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    // Track emitted events
+    const abortEvents: Array<{ workspaceId: string; messageId: string }> = [];
+    streamManager.on("stream-abort", (data: { workspaceId: string; messageId: string }) => {
+      abortEvents.push(data);
+    });
+
+    // Stop a stream that doesn't exist (simulates interrupt before stream-start)
+    const result = await streamManager.stopStream("test-workspace");
+
+    expect(result.success).toBe(true);
+    expect(abortEvents).toHaveLength(1);
+    expect(abortEvents[0].workspaceId).toBe("test-workspace");
+    // messageId is empty for synthetic abort (no actual stream existed)
+    expect(abortEvents[0].messageId).toBe("");
   });
 });
 

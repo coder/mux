@@ -6,9 +6,11 @@ import { getDefaultModel } from "./useModelsFromSettings";
 import {
   type RuntimeMode,
   type ParsedRuntime,
+  type CoderWorkspaceConfig,
   parseRuntimeModeAndHost,
   buildRuntimeString,
   RUNTIME_MODE,
+  CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
 import {
   getModelKey,
@@ -101,32 +103,39 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  const readLastRuntimeConfigString = (mode: RuntimeMode, field: string): string => {
-    const value = lastRuntimeConfigs[mode];
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return "";
+  // Generic reader for lastRuntimeConfigs fields
+  const readRuntimeConfig = <T>(mode: RuntimeMode, field: string, defaultValue: T): T => {
+    const modeConfig = lastRuntimeConfigs[mode];
+    if (!modeConfig || typeof modeConfig !== "object" || Array.isArray(modeConfig)) {
+      return defaultValue;
     }
-    const fieldValue = (value as Record<string, unknown>)[field];
-    return typeof fieldValue === "string" ? fieldValue : "";
+    const fieldValue = (modeConfig as Record<string, unknown>)[field];
+    // Type-specific validation based on default value type
+    if (typeof defaultValue === "string") {
+      return (typeof fieldValue === "string" ? fieldValue : defaultValue) as T;
+    }
+    if (typeof defaultValue === "boolean") {
+      return (fieldValue === true) as unknown as T;
+    }
+    // Object type (null default means optional object)
+    if (fieldValue && typeof fieldValue === "object" && !Array.isArray(fieldValue)) {
+      return fieldValue as T;
+    }
+    return defaultValue;
   };
 
-  const readLastRuntimeConfigBoolean = (mode: RuntimeMode, field: string): boolean => {
-    const value = lastRuntimeConfigs[mode];
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-      return false;
-    }
-    return (value as Record<string, unknown>)[field] === true;
-  };
-
-  const lastSshHost = readLastRuntimeConfigString(RUNTIME_MODE.SSH, "host");
-  const lastDockerImage = readLastRuntimeConfigString(RUNTIME_MODE.DOCKER, "image");
-  const lastShareCredentials = readLastRuntimeConfigBoolean(
-    RUNTIME_MODE.DOCKER,
-    "shareCredentials"
+  const lastSshHost = readRuntimeConfig(RUNTIME_MODE.SSH, "host", "");
+  const lastCoderEnabled = readRuntimeConfig(RUNTIME_MODE.SSH, "coderEnabled", false);
+  const lastCoderConfig = readRuntimeConfig<CoderWorkspaceConfig | null>(
+    RUNTIME_MODE.SSH,
+    "coderConfig",
+    null
   );
+  const lastDockerImage = readRuntimeConfig(RUNTIME_MODE.DOCKER, "image", "");
+  const lastShareCredentials = readRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", false);
 
   const setLastRuntimeConfig = useCallback(
-    (mode: RuntimeMode, field: string, value: string | boolean) => {
+    (mode: RuntimeMode, field: string, value: string | boolean | object | null) => {
       setLastRuntimeConfigs((prev) => {
         const existing = prev[mode];
         const existingObj =
@@ -161,22 +170,35 @@ export function useDraftWorkspaceSettings(
 
   const defaultSshHost =
     parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSshHost;
+
   const defaultDockerImage =
     parsedDefault?.mode === RUNTIME_MODE.DOCKER ? parsedDefault.image : lastDockerImage;
 
-  // Build ParsedRuntime from mode + stored host/image/shareCredentials
+  // Build ParsedRuntime from mode + stored host/image/shareCredentials/coder
   // Defined as a function so it can be used in both useState init and useEffect
   const buildRuntimeForMode = (
     mode: RuntimeMode,
     sshHost: string,
     dockerImage: string,
-    shareCredentials: boolean
+    shareCredentials: boolean,
+    coderEnabled: boolean,
+    coderConfig: CoderWorkspaceConfig | null
   ): ParsedRuntime => {
     switch (mode) {
       case RUNTIME_MODE.LOCAL:
         return { mode: "local" };
-      case RUNTIME_MODE.SSH:
-        return { mode: "ssh", host: sshHost };
+      case RUNTIME_MODE.SSH: {
+        // Use placeholder when Coder is enabled with no explicit SSH host
+        // This ensures the runtime string round-trips correctly for Coder-only users
+        const effectiveHost =
+          coderEnabled && coderConfig && !sshHost.trim() ? CODER_RUNTIME_PLACEHOLDER : sshHost;
+
+        return {
+          mode: "ssh",
+          host: effectiveHost,
+          coder: coderEnabled && coderConfig ? coderConfig : undefined,
+        };
+      }
       case RUNTIME_MODE.DOCKER:
         return { mode: "docker", image: dockerImage, shareCredentials };
       case RUNTIME_MODE.WORKTREE:
@@ -192,7 +214,9 @@ export function useDraftWorkspaceSettings(
       defaultRuntimeMode,
       defaultSshHost,
       defaultDockerImage,
-      lastShareCredentials
+      lastShareCredentials,
+      lastCoderEnabled,
+      lastCoderConfig
     )
   );
 
@@ -211,24 +235,41 @@ export function useDraftWorkspaceSettings(
           defaultRuntimeMode,
           defaultSshHost,
           defaultDockerImage,
-          lastShareCredentials
+          lastShareCredentials,
+          lastCoderEnabled,
+          lastCoderConfig
         )
       );
     }
 
     prevProjectPathRef.current = projectPath;
     prevDefaultRuntimeModeRef.current = defaultRuntimeMode;
-  }, [projectPath, defaultRuntimeMode, defaultSshHost, defaultDockerImage, lastShareCredentials]);
+  }, [
+    projectPath,
+    defaultRuntimeMode,
+    defaultSshHost,
+    defaultDockerImage,
+    lastShareCredentials,
+    lastCoderEnabled,
+    lastCoderConfig,
+  ]);
 
-  // When the user switches into SSH/Docker mode, seed the field with the remembered host/image.
-  // This avoids clearing the last host/image when the UI switches modes with an empty field.
+  // When the user switches into SSH/Docker mode, seed the field with the remembered host/image/coder.
+  // This avoids clearing the last values when the UI switches modes with an empty field.
   const prevSelectedRuntimeModeRef = useRef<RuntimeMode | null>(null);
   useEffect(() => {
     const prevMode = prevSelectedRuntimeModeRef.current;
     if (prevMode !== selectedRuntime.mode) {
       if (selectedRuntime.mode === RUNTIME_MODE.SSH) {
-        if (!selectedRuntime.host.trim() && lastSshHost.trim()) {
-          setSelectedRuntimeState({ mode: RUNTIME_MODE.SSH, host: lastSshHost });
+        const needsHostRestore = !selectedRuntime.host.trim() && lastSshHost.trim();
+        const needsCoderRestore =
+          selectedRuntime.coder === undefined && lastCoderEnabled && lastCoderConfig;
+        if (needsHostRestore || needsCoderRestore) {
+          setSelectedRuntimeState({
+            mode: RUNTIME_MODE.SSH,
+            host: needsHostRestore ? lastSshHost : selectedRuntime.host,
+            coder: needsCoderRestore ? lastCoderConfig : selectedRuntime.coder,
+          });
         }
       }
 
@@ -247,7 +288,14 @@ export function useDraftWorkspaceSettings(
     }
 
     prevSelectedRuntimeModeRef.current = selectedRuntime.mode;
-  }, [selectedRuntime, lastSshHost, lastDockerImage, lastShareCredentials]);
+  }, [
+    selectedRuntime,
+    lastSshHost,
+    lastDockerImage,
+    lastShareCredentials,
+    lastCoderEnabled,
+    lastCoderConfig,
+  ]);
 
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
@@ -257,15 +305,21 @@ export function useDraftWorkspaceSettings(
     }
   }, [branches, recommendedTrunk, trunkBranch, setTrunkBranch]);
 
-  // Setter for selected runtime (also persists host/image for future mode switches)
+  // Setter for selected runtime (also persists host/image/coder for future mode switches)
   const setSelectedRuntime = (runtime: ParsedRuntime) => {
     setSelectedRuntimeState(runtime);
 
-    // Persist host/image so they're remembered when switching modes.
+    // Persist host/image/coder so they're remembered when switching modes.
     // Avoid wiping the remembered value when the UI switches modes with an empty field.
     if (runtime.mode === RUNTIME_MODE.SSH) {
       if (runtime.host.trim()) {
         setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", runtime.host);
+      }
+      // Persist Coder enabled state and config
+      const coderEnabled = runtime.coder !== undefined;
+      setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderEnabled", coderEnabled);
+      if (runtime.coder) {
+        setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderConfig", runtime.coder);
       }
     } else if (runtime.mode === RUNTIME_MODE.DOCKER) {
       if (runtime.image.trim()) {
@@ -283,7 +337,9 @@ export function useDraftWorkspaceSettings(
       newMode,
       lastSshHost,
       lastDockerImage,
-      lastShareCredentials
+      lastShareCredentials,
+      lastCoderEnabled,
+      lastCoderConfig
     );
     const newRuntimeString = buildRuntimeString(newRuntime);
     setDefaultRuntimeString(newRuntimeString);

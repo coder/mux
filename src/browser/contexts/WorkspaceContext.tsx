@@ -30,6 +30,7 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
 /**
@@ -210,14 +211,15 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       });
   }, [api]);
   // Get project refresh function from ProjectContext
-  const { refreshProjects } = useProjectContext();
+  const { projects, refreshProjects } = useProjectContext();
   // Get router navigation functions and current route state
   const {
     navigateToWorkspace,
     navigateToProject,
     navigateToHome,
     currentWorkspaceId,
-    currentProjectPath,
+    currentProjectId,
+    currentProjectPathFromState,
     pendingSectionId,
   } = useRouter();
 
@@ -242,7 +244,26 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
   const [loading, setLoading] = useState(true);
 
-  // pendingNewWorkspaceProject is derived from currentProjectPath in URL
+  const currentProjectPath = useMemo(() => {
+    if (currentProjectPathFromState) return currentProjectPathFromState;
+    if (!currentProjectId) return null;
+
+    // Legacy: older deep links stored the full path under ?path=...
+    if (projects.has(currentProjectId)) {
+      return currentProjectId;
+    }
+
+    // Current: project ids are derived from the configured project path.
+    for (const projectPath of projects.keys()) {
+      if (getProjectRouteId(projectPath) === currentProjectId) {
+        return projectPath;
+      }
+    }
+
+    return null;
+  }, [currentProjectId, currentProjectPathFromState, projects]);
+
+  // pendingNewWorkspaceProject is derived from current project in URL/state
   const pendingNewWorkspaceProject = currentProjectPath;
   // pendingNewWorkspaceSectionId is derived from section URL param
   const pendingNewWorkspaceSectionId = pendingSectionId;
@@ -335,7 +356,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   }, [loadWorkspaceMetadata, refreshProjects]);
 
   // URL restoration is now handled by RouterContext which parses the URL on load
-  // and provides currentWorkspaceId/currentProjectPath that we derive state from.
+  // and provides currentWorkspaceId/currentProjectId that we derive state from.
 
   // Check for launch project from server (for --add-project flag)
   // This only applies in server mode, runs after metadata loads

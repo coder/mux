@@ -44,6 +44,7 @@ export interface WorkspaceUI {
     addTerminal(): Promise<void>;
     expectTerminalNoError(): Promise<void>;
     expectTerminalError(expectedText?: string): Promise<void>;
+    expectTerminalFocused(): Promise<void>;
     focusTerminal(): Promise<void>;
     typeInTerminal(text: string): Promise<void>;
     pressKeyInTerminal(key: string): Promise<void>;
@@ -478,6 +479,31 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       }
     },
 
+    /**
+     * Wait for the terminal to own focus (ghostty's hidden textarea).
+     * Uses the focus marker from TerminalView + activeElement checks.
+     */
+    async expectTerminalFocused(): Promise<void> {
+      await expect(page.locator("[data-terminal-container]")).toBeVisible();
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() => {
+              const container = document.querySelector("[data-terminal-container]");
+              const hasAutoFocus = container?.getAttribute("data-terminal-autofocus") === "true";
+              if (hasAutoFocus) {
+                return true;
+              }
+              const active = document.activeElement;
+              if (!(active instanceof HTMLElement)) {
+                return false;
+              }
+              return active.closest("[data-terminal-container]") !== null;
+            }),
+          { timeout: 5000 }
+        )
+        .toBe(true);
+    },
     /**
      * Focus the terminal so it receives keyboard input.
      * ghostty-web uses a hidden textarea for input capture.

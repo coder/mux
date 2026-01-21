@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# .mux/tool_post - Format TypeScript and Markdown files after edits
+
+if [[ "$MUX_TOOL" == file_edit_* ]]; then
+  file=$(echo "$MUX_TOOL_INPUT" | jq -r '.file_path')
+
+  case "$file" in
+    *.ts|*.tsx|*.md|*.mdx)
+      before=$(cat "$file" 2>/dev/null) || exit 0
+      bun run prettier --write --log-level silent "$file" 2>/dev/null || true
+      # Only output if file changed
+      if [[ "$(cat "$file")" != "$before" ]]; then
+        echo "Formatted: $file"
+      fi
+      ;;
+  esac
+fi

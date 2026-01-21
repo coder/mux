@@ -7,24 +7,10 @@
  * is not discoverable in the UI (e.g., no tooltip, placeholder text, or visible hint).
  */
 
-/**
- * Keybind definition type
- */
-export interface Keybind {
-  key: string;
-  ctrl?: boolean;
-  shift?: boolean;
-  alt?: boolean;
-  meta?: boolean;
-  /**
-   * On macOS, Ctrl-based shortcuts traditionally use Cmd instead.
-   * Use this field to control that behavior:
-   * - "either" (default): accept Ctrl or Cmd
-   * - "command": require Cmd specifically
-   * - "control": require the Control key specifically
-   */
-  macCtrlBehavior?: "either" | "command" | "control";
-}
+import { stopKeyboardPropagation } from "@/browser/utils/events";
+import type { Keybind } from "@/common/types/keybind";
+
+export type { Keybind };
 
 /**
  * Detect if running on macOS
@@ -351,7 +337,8 @@ export function createEditKeyHandler(options: {
     if (e.key === "Enter") {
       options.onSave();
     } else if (e.key === "Escape") {
-      e.stopPropagation();
+      e.preventDefault();
+      stopKeyboardPropagation(e);
       options.onCancel();
     }
   };

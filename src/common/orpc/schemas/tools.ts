@@ -37,6 +37,8 @@ export const FileTreeNodeSchema = z.object({
   get children() {
     return z.array(FileTreeNodeSchema);
   },
+  /** Whether this file/directory is gitignored */
+  ignored: z.boolean().optional(),
   stats: z
     .object({
       filePath: z.string(),

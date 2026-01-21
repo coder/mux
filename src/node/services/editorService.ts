@@ -1,16 +1,51 @@
 import { spawn, spawnSync } from "child_process";
+import * as fsPromises from "fs/promises";
 import type { Config } from "@/node/config";
-import { isSSHRuntime } from "@/common/types/runtime";
+import { isDockerRuntime, isSSHRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 /**
  * Quote a string for safe use in shell commands.
- * Uses single quotes with proper escaping for embedded single quotes.
+ *
+ * IMPORTANT: Prefer spawning commands with an args array instead of building a
+ * single shell string. This helper exists only for custom editor commands.
  */
 function shellQuote(value: string): string {
-  if (value.length === 0) return "''";
+  if (value.length === 0) return process.platform === "win32" ? '""' : "''";
+
+  // cmd.exe: use double quotes (single quotes are treated as literal characters)
+  if (process.platform === "win32") {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  // POSIX shells: single quotes with proper escaping for embedded single quotes.
   return "'" + value.replace(/'/g, "'\"'\"'") + "'";
+}
+
+function getExecutableFromShellCommand(command: string): string | null {
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+
+  const quote = trimmed[0];
+  if (quote === '"' || quote === "'") {
+    const endQuoteIndex = trimmed.indexOf(quote, 1);
+    if (endQuoteIndex === -1) {
+      return null;
+    }
+    return trimmed.slice(1, endQuoteIndex);
+  }
+
+  return trimmed.split(/\s+/)[0] ?? null;
+}
+
+function looksLikePath(command: string): boolean {
+  return (
+    command.startsWith("./") ||
+    command.startsWith("../") ||
+    command.includes("/") ||
+    command.includes("\\") ||
+    /^[A-Za-z]:/.test(command)
+  );
 }
 
 export interface EditorConfig {
@@ -20,17 +55,12 @@ export interface EditorConfig {
 
 /**
  * Service for opening workspaces in code editors.
- * Supports VS Code, Cursor, Zed, and custom editors.
- * For SSH workspaces, can use Remote-SSH extension (VS Code/Cursor only).
+ *
+ * NOTE: VS Code/Cursor/Zed are opened via deep links in the renderer.
+ * This service is only responsible for spawning the user's custom editor command.
  */
 export class EditorService {
   private readonly config: Config;
-
-  private static readonly EDITOR_COMMANDS: Record<string, string> = {
-    vscode: "code",
-    cursor: "cursor",
-    zed: "zed",
-  };
 
   constructor(config: Config) {
     this.config = config;
@@ -38,9 +68,8 @@ export class EditorService {
 
   /**
    * Open a path in the user's configured code editor.
-   * For SSH workspaces with Remote-SSH extension enabled, opens directly in the editor.
    *
-   * @param workspaceId - The workspace (used to determine if SSH and get remote host)
+   * @param workspaceId - The workspace (used to determine runtime + validate constraints)
    * @param targetPath - The path to open (workspace directory or specific file)
    * @param editorConfig - Editor configuration from user settings
    */
@@ -50,6 +79,19 @@ export class EditorService {
     editorConfig: EditorConfig
   ): Promise<{ success: true; data: void } | { success: false; error: string }> {
     try {
+      if (editorConfig.editor !== "custom") {
+        return {
+          success: false,
+          error:
+            "Built-in editors are opened via deep links. Select Custom editor to use a command.",
+        };
+      }
+
+      const customCommand = editorConfig.customCommand?.trim();
+      if (!customCommand) {
+        return { success: false, error: "No editor command configured" };
+      }
+
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const workspace = allMetadata.find((w) => w.id === workspaceId);
 
@@ -57,63 +99,41 @@ export class EditorService {
         return { success: false, error: `Workspace not found: ${workspaceId}` };
       }
 
-      const runtimeConfig = workspace.runtimeConfig;
-      const isSSH = isSSHRuntime(runtimeConfig);
-
-      // Determine the editor command
-      const editorCommand =
-        editorConfig.editor === "custom"
-          ? editorConfig.customCommand
-          : EditorService.EDITOR_COMMANDS[editorConfig.editor];
-
-      if (!editorCommand) {
-        return { success: false, error: "No editor command configured" };
+      // Remote runtimes: custom commands run on the local machine and can't access remote paths.
+      if (isSSHRuntime(workspace.runtimeConfig)) {
+        return {
+          success: false,
+          error: "Custom editors do not support SSH connections for SSH workspaces",
+        };
       }
 
-      // Check if editor is available
-      const isAvailable = this.isCommandAvailable(editorCommand);
-      if (!isAvailable) {
-        return { success: false, error: `Editor command not found: ${editorCommand}` };
+      if (isDockerRuntime(workspace.runtimeConfig)) {
+        return { success: false, error: "Custom editors do not support Docker containers" };
       }
 
-      if (isSSH) {
-        // SSH workspace handling - only VS Code and Cursor support Remote-SSH
-        if (editorConfig.editor !== "vscode" && editorConfig.editor !== "cursor") {
-          return {
-            success: false,
-            error: `${editorConfig.editor} does not support Remote-SSH for SSH workspaces`,
-          };
-        }
-
-        // Resolve tilde paths to absolute paths for SSH (VS Code doesn't expand ~)
-        const runtime = createRuntime(runtimeConfig, { projectPath: workspace.projectPath });
-        const resolvedPath = await runtime.resolvePath(targetPath);
-
-        // Build the remote command: code --remote ssh-remote+host /remote/path
-        // Quote the path to handle spaces; the remote host arg doesn't need quoting
-        const shellCmd = `${editorCommand} --remote ${shellQuote(`ssh-remote+${runtimeConfig.host}`)} ${shellQuote(resolvedPath)}`;
-
-        log.info(`Opening SSH path in editor: ${shellCmd}`);
-        const child = spawn(shellCmd, [], {
-          detached: true,
-          stdio: "ignore",
-          shell: true,
-        });
-        child.unref();
-      } else {
-        // Local - expand tilde and open the path (quote to handle spaces)
-        const resolvedPath = targetPath.startsWith("~/")
-          ? targetPath.replace("~", process.env.HOME ?? "~")
-          : targetPath;
-        const shellCmd = `${editorCommand} ${shellQuote(resolvedPath)}`;
-        log.info(`Opening local path in editor: ${shellCmd}`);
-        const child = spawn(shellCmd, [], {
-          detached: true,
-          stdio: "ignore",
-          shell: true,
-        });
-        child.unref();
+      const executable = getExecutableFromShellCommand(customCommand);
+      if (!executable) {
+        return { success: false, error: `Invalid custom editor command: ${customCommand}` };
       }
+
+      if (!(await this.isCommandAvailable(executable))) {
+        return { success: false, error: `Editor command not found: ${executable}` };
+      }
+
+      // Local - expand tilde (shellQuote prevents shell expansion)
+      const resolvedPath = targetPath.startsWith("~/")
+        ? targetPath.replace("~", process.env.HOME ?? "~")
+        : targetPath;
+
+      const shellCmd = `${customCommand} ${shellQuote(resolvedPath)}`;
+      log.info(`Opening local path in custom editor: ${shellCmd}`);
+      const child = spawn(shellCmd, [], {
+        detached: true,
+        stdio: "ignore",
+        shell: true,
+        windowsHide: true,
+      });
+      child.unref();
 
       return { success: true, data: undefined };
     } catch (err) {
@@ -127,9 +147,15 @@ export class EditorService {
    * Check if a command is available in the system PATH.
    * Inherits enriched PATH from process.env (set by initShellEnv at startup).
    */
-  private isCommandAvailable(command: string): boolean {
+  private async isCommandAvailable(command: string): Promise<boolean> {
     try {
-      const result = spawnSync("which", [command], { encoding: "utf8" });
+      if (looksLikePath(command)) {
+        await fsPromises.access(command);
+        return true;
+      }
+
+      const lookupCommand = process.platform === "win32" ? "where" : "which";
+      const result = spawnSync(lookupCommand, [command], { encoding: "utf8" });
       return result.status === 0;
     } catch {
       return false;

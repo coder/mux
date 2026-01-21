@@ -280,10 +280,21 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           {isFileSuggestion && (
             <FileIcon filePath={suggestion.display} className="shrink-0 text-sm" />
           )}
-          <div className="font-monospace text-foreground min-w-0 flex-1 truncate text-xs">
+          <div
+            className={cn(
+              "font-monospace text-foreground text-xs",
+              isFileSuggestion ? "min-w-0 flex-1 truncate" : "shrink-0 whitespace-nowrap"
+            )}
+          >
             <HighlightedText text={suggestion.display} query={highlightQuery} />
           </div>
-          <div className="text-secondary shrink-0 text-right text-[11px]">
+          <div
+            className={cn(
+              "text-secondary min-w-0 truncate text-[11px]",
+              isFileSuggestion ? "max-w-[70%]" : "flex-1 text-right"
+            )}
+            title={suggestion.description}
+          >
             {suggestion.description}
           </div>
         </div>

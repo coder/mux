@@ -46,7 +46,7 @@ MAKEFLAGS += -j
 endif
 
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
-ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:@trpc/server --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
+ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
 # Include formatting rules
 include fmt.mk
@@ -141,7 +141,8 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 	@echo "Starting dev mode (3 watchers: nodemon for main process, esbuild for api, vite for renderer)..."
 	# On Windows, use npm run because bunx doesn't correctly pass arguments to concurrently
 	# https://github.com/oven-sh/bun/issues/18275
-	@NODE_OPTIONS="--max-old-space-size=4096" npm x concurrently -k --raw \
+	@NODE_OPTIONS="--max-old-space-size=4096" \
+		npm x concurrently -k --raw \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"vite"
@@ -154,33 +155,36 @@ dev: node_modules/.installed build-main build-preload ## Start development serve
 endif
 
 ifeq ($(OS),Windows_NT)
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0 for remote access
+dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
 	@echo "Starting dev-server..."
-	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000)"
+	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),127.0.0.1):$(or $(BACKEND_PORT),3000)"
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
 	@echo ""
-	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
+	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host>"
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
 	@npm x concurrently -k \
-		"npm x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
+		"nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"npm x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec \"node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)\"" \
-		"$(SHELL) -lc \"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite\""
+		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)" \
+		"set MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1)&& set MUX_VITE_PORT=$(or $(VITE_PORT),5173)&& set MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS)&& set MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000)&& vite"
 else
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0 for remote access
+dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
 	@echo "Starting dev-server..."
-	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000)"
+	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),127.0.0.1):$(or $(BACKEND_PORT),3000)"
 	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
 	@echo ""
-	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 BACKEND_HOST=0.0.0.0"
+	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host>"
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),localhost) --port $(or $(BACKEND_PORT),3000)'" \
-		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) VITE_BACKEND_URL=http://$(or $(BACKEND_HOST),localhost):$(or $(BACKEND_PORT),3000) vite"
+		"bun x nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms --exec 'NODE_ENV=development node dist/cli/index.js server --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
+		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS) MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000) vite"
 endif
 
 
+
+dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + free ports)
+	@bun scripts/dev-server-sandbox.ts
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
 	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .
@@ -269,7 +273,7 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links ## Run all static checks
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-actions lint-shellcheck ## Run all static checks
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
@@ -279,6 +283,23 @@ lint: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Run 
 
 lint-fix: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Run linter with --fix
 	@./scripts/lint.sh --fix
+
+lint-actions: lint-actionlint lint-zizmor ## Lint GitHub Actions workflows
+
+lint-actionlint: ## Run actionlint on GitHub Actions workflows (uses shellcheck if installed)
+	go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
+	@./scripts/zizmor.sh --min-confidence high .
+
+# Shell files to lint (excludes node_modules, build artifacts, .git)
+SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './build/*' -o -path './dist/*' \) -type f -name '*.sh' 2>/dev/null)
+
+lint-shellcheck: ## Run shellcheck on shell scripts
+	shellcheck --external-sources $(SHELL_SRC_FILES)
+
+pin-actions: ## Pin GitHub Actions to SHA hashes (requires GH_TOKEN or gh CLI)
+	./scripts/pin-actions.sh .github/workflows/*.yml .github/actions/*/action.yml
 
 ifeq ($(OS),Windows_NT)
 typecheck: node_modules/.installed src/version.ts $(BUILTIN_AGENTS_GENERATED) $(BUILTIN_SKILLS_GENERATED) ## Run TypeScript type checking (uses tsgo for 10x speedup)
@@ -417,39 +438,29 @@ chromatic: node_modules/.installed ## Run Chromatic for visual regression testin
 	@bun x chromatic --exit-zero-on-changes
 
 ## Benchmarks
-benchmark-terminal: ## Run Terminal-Bench with the mux agent (use TB_DATASET/TB_SAMPLE_SIZE/TB_TIMEOUT/TB_ARGS to customize)
-	@TB_DATASET=$${TB_DATASET:-terminal-bench-core==0.1.1}; \
+benchmark-terminal: ## Run Terminal-Bench 2.0 with Harbor (use TB_DATASET/TB_CONCURRENCY/TB_TIMEOUT/TB_ENV/TB_MODEL/TB_ARGS to customize)
+	@TB_DATASET=$${TB_DATASET:-terminal-bench@2.0}; \
 	TB_TIMEOUT=$${TB_TIMEOUT:-1800}; \
-	CONCURRENCY_FLAG=$${TB_CONCURRENCY:+--n-concurrent $$TB_CONCURRENCY}; \
-	LIVESTREAM_FLAG=$${TB_LIVESTREAM:+--livestream}; \
-	TASK_ID_FLAGS=""; \
-	if [ -n "$$TB_SAMPLE_SIZE" ]; then \
-		echo "Ensuring dataset $$TB_DATASET is downloaded..."; \
-		uvx terminal-bench datasets download --dataset "$$TB_DATASET" 2>&1 | grep -v "already exists" || true; \
-		echo "Sampling $$TB_SAMPLE_SIZE tasks from $$TB_DATASET..."; \
-		TASK_IDS=$$(python3 benchmarks/terminal_bench/sample_tasks.py --dataset "$$TB_DATASET" --sample-size "$$TB_SAMPLE_SIZE" --format space) || { \
-			echo "Error: Failed to sample tasks" >&2; \
-			exit 1; \
-		}; \
-		if [ -z "$$TASK_IDS" ]; then \
-			echo "Error: Sampling returned no task IDs" >&2; \
-			exit 1; \
-		fi; \
-		for task_id in $$TASK_IDS; do \
-			TASK_ID_FLAGS="$$TASK_ID_FLAGS --task-id $$task_id"; \
+	TB_CONCURRENCY=$${TB_CONCURRENCY:-4}; \
+	ENV_FLAG=$${TB_ENV:+--env $$TB_ENV}; \
+	MODEL_FLAG=$${TB_MODEL:+-m $$TB_MODEL}; \
+	TASK_NAME_FLAGS=""; \
+	if [ -n "$$TB_TASK_NAMES" ]; then \
+		for task_name in $$TB_TASK_NAMES; do \
+			TASK_NAME_FLAGS="$$TASK_NAME_FLAGS --task-name $$task_name"; \
 		done; \
-		echo "Selected task IDs: $$TASK_IDS"; \
 	fi; \
 	echo "Using timeout: $$TB_TIMEOUT seconds"; \
-	echo "Running Terminal-Bench with dataset $$TB_DATASET"; \
+	echo "Running Terminal-Bench with dataset $$TB_DATASET (concurrency: $$TB_CONCURRENCY)"; \
 	export MUX_TIMEOUT_MS=$$((TB_TIMEOUT * 1000)); \
-	uvx terminal-bench run \
+	uvx harbor run \
 		--dataset "$$TB_DATASET" \
 		--agent-import-path benchmarks.terminal_bench.mux_agent:MuxAgent \
-		--global-agent-timeout-sec $$TB_TIMEOUT \
-		$$CONCURRENCY_FLAG \
-		$$LIVESTREAM_FLAG \
-		$$TASK_ID_FLAGS \
+		--agent-kwarg timeout=$$TB_TIMEOUT \
+		--n-concurrent $$TB_CONCURRENCY \
+		$$ENV_FLAG \
+		$$MODEL_FLAG \
+		$$TASK_NAME_FLAGS \
 		$${TB_ARGS}
 
 ## Clean

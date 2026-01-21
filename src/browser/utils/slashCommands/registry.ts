@@ -186,23 +186,26 @@ const clearCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const TRUNCATE_USAGE = "/truncate <0-100> (percentage to remove)";
+
 const truncateCommandDefinition: SlashCommandDefinition = {
   key: "truncate",
   description: "Truncate conversation history by percentage (0-100)",
   handler: ({ cleanRemainingTokens }): ParsedCommand => {
     if (cleanRemainingTokens.length === 0) {
       return {
-        type: "unknown-command",
+        type: "command-missing-args",
         command: "truncate",
-        subcommand: undefined,
+        usage: TRUNCATE_USAGE,
       };
     }
 
     if (cleanRemainingTokens.length > 1) {
       return {
-        type: "unknown-command",
+        type: "command-invalid-args",
         command: "truncate",
-        subcommand: cleanRemainingTokens[1],
+        input: cleanRemainingTokens.join(" "),
+        usage: TRUNCATE_USAGE,
       };
     }
 
@@ -212,9 +215,10 @@ const truncateCommandDefinition: SlashCommandDefinition = {
 
     if (isNaN(pct) || pct < 0 || pct > 100) {
       return {
-        type: "unknown-command",
+        type: "command-invalid-args",
         command: "truncate",
-        subcommand: pctStr,
+        input: pctStr,
+        usage: TRUNCATE_USAGE,
       };
     }
 
@@ -447,23 +451,6 @@ const vimCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-const initCommandDefinition: SlashCommandDefinition = {
-  key: "init",
-  description: "Bootstrap an AGENTS.md file in a new or existing project",
-  appendSpace: false,
-  handler: ({ cleanRemainingTokens }): ParsedCommand => {
-    if (cleanRemainingTokens.length > 0) {
-      return {
-        type: "unknown-command",
-        command: "init",
-        subcommand: cleanRemainingTokens[0],
-      };
-    }
-
-    return { type: "init" };
-  },
-};
-
 const planOpenCommandDefinition: SlashCommandDefinition = {
   key: "open",
   description: "Open plan in external editor",
@@ -632,6 +619,8 @@ function parseMCPNameCommand(
   return { name, command };
 }
 
+const IDLE_USAGE = "/idle <hours> or /idle off";
+
 const idleCommandDefinition: SlashCommandDefinition = {
   key: "idle",
   description: "Configure idle compaction for this project. Usage: /idle <hours> or /idle off",
@@ -639,9 +628,9 @@ const idleCommandDefinition: SlashCommandDefinition = {
   handler: ({ cleanRemainingTokens }): ParsedCommand => {
     if (cleanRemainingTokens.length === 0) {
       return {
-        type: "unknown-command",
+        type: "command-missing-args",
         command: "idle",
-        subcommand: undefined,
+        usage: IDLE_USAGE,
       };
     }
 
@@ -655,14 +644,22 @@ const idleCommandDefinition: SlashCommandDefinition = {
     const hours = parseInt(arg, 10);
     if (isNaN(hours) || hours < 1) {
       return {
-        type: "unknown-command",
+        type: "command-invalid-args",
         command: "idle",
-        subcommand: arg,
+        input: arg,
+        usage: IDLE_USAGE,
       };
     }
 
     return { type: "idle-compaction", hours };
   },
+};
+
+const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
+  key: "debug-llm-request",
+  description: "Show the last LLM request sent (debug)",
+  appendSpace: false,
+  handler: (): ParsedCommand => ({ type: "debug-llm-request" }),
 };
 
 const mcpCommandDefinition: SlashCommandDefinition = {
@@ -678,7 +675,11 @@ const mcpCommandDefinition: SlashCommandDefinition = {
     if (sub === "add" || sub === "edit") {
       const parsed = parseMCPNameCommand(sub, cleanRemainingTokens, rawInput);
       if (!parsed) {
-        return { type: "unknown-command", command: "mcp", subcommand: sub };
+        return {
+          type: "command-missing-args",
+          command: `mcp ${sub}`,
+          usage: `/mcp ${sub} <name> <command>`,
+        };
       }
       return { type: sub === "add" ? "mcp-add" : "mcp-edit", ...parsed };
     }
@@ -686,7 +687,11 @@ const mcpCommandDefinition: SlashCommandDefinition = {
     if (sub === "remove") {
       const name = cleanRemainingTokens[1];
       if (!name) {
-        return { type: "unknown-command", command: "mcp", subcommand: "remove" };
+        return {
+          type: "command-missing-args",
+          command: "mcp remove",
+          usage: "/mcp remove <server-name>",
+        };
       }
       return { type: "mcp-remove", name };
     }
@@ -708,7 +713,7 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   vimCommandDefinition,
   mcpCommandDefinition,
   idleCommandDefinition,
-  initCommandDefinition,
+  debugLlmRequestCommandDefinition,
 ];
 
 export const SLASH_COMMAND_DEFINITION_MAP = new Map(

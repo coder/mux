@@ -14,6 +14,7 @@ import {
   type CompactionRequestData,
   type ContinueMessage,
   buildContinueMessage,
+  isDefaultContinueMessage,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -647,8 +648,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // misread it as a competing instruction. We still keep it in metadata so the backend resumes.
   // Only treat it as the default resume when there's no other queued content (images/reviews).
   const cm = options.continueMessage;
-  const isDefaultResume =
-    cm?.text?.trim() === "Continue" && !cm?.imageParts?.length && !cm?.reviews?.length;
+  const isDefaultResume = isDefaultContinueMessage(cm);
 
   if (cm && !isDefaultResume) {
     messageText += `\n\nThe user wants to continue with: ${cm.text}`;
@@ -985,6 +985,7 @@ export async function handlePlanOpenCommand(
     workspaceId,
     targetPath: planResult.data.path,
     runtimeConfig: workspaceInfo?.runtimeConfig,
+    isFile: true,
   });
 
   if (!openResult.success) {

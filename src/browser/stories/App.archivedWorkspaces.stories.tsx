@@ -20,10 +20,10 @@ function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
 }
 
 /**
- * Regression test: archived workspaces with a custom title should still expose the git branch
+ * Regression test: archived workspaces with a custom title should still expose the workspace
  * name (workspace.name) in the runtime badge tooltip.
  */
-export const BranchNameInRuntimeTooltip: AppStory = {
+export const WorkspaceNameInRuntimeTooltip: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -90,8 +90,15 @@ export const BranchNameInRuntimeTooltip: AppStory = {
     const canvas = within(storyRoot);
 
     // Wait for the archived list to load and scroll it into view (it's below the creation prompt).
+
     const archivedHeader = await canvas.findByText(/Archived Workspaces/i, {}, { timeout: 10000 });
     archivedHeader.scrollIntoView({ block: "start" });
+
+    // ArchivedWorkspaces is collapsed by default; expand to make rows interactable.
+    const expandButton = canvas.queryByLabelText("Expand archived workspaces");
+    if (expandButton) {
+      await userEvent.click(expandButton);
+    }
 
     // Find the workspace row by its visible title.
     const checkbox = await canvas.findByLabelText(
@@ -130,7 +137,7 @@ export const BranchNameInRuntimeTooltip: AppStory = {
 
         const tooltipWithin = within(tooltip as HTMLElement);
         tooltipWithin.getByText("Worktree: isolated git worktree");
-        tooltipWithin.getByText("Branch:");
+        tooltipWithin.getByText("Name");
         tooltipWithin.getByText("bugfix/agent-report-rendering");
       },
       { timeout: 2000, interval: 50 }
@@ -140,7 +147,7 @@ export const BranchNameInRuntimeTooltip: AppStory = {
     docs: {
       description: {
         story:
-          "Shows a ProjectPage with archived workspaces; hovering the worktree badge displays the stored branch name when a custom title is set.",
+          "Shows a ProjectPage with archived workspaces; hovering the worktree badge displays the workspace name when a custom title is set.",
       },
     },
   },

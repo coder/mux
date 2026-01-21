@@ -15,9 +15,10 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name == 'push'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0 # Required for Chromatic to track changes
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -31,7 +32,7 @@ jobs:
         run: bun x storybook build --stats-json
 
       - name: Run Chromatic
-        uses: chromaui/action@latest
+        uses: chromaui/action@07791f8243f4cb2698bf4d00426baf4b2d1cb7e0 # v13.3.5
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
           exitZeroOnChanges: true

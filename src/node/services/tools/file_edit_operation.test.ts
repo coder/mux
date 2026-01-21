@@ -246,9 +246,9 @@ describe("executeFileEditOperation plan mode enforcement", () => {
     expect(await fs.readFile(planPath, "utf-8")).toBe("# Plan\n");
   });
 
-  test("should handle relative path to plan file in plan mode", async () => {
-    // When user provides a relative path that resolves to the plan file,
-    // it should still be allowed
+  test("should require exact plan file path string in plan mode", async () => {
+    // If an alternate path resolves to the plan file, we still require using the exact
+    // planFilePath string provided in the plan-mode instructions.
     const resolvePathCalls: string[] = [];
 
     const mockRuntime = {
@@ -282,7 +282,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
       }),
     } as unknown as Runtime;
 
-    await executeFileEditOperation({
+    const result = await executeFileEditOperation({
       config: {
         cwd: "/home/user/project",
         runtime: mockRuntime,
@@ -290,13 +290,19 @@ describe("executeFileEditOperation plan mode enforcement", () => {
         mode: "plan",
         planFilePath: "/home/user/.mux/sessions/ws/plan.md",
       },
-      filePath: "../.mux/sessions/ws/plan.md", // Relative path to plan file
+      filePath: "../.mux/sessions/ws/plan.md", // Alternate path to plan file
       operation: () => ({ success: true, newContent: "# Plan", metadata: {} }),
     });
 
-    // This will fail at file read (because mock doesn't provide real stream),
-    // but the key is that it passes the plan mode check and tries to read the file
-    // So we check that resolvePath was called for both paths
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("exact plan file path");
+      expect(result.error).toContain("/home/user/.mux/sessions/ws/plan.md");
+      expect(result.error).toContain("../.mux/sessions/ws/plan.md");
+      expect(result.error).toContain("resolves to the plan file");
+    }
+
+    // We still resolve both paths to determine whether the attempted path is the plan file.
     expect(resolvePathCalls).toContain("../.mux/sessions/ws/plan.md");
     expect(resolvePathCalls).toContain("/home/user/.mux/sessions/ws/plan.md");
   });

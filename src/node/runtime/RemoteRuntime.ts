@@ -27,6 +27,7 @@ import type {
   WorkspaceInitResult,
   WorkspaceForkParams,
   WorkspaceForkResult,
+  EnsureReadyResult,
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
@@ -364,6 +365,32 @@ export abstract class RemoteRuntime implements Runtime {
   }
 
   /**
+   * Ensure a directory exists (mkdir -p semantics).
+   */
+  async ensureDir(dirPath: string): Promise<void> {
+    const stream = await this.exec(`mkdir -p ${this.quoteForRemote(dirPath)}`, {
+      cwd: "/",
+      timeout: 10,
+    });
+
+    await stream.stdin.close();
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      streamToString(stream.stdout),
+      streamToString(stream.stderr),
+      stream.exitCode,
+    ]);
+
+    if (exitCode !== 0) {
+      const extra = stderr.trim() || stdout.trim();
+      throw new RuntimeError(
+        `Failed to create directory ${dirPath}: exit code ${exitCode}${extra ? `: ${extra}` : ""}`,
+        "file_io"
+      );
+    }
+  }
+
+  /**
    * Get file statistics via exec.
    */
   async stat(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
@@ -453,8 +480,9 @@ export abstract class RemoteRuntime implements Runtime {
 
   /**
    * Remote runtimes are always ready (SSH connections are re-established as needed).
+   * Subclasses (CoderSSHRuntime, DockerRuntime) may override for provisioning checks.
    */
-  ensureReady(): Promise<{ ready: boolean; error?: string }> {
+  ensureReady(): Promise<EnsureReadyResult> {
     return Promise.resolve({ ready: true });
   }
 

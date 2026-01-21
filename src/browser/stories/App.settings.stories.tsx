@@ -23,6 +23,7 @@ import { within, userEvent, waitFor } from "@storybook/test";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { TaskSettings } from "@/common/types/tasks";
+import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
 
 export default {
   ...appMeta,
@@ -35,6 +36,7 @@ export default {
 
 /** Setup basic workspace for settings stories */
 function setupSettingsStory(options: {
+  layoutPresets?: LayoutPresetsConfig;
   providersConfig?: Record<
     string,
     { apiKeySet: boolean; isConfigured: boolean; baseUrl?: string; models?: string[] }
@@ -64,6 +66,7 @@ function setupSettingsStory(options: {
     agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
     taskSettings: options.taskSettings,
+    layoutPresets: options.layoutPresets,
   });
 }
 
@@ -187,6 +190,123 @@ export const ProvidersConfigured: AppStory = {
   },
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Layouts
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Layouts section - empty state (no layouts configured) */
+export const LayoutsEmpty: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          layoutPresets: {
+            version: 2,
+            slots: [],
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "layouts");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByRole("heading", { name: /layout slots/i });
+
+    // Empty state should render no slot rows.
+    await dialogCanvas.findByText(/^Add layout$/i);
+    if (dialogCanvas.queryByText(/Slot 1/i)) {
+      throw new Error("Expected no slot rows to be rendered in the empty state");
+    }
+  },
+};
+
+/** Layouts section - with a preset assigned to a slot */
+export const LayoutsConfigured: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          layoutPresets: {
+            version: 2,
+            slots: [
+              {
+                slot: 1,
+                preset: {
+                  id: "preset-1",
+                  name: "My Layout",
+                  leftSidebarCollapsed: false,
+                  rightSidebar: {
+                    collapsed: false,
+                    width: { mode: "px", value: 420 },
+                    layout: {
+                      version: 1,
+                      nextId: 2,
+                      focusedTabsetId: "tabset-1",
+                      root: {
+                        type: "tabset",
+                        id: "tabset-1",
+                        tabs: ["costs", "review", "terminal_new:t1"],
+                        activeTab: "review",
+                      },
+                    },
+                  },
+                },
+              },
+              {
+                slot: 10,
+                preset: {
+                  id: "preset-10",
+                  name: "Extra Layout",
+                  leftSidebarCollapsed: false,
+                  rightSidebar: {
+                    collapsed: true,
+                    width: { mode: "px", value: 400 },
+                    layout: {
+                      version: 1,
+                      nextId: 2,
+                      focusedTabsetId: "tabset-1",
+                      root: {
+                        type: "tabset",
+                        id: "tabset-1",
+                        tabs: ["costs"],
+                        activeTab: "costs",
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "layouts");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByRole("heading", { name: /layout slots/i });
+
+    // Wait for the async config load from the UILayoutsProvider.
+    await dialogCanvas.findByText(/My Layout/i);
+    await dialogCanvas.findByText(/Extra Layout/i);
+    await dialogCanvas.findByText(/^Slot 1$/i);
+    await dialogCanvas.findByText(/^Slot 10$/i);
+    await dialogCanvas.findByText(/^Add layout$/i);
+
+    if (dialogCanvas.queryByText(/Slot 2/i)) {
+      throw new Error("Expected only configured layouts to render");
+    }
+  },
+};
 /** Providers section - expanded to show quick links (docs + get API key) */
 export const ProvidersExpanded: AppStory = {
   render: () => (

@@ -20,25 +20,6 @@ export function LeftSidebar(props: LeftSidebarProps) {
 
   return (
     <>
-      {/* Hamburger menu button - only visible on mobile */}
-      {collapsed && (
-        <button
-          onClick={onToggleCollapsed}
-          title="Open sidebar"
-          aria-label="Open sidebar menu"
-          className={cn(
-            "hidden mobile-menu-btn fixed top-3 left-3 z-30",
-            "w-10 h-10 bg-sidebar border border-border-light rounded-md cursor-pointer",
-            "items-center justify-center text-foreground text-xl transition-all duration-200",
-            "shadow-[0_2px_4px_rgba(0,0,0,0.3)]",
-            "hover:bg-hover hover:border-bg-light",
-            "active:scale-95"
-          )}
-        >
-          ☰
-        </button>
-      )}
-
       {/* Overlay backdrop - only visible on mobile when sidebar is open */}
       <div
         className={cn(

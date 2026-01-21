@@ -1,4 +1,5 @@
 import { createPortal } from "react-dom";
+import { AlertTriangle } from "lucide-react";
 import type { PopoverErrorState } from "@/browser/hooks/usePopoverError";
 
 interface PopoverErrorProps {
@@ -24,7 +25,7 @@ export function PopoverError(props: PopoverErrorProps) {
         left: `${props.error.position.left}px`,
       }}
     >
-      <span className="text-sm leading-none">⚠</span>
+      <AlertTriangle aria-hidden="true" className="h-4 w-4" />
       <div className="flex-1 leading-[1.4] break-words whitespace-pre-wrap">
         <span className="font-medium">{props.prefix}</span>
         <p className="text-light mt-1">{props.error.error}</p>

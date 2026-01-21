@@ -19,6 +19,7 @@ import {
   type ProviderName,
 } from "@/common/constants/providers";
 
+import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config, ProviderConfig } from "@/node/config";
@@ -47,6 +48,7 @@ import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
+import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { buildSystemMessage, readToolInstructions } from "./systemMessage";
@@ -410,6 +412,9 @@ export class AIService extends EventEmitter {
     string,
     { abortController: AbortController; startTime: number; syntheticMessageId: string }
   >();
+
+  // Debug: captured LLM request payloads for last send per workspace
+  private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
 
@@ -756,8 +761,8 @@ export class AIService extends EventEmitter {
 
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Wrap fetch to force truncation: "disabled" for OpenAI Responses API calls.
-        // This guarantees OpenAI never truncates server-side (mux handles context).
+        // Wrap fetch to default truncation to "disabled" for OpenAI Responses API calls.
+        // This preserves our compaction handling while still allowing explicit truncation (e.g., auto).
         const fetchWithOpenAITruncation = Object.assign(
           async (
             input: Parameters<typeof fetch>[0],
@@ -792,7 +797,10 @@ export class AIService extends EventEmitter {
 
                 try {
                   const json = JSON.parse(body) as Record<string, unknown>;
-                  json.truncation = "disabled";
+                  const truncation = json.truncation;
+                  if (truncation !== "auto" && truncation !== "disabled") {
+                    json.truncation = "disabled";
+                  }
                   const newBody = JSON.stringify(json);
                   const newInit: RequestInit = { ...init, headers, body: newBody };
                   return baseFetch(input, newInit);
@@ -1104,6 +1112,7 @@ export class AIService extends EventEmitter {
    * @param changedFileAttachments Optional attachments for files that were edited externally
    * @param postCompactionAttachments Optional attachments to inject after compaction
    * @param disableWorkspaceAgents When true, read agent definitions from project path instead of workspace worktree
+   * @param openaiTruncationModeOverride Optional OpenAI truncation override (e.g., compaction retry)
    * @returns Promise that resolves when streaming completes or fails
    */
   async streamMessage(
@@ -1123,7 +1132,8 @@ export class AIService extends EventEmitter {
     postCompactionAttachments?: PostCompactionAttachment[] | null,
     experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean },
     disableWorkspaceAgents?: boolean,
-    hasQueuedMessage?: () => boolean
+    hasQueuedMessage?: () => boolean,
+    openaiTruncationModeOverride?: "auto" | "disabled"
   ): Promise<Result<void, SendMessageError>> {
     // Support interrupts during startup (before StreamManager emits stream-start).
     // We register an AbortController up-front and let stopStream() abort it.
@@ -1254,14 +1264,30 @@ export class AIService extends EventEmitter {
 
       // Verify runtime is actually reachable after init completes.
       // For Docker workspaces, this checks the container exists and starts it if stopped.
+      // For Coder workspaces, this may start a stopped workspace and wait for it.
       // If init failed during container creation, ensureReady() will return an error.
-      const readyResult = await runtime.ensureReady();
+      const readyResult = await runtime.ensureReady({
+        signal: combinedAbortSignal,
+        statusSink: (status) => {
+          // Emit runtime-status events for frontend UX (StreamingBarrier)
+          this.emit("runtime-status", {
+            type: "runtime-status",
+            workspaceId,
+            phase: status.phase,
+            runtimeType: status.runtimeType,
+            detail: status.detail,
+          });
+        },
+      });
       if (!readyResult.ready) {
         // Generate message ID for the error event (frontend needs this for synthetic message)
-        const errorMessageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+        const errorMessageId = createAssistantMessageId();
         const runtimeType = metadata.runtimeConfig?.type ?? "local";
         const runtimeLabel = runtimeType === "docker" ? "Container" : "Runtime";
-        const errorMessage = `${runtimeLabel} unavailable.`;
+        const errorMessage = readyResult.error || `${runtimeLabel} unavailable.`;
+
+        // Use the errorType from ensureReady result (runtime_not_ready vs runtime_start_failed)
+        const errorType = readyResult.errorType;
 
         // Emit error event so frontend receives it via stream subscription.
         // This mirrors the context_exceeded pattern - the fire-and-forget sendMessage
@@ -1272,11 +1298,11 @@ export class AIService extends EventEmitter {
           workspaceId,
           messageId: errorMessageId,
           error: errorMessage,
-          errorType: "runtime_not_ready",
+          errorType,
         });
 
         return Err({
-          type: "runtime_not_ready",
+          type: errorType,
           message: errorMessage,
         });
       }
@@ -1776,7 +1802,7 @@ export class AIService extends EventEmitter {
       if (combinedAbortSignal.aborted) {
         return Ok(undefined);
       }
-      const assistantMessageId = `assistant-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+      const assistantMessageId = createAssistantMessageId();
       const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
         timestamp: Date.now(),
         model: modelString,
@@ -1917,6 +1943,7 @@ export class AIService extends EventEmitter {
       }
 
       // Build provider options based on thinking level and message history
+      const truncationMode = openaiTruncationModeOverride;
       // Pass filtered messages so OpenAI can extract previousResponseId for persistence
       // Also pass callback to filter out lost responseIds (OpenAI invalidated them)
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching
@@ -1926,7 +1953,8 @@ export class AIService extends EventEmitter {
         filteredMessages,
         (id) => this.streamManager.isResponseIdLost(id),
         effectiveMuxProviderOptions,
-        workspaceId
+        workspaceId,
+        truncationMode
       );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
@@ -1971,7 +1999,31 @@ export class AIService extends EventEmitter {
         return Ok(undefined);
       }
 
-      // Delegate to StreamManager with model instance, system message, tools, historySequence, and initial metadata
+      // Capture request payload for the debug modal, then delegate to StreamManager.
+      const snapshot: DebugLlmRequestSnapshot = {
+        capturedAt: Date.now(),
+        workspaceId,
+        model: modelString,
+        providerName,
+        thinkingLevel: effectiveThinkingLevel,
+        mode: effectiveMode,
+        agentId: effectiveAgentId,
+        maxOutputTokens,
+        systemMessage,
+        messages: finalMessages,
+      };
+
+      try {
+        const cloned =
+          typeof structuredClone === "function"
+            ? structuredClone(snapshot)
+            : (JSON.parse(JSON.stringify(snapshot)) as DebugLlmRequestSnapshot);
+
+        this.lastLlmRequestByWorkspace.set(workspaceId, cloned);
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        log.warn("Failed to capture debug LLM request snapshot", { workspaceId, error: errMsg });
+      }
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
@@ -2107,6 +2159,14 @@ export class AIService extends EventEmitter {
     await this.streamManager.replayStream(workspaceId);
   }
 
+  debugGetLastLlmRequest(workspaceId: string): Result<DebugLlmRequestSnapshot | null> {
+    if (typeof workspaceId !== "string" || workspaceId.trim().length === 0) {
+      return Err("debugGetLastLlmRequest: workspaceId is required");
+    }
+
+    return Ok(this.lastLlmRequestByWorkspace.get(workspaceId) ?? null);
+  }
+
   /**
    * DEBUG ONLY: Trigger an artificial stream error for testing.
    * This is used by integration tests to simulate network errors mid-stream.
@@ -2117,6 +2177,14 @@ export class AIService extends EventEmitter {
     errorMessage = "Test-triggered stream error"
   ): Promise<boolean> {
     return this.streamManager.debugTriggerStreamError(workspaceId, errorMessage);
+  }
+
+  /**
+   * Wait for workspace initialization to complete (if running).
+   * Public wrapper for agent discovery and other callers.
+   */
+  async waitForInit(workspaceId: string, abortSignal?: AbortSignal): Promise<void> {
+    return this.initStateManager.waitForInit(workspaceId, abortSignal);
   }
 
   async deleteWorkspace(workspaceId: string): Promise<Result<void>> {

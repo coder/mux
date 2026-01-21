@@ -1,4 +1,5 @@
 import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
@@ -97,8 +98,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   };
 
   const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    // Always stop propagation to prevent parent div's onKeyDown from interfering
-    e.stopPropagation();
+    // Always stop propagation to prevent parent div's onKeyDown and global handlers from interfering
+    stopKeyboardPropagation(e);
     if (e.key === "Enter") {
       e.preventDefault();
       void handleConfirmEdit();
@@ -211,7 +212,12 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-1.5">
-            <RuntimeBadge runtimeConfig={metadata.runtimeConfig} isWorking={isWorking} />
+            <RuntimeBadge
+              runtimeConfig={metadata.runtimeConfig}
+              isWorking={isWorking}
+              workspaceName={metadata.name}
+              workspacePath={namedWorkspacePath}
+            />
             {isEditing ? (
               <input
                 className="bg-input-bg text-input-text border-input-border font-inherit focus:border-input-border-focus col-span-2 min-w-0 flex-1 rounded-sm border px-1 text-left text-[13px] outline-none"
@@ -266,7 +272,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             <div className="min-w-0">
               {isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
-                  <span className="-mt-0.5 shrink-0 text-[10px]">📦</span>
+                  <ArchiveIcon className="h-3 w-3 shrink-0" />
                   <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (

@@ -18,6 +18,8 @@ interface TerminalViewProps {
   setDocumentTitle?: boolean;
   /** Called when the terminal title changes (via OSC escape sequences from running processes) */
   onTitleChange?: (title: string) => void;
+  /** Called once after auto-focus successfully lands (used to clear parent state). */
+  onAutoFocusConsumed?: () => void;
   /**
    * Whether to auto-focus the terminal on mount/visibility change.
    *
@@ -33,10 +35,12 @@ export function TerminalView({
   visible,
   setDocumentTitle = true,
   onTitleChange,
+  onAutoFocusConsumed,
   autoFocus = true,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
+  const autoFocusRef = useRef(autoFocus);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
@@ -64,6 +68,70 @@ export function TerminalView({
     };
     void setWindowDetails();
   }, [api, workspaceId, setDocumentTitle]);
+
+  const autoFocusConsumedRef = useRef(false);
+
+  const consumeAutoFocus = useCallback(() => {
+    if (autoFocusConsumedRef.current) {
+      return;
+    }
+    autoFocusConsumedRef.current = true;
+    onAutoFocusConsumed?.();
+  }, [onAutoFocusConsumed]);
+
+  useEffect(() => {
+    autoFocusRef.current = autoFocus;
+    autoFocusConsumedRef.current = false;
+  }, [autoFocus]);
+
+  useEffect(() => {
+    if (!autoFocus || !visible || !terminalReady || autoFocusConsumedRef.current) {
+      return;
+    }
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 60;
+
+    const tryFocus = () => {
+      if (cancelled) {
+        return;
+      }
+
+      const term = termRef.current;
+      const container = containerRef.current;
+      if (!term || !container) {
+        return;
+      }
+
+      term.focus();
+      const textarea = container.querySelector("textarea");
+      if (textarea instanceof HTMLTextAreaElement) {
+        textarea.focus();
+      }
+
+      const active = document.activeElement;
+      const isFocused = active instanceof HTMLElement && container.contains(active);
+      if (isFocused) {
+        consumeAutoFocus();
+        return;
+      }
+
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        requestAnimationFrame(tryFocus);
+      } else {
+        consumeAutoFocus();
+      }
+    };
+
+    const rafId = requestAnimationFrame(tryFocus);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
+  }, [autoFocus, visible, terminalReady, consumeAutoFocus]);
 
   // Reset loading state when session changes
   useEffect(() => {
@@ -167,6 +235,8 @@ export function TerminalView({
     if (!containerEl) {
       return;
     }
+
+    const shouldAutoFocusOnInit = autoFocusRef.current;
 
     // StrictMode will run this effect twice in dev (setup → cleanup → setup).
     // If the first async init completes after cleanup, we can end up with two ghostty-web
@@ -279,7 +349,7 @@ export function TerminalView({
         // It also schedules a delayed focus with setTimeout(0) as "backup".
         // If autoFocus is disabled, blur immediately AND with a delayed blur to counteract.
         // If autoFocus is enabled, focus the hidden textarea to avoid browser caret.
-        if (autoFocus) {
+        if (shouldAutoFocusOnInit) {
           const textarea = containerEl.querySelector("textarea");
           if (textarea instanceof HTMLTextAreaElement) {
             textarea.focus();
@@ -340,7 +410,7 @@ export function TerminalView({
       containerEl.replaceChildren();
       initInProgressRef.current = false;
     };
-  }, [visible, workspaceId, router, sessionId, autoFocus]);
+  }, [visible, workspaceId, router, sessionId]);
 
   // Track focus/blur on the terminal container to control cursor blinking
   useEffect(() => {
@@ -351,14 +421,19 @@ export function TerminalView({
     const container = containerRef.current;
 
     const handleFocusIn = () => {
+      container.setAttribute("data-terminal-autofocus", "true");
       if (termRef.current) {
         termRef.current.options.cursorBlink = true;
+      }
+      if (autoFocus) {
+        consumeAutoFocus();
       }
     };
 
     const handleFocusOut = (e: FocusEvent) => {
       // Only blur if focus is leaving the container entirely
       if (!container.contains(e.relatedTarget as Node)) {
+        container.removeAttribute("data-terminal-autofocus");
         if (termRef.current) {
           termRef.current.options.cursorBlink = false;
         }
@@ -371,8 +446,9 @@ export function TerminalView({
     return () => {
       container.removeEventListener("focusin", handleFocusIn);
       container.removeEventListener("focusout", handleFocusOut);
+      container.removeAttribute("data-terminal-autofocus");
     };
-  }, [terminalReady]);
+  }, [autoFocus, consumeAutoFocus, terminalReady]);
 
   // Resize on container size change
   useEffect(() => {

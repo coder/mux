@@ -1,12 +1,14 @@
-import React, { useEffect, useId } from "react";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import React, { useId } from "react";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
 // Glow is applied via CSS using color-mix with the theme color
+const BASE_THINKING_LEVELS: ThinkingLevel[] = THINKING_LEVELS.filter((level) => level !== "xhigh");
+
 const GLOW_INTENSITIES: Record<number, { track: string; thumb: string }> = {
   0: { track: "none", thumb: "none" },
   1: {
@@ -68,31 +70,14 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
   const [isHovering, setIsHovering] = React.useState(false);
   const sliderId = useId();
   const allowed = getThinkingPolicyForModel(modelString);
-
-  // Force value to nearest allowed level if current level is invalid for this model
-  // This prevents "stuck" invalid states when switching models
-  useEffect(() => {
-    // If current level is valid, do nothing
-    if (allowed.includes(thinkingLevel)) return;
-
-    // If current level is invalid, switch to a valid one
-    // Prefer medium if available, otherwise first allowed
-    const fallback = allowed.includes("medium") ? "medium" : allowed[0];
-
-    // Only update if we actually need to change it (prevent infinite loops)
-    // We use a timeout to avoid updating state during render
-    const timer = setTimeout(() => {
-      setThinkingLevel(fallback);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [allowed, thinkingLevel, setThinkingLevel]);
+  const effectiveThinkingLevel = enforceThinkingPolicy(modelString, thinkingLevel);
 
   if (allowed.length <= 1) {
     // Render non-interactive badge for single-option policies with explanatory tooltip
     // or if no options are available (shouldn't happen given policy types)
     const fixedLevel = allowed[0] || "off";
     // Calculate style based on "standard" levels for consistency
-    const standardIndex = ["off", "low", "medium", "high"].indexOf(fixedLevel);
+    const standardIndex = BASE_THINKING_LEVELS.indexOf(fixedLevel);
     const value = standardIndex === -1 ? 0 : standardIndex;
 
     const formattedLevel = fixedLevel === "off" ? "Off" : fixedLevel;
@@ -119,15 +104,15 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
   }
 
   // Map current level to index within the *allowed* subset
-  const currentIndex = allowed.indexOf(thinkingLevel);
+  const currentIndex = allowed.indexOf(effectiveThinkingLevel);
   const sliderValue = currentIndex === -1 ? 0 : currentIndex;
   const maxSteps = allowed.length - 1;
 
   // Map levels to visual intensity indices (0-3) so colors/glow stay consistent
   // Levels outside the base 4 (e.g., xhigh) map to the strongest intensity
-  const baseVisualOrder: ThinkingLevel[] = ["off", "low", "medium", "high"];
+  const baseVisualOrder = BASE_THINKING_LEVELS;
   const visualValue = (() => {
-    const idx = baseVisualOrder.indexOf(thinkingLevel);
+    const idx = baseVisualOrder.indexOf(effectiveThinkingLevel);
     if (idx >= 0) return idx;
     return baseVisualOrder.length - 1; // clamp extras (e.g., xhigh) to strongest glow
   })();
@@ -171,7 +156,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
             aria-valuemin={0}
             aria-valuemax={maxSteps}
             aria-valuenow={sliderValue}
-            aria-valuetext={thinkingLevel}
+            aria-valuetext={effectiveThinkingLevel}
             aria-label="Thinking level"
             className="thinking-slider"
             style={
@@ -186,14 +171,14 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
             type="button"
             onClick={cycleThinkingLevel}
             className="cursor-pointer border-none bg-transparent p-0"
-            aria-label={`Thinking level: ${thinkingLevel}. Click to cycle.`}
+            aria-label={`Thinking level: ${effectiveThinkingLevel}. Click to cycle.`}
           >
             <span
               className="min-w-11 uppercase transition-all duration-200 select-none"
               style={textStyle}
               aria-live="polite"
             >
-              {thinkingLevel}
+              {effectiveThinkingLevel}
             </span>
           </button>
         </div>

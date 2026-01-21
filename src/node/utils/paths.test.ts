@@ -79,18 +79,13 @@ describe("PlatformPaths", () => {
   });
 
   describe("formatHome", () => {
-    test("replaces home directory with tilde on Unix", () => {
+    test("replaces home directory with tilde", () => {
       const home = os.homedir();
       const testPath = path.join(home, "projects", "mux");
       const result = PlatformPaths.formatHome(testPath);
 
-      // On Unix-like systems, should use tilde
-      if (process.platform !== "win32") {
-        expect(result).toBe("~/projects/mux");
-      } else {
-        // On Windows, should keep full path
-        expect(result).toContain(home);
-      }
+      const sep = PlatformPaths.separator;
+      expect(result).toBe(`~${sep}projects${sep}mux`);
     });
 
     test("leaves non-home paths unchanged", () => {

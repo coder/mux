@@ -654,8 +654,6 @@ export interface GitStatusFixture {
 
 export function createGitStatusOutput(fixture: GitStatusFixture): string {
   const { ahead = 0, behind = 0, dirty = 0 } = fixture;
-  const headCommit = fixture.headCommit ?? "Latest commit";
-  const originCommit = fixture.originCommit ?? "Latest commit";
 
   // Provide deterministic defaults so existing stories still show something
   // when the indicator switches to line-delta mode.
@@ -664,31 +662,7 @@ export function createGitStatusOutput(fixture: GitStatusFixture): string {
   const incomingAdditions = fixture.incomingAdditions ?? behind * 10;
   const incomingDeletions = fixture.incomingDeletions ?? behind * 3;
 
-  // Deterministic hex hashes (parseGitShowBranchForStatus expects [a-f0-9]+).
-  let hashIndex = 0;
-  const nextHash = () => {
-    hashIndex++;
-    return hashIndex.toString(16).padStart(7, "0");
-  };
-
-  const lines = ["---PRIMARY---", "main", "---SHOW_BRANCH---"];
-  lines.push(`! [HEAD] ${headCommit}`);
-  lines.push(` ! [origin/main] ${originCommit}`);
-  lines.push("--");
-
-  // Ahead commits (local only)
-  for (let i = 0; i < ahead; i++) {
-    lines.push(`-  [${nextHash()}] Local commit ${i + 1}`);
-  }
-  // Behind commits (origin only)
-  for (let i = 0; i < behind; i++) {
-    lines.push(` + [${nextHash()}] Origin commit ${i + 1}`);
-  }
-  // Synced commit
-  if (ahead === 0 && behind === 0) {
-    lines.push(`++ [${nextHash()}] ${headCommit}`);
-  }
-
+  const lines = ["---PRIMARY---", "main", "---AHEAD_BEHIND---", `${ahead} ${behind}`];
   lines.push("---DIRTY---");
   lines.push(String(dirty));
   lines.push("---LINE_DELTA---");

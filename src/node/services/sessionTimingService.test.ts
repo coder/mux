@@ -129,6 +129,111 @@ describe("SessionTimingService", () => {
     expect(file.session?.byModel[key]?.responseCount).toBe(1);
   });
 
+  it("does not double-count overlapping tool calls", async () => {
+    const telemetry = createMockTelemetryService();
+    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+    service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+    const workspaceId = "test-workspace";
+    const messageId = "m1";
+    const model = "openai:gpt-4o";
+    const startTime = 3_000_000;
+
+    service.handleStreamStart({
+      type: "stream-start",
+      workspaceId,
+      messageId,
+      model,
+      historySequence: 1,
+      startTime,
+      mode: "exec",
+    });
+
+    // First token arrives quickly.
+    service.handleStreamDelta({
+      type: "stream-delta",
+      workspaceId,
+      messageId,
+      delta: "hi",
+      tokens: 2,
+      timestamp: startTime + 500,
+    });
+
+    // Two tools overlap: [1000, 3000] and [1500, 4000]
+    service.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId,
+      messageId,
+      toolCallId: "t1",
+      toolName: "bash",
+      args: { cmd: "sleep 2" },
+      tokens: 1,
+      timestamp: startTime + 1000,
+    });
+
+    service.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId,
+      messageId,
+      toolCallId: "t2",
+      toolName: "bash",
+      args: { cmd: "sleep 3" },
+      tokens: 1,
+      timestamp: startTime + 1500,
+    });
+
+    service.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId,
+      messageId,
+      toolCallId: "t1",
+      toolName: "bash",
+      result: { ok: true },
+      timestamp: startTime + 3000,
+    });
+
+    service.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId,
+      messageId,
+      toolCallId: "t2",
+      toolName: "bash",
+      result: { ok: true },
+      timestamp: startTime + 4000,
+    });
+
+    service.handleStreamEnd({
+      type: "stream-end",
+      workspaceId,
+      messageId,
+      metadata: {
+        model,
+        duration: 5000,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+        },
+      },
+      parts: [],
+    });
+
+    await service.waitForIdle(workspaceId);
+
+    const snapshot = await service.getSnapshot(workspaceId);
+    expect(snapshot.lastRequest?.totalDurationMs).toBe(5000);
+
+    // Tool wall-time should be the union: [1000, 4000] = 3000ms.
+    expect(snapshot.lastRequest?.toolExecutionMs).toBe(3000);
+    expect(snapshot.lastRequest?.toolExecutionMs).toBeLessThanOrEqual(
+      snapshot.lastRequest?.totalDurationMs ?? 0
+    );
+
+    expect(snapshot.lastRequest?.ttftMs).toBe(500);
+    expect(snapshot.lastRequest?.streamingMs).toBe(1500);
+    expect(snapshot.lastRequest?.invalid).toBe(false);
+  });
+
   it("emits invalid timing telemetry when tool percent would exceed 100%", async () => {
     const telemetry = createMockTelemetryService();
     const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);

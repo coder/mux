@@ -5,6 +5,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
@@ -27,6 +28,8 @@ import { parseReviewLineRange, type Review, type ReviewNoteData } from "@/common
 
 // Shared type for diff line types
 export type DiffLineType = "add" | "remove" | "context" | "header";
+
+export type LineNumberMode = "both" | "old" | "new";
 
 interface DiffLineStyles {
   tintBase: string | null;
@@ -129,28 +132,35 @@ interface LineNumberWidths {
   newWidthCh: number;
 }
 
+const getLineNumberModeFlags = (lineNumberMode: LineNumberMode) => ({
+  showOld: lineNumberMode !== "new",
+  showNew: lineNumberMode !== "old",
+});
+
 /**
  * Calculate minimum column widths needed to display line numbers.
  * Works with any iterable of lines that have old/new line number properties.
  */
 function calculateLineNumberWidths(
-  lines: Iterable<{ oldLineNum: number | null; newLineNum: number | null }>
+  lines: Iterable<{ oldLineNum: number | null; newLineNum: number | null }>,
+  lineNumberMode: LineNumberMode
 ): LineNumberWidths {
   let oldWidthCh = 0;
   let newWidthCh = 0;
+  const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
 
   for (const line of lines) {
-    if (line.oldLineNum !== null) {
+    if (showOld && line.oldLineNum !== null) {
       oldWidthCh = Math.max(oldWidthCh, String(line.oldLineNum).length);
     }
-    if (line.newLineNum !== null) {
+    if (showNew && line.newLineNum !== null) {
       newWidthCh = Math.max(newWidthCh, String(line.newLineNum).length);
     }
   }
 
   return {
-    oldWidthCh: Math.max(2, oldWidthCh), // Minimum 2 chars for alignment
-    newWidthCh: Math.max(2, newWidthCh),
+    oldWidthCh: showOld ? Math.max(2, oldWidthCh) : 0,
+    newWidthCh: showNew ? Math.max(2, newWidthCh) : 0,
   };
 }
 
@@ -160,6 +170,7 @@ interface DiffLineGutterProps {
   oldLineNum: number | null;
   newLineNum: number | null;
   showLineNumbers: boolean;
+  lineNumberMode: LineNumberMode;
   lineNumberWidths: LineNumberWidths;
 }
 
@@ -168,36 +179,45 @@ const DiffLineGutter: React.FC<DiffLineGutterProps> = ({
   oldLineNum,
   newLineNum,
   showLineNumbers,
+  lineNumberMode,
   lineNumberWidths,
-}) => (
-  <span
-    className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
-    style={{ background: getDiffLineGutterBackground(type) }}
-  >
-    {showLineNumbers && (
-      <>
-        <span
-          className="text-right"
-          style={{
-            width: `${lineNumberWidths.oldWidthCh}ch`,
-            color: getLineNumberColor(type),
-          }}
-        >
-          {oldLineNum ?? ""}
-        </span>
-        <span
-          className="ml-3 text-right"
-          style={{
-            width: `${lineNumberWidths.newWidthCh}ch`,
-            color: getLineNumberColor(type),
-          }}
-        >
-          {newLineNum ?? ""}
-        </span>
-      </>
-    )}
-  </span>
-);
+}) => {
+  const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
+
+  return (
+    <span
+      className="flex shrink-0 items-center gap-0.5 px-1 tabular-nums select-none"
+      style={{ background: getDiffLineGutterBackground(type) }}
+    >
+      {showLineNumbers && (
+        <>
+          {showOld && (
+            <span
+              className="text-right"
+              style={{
+                width: `${lineNumberWidths.oldWidthCh}ch`,
+                color: getLineNumberColor(type),
+              }}
+            >
+              {oldLineNum ?? ""}
+            </span>
+          )}
+          {showNew && (
+            <span
+              className={showOld ? "ml-3 text-right" : "text-right"}
+              style={{
+                width: `${lineNumberWidths.newWidthCh}ch`,
+                color: getLineNumberColor(type),
+              }}
+            >
+              {newLineNum ?? ""}
+            </span>
+          )}
+        </>
+      )}
+    </span>
+  );
+};
 
 // Shared indicator component (+/- with optional hover replacement) - renders as a CSS Grid cell
 interface DiffIndicatorProps {
@@ -346,6 +366,8 @@ interface DiffRendererProps {
   content: string;
   /** Whether to show line numbers (default: true) */
   showLineNumbers?: boolean;
+  /** Which line numbers to show when enabled (default: "both") */
+  lineNumberMode?: LineNumberMode;
   /** Starting old line number for context */
   oldStart?: number;
   /** Starting new line number for context */
@@ -491,6 +513,7 @@ function useHighlightedDiff(
 export const DiffRenderer: React.FC<DiffRendererProps> = ({
   content,
   showLineNumbers = true,
+  lineNumberMode = "both",
   oldStart = 1,
   newStart = 1,
   filePath,
@@ -518,8 +541,8 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
         newLineNum: line.newLineNumber,
       }))
     );
-    return calculateLineNumberWidths(lines);
-  }, [highlightedChunks, showLineNumbers]);
+    return calculateLineNumberWidths(lines, lineNumberMode);
+  }, [highlightedChunks, showLineNumbers, lineNumberMode]);
 
   // Get first and last line types for padding background colors
   const firstLineType = highlightedChunks[0]?.type;
@@ -544,6 +567,7 @@ export const DiffRenderer: React.FC<DiffRendererProps> = ({
                 oldLineNum={line.oldLineNumber}
                 newLineNum={line.newLineNumber}
                 showLineNumbers={showLineNumbers}
+                lineNumberMode={lineNumberMode}
                 lineNumberWidths={lineNumberWidths}
               />
               <DiffIndicator type={chunk.type} background={codeBg} />
@@ -603,13 +627,24 @@ interface ReviewNoteInputProps {
   }>;
   filePath: string;
   showLineNumbers: boolean;
+  lineNumberMode: LineNumberMode;
   lineNumberWidths: { oldWidthCh: number; newWidthCh: number };
   onSubmit: (data: ReviewNoteData) => void;
   onCancel: () => void;
 }
 
 const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
-  ({ selection, lineData, filePath, showLineNumbers, lineNumberWidths, onSubmit, onCancel }) => {
+  ({
+    selection,
+    lineData,
+    filePath,
+    showLineNumbers,
+    lineNumberMode,
+    lineNumberWidths,
+    onSubmit,
+    onCancel,
+  }) => {
+    const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
     const [noteText, setNoteText] = React.useState("");
     const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
@@ -716,8 +751,13 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
         >
           {showLineNumbers && (
             <>
-              <span style={{ width: `${lineNumberWidths.oldWidthCh}ch` }} />
-              <span className="ml-3" style={{ width: `${lineNumberWidths.newWidthCh}ch` }} />
+              {showOld && <span style={{ width: `${lineNumberWidths.oldWidthCh}ch` }} />}
+              {showNew && (
+                <span
+                  className={showOld ? "ml-3" : undefined}
+                  style={{ width: `${lineNumberWidths.newWidthCh}ch` }}
+                />
+              )}
             </>
           )}
         </span>
@@ -747,7 +787,7 @@ const ReviewNoteInput: React.FC<ReviewNoteInputProps> = React.memo(
               onChange={(e) => setNoteText(e.target.value)}
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => {
-                e.stopPropagation();
+                stopKeyboardPropagation(e);
 
                 const isEnter = e.key === "Enter" || e.keyCode === 13;
                 const isEscape = e.key === "Escape" || e.keyCode === 27;
@@ -790,14 +830,16 @@ interface InlineReviewNoteRowProps {
   review: Review;
   lineType: DiffLineType;
   showLineNumbers: boolean;
+  lineNumberMode: LineNumberMode;
   lineNumberWidths: LineNumberWidths;
   /** Optional action callbacks for review actions */
   reviewActions?: ReviewActionCallbacks;
 }
 
 const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
-  ({ review, lineType, showLineNumbers, lineNumberWidths, reviewActions }) => {
+  ({ review, lineType, showLineNumbers, lineNumberMode, lineNumberWidths, reviewActions }) => {
     const codeBg = getDiffLineBackground(lineType);
+    const { showOld, showNew } = getLineNumberModeFlags(lineNumberMode);
 
     return (
       <div
@@ -812,8 +854,13 @@ const InlineReviewNoteRow: React.FC<InlineReviewNoteRowProps> = React.memo(
         >
           {showLineNumbers && (
             <>
-              <span style={{ width: `${lineNumberWidths.oldWidthCh}ch` }} />
-              <span className="ml-3" style={{ width: `${lineNumberWidths.newWidthCh}ch` }} />
+              {showOld && <span style={{ width: `${lineNumberWidths.oldWidthCh}ch` }} />}
+              {showNew && (
+                <span
+                  className={showOld ? "ml-3" : undefined}
+                  style={{ width: `${lineNumberWidths.newWidthCh}ch` }}
+                />
+              )}
             </>
           )}
         </span>
@@ -834,6 +881,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
   ({
     content,
     showLineNumbers = true,
+    lineNumberMode = "both",
     oldStart = 1,
     newStart = 1,
     filePath,
@@ -941,8 +989,10 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
     const lineNumberWidths = React.useMemo(
       () =>
-        showLineNumbers ? calculateLineNumberWidths(lineData) : { oldWidthCh: 2, newWidthCh: 2 },
-      [lineData, showLineNumbers]
+        showLineNumbers
+          ? calculateLineNumberWidths(lineData, lineNumberMode)
+          : { oldWidthCh: 2, newWidthCh: 2 },
+      [lineData, showLineNumbers, lineNumberMode]
     );
 
     const inlineReviewsByAnchor = React.useMemo(() => {
@@ -1092,6 +1142,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   oldLineNum={lineInfo.oldLineNum}
                   newLineNum={lineInfo.newLineNum}
                   showLineNumbers={showLineNumbers}
+                  lineNumberMode={lineNumberMode}
                   lineNumberWidths={lineNumberWidths}
                 />
                 <DiffIndicator
@@ -1154,6 +1205,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                     lineData={lineData}
                     filePath={filePath}
                     showLineNumbers={showLineNumbers}
+                    lineNumberMode={lineNumberMode}
                     lineNumberWidths={lineNumberWidths}
                     onSubmit={handleSubmitNote}
                     onCancel={handleCancelNote}
@@ -1166,6 +1218,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   review={review}
                   lineType={lineInfo.type}
                   showLineNumbers={showLineNumbers}
+                  lineNumberMode={lineNumberMode}
                   lineNumberWidths={lineNumberWidths}
                   reviewActions={reviewActions}
                 />

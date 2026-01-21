@@ -22,6 +22,7 @@ FILENAME="${FILENAME%.png}"
 
 # Find the latest screenshot - check custom location first, then Desktop
 # Check for both WebP and PNG files
+# shellcheck disable=SC2012 # ls -t is fine here for simple "most recent" lookup in known locations
 LATEST_SCREENSHOT=$(ls -t ~/Documents/Screenshots/*.{webp,png} ~/Desktop/*.{webp,png} 2>/dev/null | head -1)
 
 if [ -z "$LATEST_SCREENSHOT" ]; then

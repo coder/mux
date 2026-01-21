@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { cn } from "@/common/lib/utils";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
+import MuxLogoDark from "@/browser/assets/logos/mux-logo-dark.svg?react";
+import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
+import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
@@ -240,6 +243,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     reorderSections,
     assignWorkspaceToSection,
   } = useProjectContext();
+
+  // Theme for logo variant
+  const { theme } = useTheme();
+  const MuxLogo = theme === "dark" || theme.endsWith("-dark") ? MuxLogoDark : MuxLogoLight;
 
   // Mobile breakpoint for auto-closing sidebar
   const MOBILE_BREAKPOINT = 768;
@@ -483,14 +490,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         >
           {!collapsed && (
             <>
-              <div className="border-dark flex items-center justify-between border-b p-4">
-                <h2 className="text-foreground m-0 text-lg font-medium">Projects</h2>
+              <div className="border-dark flex items-center justify-between border-b py-3 pr-3 pl-4">
+                <MuxLogo className="h-5 w-[44px]" aria-label="Projects" />
                 <button
                   onClick={onAddProject}
                   aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent text-lg leading-none transition-all duration-200"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
                 >
-                  +
+                  <span className="text-base leading-none">+</span>
+                  <span>New Project</span>
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto">

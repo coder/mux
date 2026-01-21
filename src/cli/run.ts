@@ -58,18 +58,26 @@ import {
 import { defaultModel, resolveModelAlias } from "@/common/utils/ai/models";
 import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/providerRequirements";
 
-import type { ThinkingLevel } from "@/common/types/thinking";
+import {
+  DEFAULT_THINKING_LEVEL,
+  THINKING_LEVELS,
+  isThinkingLevel,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { log, type LogLevel } from "@/node/services/log";
 import chalk from "chalk";
-import type { InitLogger } from "@/node/runtime/Runtime";
+import type { InitLogger, WorkspaceInitResult } from "@/node/runtime/Runtime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
+import { runFullInit } from "@/node/runtime/runtimeFactory";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+
+const THINKING_LEVELS_LIST = THINKING_LEVELS.join(", ");
 
 type CLIMode = "plan" | "exec";
 
@@ -101,18 +109,13 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
 }
 
 function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
-  if (!value) return "medium"; // Default for mux run
+  if (!value) return DEFAULT_THINKING_LEVEL; // Default for mux run
 
   const normalized = value.trim().toLowerCase();
-  if (
-    normalized === "off" ||
-    normalized === "low" ||
-    normalized === "medium" ||
-    normalized === "high"
-  ) {
+  if (isThinkingLevel(normalized)) {
     return normalized;
   }
-  throw new Error(`Invalid thinking level "${value}". Expected: off, low, medium, high`);
+  throw new Error(`Invalid thinking level "${value}". Expected: ${THINKING_LEVELS_LIST}`);
 }
 
 function parseMode(value: string | undefined): CLIMode {
@@ -239,7 +242,11 @@ program
     "local"
   )
   .option("--mode <mode>", "agent mode: plan or exec", "exec")
-  .option("-t, --thinking <level>", "thinking level: off, low, medium, high", "medium")
+  .option(
+    "-t, --thinking <level>",
+    `thinking level: ${THINKING_LEVELS_LIST}`,
+    DEFAULT_THINKING_LEVEL
+  )
   .option("-v, --verbose", "show info-level logs (default: errors only)")
   .option("--hide-costs", "hide cost summary at end of run")
   .option("--log-level <level>", "set log level: error, warn, info, debug")
@@ -494,13 +501,22 @@ async function main(): Promise<number> {
       process.exit(1);
     }
 
-    const initResult = await runtime.initWorkspace({
-      projectPath: projectDir,
-      branchName,
-      trunkBranch,
-      workspacePath: createResult.workspacePath!,
-      initLogger,
-    });
+    // Use runFullInit to ensure postCreateSetup runs before initWorkspace
+    let initResult: WorkspaceInitResult;
+    try {
+      initResult = await runFullInit(runtime, {
+        projectPath: projectDir,
+        branchName,
+        trunkBranch,
+        workspacePath: createResult.workspacePath!,
+        initLogger,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      initLogger.logStderr(`Initialization failed: ${errorMessage}`);
+      initLogger.logComplete(-1);
+      initResult = { success: false, error: errorMessage };
+    }
     if (!initResult.success) {
       // Clean up orphaned container
       // eslint-disable-next-line @typescript-eslint/no-empty-function

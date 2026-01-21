@@ -12,6 +12,7 @@ import {
   isReasoningDelta,
   isReasoningEnd,
   isRestoreToInput,
+  isRuntimeStatus,
   isStreamAbort,
   isStreamDelta,
   isStreamEnd,
@@ -33,6 +34,7 @@ import type {
   ToolCallEndEvent,
   ToolCallStartEvent,
   UsageDeltaEvent,
+  RuntimeStatusEvent,
 } from "@/common/types/stream";
 
 export type WorkspaceChatEventUpdateHint = "immediate" | "throttled" | "ignored";
@@ -62,6 +64,8 @@ export interface WorkspaceChatEventAggregator {
   handleDeleteMessage(data: DeleteMessage): void;
 
   handleMessage(data: WorkspaceChatMessage): void;
+
+  handleRuntimeStatus(data: RuntimeStatusEvent): void;
 
   clearTokenState(messageId: string): void;
 }
@@ -144,6 +148,12 @@ export function applyWorkspaceChatEventToAggregator(
 
   if (isDeleteMessage(event)) {
     aggregator.handleDeleteMessage(event);
+    return "immediate";
+  }
+
+  // runtime-status events are used for Coder workspace starting UX
+  if (isRuntimeStatus(event)) {
+    aggregator.handleRuntimeStatus(event);
     return "immediate";
   }
 

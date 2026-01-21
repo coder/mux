@@ -10,6 +10,7 @@ import {
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 
 export interface RouterContext {
@@ -17,7 +18,13 @@ export interface RouterContext {
   navigateToProject: (projectPath: string, sectionId?: string) => void;
   navigateToHome: () => void;
   currentWorkspaceId: string | null;
-  currentProjectPath: string | null;
+
+  /** Project identifier from URL (does not include full filesystem path). */
+  currentProjectId: string | null;
+
+  /** Optional project path carried via in-memory navigation state (not persisted on refresh). */
+  currentProjectPathFromState: string | null;
+
   /** Section ID for pending workspace creation (from URL) */
   pendingSectionId: string | null;
 }
@@ -71,6 +78,13 @@ function useUrlSync(): void {
 }
 
 function RouterContextInner(props: { children: ReactNode }) {
+  function getProjectPathFromLocationState(state: unknown): string | null {
+    if (!state || typeof state !== "object") return null;
+    if (!("projectPath" in state)) return null;
+    const projectPath = (state as { projectPath?: unknown }).projectPath;
+    return typeof projectPath === "string" ? projectPath : null;
+  }
+
   const navigate = useNavigate();
   const navigateRef = useRef(navigate);
   useEffect(() => {
@@ -83,7 +97,30 @@ function RouterContextInner(props: { children: ReactNode }) {
 
   const workspaceMatch = /^\/workspace\/(.+)$/.exec(location.pathname);
   const currentWorkspaceId = workspaceMatch ? decodeURIComponent(workspaceMatch[1]) : null;
-  const currentProjectPath = location.pathname === "/project" ? searchParams.get("path") : null;
+  const currentProjectId =
+    location.pathname === "/project"
+      ? (searchParams.get("project") ?? searchParams.get("path"))
+      : null;
+  const currentProjectPathFromState =
+    location.pathname === "/project" ? getProjectPathFromLocationState(location.state) : null;
+
+  // Back-compat: if we ever land on a legacy deep link (/project?path=<full path>),
+  // immediately replace it with the non-path project id URL.
+  useEffect(() => {
+    if (location.pathname !== "/project") return;
+
+    const params = new URLSearchParams(location.search);
+    const legacyPath = params.get("path");
+    const projectParam = params.get("project");
+    if (!projectParam && legacyPath) {
+      const section = params.get("section");
+      const projectId = getProjectRouteId(legacyPath);
+      const url = section
+        ? `/project?project=${encodeURIComponent(projectId)}&section=${encodeURIComponent(section)}`
+        : `/project?project=${encodeURIComponent(projectId)}`;
+      void navigateRef.current(url, { replace: true, state: { projectPath: legacyPath } });
+    }
+  }, [location.pathname, location.search]);
   const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
 
   const navigateToWorkspace = useCallback((id: string) => {
@@ -91,10 +128,11 @@ function RouterContextInner(props: { children: ReactNode }) {
   }, []);
 
   const navigateToProject = useCallback((path: string, sectionId?: string) => {
+    const projectId = getProjectRouteId(path);
     const url = sectionId
-      ? `/project?path=${encodeURIComponent(path)}&section=${encodeURIComponent(sectionId)}`
-      : `/project?path=${encodeURIComponent(path)}`;
-    void navigateRef.current(url, { replace: true });
+      ? `/project?project=${encodeURIComponent(projectId)}&section=${encodeURIComponent(sectionId)}`
+      : `/project?project=${encodeURIComponent(projectId)}`;
+    void navigateRef.current(url, { replace: true, state: { projectPath: path } });
   }, []);
 
   const navigateToHome = useCallback(() => {
@@ -107,14 +145,16 @@ function RouterContextInner(props: { children: ReactNode }) {
       navigateToProject,
       navigateToHome,
       currentWorkspaceId,
-      currentProjectPath,
+      currentProjectId,
+      currentProjectPathFromState,
       pendingSectionId,
     }),
     [
       navigateToHome,
       navigateToProject,
       navigateToWorkspace,
-      currentProjectPath,
+      currentProjectId,
+      currentProjectPathFromState,
       currentWorkspaceId,
       pendingSectionId,
     ]

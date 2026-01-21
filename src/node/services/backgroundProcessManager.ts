@@ -5,6 +5,22 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "./log";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 
+const DEFAULT_BACKGROUND_BASH_TAIL_BYTES = 64_000;
+const MAX_BACKGROUND_BASH_TAIL_BYTES = 1_000_000;
+
+export function computeTailStartOffset(fileSizeBytes: number, tailBytes: number): number {
+  assert(
+    Number.isFinite(fileSizeBytes) && fileSizeBytes >= 0,
+    `computeTailStartOffset expected fileSizeBytes >= 0 (got ${fileSizeBytes})`
+  );
+  assert(
+    Number.isFinite(tailBytes) && tailBytes > 0,
+    `computeTailStartOffset expected tailBytes > 0 (got ${tailBytes})`
+  );
+
+  return Math.max(0, fileSizeBytes - tailBytes);
+}
+
 import { EventEmitter } from "events";
 
 /**
@@ -717,6 +733,72 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
           : undefined,
       elapsed_ms: Date.now() - startTime,
       note,
+    };
+  }
+
+  /**
+   * Peek output from a background process without advancing its incremental cursor.
+   *
+   * Used by the UI to display buffered output for background bashes. Unlike getOutput(),
+   * this must NOT mutate proc.outputBytesRead/proc.incompleteLineBuffer (which are used by
+   * bash_output + task_await).
+   */
+  async peekOutput(
+    processId: string,
+    options?: { fromOffset?: number; tailBytes?: number }
+  ): Promise<
+    | {
+        success: true;
+        status: "running" | "exited" | "killed" | "failed";
+        output: string;
+        nextOffset: number;
+        truncatedStart: boolean;
+      }
+    | { success: false; error: string }
+  > {
+    const fromOffset = options?.fromOffset;
+    const tailBytesRaw = options?.tailBytes;
+
+    log.debug(
+      `BackgroundProcessManager.peekOutput(${processId}, fromOffset=${fromOffset ?? "tail"}, tailBytes=${tailBytesRaw ?? DEFAULT_BACKGROUND_BASH_TAIL_BYTES}) called`
+    );
+
+    if (fromOffset !== undefined && (!Number.isFinite(fromOffset) || fromOffset < 0)) {
+      return { success: false, error: `Invalid fromOffset: ${fromOffset}` };
+    }
+
+    const tailBytes = tailBytesRaw ?? DEFAULT_BACKGROUND_BASH_TAIL_BYTES;
+    if (!Number.isFinite(tailBytes) || tailBytes <= 0) {
+      return { success: false, error: `Invalid tailBytes: ${String(tailBytesRaw)}` };
+    }
+    const clampedTailBytes = Math.min(tailBytes, MAX_BACKGROUND_BASH_TAIL_BYTES);
+
+    const proc = await this.getProcess(processId);
+    if (!proc) {
+      return { success: false, error: `Process not found: ${processId}` };
+    }
+
+    let offset = fromOffset;
+    let truncatedStart = false;
+
+    if (offset === undefined) {
+      const fileSizeBytes = await proc.handle.getOutputFileSize();
+      offset = computeTailStartOffset(fileSizeBytes, clampedTailBytes);
+      truncatedStart = offset > 0;
+    }
+
+    const result = await proc.handle.readOutput(offset);
+    assert(
+      result.newOffset >= offset,
+      `BackgroundHandle.readOutput returned newOffset < offset (offset=${offset}, newOffset=${result.newOffset})`
+    );
+
+    return {
+      success: true,
+      status: proc.status,
+      output: result.content,
+      nextOffset: result.newOffset,
+      truncatedStart,
     };
   }
 

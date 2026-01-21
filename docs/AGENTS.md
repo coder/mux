@@ -1,6 +1,6 @@
 ---
 title: AGENTS.md
-description: Agent instructions for AI assistants working on the mux codebase
+description: Agent instructions for AI assistants working on the Mux codebase
 ---
 
 **Prime directive:** keep edits minimal and token-efficient—say only what conveys actionable signal.
@@ -13,15 +13,22 @@ description: Agent instructions for AI assistants working on the mux codebase
 
   ```md
   ---
+
   _Generated with `mux` • Model: `<modelString>` • Thinking: `<thinkingLevel>` • Cost: `$<costs>`_
+
   <!-- mux-attribution: model=<modelString> thinking=<thinkingLevel> costs=<costs> -->
   ```
 
   Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` via bash before creating or updating PRs—include them in the footer if set.
 
+## External Submissions
+
+- **Do not submit updates to the Terminal-Bench leaderboard repo directly.** Only provide the user with commands they can run themselves.
+
 ## PR + Release Workflow
 
 - Reuse existing PRs; never close or recreate without instruction. Force-push updates.
+- If a PR is already open for your change, keep it up to date with the latest commits; don't leave it stale.
 - After every push run `./scripts/wait_pr_checks.sh <pr_number>` to ensure CI passes.
 
 - When posting multi-line comments with `gh` (e.g., `@codex review`), **do not** rely on `\n` escapes inside quoted `--body` strings (they will be sent as literal text). Prefer `--body-file -` with a heredoc to preserve real newlines:
@@ -33,12 +40,14 @@ gh pr comment <pr_number> --body-file - <<'EOF'
 <message>
 EOF
 ```
+
 - If Codex left review comments and you addressed them, push your fixes, resolve the PR comment, and then comment `@codex review` to re-request review. After that, re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`.
 - Generally run `wait_pr_checks` after submitting a PR to ensure CI passes.
 - Status decoding: `mergeable=MERGEABLE` clean; `CONFLICTING` needs resolution. `mergeStateStatus=CLEAN` ready, `BLOCKED` waiting for CI, `BEHIND` rebase, `DIRTY` conflicts.
 - If behind: `git fetch origin && git rebase origin/main && git push --force-with-lease`.
 - Never enable auto-merge or merge at all unless the user explicitly says "merge it".
 - Do not enable auto-squash or auto-merge on Pull Requests unless explicit permission is given.
+- PR bodies should also capture the **why** behind a change (motivation, context, or user impact).
 - PR descriptions: include only information a busy reviewer cannot infer; focus on implementation nuances or validation steps.
 - Title prefixes: `perf|refactor|fix|feat|ci|tests|bench`, e.g., `🤖 fix: handle workspace rename edge cases`.
 - Use `tests:` for test-only changes (test helpers, flaky test fixes, storybook). Use `ci:` for CI config changes.
@@ -74,7 +83,7 @@ EOF
 ## Refactoring & Runtime Etiquette
 
 - Use `git mv` to retain history when moving files.
-- Never kill the running mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
+- Never kill the running Mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
 
 ## Self-Healing & Crash Resilience
 
@@ -94,6 +103,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ### Storybook
 
+- **Settings UI coverage:** if you add a new Settings modal section (or materially change an existing one), add/update an `App.settings.*.stories.tsx` story that navigates to that section so Chromatic catches regressions.
 - **Only** add full-app stories (`App.*.stories.tsx`). Do not add isolated component stories, even for small UI changes (they are not used/accepted in this repo).
 - Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 - Keep story data deterministic: avoid `Math.random()`, `Date.now()`, or other non-deterministic values in story setup. Pass explicit values when ordering or timing matters for visual stability.
@@ -137,6 +147,11 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 
 ## Styling
 
+- Never use emoji characters as UI icons or status indicators; emoji rendering varies across platforms and fonts.
+- Prefer SVG icons (usually from `lucide-react`) or shared icon components under `src/browser/components/icons/`.
+- For tool call headers, use `ToolIcon` from `src/browser/components/tools/shared/ToolPrimitives.tsx`.
+- If a tool/agent provides an emoji string (e.g., `status_set` or `displayStatus`), render via `EmojiIcon` (`src/browser/components/icons/EmojiIcon.tsx`) instead of rendering the emoji.
+- If a new emoji appears in tool output, extend `EmojiIcon` to map it to an SVG icon.
 - Colors defined in `src/browser/styles/globals.css` (`:root @theme` block). Reference via CSS variables (e.g., `var(--color-plan-mode)`), never hardcode hex values.
 
 ## TypeScript Discipline
@@ -150,6 +165,7 @@ Avoid mock-heavy tests that verify implementation details rather than behavior. 
 - Never repeat constant values (like keybinds) in comments—they become stale when the constant changes.
 - **Avoid `void asyncFn()`** - fire-and-forget async calls hide race conditions. When state is observable by other code (in-memory cache, event emitters), ensure visibility order matches invariants. If memory and disk must stay in sync, persist before updating memory so observers see consistent state.
 - **Avoid `setTimeout` for component coordination** - racy and fragile; use callbacks or effects.
+- **Keyboard event propagation** - React's `e.stopPropagation()` only stops synthetic event bubbling; native `window` listeners still fire. Use `stopKeyboardPropagation(e)` from `@/browser/utils/events` to stop both React and native propagation when blocking global handlers (like stream interrupt on Escape).
 
 ## Component State & Storage
 

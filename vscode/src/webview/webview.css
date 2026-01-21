@@ -534,6 +534,16 @@ body {
   border: 1px solid color-mix(in srgb, var(--color-plan-mode), transparent 80%);
 }
 
+:root[data-theme="flexoki-light"] .plan-content p > code,
+:root[data-theme="flexoki-light"] .plan-content li > code,
+:root[data-theme="flexoki-light"] .plan-content h1 > code,
+:root[data-theme="flexoki-light"] .plan-content h2 > code,
+:root[data-theme="flexoki-light"] .plan-content h3 > code,
+:root[data-theme="flexoki-light"] .plan-content h4 > code,
+:root[data-theme="flexoki-light"] .plan-content td > code {
+  color: color-mix(in srgb, var(--color-plan-mode) 65%, var(--color-foreground) 35%);
+}
+
 .plan-content blockquote {
   border-left: 3px solid var(--color-plan-mode);
   padding-left: 12px;

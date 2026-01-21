@@ -31,7 +31,7 @@ import type { ThemeMode } from "@/browser/contexts/ThemeContext";
 
 /** Map theme mode to Shiki theme (light/dark only) */
 function isLightTheme(theme: ThemeMode): boolean {
-  return theme === "light" || theme === "solarized-light";
+  return theme === "light" || theme.endsWith("-light");
 }
 
 export interface HighlightedChunk {

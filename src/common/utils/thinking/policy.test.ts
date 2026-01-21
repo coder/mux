@@ -64,6 +64,16 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 5 levels including xhigh for gpt-5.2-codex", () => {
+    expect(getThinkingPolicyForModel("openai:gpt-5.2-codex")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+  });
+
   test("returns 5 levels including xhigh for gpt-5.2", () => {
     expect(getThinkingPolicyForModel("openai:gpt-5.2")).toEqual([
       "off",
@@ -259,9 +269,9 @@ describe("enforceThinkingPolicy", () => {
   });
 
   describe("xhigh fallback for non-codex-max models", () => {
-    test("falls back to medium when xhigh requested on standard model", () => {
-      // Standard models don't support xhigh, so fall back to medium (preferred fallback)
-      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "xhigh")).toBe("medium");
+    test("clamps to highest allowed when xhigh requested on standard model", () => {
+      // Standard models don't support xhigh, so clamp to the highest allowed level.
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "xhigh")).toBe("high");
     });
 
     test("falls back to high when xhigh requested on gpt-5-pro", () => {

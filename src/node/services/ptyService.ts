@@ -1,7 +1,7 @@
 /**
  * PTY Service - Manages terminal PTY sessions
  *
- * Handles local, SSH, and Docker terminal sessions using node-pty.
+ * Handles local, SSH, SSH2, and Docker terminal sessions (node-pty + ssh2).
  * Uses callbacks for output/exit events to avoid circular dependencies.
  */
 
@@ -14,63 +14,27 @@ import type {
   TerminalCreateParams,
   TerminalResizeParams,
 } from "@/common/types/terminal";
-import type { IPty } from "node-pty";
-import { SSHRuntime, type SSHRuntimeConfig } from "@/node/runtime/SSHRuntime";
+import type { PtyHandle } from "@/node/runtime/transports";
+import { spawnPtyProcess } from "@/node/runtime/ptySpawn";
+import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
-import { getControlPath, sshConnectionPool } from "@/node/runtime/sshConnectionPool";
-import { expandTildeForSSH } from "@/node/runtime/tildeExpansion";
+import { resolveLocalPtyShell } from "@/node/utils/main/resolveLocalPtyShell";
+
+function shellQuotePath(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 
 interface SessionData {
-  pty: IPty;
+  pty: PtyHandle;
   workspaceId: string;
   workspacePath: string;
   runtime: Runtime;
+  runtimeLabel: string;
   onData: (data: string) => void;
   onExit: (exitCode: number) => void;
-}
-
-interface PtySpawnConfig {
-  command: string;
-  args: string[];
-  cwd: string;
-}
-
-/**
- * Load node-pty dynamically (handles Electron vs server mode)
- * @param runtimeType - Used for error messages
- * @param preferElectronBuild - If true, try node-pty first (for local terminals in Electron).
- *                              If false, try @lydell/node-pty first (for SSH/Docker).
- */
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
-function loadNodePty(runtimeType: string, preferElectronBuild: boolean): typeof import("node-pty") {
-  const first = preferElectronBuild ? "node-pty" : "@lydell/node-pty";
-  const second = preferElectronBuild ? "@lydell/node-pty" : "node-pty";
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-    const pty = require(first);
-    log.debug(`Using ${first} for ${runtimeType}`);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-    return pty;
-  } catch {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-assignment
-      const pty = require(second);
-      log.debug(`Using ${second} for ${runtimeType} (fallback)`);
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-      return pty;
-    } catch (err) {
-      log.error("Neither @lydell/node-pty nor node-pty available:", err);
-      throw new Error(
-        process.versions.electron
-          ? `${runtimeType} terminals are not available. node-pty failed to load (likely due to Electron ABI version mismatch). Run 'make rebuild-native' to rebuild native modules.`
-          : `${runtimeType} terminals are not available. No prebuilt binaries found for your platform. Supported: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64.`
-      );
-    }
-  }
 }
 
 /**
@@ -103,49 +67,9 @@ function createBufferedDataHandler(onData: (data: string) => void): (data: strin
 }
 
 /**
- * Build SSH command arguments from config
- * Preserves ControlMaster connection pooling and respects ~/.ssh/config
- */
-function buildSSHArgs(config: SSHRuntimeConfig, remotePath: string): string[] {
-  const args: string[] = [];
-
-  if (config.port) {
-    args.push("-p", String(config.port));
-  }
-
-  if (config.identityFile) {
-    args.push("-i", config.identityFile);
-    args.push("-o", "StrictHostKeyChecking=no");
-    args.push("-o", "UserKnownHostsFile=/dev/null");
-    args.push("-o", "LogLevel=ERROR");
-  }
-
-  // Connection multiplexing
-  const controlPath = getControlPath(config);
-  args.push("-o", "ControlMaster=auto");
-  args.push("-o", `ControlPath=${controlPath}`);
-  args.push("-o", "ControlPersist=60");
-
-  // Timeouts
-  args.push("-o", "ConnectTimeout=15");
-  args.push("-o", "ServerAliveInterval=5");
-  args.push("-o", "ServerAliveCountMax=2");
-
-  // Force PTY allocation
-  args.push("-t");
-
-  args.push(config.host);
-
-  const expandedPath = expandTildeForSSH(remotePath);
-  args.push(`cd ${expandedPath} && exec $SHELL -i`);
-
-  return args;
-}
-
-/**
  * PTYService - Manages terminal PTY sessions for workspaces
  *
- * Handles local, SSH, and Docker terminal sessions using node-pty.
+ * Handles local, SSH, SSH2, and Docker terminal sessions (node-pty + ssh2).
  * Each workspace can have one or more terminal sessions.
  */
 export class PTYService {
@@ -164,35 +88,47 @@ export class PTYService {
     // Include a random suffix to avoid collisions when creating multiple sessions quickly.
     // Collisions can cause two PTYs to appear "merged" under one sessionId.
     const sessionId = `${params.workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const runtimeType =
-      runtime instanceof SSHRuntime ? "SSH" : runtime instanceof DockerRuntime ? "Docker" : "Local";
-    log.info(
-      `Creating terminal session ${sessionId} for workspace ${params.workspaceId} (${runtimeType})`
-    );
+    let ptyProcess: PtyHandle | null = null;
+    let runtimeLabel: string;
 
-    // Determine spawn config based on runtime type
-    let spawnConfig: PtySpawnConfig;
-
-    if (runtime instanceof LocalBaseRuntime) {
-      // Validate workspace path exists for local
+    if (runtime instanceof SSHRuntime) {
+      ptyProcess = await runtime.createPtySession({
+        workspacePath,
+        cols: params.cols,
+        rows: params.rows,
+      });
+      runtimeLabel = "SSH";
+      log.info(`[PTY] SSH terminal for ${sessionId}: ssh ${runtime.getConfig().host}`);
+    } else if (runtime instanceof LocalBaseRuntime) {
       try {
         await access(workspacePath, constants.F_OK);
       } catch {
         throw new Error(`Workspace path does not exist: ${workspacePath}`);
       }
-      const shell = process.env.SHELL ?? "/bin/bash";
-      spawnConfig = { command: shell, args: [], cwd: workspacePath };
+      const shell = resolveLocalPtyShell();
+      runtimeLabel = "Local";
+
+      if (!shell.command.trim()) {
+        throw new Error("Cannot spawn Local terminal: empty shell command");
+      }
+
+      const printableArgs = shell.args.length > 0 ? ` ${shell.args.join(" ")}` : "";
       log.info(
-        `Spawning PTY with shell: ${shell}, cwd: ${workspacePath}, size: ${params.cols}x${params.rows}`
+        `Spawning PTY: ${shell.command}${printableArgs}, cwd: ${workspacePath}, size: ${params.cols}x${params.rows}`
       );
-      log.debug(`PATH env: ${process.env.PATH ?? "undefined"}`);
-    } else if (runtime instanceof SSHRuntime) {
-      const sshConfig = runtime.getConfig();
-      // Ensure connection is healthy before spawning terminal
-      await sshConnectionPool.acquireConnection(sshConfig);
-      const sshArgs = buildSSHArgs(sshConfig, workspacePath);
-      spawnConfig = { command: "ssh", args: sshArgs, cwd: process.cwd() };
-      log.info(`[PTY] SSH terminal for ${sessionId}: ssh ${sshArgs.join(" ")}`);
+      log.debug(`process.env.SHELL: ${process.env.SHELL ?? "undefined"}`);
+      log.debug(`process.env.PATH: ${process.env.PATH ?? process.env.Path ?? "undefined"}`);
+
+      ptyProcess = spawnPtyProcess({
+        runtimeLabel,
+        command: shell.command,
+        args: shell.args,
+        cwd: workspacePath,
+        cols: params.cols,
+        rows: params.rows,
+        preferElectronBuild: true,
+        logLocalEnv: true,
+      });
     } else if (runtime instanceof DockerRuntime) {
       const containerName = runtime.getContainerName();
       if (!containerName) {
@@ -204,49 +140,37 @@ export class PTYService {
         containerName,
         "/bin/sh",
         "-c",
-        `cd ${workspacePath} && exec /bin/sh`,
+        `cd ${shellQuotePath(workspacePath)} && exec /bin/sh`,
       ];
-      spawnConfig = { command: "docker", args: dockerArgs, cwd: process.cwd() };
+      runtimeLabel = "Docker";
       log.info(`[PTY] Docker terminal for ${sessionId}: docker ${dockerArgs.join(" ")}`);
+
+      ptyProcess = spawnPtyProcess({
+        runtimeLabel,
+        command: "docker",
+        args: dockerArgs,
+        cwd: process.cwd(),
+        cols: params.cols,
+        rows: params.rows,
+        preferElectronBuild: false,
+      });
     } else {
       throw new Error(`Unsupported runtime type: ${runtime.constructor.name}`);
     }
 
+    log.info(
+      `Creating terminal session ${sessionId} for workspace ${params.workspaceId} (${runtimeLabel})`
+    );
     log.info(`[PTY] Terminal size: ${params.cols}x${params.rows}`);
 
-    // Load node-pty and spawn process
-    // Local prefers node-pty (Electron rebuild), SSH/Docker prefer @lydell/node-pty (prebuilds)
-    const isLocal = runtime instanceof LocalBaseRuntime;
-    const pty = loadNodePty(runtimeType, isLocal);
-    let ptyProcess: IPty;
-    try {
-      ptyProcess = pty.spawn(spawnConfig.command, spawnConfig.args, {
-        name: "xterm-256color",
-        cols: params.cols,
-        rows: params.rows,
-        cwd: spawnConfig.cwd,
-        env: {
-          ...process.env,
-          TERM: "xterm-256color",
-          PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        },
-      });
-    } catch (err) {
-      log.error(`[PTY] Failed to spawn ${runtimeType} terminal ${sessionId}:`, err);
-      if (isLocal) {
-        log.error(`Shell: ${spawnConfig.command}, CWD: ${spawnConfig.cwd}`);
-        log.error(`process.env.SHELL: ${process.env.SHELL ?? "undefined"}`);
-        log.error(`process.env.PATH: ${process.env.PATH ?? "undefined"}`);
-      }
-      throw new Error(
-        `Failed to spawn ${runtimeType} terminal: ${err instanceof Error ? err.message : String(err)}`
-      );
+    if (!ptyProcess) {
+      throw new Error(`Failed to initialize ${runtimeLabel} terminal session`);
     }
 
     // Wire up handlers
     ptyProcess.onData(createBufferedDataHandler(onData));
     ptyProcess.onExit(({ exitCode }) => {
-      log.info(`${runtimeType} terminal session ${sessionId} exited with code ${exitCode}`);
+      log.info(`${runtimeLabel} terminal session ${sessionId} exited with code ${exitCode}`);
       this.sessions.delete(sessionId);
       onExit(exitCode);
     });
@@ -256,6 +180,7 @@ export class PTYService {
       workspaceId: params.workspaceId,
       workspacePath,
       runtime,
+      runtimeLabel,
       onData,
       onExit,
     });
@@ -295,7 +220,7 @@ export class PTYService {
     // Now works for both local AND SSH! 🎉
     session.pty.resize(params.cols, params.rows);
     log.debug(
-      `Resized terminal ${params.sessionId} (${session.runtime instanceof SSHRuntime ? "SSH" : "local"}) to ${params.cols}x${params.rows}`
+      `Resized terminal ${params.sessionId} (${session.runtimeLabel}) to ${params.cols}x${params.rows}`
     );
   }
 

@@ -288,11 +288,14 @@ describeIntegration("Plan Commands Integration", () => {
     }, 30000);
 
     it("should return error when workspace not found", async () => {
+      // Note: Built-in editors (vscode/cursor/zed) are now opened via deep links
+      // on the frontend, so the backend API only handles custom editors.
       const result = await env.orpc.general.openInEditor({
         workspaceId: "nonexistent-workspace-id",
         targetPath: "/some/path",
         editorConfig: {
-          editor: "vscode",
+          editor: "custom",
+          customCommand: "code",
         },
       });
 

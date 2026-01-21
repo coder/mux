@@ -4,6 +4,7 @@ import { isVscodeWebview } from "@/browser/utils/env";
 import * as vim from "@/browser/utils/vim";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
@@ -147,7 +148,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         return;
       }
       if (result.action === "escapeInNormalMode") {
-        e.stopPropagation(); // Prevent global handler from interrupting stream
+        stopKeyboardPropagation(e);
         onEscapeInNormalMode?.();
         return;
       }

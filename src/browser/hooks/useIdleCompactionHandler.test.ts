@@ -6,6 +6,10 @@
  * - Triggers compaction when events are received
  * - Deduplicates in-flight compactions
  * - Clears state after completion (success or failure)
+ *
+ * NOTE: We use dependency injection (_executeCompaction prop) instead of
+ * mock.module() because mock.module() is global in bun and would break
+ * other tests that import @/browser/utils/chatCommands.
  */
 
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
@@ -35,7 +39,7 @@ void mock.module("@/browser/hooks/useSendMessageOptions", () => ({
   }),
 }));
 
-// Mock executeCompaction - tracks calls and can be configured per test
+// Mock executeCompaction via dependency injection (not mock.module)
 let executeCompactionCalls: Array<{
   api: unknown;
   workspaceId: string;
@@ -49,27 +53,26 @@ let executeCompactionResolver:
   | ((value: { success: true } | { success: false; error: string }) => void)
   | null = null;
 
-void mock.module("@/browser/utils/chatCommands", () => ({
-  executeCompaction: (opts: {
-    api: unknown;
-    workspaceId: string;
-    sendMessageOptions: unknown;
-    source: string;
-  }) => {
-    executeCompactionCalls.push(opts);
-    if (executeCompactionResolver) {
-      // Return a promise that hangs until manually resolved
-      return new Promise((resolve) => {
-        const savedResolver = executeCompactionResolver;
-        executeCompactionResolver = (val) => {
-          savedResolver?.(val);
-          resolve(val);
-        };
-      });
-    }
-    return Promise.resolve(executeCompactionResult);
-  },
-}));
+// Create the mock function that will be injected via _executeCompaction
+const mockExecuteCompaction = (opts: {
+  api: unknown;
+  workspaceId: string;
+  sendMessageOptions: unknown;
+  source: string;
+}) => {
+  executeCompactionCalls.push(opts);
+  if (executeCompactionResolver) {
+    // Return a promise that hangs until manually resolved
+    return new Promise<{ success: true } | { success: false; error: string }>((resolve) => {
+      const savedResolver = executeCompactionResolver;
+      executeCompactionResolver = (val) => {
+        savedResolver?.(val);
+        resolve(val);
+      };
+    });
+  }
+  return Promise.resolve(executeCompactionResult);
+};
 
 // Import after mocks are set up
 import { useIdleCompactionHandler } from "./useIdleCompactionHandler";
@@ -102,14 +105,18 @@ describe("useIdleCompactionHandler", () => {
   });
 
   test("subscribes to onIdleCompactionNeeded on mount", () => {
-    renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
+    renderHook(() =>
+      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+    );
 
     expect(onIdleCompactionNeededCallCount).toBe(1);
     expect(capturedCallback).not.toBeNull();
   });
 
   test("unsubscribes on unmount", () => {
-    const { unmount } = renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
+    const { unmount } = renderHook(() =>
+      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+    );
 
     expect(unsubscribeCalled).toBe(false);
     unmount();
@@ -123,7 +130,9 @@ describe("useIdleCompactionHandler", () => {
   });
 
   test("calls executeCompaction when event received", async () => {
-    renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
+    renderHook(() =>
+      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+    );
 
     expect(capturedCallback).not.toBeNull();
     capturedCallback!("workspace-123");
@@ -145,7 +154,9 @@ describe("useIdleCompactionHandler", () => {
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     executeCompactionResolver = () => {};
 
-    renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
+    renderHook(() =>
+      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+    );
 
     // Trigger first event
     capturedCallback!("workspace-123");
@@ -171,7 +182,9 @@ describe("useIdleCompactionHandler", () => {
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     executeCompactionResolver = () => {};
 
-    renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
+    renderHook(() =>
+      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+    );
 
     // Trigger two events for different workspaces
     capturedCallback!("workspace-1");
@@ -197,7 +210,9 @@ describe("useIdleCompactionHandler", () => {
   });
 
   test("clears workspace from triggered set after success", async () => {
-    renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
+    renderHook(() =>
+      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+    );
 
     // First trigger
     capturedCallback!("workspace-123");
@@ -224,7 +239,9 @@ describe("useIdleCompactionHandler", () => {
     const originalError = console.error;
     console.error = mock(() => undefined);
 
-    renderHook(() => useIdleCompactionHandler({ api: mockApi as never }));
+    renderHook(() =>
+      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+    );
 
     // First trigger (will fail)
     capturedCallback!("workspace-123");

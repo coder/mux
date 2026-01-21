@@ -19,6 +19,31 @@ describe("getEditorDeepLink", () => {
       expect(url).toBe("cursor://file/home/user/project/file.ts");
     });
 
+    test("normalizes Windows drive paths for local deep links", () => {
+      const url = getEditorDeepLink({
+        editor: "vscode",
+        path: "C:\\Users\\Me\\proj\\file.ts",
+      });
+      expect(url).toBe("vscode://file/C:/Users/Me/proj/file.ts");
+    });
+
+    test("normalizes Windows drive paths with forward slashes", () => {
+      const url = getEditorDeepLink({
+        editor: "cursor",
+        path: "C:/Users/Me/proj/file.ts",
+        line: 42,
+        column: 10,
+      });
+      expect(url).toBe("cursor://file/C:/Users/Me/proj/file.ts:42:10");
+    });
+
+    test("strips surrounding quotes from local deep link paths", () => {
+      const url = getEditorDeepLink({
+        editor: "vscode",
+        path: "'C:\\Users\\Me\\proj\\file.ts'",
+      });
+      expect(url).toBe("vscode://file/C:/Users/Me/proj/file.ts");
+    });
     test("generates zed:// URL for local path", () => {
       const url = getEditorDeepLink({
         editor: "zed",
@@ -66,13 +91,22 @@ describe("getEditorDeepLink", () => {
       expect(url).toBe("cursor://vscode-remote/ssh-remote+devbox/home/user/project/file.ts");
     });
 
-    test("returns null for zed with SSH host (unsupported)", () => {
+    test("generates zed://ssh URL for SSH host", () => {
       const url = getEditorDeepLink({
         editor: "zed",
         path: "/home/user/project/file.ts",
         sshHost: "devbox",
       });
-      expect(url).toBeNull();
+      expect(url).toBe("zed://ssh/devbox/home/user/project/file.ts");
+    });
+
+    test("includes port in zed://ssh URL when provided in sshHost", () => {
+      const url = getEditorDeepLink({
+        editor: "zed",
+        path: "/home/user/project/file.ts",
+        sshHost: "devbox:2222",
+      });
+      expect(url).toBe("zed://ssh/devbox:2222/home/user/project/file.ts");
     });
 
     test("encodes SSH host with special characters", () => {

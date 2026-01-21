@@ -1,5 +1,6 @@
 import assert from "@/common/utils/assert";
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
+import { createAssistantMessageId } from "./messageIds";
 
 /**
  * Helper to wrap arbitrary errors into SendMessageError structures.
@@ -46,8 +47,15 @@ export const formatSendMessageError = (
       };
     case "runtime_not_ready":
       return {
-        message: `Workspace runtime unavailable: ${error.message}. The container may have failed to start or been removed.`,
-        errorType: "unknown",
+        message:
+          `Workspace runtime unavailable: ${error.message}. ` +
+          `The container/workspace may have been removed or does not exist.`,
+        errorType: "runtime_not_ready",
+      };
+    case "runtime_start_failed":
+      return {
+        message: `Workspace is starting: ${error.message}`,
+        errorType: "runtime_start_failed",
       };
     case "unknown":
       return {
@@ -55,4 +63,15 @@ export const formatSendMessageError = (
         errorType: "unknown",
       };
   }
+};
+
+/**
+ * Build a stream-error payload for pre-stream failures so the UI can surface them immediately.
+ */
+export const buildStreamErrorEventData = (
+  error: SendMessageError
+): { messageId: string; error: string; errorType: StreamErrorType } => {
+  const { message, errorType } = formatSendMessageError(error);
+  const messageId = createAssistantMessageId();
+  return { messageId, error: message, errorType };
 };

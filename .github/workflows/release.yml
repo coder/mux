@@ -10,10 +10,6 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write # Required for electron-builder to upload release assets
-  id-token: write # Required for GCP workload identity authentication (Windows code signing)
-
 env:
   RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
 
@@ -23,15 +19,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ensure release tag context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [ -z "$RELEASE_TAG" ]; then
             echo "::error::RELEASE_TAG is empty. Ensure this workflow runs on a release event or refs/tags/* ref."
             exit 1
           fi
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ -n "${{ inputs.tag }}" ]; then
-              echo "workflow_dispatch with explicit tag input: ${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT_TAG" ]; then
+              echo "workflow_dispatch with explicit tag input: $INPUT_TAG"
             elif [[ "$GITHUB_REF" != refs/tags/* ]]; then
               echo "::error::workflow_dispatch runs must either provide a 'tag' input or target a tag ref. Current ref: $GITHUB_REF"
               exit 1
@@ -44,12 +43,15 @@ jobs:
     name: Build and Release macOS
     needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
+    permissions:
+      contents: write # Upload release assets
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -74,12 +76,15 @@ jobs:
     name: Build and Release Linux
     needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: write # Upload release assets
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -95,12 +100,15 @@ jobs:
     name: Build and Release VS Code Extension
     needs: preflight
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
+    permissions:
+      contents: write # Upload .vsix to release
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -147,12 +155,16 @@ jobs:
     name: Build and Release Windows
     needs: preflight
     runs-on: windows-latest
+    permissions:
+      contents: write # Upload release assets
+      id-token: write # GCP workload identity for code signing
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.tag || github.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -193,7 +205,7 @@ jobs:
           GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-release
           path: |

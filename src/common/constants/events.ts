@@ -74,6 +74,12 @@ export const CUSTOM_EVENTS = {
    * No detail
    */
   TOGGLE_VOICE_INPUT: "mux:toggleVoiceInput",
+
+  /**
+   * Event to open the debug LLM request modal
+   * No detail
+   */
+  OPEN_DEBUG_LLM_REQUEST: "mux:openDebugLlmRequest",
 } as const;
 
 /**
@@ -115,6 +121,7 @@ export interface CustomEventPayloads {
     runtime?: string;
   };
   [CUSTOM_EVENTS.TOGGLE_VOICE_INPUT]: never; // No payload
+  [CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST]: never; // No payload
 }
 
 /**

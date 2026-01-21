@@ -1,7 +1,8 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
-import { stat, readFile } from "fs/promises";
+import { createHash } from "crypto";
+import { readFile } from "fs/promises";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -20,7 +21,21 @@ import type {
   ImagePart,
 } from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
-import { createUnknownSendMessageError } from "@/node/services/utils/sendMessageError";
+import { SkillNameSchema } from "@/common/orpc/schemas";
+import {
+  buildStreamErrorEventData,
+  createUnknownSendMessageError,
+} from "@/node/services/utils/sendMessageError";
+import {
+  createUserMessageId,
+  createFileSnapshotMessageId,
+  createAgentSkillSnapshotMessageId,
+} from "@/node/services/utils/messageIds";
+import {
+  FileChangeTracker,
+  type FileState,
+  type EditedFileAttachment,
+} from "@/node/services/utils/fileChangeTracker";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
@@ -38,32 +53,22 @@ import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
 import type { TelemetryService } from "./telemetryService";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
-import { computeDiff } from "@/node/utils/diff";
+
 import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
-import { isValidModelFormat } from "@/common/utils/ai/models";
+import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
+import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 
 /**
  * Tracked file state for detecting external edits.
  * Uses timestamp-based polling with diff injection.
  */
-export interface FileState {
-  content: string;
-  timestamp: number; // mtime in ms
-}
-
-/**
- * Attachment for files that were edited externally between messages.
- */
-export interface EditedFileAttachment {
-  type: "edited_text_file";
-  filename: string;
-  snippet: string; // diff of changes
-}
+// Re-export types from FileChangeTracker for backward compatibility
+export type { FileState, EditedFileAttachment } from "@/node/services/utils/fileChangeTracker";
 
 // Type guard for compaction request metadata
 interface CompactionRequestMetadata {
@@ -80,6 +85,8 @@ function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMe
   if (typeof obj.parsed !== "object" || obj.parsed === null) return false;
   return true;
 }
+
+const MAX_AGENT_SKILL_SNAPSHOT_CHARS = 50_000;
 
 export interface AgentSessionChatEvent {
   workspaceId: string;
@@ -125,11 +132,8 @@ export class AgentSession {
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
 
-  /**
-   * Tracked file state for detecting external edits.
-   * Key: absolute file path, Value: last known content and mtime.
-   */
-  private readonly readFileState = new Map<string, FileState>();
+  /** Tracks file state for detecting external edits. */
+  private readonly fileChangeTracker = new FileChangeTracker();
 
   /**
    * Track turns since last post-compaction attachment injection.
@@ -146,6 +150,16 @@ export class AgentSession {
    * Cache the last-known experiment state so we don't spam metadata refresh
    * when post-compaction context is disabled.
    */
+  /** Track compaction requests that already retried with truncation. */
+  private readonly compactionRetryAttempts = new Set<string>();
+  /**
+   * Active compaction request metadata for retry decisions (cleared on stream end/abort).
+   */
+  private activeCompactionRequest?: {
+    id: string;
+    modelString: string;
+    options?: SendMessageOptions;
+  };
   private postCompactionContextEnabled = false;
 
   constructor(options: AgentSessionOptions) {
@@ -399,10 +413,10 @@ export class AgentSession {
     const trimmedMessage = message.trim();
     const imageParts = options?.imageParts;
 
-    // Edits are implemented as truncate+replace. If the frontend forgets to re-send
-    // imageParts, we should preserve the original message's attachments.
+    // Edits are implemented as truncate+replace. If the frontend omits imageParts,
+    // preserve the original message's attachments.
     let preservedEditImageParts: MuxImagePart[] | undefined;
-    if (options?.editMessageId && (!imageParts || imageParts.length === 0)) {
+    if (options?.editMessageId && imageParts === undefined) {
       const historyResult = await this.historyService.getHistory(this.workspaceId);
       if (historyResult.success) {
         const targetMessage: MuxMessage | undefined = historyResult.data.find(
@@ -438,7 +452,7 @@ export class AgentSession {
         }
       }
 
-      // Find the truncation target: the edited message or its preceding @file snapshot
+      // Find the truncation target: the edited message or any immediately-preceding snapshots.
       // (snapshots are persisted immediately before their corresponding user message)
       let truncateTargetId = options.editMessageId;
       const historyResult = await this.historyService.getHistory(this.workspaceId);
@@ -446,10 +460,14 @@ export class AgentSession {
         const messages = historyResult.data;
         const editIndex = messages.findIndex((m) => m.id === options.editMessageId);
         if (editIndex > 0) {
-          const precedingMsg = messages[editIndex - 1];
-          // Check if the preceding message is a @file snapshot (synthetic with fileAtMentionSnapshot)
-          if (precedingMsg.metadata?.synthetic && precedingMsg.metadata?.fileAtMentionSnapshot) {
-            truncateTargetId = precedingMsg.id;
+          // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
+          for (let i = editIndex - 1; i >= 0; i--) {
+            const msg = messages[i];
+            const isSnapshot =
+              msg.metadata?.synthetic &&
+              (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
+            if (!isSnapshot) break;
+            truncateTargetId = msg.id;
           }
         }
       }
@@ -477,7 +495,7 @@ export class AgentSession {
       }
     }
 
-    const messageId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    const messageId = createUserMessageId();
     const additionalParts =
       preservedEditImageParts && preservedEditImageParts.length > 0
         ? preservedEditImageParts
@@ -540,10 +558,20 @@ export class AgentSession {
     // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
     // File changes after this point are surfaced via <system-file-update> diffs instead.
     const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
+    let skillSnapshotResult: { snapshotMessage: MuxMessage } | null = null;
+    try {
+      skillSnapshotResult = await this.materializeAgentSkillSnapshot(
+        typedMuxMetadata,
+        options?.disableWorkspaceAgents
+      );
+    } catch (error) {
+      return Err(
+        createUnknownSendMessageError(error instanceof Error ? error.message : String(error))
+      );
+    }
 
-    // Persist snapshot (if any) BEFORE user message so file content precedes the instruction
-    // in the prompt (matching injectFileAtMentions ordering). Both must succeed or neither
-    // is persisted to avoid orphaned snapshots.
+    // Persist snapshots (if any) BEFORE the user message so they precede it in the prompt.
+    // Order matters: @file snapshot first, then agent-skill snapshot.
     if (snapshotResult?.snapshotMessage) {
       const snapshotAppendResult = await this.historyService.appendToHistory(
         this.workspaceId,
@@ -554,9 +582,19 @@ export class AgentSession {
       }
     }
 
+    if (skillSnapshotResult?.snapshotMessage) {
+      const skillSnapshotAppendResult = await this.historyService.appendToHistory(
+        this.workspaceId,
+        skillSnapshotResult.snapshotMessage
+      );
+      if (!skillSnapshotAppendResult.success) {
+        return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+      }
+    }
+
     const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
     if (!appendResult.success) {
-      // Note: If we get here with a snapshot, the snapshot is already persisted but user message
+      // Note: If we get here with snapshots, one or more snapshots may already be persisted but user message
       // failed. This is a rare edge case (disk full mid-operation). The next edit will clean up
       // the orphan via the truncation logic that removes preceding snapshots.
       return Err(createUnknownSendMessageError(appendResult.error));
@@ -568,9 +606,13 @@ export class AgentSession {
       return Ok(undefined);
     }
 
-    // Emit snapshot first (if any), then user message - maintains prompt ordering in UI
+    // Emit snapshots first (if any), then user message - maintains prompt ordering in UI
     if (snapshotResult?.snapshotMessage) {
       this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
+    }
+
+    if (skillSnapshotResult?.snapshotMessage) {
+      this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
     }
 
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
@@ -595,7 +637,10 @@ export class AgentSession {
       const continueMessage = typedMuxMetadata.parsed.continueMessage;
 
       // Process the continue message content (handles reviews -> text formatting + metadata)
-      const { finalText, metadata } = prepareUserMessageForSend(continueMessage);
+      const { finalText, metadata } = prepareUserMessageForSend(
+        continueMessage,
+        continueMessage.muxMetadata
+      );
 
       // Legacy compatibility: older clients stored `continueMessage.mode` (exec/plan) and compaction
       // requests run with agentId="compact". Avoid falling back to the compact agent for the
@@ -610,6 +655,7 @@ export class AgentSession {
         "exec";
       // Build options for the queued message (strip compaction-specific fields)
       // agentId determines tool policy via resolveToolPolicyForAgent in aiService
+
       const sanitizedOptions: Omit<
         SendMessageOptions,
         "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
@@ -620,6 +666,7 @@ export class AgentSession {
         additionalSystemInstructions: options.additionalSystemInstructions,
         providerOptions: options.providerOptions,
         experiments: options.experiments,
+        disableWorkspaceAgents: options.disableWorkspaceAgents,
       };
 
       // Add image parts if present
@@ -633,8 +680,14 @@ export class AgentSession {
         sanitizedOptions.muxMetadata = metadata;
       }
 
-      this.messageQueue.add(finalText, sanitizedOptions);
-      this.emitQueuedMessageChanged();
+      const dedupeKey = JSON.stringify({
+        text: finalText.trim(),
+        images: (continueImageParts ?? []).map((image) => `${image.mediaType}:${image.url}`),
+      });
+
+      if (this.messageQueue.addOnce(finalText, sanitizedOptions, dedupeKey)) {
+        this.emitQueuedMessageChanged();
+      }
     }
 
     if (this.disposed) {
@@ -684,7 +737,8 @@ export class AgentSession {
 
   private async streamWithHistory(
     modelString: string,
-    options?: SendMessageOptions
+    options?: SendMessageOptions,
+    openaiTruncationModeOverride?: "auto" | "disabled"
   ): Promise<Result<void, SendMessageError>> {
     if (this.disposed) {
       return Ok(undefined);
@@ -711,8 +765,14 @@ export class AgentSession {
       );
     }
 
+    this.activeCompactionRequest = this.resolveCompactionRequest(
+      historyResult.data,
+      modelString,
+      options
+    );
+
     // Check for external file edits (timestamp-based polling)
-    const changedFileAttachments = await this.getChangedFileAttachments();
+    const changedFileAttachments = await this.fileChangeTracker.getChangedAttachments();
 
     // Check if post-compaction attachments should be injected (gated by experiment)
     const postCompactionAttachments = options?.experiments?.postCompactionContext
@@ -726,9 +786,9 @@ export class AgentSession {
       : undefined;
 
     // Bind recordFileState to this session for the propose_plan tool
-    const recordFileState = this.recordFileState.bind(this);
+    const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
-    return this.aiService.streamMessage(
+    const streamResult = await this.aiService.streamMessage(
       historyResult.data,
       this.workspaceId,
       modelString,
@@ -745,8 +805,213 @@ export class AgentSession {
       postCompactionAttachments,
       options?.experiments,
       options?.disableWorkspaceAgents,
-      () => !this.messageQueue.isEmpty()
+      () => !this.messageQueue.isEmpty(),
+      openaiTruncationModeOverride
     );
+
+    if (!streamResult.success) {
+      this.activeCompactionRequest = undefined;
+
+      // If stream startup failed before any stream events were emitted (e.g., missing API key),
+      // emit a synthetic stream-error so the UI can surface the failure immediately.
+      if (
+        streamResult.error.type !== "runtime_not_ready" &&
+        streamResult.error.type !== "runtime_start_failed"
+      ) {
+        const streamError = buildStreamErrorEventData(streamResult.error);
+        await this.handleStreamError({
+          workspaceId: this.workspaceId,
+          ...streamError,
+        });
+      }
+    }
+
+    return streamResult;
+  }
+
+  private resolveCompactionRequest(
+    history: MuxMessage[],
+    modelString: string,
+    options?: SendMessageOptions
+  ): { id: string; modelString: string; options?: SendMessageOptions } | undefined {
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const message = history[index];
+      if (message.role !== "user") {
+        continue;
+      }
+      if (!isCompactionRequestMetadata(message.metadata?.muxMetadata)) {
+        return undefined;
+      }
+      return {
+        id: message.id,
+        modelString,
+        options,
+      };
+    }
+    return undefined;
+  }
+
+  private async finalizeCompactionRetry(messageId: string): Promise<void> {
+    this.activeCompactionRequest = undefined;
+    this.emitChatEvent({
+      type: "stream-abort",
+      workspaceId: this.workspaceId,
+      messageId,
+    });
+    await this.clearFailedCompaction(messageId);
+  }
+
+  private async clearFailedCompaction(messageId: string): Promise<void> {
+    const [partialResult, deleteMessageResult] = await Promise.all([
+      this.partialService.deletePartial(this.workspaceId),
+      this.historyService.deleteMessage(this.workspaceId, messageId),
+    ]);
+
+    if (!partialResult.success) {
+      log.warn("Failed to clear partial before compaction retry", {
+        workspaceId: this.workspaceId,
+        error: partialResult.error,
+      });
+    }
+
+    if (
+      !deleteMessageResult.success &&
+      !(
+        typeof deleteMessageResult.error === "string" &&
+        deleteMessageResult.error.includes("not found in history")
+      )
+    ) {
+      log.warn("Failed to delete failed compaction placeholder", {
+        workspaceId: this.workspaceId,
+        error: deleteMessageResult.error,
+      });
+    }
+  }
+
+  private isSonnet45Model(modelString: string): boolean {
+    const normalized = normalizeGatewayModel(modelString);
+    const [provider, modelName] = normalized.split(":", 2);
+    return provider === "anthropic" && modelName?.toLowerCase().startsWith("claude-sonnet-4-5");
+  }
+
+  private withAnthropic1MContext(
+    modelString: string,
+    options: SendMessageOptions | undefined
+  ): SendMessageOptions {
+    if (options) {
+      return {
+        ...options,
+        providerOptions: {
+          ...options.providerOptions,
+          anthropic: {
+            ...options.providerOptions?.anthropic,
+            use1MContext: true,
+          },
+        },
+      };
+    }
+
+    return {
+      model: modelString,
+      providerOptions: {
+        anthropic: {
+          use1MContext: true,
+        },
+      },
+    };
+  }
+
+  private isGptClassModel(modelString: string): boolean {
+    const normalized = normalizeGatewayModel(modelString);
+    const [provider, modelName] = normalized.split(":", 2);
+    return provider === "openai" && modelName?.toLowerCase().startsWith("gpt-");
+  }
+
+  private async maybeRetryCompactionOnContextExceeded(data: {
+    messageId: string;
+    errorType?: string;
+  }): Promise<boolean> {
+    if (data.errorType !== "context_exceeded") {
+      return false;
+    }
+
+    const context = this.activeCompactionRequest;
+    if (!context) {
+      return false;
+    }
+
+    const isGptClass = this.isGptClassModel(context.modelString);
+    const isSonnet45 = this.isSonnet45Model(context.modelString);
+
+    if (!isGptClass && !isSonnet45) {
+      return false;
+    }
+
+    if (isSonnet45) {
+      const use1MContext = context.options?.providerOptions?.anthropic?.use1MContext ?? false;
+      if (use1MContext) {
+        return false;
+      }
+    }
+
+    if (this.compactionRetryAttempts.has(context.id)) {
+      return false;
+    }
+
+    this.compactionRetryAttempts.add(context.id);
+
+    const retryLabel = isSonnet45 ? "Anthropic 1M context" : "OpenAI truncation";
+    log.info(`Compaction hit context limit; retrying once with ${retryLabel}`, {
+      workspaceId: this.workspaceId,
+      model: context.modelString,
+      compactionRequestId: context.id,
+    });
+
+    await this.finalizeCompactionRetry(data.messageId);
+
+    const retryOptions = isSonnet45
+      ? this.withAnthropic1MContext(context.modelString, context.options)
+      : context.options;
+    const retryResult = await this.streamWithHistory(
+      context.modelString,
+      retryOptions,
+      isGptClass ? "auto" : undefined
+    );
+    if (!retryResult.success) {
+      log.error("Compaction retry failed to start", {
+        workspaceId: this.workspaceId,
+        error: retryResult.error,
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  private async handleStreamError(data: {
+    workspaceId: string;
+    messageId: string;
+    error: string;
+    errorType?: string;
+  }): Promise<void> {
+    const hadCompactionRequest = this.activeCompactionRequest !== undefined;
+    if (await this.maybeRetryCompactionOnContextExceeded(data)) {
+      return;
+    }
+
+    this.activeCompactionRequest = undefined;
+
+    if (hadCompactionRequest && !this.disposed) {
+      this.clearQueue();
+    }
+
+    const streamError: StreamErrorMessage = {
+      type: "stream-error",
+      messageId: data.messageId,
+      error: data.error,
+      errorType: (data.errorType ?? "unknown") as StreamErrorMessage["errorType"],
+    };
+    this.emitChatEvent(streamError);
   }
 
   private attachAiListeners(): void {
@@ -792,10 +1057,20 @@ export class AgentSession {
     forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
-    forward("stream-abort", (payload) => this.emitChatEvent(payload));
+    forward("stream-abort", (payload) => {
+      const hadCompactionRequest = this.activeCompactionRequest !== undefined;
+      this.activeCompactionRequest = undefined;
+      if (hadCompactionRequest && !this.disposed) {
+        this.clearQueue();
+      }
+      this.emitChatEvent(payload);
+    });
+    forward("runtime-status", (payload) => this.emitChatEvent(payload));
 
     forward("stream-end", async (payload) => {
+      this.activeCompactionRequest = undefined;
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);
+
       if (!handled) {
         this.emitChatEvent(payload);
       } else {
@@ -803,6 +1078,7 @@ export class AgentSession {
         // This allows the frontend to get updated postCompaction state
         this.onCompactionComplete?.();
       }
+
       // Stream end: auto-send queued messages
       this.sendQueuedMessages();
     });
@@ -823,13 +1099,7 @@ export class AgentSession {
         error: string;
         errorType?: string;
       };
-      const streamError: StreamErrorMessage = {
-        type: "stream-error",
-        messageId: data.messageId,
-        error: data.error,
-        errorType: (data.errorType ?? "unknown") as StreamErrorMessage["errorType"],
-      };
-      this.emitChatEvent(streamError);
+      void this.handleStreamError(data);
     };
 
     this.aiListeners.push({ event: "error", handler: errorHandler });
@@ -954,28 +1224,22 @@ export class AgentSession {
    * Called by tools (e.g., propose_plan) after reading/writing files.
    */
   recordFileState(filePath: string, state: FileState): void {
-    this.readFileState.set(filePath, state);
+    this.fileChangeTracker.record(filePath, state);
   }
 
-  /**
-   * Get the count of tracked files for UI display.
-   */
+  /** Get the count of tracked files for UI display. */
   getTrackedFilesCount(): number {
-    return this.readFileState.size;
+    return this.fileChangeTracker.count;
   }
 
-  /**
-   * Get the paths of tracked files for UI display.
-   */
+  /** Get the paths of tracked files for UI display. */
   getTrackedFilePaths(): string[] {
-    return Array.from(this.readFileState.keys());
+    return this.fileChangeTracker.paths;
   }
 
-  /**
-   * Clear all tracked file state (e.g., on /clear).
-   */
+  /** Clear all tracked file state (e.g., on /clear). */
   clearFileState(): void {
-    this.readFileState.clear();
+    this.fileChangeTracker.clear();
   }
 
   /**
@@ -994,7 +1258,7 @@ export class AgentSession {
       this.compactionOccurred = true;
       this.turnsSinceLastAttachment = 0;
       // Clear file state cache since history context is gone
-      this.readFileState.clear();
+      this.fileChangeTracker.clear();
 
       // Load exclusions and persistent TODO state (local workspace session data)
       const excludedItems = await this.loadExcludedItems();
@@ -1169,7 +1433,7 @@ export class AgentSession {
     const tokens = materialized.map((m) => m.token);
     const blocks = materialized.map((m) => m.block).join("\n\n");
 
-    const snapshotId = `file-snapshot-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const snapshotId = createFileSnapshotMessageId();
     const snapshotMessage = createMuxMessage(snapshotId, "user", blocks, {
       timestamp: Date.now(),
       synthetic: true,
@@ -1177,6 +1441,89 @@ export class AgentSession {
     });
 
     return { snapshotMessage, materializedTokens: tokens };
+  }
+
+  private async materializeAgentSkillSnapshot(
+    muxMetadata: MuxFrontendMetadata | undefined,
+    disableWorkspaceAgents: boolean | undefined
+  ): Promise<{ snapshotMessage: MuxMessage } | null> {
+    if (!muxMetadata || muxMetadata.type !== "agent-skill") {
+      return null;
+    }
+
+    // Guard for test mocks that may not implement getWorkspaceMetadata.
+    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+      return null;
+    }
+
+    const parsedName = SkillNameSchema.safeParse(muxMetadata.skillName);
+    if (!parsedName.success) {
+      throw new Error(`Invalid agent skill name: ${muxMetadata.skillName}`);
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    if (!metadataResult.success) {
+      throw new Error("Cannot materialize agent skill: workspace metadata not found");
+    }
+
+    const metadata = metadataResult.data;
+    const runtime = createRuntime(
+      metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+      { projectPath: metadata.projectPath, workspaceName: metadata.name }
+    );
+
+    // In-place workspaces (CLI/benchmarks) have projectPath === name.
+    // Use the path directly instead of reconstructing via getWorkspacePath.
+    const isInPlace = metadata.projectPath === metadata.name;
+    const workspacePath = isInPlace
+      ? metadata.projectPath
+      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    // When workspace agents are disabled, resolve skills from the project path instead of
+    // the worktree so skill invocation uses the same precedence/discovery root as the UI.
+    const skillDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
+    const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
+    const skill = resolved.package;
+
+    const body =
+      skill.body.length > MAX_AGENT_SKILL_SNAPSHOT_CHARS
+        ? `${skill.body.slice(0, MAX_AGENT_SKILL_SNAPSHOT_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_SNAPSHOT_CHARS} characters]`
+        : skill.body;
+
+    const snapshotText = `<agent-skill name="${skill.frontmatter.name}" scope="${skill.scope}">\n${body}\n</agent-skill>`;
+    const sha256 = createHash("sha256").update(snapshotText).digest("hex");
+
+    // Dedupe: if we recently persisted the same snapshot, avoid inserting again.
+    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    if (historyResult.success) {
+      const recentMessages = historyResult.data.slice(Math.max(0, historyResult.data.length - 5));
+      const recentSnapshot = [...recentMessages]
+        .reverse()
+        .find((msg) => msg.metadata?.synthetic && msg.metadata?.agentSkillSnapshot);
+      const recentMeta = recentSnapshot?.metadata?.agentSkillSnapshot;
+
+      if (
+        recentMeta &&
+        recentMeta.skillName === skill.frontmatter.name &&
+        recentMeta.sha256 === sha256
+      ) {
+        return null;
+      }
+    }
+
+    const snapshotId = createAgentSkillSnapshotMessageId();
+    const snapshotMessage = createMuxMessage(snapshotId, "user", snapshotText, {
+      timestamp: Date.now(),
+      synthetic: true,
+      agentSkillSnapshot: {
+        skillName: skill.frontmatter.name,
+        scope: skill.scope,
+        sha256,
+      },
+    });
+
+    return { snapshotMessage };
   }
 
   /**
@@ -1245,39 +1592,9 @@ export class AgentSession {
     }
   }
 
-  /**
-   * Check tracked files for external modifications.
-   * Returns attachments for files that changed since last recorded state.
-   * Uses timestamp-based polling with diff injection.
-   */
+  /** Delegate to FileChangeTracker for external file change detection. */
   async getChangedFileAttachments(): Promise<EditedFileAttachment[]> {
-    const checks = Array.from(this.readFileState.entries()).map(
-      async ([filePath, state]): Promise<EditedFileAttachment | null> => {
-        try {
-          const currentMtime = (await stat(filePath)).mtimeMs;
-          if (currentMtime <= state.timestamp) return null; // No change
-
-          const currentContent = await readFile(filePath, "utf-8");
-          const diff = computeDiff(state.content, currentContent);
-          if (!diff) return null; // Content identical despite mtime change
-
-          // Update stored state
-          this.readFileState.set(filePath, { content: currentContent, timestamp: currentMtime });
-
-          return {
-            type: "edited_text_file",
-            filename: filePath,
-            snippet: diff,
-          };
-        } catch {
-          // File deleted or inaccessible, skip
-          return null;
-        }
-      }
-    );
-
-    const results = await Promise.all(checks);
-    return results.filter((r): r is EditedFileAttachment => r !== null);
+    return this.fileChangeTracker.getChangedAttachments();
   }
 
   /**

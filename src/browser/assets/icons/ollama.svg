@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Ollama icon</title>
+  <path
+    d="M7 5l2 4H5l2-4Z"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M17 5l2 4h-4l2-4Z"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M12 22c-3.9 0-7-3.1-7-7 0-3.1 2-5.8 4.9-6.7L12 7l2.1 1.3C17 9.2 19 11.9 19 15c0 3.9-3.1 7-7 7Z"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linejoin="round"
+  />
+  <circle cx="10" cy="15" r="1" />
+  <circle cx="14" cy="15" r="1" />
+</svg>

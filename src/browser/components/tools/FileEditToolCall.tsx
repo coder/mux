@@ -114,7 +114,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
     result && result.success && result.diff
       ? [
           {
-            label: copied ? "✓ Copied" : "Copy Patch",
+            label: copied ? "Copied" : "Copy Patch",
             onClick: () => void copyToClipboard(result.diff),
           },
           {
@@ -133,7 +133,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
           className="hover:text-text flex flex-1 cursor-pointer items-center gap-2"
         >
           <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-          <ToolIcon emoji="✏️" toolName={toolName} />
+          <ToolIcon toolName={toolName} />
           <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
             <FileIcon filePath={filePath} className="text-[15px] leading-none" />
             <span className="font-monospace truncate">{filePath}</span>

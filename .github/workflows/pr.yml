@@ -19,10 +19,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Permissions for GCP workload identity authentication (Windows code signing on main)
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   # Detect what files changed to determine which jobs/tests to run
@@ -35,8 +33,10 @@ jobs:
       backend: ${{ steps.filter.outputs.backend }}
       browser: ${{ steps.filter.outputs.browser }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
         with:
           filters: |
@@ -70,12 +70,13 @@ jobs:
     if: github.event_name != 'push' || github.actor != 'github-merge-queue[bot]'
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: ./scripts/generate-version.sh
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.local/bin/shfmt
           key: ${{ runner.os }}-shfmt-latest
@@ -92,16 +93,24 @@ jobs:
             exit 1
           fi
 
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - uses: cachix/install-nix-action@v27
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - uses: cachix/install-nix-action@ba0dd844c9180cbf77aa72a116d6fbc515d0e87b # v27
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
       - run: |
           set -euo pipefail
           curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf https://astral.sh/uv/install.sh | sh
-      - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: make -j static-check
+        env:
+          # Used by zizmor to lint third-party GitHub actions
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test-unit:
     name: Test / Unit
@@ -109,11 +118,15 @@ jobs:
     if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: make build-main
-      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }}
-      - uses: codecov/codecov-action@v5
+      # workflow_dispatch inputs are only triggerable by repo members, so direct
+      # interpolation is acceptable and preserves shell quoting in the filter.
+      - run: bun test --coverage --coverage-reporter=lcov ${{ github.event.inputs.test_filter || 'src' }} # zizmor: ignore[template-injection]
+      - uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -127,19 +140,22 @@ jobs:
     timeout-minutes: 10
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: make build-main
+      # workflow_dispatch inputs are only triggerable by repo members, so direct
+      # interpolation is acceptable and preserves shell quoting in the filter.
       - name: Run integration tests
-        run: |
-          # Manual override
+        run: | # zizmor: ignore[template-injection]
+          set -euo pipefail
+
+          # Manual override (workflow_dispatch input)
           if [[ -n "${{ github.event.inputs.test_filter }}" ]]; then
             TEST_INTEGRATION=1 bun x jest --coverage --maxWorkers=100% --silent ${{ github.event.inputs.test_filter }}
             exit 0
           fi
-          
-          BACKEND="${{ needs.changes.outputs.backend }}"
-          BROWSER="${{ needs.changes.outputs.browser }}"
           
           # Skip if no relevant changes
           if [[ "$BACKEND" != "true" && "$BROWSER" != "true" ]]; then
@@ -159,8 +175,9 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      - uses: codecov/codecov-action@v5
-        if: ${{ steps.test-filter.outputs.filter != '' }}
+          BACKEND: ${{ needs.changes.outputs.backend }}
+          BROWSER: ${{ needs.changes.outputs.browser }}
+      - uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
@@ -173,7 +190,9 @@ jobs:
     if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && github.event.inputs.test_filter == '' && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/setup-playwright
       - run: make storybook-build
@@ -205,7 +224,9 @@ jobs:
             runner: ${{ github.repository_owner == 'coder' && 'depot-macos-latest' || 'macos-latest' }}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - name: Install xvfb
         if: matrix.os == 'linux'
@@ -222,16 +243,54 @@ jobs:
         if: matrix.os == 'macos'
         run: make test-e2e PLAYWRIGHT_ARGS="tests/e2e/scenarios/windowLifecycle.spec.ts"
 
+  test-windows:
+    name: Test / Windows
+    needs: [changes]
+    if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
+    timeout-minutes: 15
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-mux
+        with:
+          skip-build-caches: true
+      - name: Generate version.ts
+        shell: bash
+        run: ./scripts/generate-version.sh
+      - name: Generate built-in skills content
+        shell: bash
+        run: ./scripts/generate-builtin-skills.sh
+      - name: Run unit tests (Windows smoke)
+        shell: pwsh
+        run: |
+          bun test src/node/utils/paths.test.ts src/node/utils/main/bashPath.test.ts src/node/utils/main/resolveLocalPtyShell.test.ts
+      - name: Run Windows integration smoke tests
+        shell: pwsh
+        run: |
+          if ($env:BACKEND -ne "true") {
+            Write-Host "No backend changes - skipping Windows integration smoke tests"
+            exit 0
+          }
+
+          bun x jest --silent tests/ipc/backgroundBashDirect.test.ts tests/ipc/executeBash.test.ts tests/ipc/projectCreate.test.ts tests/ipc/planCommands.test.ts
+        env:
+          BACKEND: ${{ needs.changes.outputs.backend }}
+          TEST_INTEGRATION: "1"
+
   smoke-server:
     name: Smoke / Server
     needs: [changes]
     if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
+      - run: ./scripts/generate-npm-shrinkwrap.sh
       - run: make build
       - run: npm pack
       - env:
@@ -239,9 +298,10 @@ jobs:
           SERVER_HOST: localhost
           STARTUP_TIMEOUT: 30
         run: |
+          # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
           TARBALL=$(ls mux-*.tgz | head -1)
           PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: failure()
         with:
           name: smoke-server-logs
@@ -255,11 +315,12 @@ jobs:
     if: github.event_name == 'merge_group' || (github.event_name == 'push' && github.actor != 'github-merge-queue[bot]')
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           load: true
@@ -287,13 +348,14 @@ jobs:
     if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - run: bun run build
       - run: make dist-linux
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-linux
           path: release/*.AppImage
@@ -306,9 +368,10 @@ jobs:
     if: ${{ needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true' }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-macos-15' || 'macos-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - name: Setup code signing
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -320,13 +383,13 @@ jobs:
           AC_APIKEY_ID: ${{ secrets.AC_APIKEY_ID }}
           AC_APIKEY_ISSUER_ID: ${{ secrets.AC_APIKEY_ISSUER_ID }}
       - run: make dist-mac
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-macos-x64
           path: release/*-x64.dmg
           retention-days: 30
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-macos-arm64
           path: release/*-arm64.dmg
@@ -339,10 +402,14 @@ jobs:
     # Windows builds are slow - only run in merge queue and main pushes, not on every PR push
     if: ${{ (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') }}
     runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write # GCP workload identity for Windows code signing
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - name: Add MSYS2 make to PATH
         shell: pwsh
@@ -374,7 +441,7 @@ jobs:
           EV_KEY: ${{ vars.EV_KEY }}
           EV_TSA_URL: ${{ vars.EV_TSA_URL }}
           GCLOUD_ACCESS_TOKEN: ${{ steps.signing.outputs.gcloud_access_token }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-windows
           path: release/*.exe
@@ -387,12 +454,13 @@ jobs:
     if: ${{ (needs.changes.outputs.src == 'true' || needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/setup-mux
       - uses: ./.github/actions/build-vscode-extension
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build-vscode
           path: vscode/mux-*.vsix
@@ -404,9 +472,10 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ${{ github.repository_owner == 'coder' && 'depot-ubuntu-22.04-16' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/check_codex_comments.sh ${{ github.event.pull_request.number }}
@@ -421,6 +490,7 @@ jobs:
       - test-unit
       - test-integration
       - test-storybook
+      - test-windows
       - test-e2e
       - smoke-server
       - smoke-docker

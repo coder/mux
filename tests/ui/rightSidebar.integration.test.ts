@@ -27,7 +27,8 @@ import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   getRightSidebarLayoutKey,
 } from "@/common/constants/storage";
-// RightSidebarLayoutState used for initial setup via localStorage - acceptable for test fixtures
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+// RightSidebarLayoutState used for initial setup via persisted-state helpers - acceptable for test fixtures
 import type { RightSidebarLayoutState } from "@/browser/utils/rightSidebarLayout";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -44,10 +45,8 @@ describeIntegration("RightSidebar (UI)", () => {
   beforeEach(() => {
     // Clear persisted state before each test
     // Note: layout is per-workspace now, so cleared inside tests with workspace context
-    if (typeof localStorage !== "undefined") {
-      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(RIGHT_SIDEBAR_COLLAPSED_KEY);
-    }
+    updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+    updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, null);
   });
 
   test("tab switching updates active tab and persists selection", async () => {
@@ -55,8 +54,8 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted state
-      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -151,12 +150,68 @@ describeIntegration("RightSidebar (UI)", () => {
     });
   }, 60_000);
 
+  test("stats tab enabled does not steal default focus", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const previousStatsTabState = await env.orpc.features.getStatsTabState();
+      await env.orpc.features.setStatsTabOverride({ override: "on" });
+
+      // Clear any persisted state
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
+
+      const view = renderApp({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        // Find the right sidebar
+        const sidebar = await waitFor(
+          () => {
+            const el = view.container.querySelector(
+              '[role="complementary"][aria-label="Workspace insights"]'
+            );
+            if (!el) throw new Error("RightSidebar not found");
+            return el as HTMLElement;
+          },
+          { timeout: 10_000 }
+        );
+
+        // Wait for Stats tab injection and confirm it doesn't steal focus.
+        await waitFor(() => {
+          const costsTab = sidebar.querySelector(
+            '[role="tab"][aria-controls*="costs"]'
+          ) as HTMLElement | null;
+          if (!costsTab) throw new Error("Costs tab not found");
+
+          const statsTab = sidebar.querySelector(
+            '[role="tab"][aria-controls*="stats"]'
+          ) as HTMLElement | null;
+          if (!statsTab) throw new Error("Stats tab not found");
+
+          expect(costsTab.getAttribute("aria-selected")).toBe("true");
+          expect(statsTab.getAttribute("aria-selected")).toBe("false");
+        });
+      } finally {
+        try {
+          await env.orpc.features.setStatsTabOverride({ override: previousStatsTabState.override });
+        } finally {
+          await cleanupView(view, cleanupDom);
+        }
+      }
+    });
+  }, 60_000);
+
   test("sidebar collapse and expand via button", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
       // Start expanded
-      localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+      updatePersistedState(RIGHT_SIDEBAR_COLLAPSED_KEY, false);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -240,7 +295,7 @@ describeIntegration("RightSidebar (UI)", () => {
           activeTab: "review",
         },
       };
-      localStorage.setItem(getRightSidebarLayoutKey(workspaceId), JSON.stringify(initialLayout));
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), initialLayout);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -417,7 +472,7 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted width state
-      localStorage.removeItem("right-sidebar:width");
+      updatePersistedState("right-sidebar:width", null);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -549,7 +604,7 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted state
-      localStorage.removeItem("right-sidebar:width");
+      updatePersistedState("right-sidebar:width", null);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -685,7 +740,7 @@ describeIntegration("RightSidebar (UI)", () => {
         },
         focusedTabsetId: "tabset-top",
       };
-      localStorage.setItem(getRightSidebarLayoutKey(workspaceId), JSON.stringify(splitLayout));
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), splitLayout);
 
       const view = renderApp({
         apiClient: env.orpc,
@@ -743,8 +798,8 @@ describeIntegration("RightSidebar (UI)", () => {
       const cleanupDom = installDom();
 
       // Clear any persisted state
-      localStorage.removeItem(RIGHT_SIDEBAR_TAB_KEY);
-      localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+      updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
+      updatePersistedState(getRightSidebarLayoutKey(workspaceId), null);
 
       const view = renderApp({
         apiClient: env.orpc,

@@ -1,5 +1,8 @@
 import { describe, expect, test, mock, beforeEach } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
+import * as fsPromises from "fs/promises";
+import { tmpdir } from "os";
+import path from "path";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
@@ -13,6 +16,35 @@ import type { BackgroundProcessManager } from "./backgroundProcessManager";
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
   (service as any).renamingWorkspaces.add(workspaceId);
+}
+
+async function withTempMuxRoot<T>(fn: (root: string) => Promise<T>): Promise<T> {
+  const originalMuxRoot = process.env.MUX_ROOT;
+  const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-plan-"));
+  process.env.MUX_ROOT = tempRoot;
+
+  try {
+    return await fn(tempRoot);
+  } finally {
+    if (originalMuxRoot === undefined) {
+      delete process.env.MUX_ROOT;
+    } else {
+      process.env.MUX_ROOT = originalMuxRoot;
+    }
+    await fsPromises.rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+async function writePlanFile(
+  root: string,
+  projectName: string,
+  workspaceName: string
+): Promise<string> {
+  const planDir = path.join(root, "plans", projectName);
+  await fsPromises.mkdir(planDir, { recursive: true });
+  const planFile = path.join(planDir, `${workspaceName}.md`);
+  await fsPromises.writeFile(planFile, "# Plan\n");
+  return planFile;
 }
 
 // NOTE: This test file uses bun:test mocks (not Jest).
@@ -168,6 +200,36 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
     );
+  });
+
+  test("returns expanded plan path for local runtimes", async () => {
+    await withTempMuxRoot(async (muxRoot) => {
+      const workspaceId = "ws-plan-path";
+      const workspaceName = "plan-workspace";
+      const projectName = "cmux";
+      const planFile = await writePlanFile(muxRoot, projectName, workspaceName);
+
+      interface WorkspaceServiceTestAccess {
+        getInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
+      }
+
+      const fakeMetadata: FrontendWorkspaceMetadata = {
+        id: workspaceId,
+        name: workspaceName,
+        projectName,
+        projectPath: "/tmp/proj",
+        namedWorkspacePath: "/tmp/proj/plan-workspace",
+        runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+      };
+
+      const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+      svc.getInfo = mock(() => Promise.resolve(fakeMetadata));
+
+      const result = await workspaceService.getPostCompactionState(workspaceId);
+
+      expect(result.planPath).toBe(planFile);
+      expect(result.planPath?.startsWith("~")).toBe(false);
+    });
   });
 
   test("debounces multiple refresh requests into a single metadata emit", async () => {

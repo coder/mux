@@ -18,10 +18,10 @@ describe("getModelStats", () => {
     });
 
     test("should find models in models-extra.ts", () => {
-      const stats = getModelStats("openai:gpt-5-pro");
+      const stats = getModelStats("openai:gpt-5.2-pro");
       expect(stats).not.toBeNull();
-      expect(stats?.max_input_tokens).toBe(400000);
-      expect(stats?.input_cost_per_token).toBe(0.000015);
+      expect(stats?.max_input_tokens).toBe(272000);
+      expect(stats?.input_cost_per_token).toBe(0.000021);
     });
 
     test("models-extra.ts should override models.json", () => {

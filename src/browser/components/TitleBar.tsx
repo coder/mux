@@ -6,21 +6,16 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
 import { Download, Loader2, RefreshCw } from "lucide-react";
 
-import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useAPI } from "@/browser/contexts/API";
-import { isDesktopMode, getTitlebarLeftInset } from "@/browser/hooks/useDesktopTitlebar";
+import {
+  isDesktopMode,
+  getTitlebarLeftInset,
+  DESKTOP_TITLEBAR_HEIGHT_CLASS,
+} from "@/browser/hooks/useDesktopTitlebar";
 
 // Update check intervals
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const UPDATE_CHECK_HOVER_COOLDOWN_MS = 60 * 1000; // 1 minute
-
-const updateStatusColors: Record<"available" | "downloading" | "downloaded" | "disabled", string> =
-  {
-    available: "#4CAF50", // Green for available
-    downloading: "#2196F3", // Blue for downloading
-    downloaded: "#FF9800", // Orange for ready to install
-    disabled: "#666666", // Gray for disabled
-  };
 
 interface VersionMetadata {
   buildTime: string;
@@ -34,15 +29,6 @@ function hasBuildInfo(value: unknown): value is VersionMetadata {
 
   const candidate = value as Record<string, unknown>;
   return typeof candidate.buildTime === "string";
-}
-
-function formatLocalDate(isoDate: string): string {
-  const date = new Date(isoDate);
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
 }
 
 function formatExtendedTimestamp(isoDate: string): string {
@@ -64,14 +50,12 @@ function parseBuildInfo(version: unknown) {
     const gitDescribe = typeof git_describe === "string" ? git_describe : undefined;
 
     return {
-      buildDate: formatLocalDate(buildTime),
       extendedTimestamp: formatExtendedTimestamp(buildTime),
       gitDescribe,
     };
   }
 
   return {
-    buildDate: "unknown",
     extendedTimestamp: "Unknown build time",
     gitDescribe: undefined,
   };
@@ -83,17 +67,6 @@ export function TitleBar() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
   const lastHoverCheckTime = useRef<number>(0);
-
-  const { startSequence } = useTutorial();
-
-  // Start settings tutorial on first launch
-  useEffect(() => {
-    // Small delay to ensure UI is rendered before showing tutorial
-    const timer = setTimeout(() => {
-      startSequence("settings");
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [startSequence]);
 
   useEffect(() => {
     // Skip update checks in browser mode - app updates only apply to Electron
@@ -135,6 +108,11 @@ export function TitleBar() {
   }, [api]);
 
   const handleIndicatorHover = () => {
+    // Skip update checks in browser mode - app updates only apply to Electron
+    if (!window.api) {
+      return;
+    }
+
     // Debounce: Only check once per cooldown period on hover
     const now = Date.now();
 
@@ -157,6 +135,11 @@ export function TitleBar() {
   };
 
   const handleUpdateClick = () => {
+    // Skip in browser mode - app updates only apply to Electron
+    if (!window.api) {
+      return;
+    }
+
     if (updateStatus.type === "available") {
       api?.update.download().catch(console.error);
     } else if (updateStatus.type === "downloaded") {
@@ -166,9 +149,11 @@ export function TitleBar() {
 
   const getUpdateTooltip = () => {
     const currentVersion = gitDescribe ?? "dev";
-    const lines: React.ReactNode[] = [`Current: ${currentVersion}`];
+    const lines: React.ReactNode[] = [`Current: ${currentVersion}`, `Built: ${extendedTimestamp}`];
 
-    if (isCheckingOnHover || updateStatus.type === "checking") {
+    if (!window.api) {
+      lines.push("Desktop updates are available in the Electron app only.");
+    } else if (isCheckingOnHover || updateStatus.type === "checking") {
       lines.push("Checking for updates...");
     } else {
       switch (updateStatus.type) {
@@ -212,25 +197,28 @@ export function TitleBar() {
     );
   };
 
-  const getIndicatorStatus = (): "available" | "downloading" | "downloaded" | "disabled" => {
-    if (isCheckingOnHover || updateStatus.type === "checking") return "disabled";
-
-    switch (updateStatus.type) {
-      case "available":
-        return "available";
-      case "downloading":
-        return "downloading";
-      case "downloaded":
-        return "downloaded";
-      default:
-        return "disabled";
+  const updateBadgeIcon = (() => {
+    if (updateStatus.type === "available") {
+      return <Download className="size-3.5" />;
     }
-  };
 
-  const indicatorStatus = getIndicatorStatus();
-  // Always show indicator in packaged builds (or dev with DEBUG_UPDATER)
-  // In dev without DEBUG_UPDATER, the backend won't initialize updater service
-  const showUpdateIndicator = true;
+    if (updateStatus.type === "downloaded") {
+      return <RefreshCw className="size-3.5" />;
+    }
+
+    if (
+      updateStatus.type === "downloading" ||
+      updateStatus.type === "checking" ||
+      isCheckingOnHover
+    ) {
+      return <Loader2 className="size-3.5 animate-spin" />;
+    }
+
+    return null;
+  })();
+
+  const isUpdateActionable =
+    updateStatus.type === "available" || updateStatus.type === "downloaded";
 
   // In desktop mode, add left padding for macOS traffic lights
   const leftInset = getTitlebarLeftInset();
@@ -239,51 +227,47 @@ export function TitleBar() {
   return (
     <div
       className={cn(
-        "bg-sidebar border-border-light font-primary text-muted flex h-8 shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
+        "bg-sidebar border-border-light font-primary text-muted flex shrink-0 items-center justify-between border-b px-4 text-[11px] select-none",
+        isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
       )}
       style={leftInset > 0 ? { paddingLeft: leftInset } : undefined}
     >
-      <div className={cn("mr-4 flex min-w-0 items-center gap-2", isDesktop && "titlebar-no-drag")}>
-        {showUpdateIndicator && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div
-                className={cn(
-                  "w-4 h-4 flex items-center justify-center",
-                  indicatorStatus === "disabled"
-                    ? "cursor-default"
-                    : "cursor-pointer hover:opacity-70"
-                )}
-                style={{ color: updateStatusColors[indicatorStatus] }}
-                onClick={handleUpdateClick}
-                onMouseEnter={handleIndicatorHover}
-              >
-                {indicatorStatus === "disabled" ? (
-                  <span className="text-sm">⊘</span>
-                ) : indicatorStatus === "downloading" ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : indicatorStatus === "downloaded" ? (
-                  <RefreshCw className="size-3.5" />
-                ) : (
-                  <Download className="size-3.5" />
-                )}
-              </div>
-            </TooltipTrigger>
-            <TooltipContent align="start" className="pointer-events-auto">
-              {getUpdateTooltip()}
-            </TooltipContent>
-          </Tooltip>
+      <div
+        className={cn(
+          "mr-4 flex min-w-0",
+          leftInset > 0 ? "flex-col" : "items-center gap-2",
+          isDesktop && "titlebar-no-drag"
         )}
+      >
         <Tooltip>
           <TooltipTrigger asChild>
-            <div className="min-w-0 cursor-text truncate text-xs font-normal tracking-wider select-text">
-              mux {gitDescribe ?? "(dev)"}
+            <div
+              className={cn(
+                "flex items-center gap-1.5",
+                isUpdateActionable ? "cursor-pointer hover:opacity-70" : "cursor-default"
+              )}
+              onClick={handleUpdateClick}
+              onMouseEnter={handleIndicatorHover}
+            >
+              <div
+                className={cn(
+                  "min-w-0 cursor-text truncate font-normal tracking-wider select-text",
+                  leftInset > 0 ? "text-[10px]" : "text-xs"
+                )}
+              >
+                {gitDescribe ?? "(dev)"}
+              </div>
+              {updateBadgeIcon && (
+                <div className="text-accent flex h-3.5 w-3.5 items-center justify-center">
+                  {updateBadgeIcon}
+                </div>
+              )}
             </div>
           </TooltipTrigger>
-          <TooltipContent side="bottom" align="start">
-            Built at {extendedTimestamp}
+          <TooltipContent align="start" className="pointer-events-auto">
+            {getUpdateTooltip()}
           </TooltipContent>
         </Tooltip>
       </div>

@@ -20,6 +20,11 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
+import {
+  DEFAULT_LAYOUT_PRESETS_CONFIG,
+  isLayoutPresetsConfigEmpty,
+  normalizeLayoutPresetsConfig,
+} from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import {
@@ -27,6 +32,10 @@ import {
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
 } from "@/common/types/tasks";
+import {
+  discoverAgentSkills,
+  readAgentSkill,
+} from "@/node/services/agentSkills/agentSkillsService";
 import {
   discoverAgentDefinitions,
   readAgentDefinition,
@@ -444,11 +453,36 @@ export const router = (authToken?: string) => {
           await context.taskService.maybeStartQueuedTasks();
         }),
     },
+    uiLayouts: {
+      getAll: t
+        .input(schemas.uiLayouts.getAll.input)
+        .output(schemas.uiLayouts.getAll.output)
+        .handler(({ context }) => {
+          const config = context.config.loadConfigOrDefault();
+          return config.layoutPresets ?? DEFAULT_LAYOUT_PRESETS_CONFIG;
+        }),
+      saveAll: t
+        .input(schemas.uiLayouts.saveAll.input)
+        .output(schemas.uiLayouts.saveAll.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalized = normalizeLayoutPresetsConfig(input.layoutPresets);
+            return {
+              ...config,
+              layoutPresets: isLayoutPresetsConfigEmpty(normalized) ? undefined : normalized,
+            };
+          });
+        }),
+    },
     agents: {
       list: t
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
+          // Wait for workspace init before discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
 
@@ -483,8 +517,37 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
+          // Wait for workspace init before discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           return readAgentDefinition(runtime, discoveryPath, input.agentId);
+        }),
+    },
+    agentSkills: {
+      list: t
+        .input(schemas.agentSkills.list.input)
+        .output(schemas.agentSkills.list.output)
+        .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          return discoverAgentSkills(runtime, discoveryPath);
+        }),
+      get: t
+        .input(schemas.agentSkills.get.input)
+        .output(schemas.agentSkills.get.output)
+        .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          const result = await readAgentSkill(runtime, discoveryPath, input.skillName);
+          return result.package;
         }),
     },
     providers: {
@@ -1015,6 +1078,32 @@ export const router = (authToken?: string) => {
           };
         }),
     },
+    coder: {
+      getInfo: t
+        .input(schemas.coder.getInfo.input)
+        .output(schemas.coder.getInfo.output)
+        .handler(async ({ context }) => {
+          return context.coderService.getCoderInfo();
+        }),
+      listTemplates: t
+        .input(schemas.coder.listTemplates.input)
+        .output(schemas.coder.listTemplates.output)
+        .handler(async ({ context }) => {
+          return context.coderService.listTemplates();
+        }),
+      listPresets: t
+        .input(schemas.coder.listPresets.input)
+        .output(schemas.coder.listPresets.output)
+        .handler(async ({ context, input }) => {
+          return context.coderService.listPresets(input.template, input.org);
+        }),
+      listWorkspaces: t
+        .input(schemas.coder.listWorkspaces.input)
+        .output(schemas.coder.listWorkspaces.output)
+        .handler(async ({ context }) => {
+          return context.coderService.listWorkspaces();
+        }),
+    },
     workspace: {
       list: t
         .input(schemas.workspace.list.input)
@@ -1219,6 +1308,12 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.getInfo.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.getInfo(input.workspaceId);
+        }),
+      getLastLlmRequest: t
+        .input(schemas.workspace.getLastLlmRequest.input)
+        .output(schemas.workspace.getLastLlmRequest.output)
+        .handler(({ context, input }) => {
+          return context.aiService.debugGetLastLlmRequest(input.workspaceId);
         }),
       getFullReplay: t
         .input(schemas.workspace.getFullReplay.input)
@@ -1483,6 +1578,20 @@ export const router = (authToken?: string) => {
               return { success: false, error: result.error };
             }
             return { success: true, data: undefined };
+          }),
+        getOutput: t
+          .input(schemas.workspace.backgroundBashes.getOutput.input)
+          .output(schemas.workspace.backgroundBashes.getOutput.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.workspaceService.getBackgroundProcessOutput(
+              input.workspaceId,
+              input.processId,
+              { fromOffset: input.fromOffset, tailBytes: input.tailBytes }
+            );
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return { success: true, data: result.data };
           }),
       },
       getPostCompactionState: t

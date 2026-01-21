@@ -1,7 +1,6 @@
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
-import { parseGitShowBranchForStatus } from "@/common/utils/git/parseGitStatus";
 import {
   generateGitStatusScript,
   GIT_FETCH_SCRIPT,
@@ -151,6 +150,14 @@ export class GitStatusStore {
    */
   isWorkspaceRefreshing(workspaceId: string): boolean {
     return this.refreshingWorkspacesCache.get(workspaceId) ?? false;
+  }
+
+  /**
+   * Check if any git status fetch is currently in-flight.
+   * Use this to ensure no background fetch can race with operations that change git state.
+   */
+  isAnyRefreshInFlight(): boolean {
+    return this.refreshController.isRefreshing;
   }
 
   /**
@@ -344,7 +351,8 @@ export class GitStatusStore {
       }
 
       const {
-        showBranchOutput,
+        ahead,
+        behind,
         dirtyCount,
         outgoingAdditions,
         outgoingDeletions,
@@ -353,17 +361,11 @@ export class GitStatusStore {
       } = parsed;
       const dirty = dirtyCount > 0;
 
-      // Parse ahead/behind from show-branch output
-      const parsedStatus = parseGitShowBranchForStatus(showBranchOutput);
-
-      if (!parsedStatus) {
-        return [metadata.id, null];
-      }
-
       return [
         metadata.id,
         {
-          ...parsedStatus,
+          ahead,
+          behind,
           dirty,
           outgoingAdditions,
           outgoingDeletions,

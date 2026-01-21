@@ -1,4 +1,4 @@
-import { getPlanModeInstruction } from "./modeUtils";
+import { getPlanFileHint, getPlanModeInstruction } from "./modeUtils";
 
 describe("getPlanModeInstruction", () => {
   it("provides plan file path context", () => {
@@ -33,5 +33,21 @@ describe("getPlanModeInstruction", () => {
 
     expect(instruction).toContain('MUST ONLY spawn `agentId: "explore"` tasks');
     expect(instruction).toContain("Do NOT call `propose_plan` until");
+  });
+});
+
+describe("getPlanFileHint", () => {
+  it("returns null when the plan file does not exist", () => {
+    expect(getPlanFileHint("/tmp/plan.md", false)).toBeNull();
+  });
+
+  it("includes post-compaction guidance and an ignore escape hatch", () => {
+    const hint = getPlanFileHint("/tmp/plan.md", true);
+
+    if (!hint) throw new Error("expected non-null hint");
+
+    expect(hint).toContain("A plan file exists at: /tmp/plan.md");
+    expect(hint).toContain("compaction/context reset");
+    expect(hint).toContain("If it is unrelated to the current request, ignore it.");
   });
 });

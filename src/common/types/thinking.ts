@@ -5,7 +5,8 @@
  * different AI providers (Anthropic, OpenAI, etc.)
  */
 
-export type ThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh";
+export const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**
  * Active thinking levels (excludes "off")
@@ -14,13 +15,7 @@ export type ThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh";
 export type ThinkingLevelOn = Exclude<ThinkingLevel, "off">;
 
 export function isThinkingLevel(value: unknown): value is ThinkingLevel {
-  return (
-    value === "off" ||
-    value === "low" ||
-    value === "medium" ||
-    value === "high" ||
-    value === "xhigh"
-  );
+  return typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel);
 }
 
 export function coerceThinkingLevel(value: unknown): ThinkingLevel | undefined {

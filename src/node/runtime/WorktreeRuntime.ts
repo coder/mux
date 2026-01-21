@@ -139,9 +139,14 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       return true;
     } catch (error) {
       const errorMsg = getErrorMessage(error);
-      initLogger.logStderr(
-        `Note: Could not fetch from origin (${errorMsg}), using local branch state`
-      );
+      // Branch doesn't exist on origin (common for subagent local-only branches)
+      if (errorMsg.includes("couldn't find remote ref")) {
+        initLogger.logStep(`Branch "${trunkBranch}" not found on origin; using local state.`);
+      } else {
+        initLogger.logStderr(
+          `Note: Could not fetch from origin (${errorMsg}), using local branch state`
+        );
+      }
       return false;
     }
   }
@@ -198,9 +203,15 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, env } = params;
+    const { projectPath, branchName, workspacePath, initLogger, env, skipInitHook } = params;
 
     try {
+      if (skipInitHook) {
+        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+        initLogger.logComplete(0);
+        return { success: true };
+      }
+
       // Run .mux/init hook if it exists
       // Note: runInitHook calls logComplete() internally if hook exists
       const hookExists = await checkInitHookExists(projectPath);

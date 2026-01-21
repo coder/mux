@@ -1,4 +1,5 @@
 import type { CompactionRequestData } from "@/common/types/message";
+import { isDefaultContinueMessage } from "@/common/types/message";
 
 /**
  * Format compaction command *line* for display.
@@ -21,6 +22,22 @@ export function formatCompactionCommandLine(options: {
 }
 
 /**
+ * Return the visible continue text for a compaction request.
+ * Hides the default resume sentinel ("Continue") and empty text.
+ */
+export function getCompactionContinueText(
+  continueMessage?: CompactionRequestData["continueMessage"]
+): string | null {
+  if (!continueMessage) return null;
+  if (isDefaultContinueMessage(continueMessage)) return null;
+  const continueText = continueMessage.text;
+  if (typeof continueText !== "string" || continueText.trim().length === 0) {
+    return null;
+  }
+  return continueText;
+}
+
+/**
  * Build the text shown in the editor when editing a /compact request.
  *
  * `rawCommand` is intentionally a single-line command (no multiline payload).
@@ -30,9 +47,24 @@ export function buildCompactionEditText(request: {
   rawCommand: string;
   parsed: CompactionRequestData;
 }): string {
-  const continueText = request.parsed.continueMessage?.text;
-  if (typeof continueText === "string" && continueText.trim().length > 0) {
+  const continueText = getCompactionContinueText(request.parsed.continueMessage);
+  if (continueText) {
     return `${request.rawCommand}\n${continueText}`;
+  }
+  return request.rawCommand;
+}
+
+/**
+ * Build the text shown in user message bubbles for a /compact request.
+ * Uses a hard line break so the command and payload render on separate lines.
+ */
+export function buildCompactionDisplayText(request: {
+  rawCommand: string;
+  parsed: CompactionRequestData;
+}): string {
+  const continueText = getCompactionContinueText(request.parsed.continueMessage);
+  if (continueText) {
+    return `${request.rawCommand}  \n${continueText}`;
   }
   return request.rawCommand;
 }

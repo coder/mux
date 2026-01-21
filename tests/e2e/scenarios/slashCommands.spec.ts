@@ -28,6 +28,8 @@ test.describe("slash command flows", () => {
     await ui.chat.expectTranscriptContains("Directory listing:");
 
     await ui.chat.sendMessage("/clear");
+    // Confirm the destructive action in the modal
+    await page.getByRole("button", { name: "Clear" }).click();
     await ui.chat.expectStatusMessageContains("Chat history cleared");
 
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
@@ -58,7 +60,10 @@ test.describe("slash command flows", () => {
     await expect(transcript).toContainText("Mock README content");
     await expect(transcript).toContainText("hello");
 
-    await ui.chat.sendCommandAndExpectStatus("/truncate 50", "Chat history truncated by 50%");
+    await ui.chat.sendMessage("/truncate 50");
+    // Confirm the destructive action in the modal
+    await page.getByRole("button", { name: "Truncate" }).click();
+    await ui.chat.expectStatusMessageContains("Chat history truncated by 50%");
 
     await expect(transcript).not.toContainText("Mock README content");
     await expect(transcript).toContainText("hello");

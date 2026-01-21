@@ -16,14 +16,17 @@ describe("sshConnectionPool", () => {
     });
 
     test("different hosts produce different controlPaths", () => {
-      const path1 = getControlPath({
+      const config1: SSHRuntimeConfig = {
         host: "host1.example.com",
         srcBaseDir: "/work",
-      });
-      const path2 = getControlPath({
+      };
+      const config2: SSHRuntimeConfig = {
         host: "host2.example.com",
         srcBaseDir: "/work",
-      });
+      };
+
+      const path1 = getControlPath(config1);
+      const path2 = getControlPath(config2);
 
       expect(path1).not.toBe(path2);
     });

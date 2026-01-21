@@ -58,7 +58,7 @@ export interface RightSidebarLayoutState {
 
 export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSidebarLayoutState {
   // Default tabs exclude terminal - users add terminals via the "+" button
-  const baseTabs: TabType[] = ["costs", "review"];
+  const baseTabs: TabType[] = ["costs", "review", "explorer"];
   const tabs = baseTabs.includes(activeTab) ? baseTabs : [...baseTabs, activeTab];
 
   return {
@@ -74,11 +74,41 @@ export function getDefaultRightSidebarLayoutState(activeTab: TabType): RightSide
   };
 }
 
+/**
+ * Recursively inject a tab into the first tabset that doesn't have it.
+ * Returns true if injection happened.
+ */
+function injectTabIntoLayout(node: RightSidebarLayoutNode, tab: TabType): boolean {
+  if (node.type === "tabset") {
+    if (!node.tabs.includes(tab)) {
+      node.tabs.push(tab);
+      return true;
+    }
+    return false;
+  }
+  // Split node - try first child, then second
+  return injectTabIntoLayout(node.children[0], tab) || injectTabIntoLayout(node.children[1], tab);
+}
+
+/**
+ * Check if a tab exists anywhere in the layout tree.
+ */
+function layoutContainsTab(node: RightSidebarLayoutNode, tab: TabType): boolean {
+  if (node.type === "tabset") {
+    return node.tabs.includes(tab);
+  }
+  return layoutContainsTab(node.children[0], tab) || layoutContainsTab(node.children[1], tab);
+}
+
 export function parseRightSidebarLayoutState(
   raw: unknown,
   activeTabFallback: TabType
 ): RightSidebarLayoutState {
   if (isRightSidebarLayoutState(raw)) {
+    // Migrate: inject "explorer" tab if missing from persisted layout
+    if (!layoutContainsTab(raw.root, "explorer")) {
+      injectTabIntoLayout(raw.root, "explorer");
+    }
     return raw;
   }
 

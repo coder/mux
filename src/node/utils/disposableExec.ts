@@ -1,5 +1,37 @@
-import { exec } from "child_process";
+import { exec, execFileSync } from "child_process";
 import type { ChildProcess } from "child_process";
+
+export function killProcessTree(pid: number): void {
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return;
+  }
+
+  // process.kill(-pid) is Unix-only; on Windows we must use taskkill to kill the full tree.
+  if (process.platform === "win32") {
+    try {
+      execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } catch {
+      // Ignore errors - process may already have exited.
+    }
+
+    return;
+  }
+
+  // Prefer killing the entire process group. This requires the target process to be a group leader.
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    // Fall back to just the individual process.
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // ignore
+    }
+  }
+}
 
 /**
  * Disposable wrapper for child processes that ensures immediate cleanup.
@@ -65,10 +97,16 @@ export class DisposableProcess implements Disposable {
       this.process.exitCode === null &&
       this.process.signalCode === null
     ) {
-      try {
-        this.process.kill("SIGKILL");
-      } catch {
-        // Ignore ESRCH errors - process may have exited between check and kill
+      // On Windows, childProcess.kill() does not terminate the full process tree.
+      // Use taskkill /T to avoid leaking child processes (e.g., spawned by Git Bash).
+      if (this.process.pid !== undefined) {
+        killProcessTree(this.process.pid);
+      } else {
+        try {
+          this.process.kill("SIGKILL");
+        } catch {
+          // Ignore ESRCH errors - process may have exited between check and kill
+        }
       }
     }
 

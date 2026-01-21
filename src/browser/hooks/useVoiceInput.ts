@@ -8,6 +8,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import type { APIClient } from "@/browser/contexts/API";
 import { trackVoiceTranscription } from "@/common/telemetry";
 
@@ -345,7 +346,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         stop({ send: true });
       } else if (e.key === "Escape") {
         e.preventDefault();
-        e.stopPropagation(); // Prevent global stream interrupt handler
+        stopKeyboardPropagation(e);
         cancel();
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_VOICE_INPUT)) {
         e.preventDefault();

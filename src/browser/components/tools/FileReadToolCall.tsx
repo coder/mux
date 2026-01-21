@@ -80,7 +80,7 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
     <ToolContainer expanded={expanded} className="@container">
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
-        <ToolIcon emoji="📖" toolName="file_read" />
+        <ToolIcon toolName="file_read" />
         <div className="text-text flex max-w-96 min-w-0 items-center gap-1.5">
           <FileIcon filePath={filePath} className="text-[15px] leading-none" />
           <span className="font-monospace truncate">{filePath}</span>

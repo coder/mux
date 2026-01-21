@@ -21,7 +21,7 @@ import {
   isQueuedMessageChanged,
   isRestoreToInput,
 } from "@/common/orpc/types";
-import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
+import type { StreamEndEvent, StreamAbortEvent, RuntimeStatusEvent } from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
@@ -56,6 +56,8 @@ export interface WorkspaceState {
   pendingStreamStartTime: number | null;
   // Model override from pending compaction request (used during "starting" phase)
   pendingCompactionModel: string | null;
+  // Runtime status from ensureReady (for Coder workspace starting UX)
+  runtimeStatus: RuntimeStatusEvent | null;
   // Live streaming stats (updated on each stream-delta)
   streamingTokenCount: number | undefined;
   streamingTPS: number | undefined;
@@ -472,6 +474,10 @@ export class WorkspaceStore {
       applyWorkspaceChatEventToAggregator(aggregator, data);
       this.states.bump(workspaceId);
     },
+    "runtime-status": (workspaceId, aggregator, data) => {
+      applyWorkspaceChatEventToAggregator(aggregator, data);
+      this.states.bump(workspaceId);
+    },
     "session-usage-delta": (workspaceId, _aggregator, data) => {
       const usageDelta = data as Extract<WorkspaceChatMessage, { type: "session-usage-delta" }>;
 
@@ -866,6 +872,7 @@ export class WorkspaceStore {
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
         pendingCompactionModel: aggregator.getPendingCompactionModel(),
+        runtimeStatus: aggregator.getRuntimeStatus(),
         streamingTokenCount,
         streamingTPS,
       };
@@ -1587,7 +1594,9 @@ export class WorkspaceStore {
   ): StreamingMessageAggregator {
     if (!this.aggregators.has(workspaceId)) {
       // Create new aggregator with required createdAt and workspaceId for localStorage persistence
-      const aggregator = new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt);
+      const aggregator = new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt, {
+        debugShowAllMessages: window.api?.debugShowAllMessages === true,
+      });
       // Wire up navigation callback for notification clicks
       if (this.navigateToWorkspaceCallback) {
         aggregator.onNavigateToWorkspace = this.navigateToWorkspaceCallback;

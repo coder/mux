@@ -37,12 +37,19 @@ export async function validatePlanModeAccess(
     };
   }
 
-  // Plan mode restriction: only allow editing the plan file
+  // Plan mode restriction: only allow editing the plan file (and require exact string match).
   if (config.mode === "plan" && config.planFilePath) {
-    if (!(await isPlanFilePath(filePath, config))) {
+    if (filePath !== config.planFilePath) {
+      if (await isPlanFilePath(filePath, config)) {
+        return {
+          success: false,
+          error: `In plan mode, you must use the exact plan file path from the instructions: ${config.planFilePath} (attempted: ${filePath}; this resolves to the plan file but absolute/alternate paths are not allowed)`,
+        };
+      }
+
       return {
         success: false,
-        error: `In plan mode, only the plan file can be edited. Use path: ${config.planFilePath} (attempted: ${filePath})`,
+        error: `In plan mode, only the plan file can be edited. You must use the exact plan file path: ${config.planFilePath} (attempted: ${filePath})`,
       };
     }
     // Skip cwd validation for plan file - it may be outside workspace

@@ -9,6 +9,7 @@ import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks"
 import { log } from "./log";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 
 /**
@@ -400,7 +401,7 @@ export class HistoryService {
         // We stringify the entire message for simplicity - only relative weights matter
         const messageTokens: Array<{ message: MuxMessage; tokens: number }> = await Promise.all(
           messages.map(async (msg) => {
-            const tokens = await tokenizer.countTokens(JSON.stringify(msg));
+            const tokens = await tokenizer.countTokens(safeStringifyForCounting(msg));
             return { message: msg, tokens };
           })
         );

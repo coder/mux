@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useMemo } from "react";
+import { Check, Circle } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
 import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
 import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
@@ -43,6 +44,8 @@ interface HunkViewerProps {
   includeUncommitted: boolean;
   /** Action callbacks for inline review notes */
   reviewActions?: ReviewActionCallbacks;
+  /** Callback to open a file in a new tab */
+  onOpenFile?: (relativePath: string) => void;
 }
 
 export const HunkViewer = React.memo<HunkViewerProps>(
@@ -63,6 +66,7 @@ export const HunkViewer = React.memo<HunkViewerProps>(
     diffBase,
     reviewActions,
     includeUncommitted,
+    onOpenFile,
   }) => {
     // Ref for the hunk container to track visibility
     const hunkRef = React.useRef<HTMLDivElement>(null);
@@ -127,6 +131,14 @@ export const HunkViewer = React.memo<HunkViewerProps>(
       }
       return highlightSearchInText(hunk.filePath, searchConfig);
     }, [hunk.filePath, searchConfig]);
+
+    const handleOpenFile = React.useCallback(
+      (event: React.MouseEvent<HTMLButtonElement>) => {
+        event.stopPropagation();
+        onOpenFile?.(hunk.filePath);
+      },
+      [onOpenFile, hunk.filePath]
+    );
 
     // Persist manual expand/collapse state across remounts per workspace
     // Maps hunkId -> isExpanded for user's manual preferences
@@ -252,7 +264,11 @@ export const HunkViewer = React.memo<HunkViewerProps>(
                   onClick={handleToggleRead}
                   aria-label={`Mark as read (${formatKeybind(KEYBINDS.TOGGLE_HUNK_READ)})`}
                 >
-                  {isRead ? "✓" : "○"}
+                  {isRead ? (
+                    <Check aria-hidden="true" className="h-3 w-3" />
+                  ) : (
+                    <Circle aria-hidden="true" className="h-3 w-3" />
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent align="start" side="top">
@@ -261,10 +277,25 @@ export const HunkViewer = React.memo<HunkViewerProps>(
               </TooltipContent>
             </Tooltip>
           )}
-          <div
-            className="text-foreground min-w-0 truncate"
-            dangerouslySetInnerHTML={{ __html: highlightedFilePath }}
-          />
+          {onOpenFile ? (
+            <button
+              type="button"
+              onClick={handleOpenFile}
+              className={cn(
+                "text-foreground min-w-0 truncate bg-transparent p-0 text-left",
+                "hover:text-link focus-visible:text-link cursor-pointer border-none"
+              )}
+              title={hunk.filePath}
+              aria-label={`Open ${hunk.filePath} in new tab`}
+            >
+              <span dangerouslySetInnerHTML={{ __html: highlightedFilePath }} />
+            </button>
+          ) : (
+            <div
+              className="text-foreground min-w-0 truncate"
+              dangerouslySetInnerHTML={{ __html: highlightedFilePath }}
+            />
+          )}
           <div className="text-muted ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
             {!isPureRename && (
               <>

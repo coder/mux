@@ -15,7 +15,8 @@ import {
   readAgentDefinition,
   discoverAgentDefinitions,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { createRuntime, runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { Ok, Err, type Result } from "@/common/types/result";
@@ -23,6 +24,7 @@ import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
@@ -453,12 +455,14 @@ export class TaskService {
       }
     };
 
+    let skipInitHook = false;
     try {
       const definition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
       if (definition.frontmatter.subagent?.runnable !== true) {
         const hint = await getRunnableHint();
         return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId}). ${hint}`);
       }
+      skipInitHook = definition.frontmatter.subagent?.skip_init_hook === true;
     } catch {
       const hint = await getRunnableHint();
       return Err(`Task.create: unknown agentId (${agentId}). ${hint}`);
@@ -549,11 +553,29 @@ export class TaskService {
 
     // Note: Local project-dir runtimes share the same directory (unsafe by design).
     // For worktree/ssh runtimes we attempt a fork first; otherwise fall back to createWorkspace.
+
     const forkResult = await runtime.forkWorkspace({
       projectPath: parentMeta.projectPath,
       sourceWorkspaceName: parentMeta.name,
       newWorkspaceName: workspaceName,
       initLogger,
+    });
+
+    const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
+      this.config,
+      parentWorkspaceId,
+      parentRuntimeConfig,
+      forkResult
+    );
+
+    if (forkResult.sourceRuntimeConfig) {
+      // Ensure UI gets the updated runtimeConfig for the parent workspace.
+      await this.emitWorkspaceMetadata(parentWorkspaceId);
+    }
+
+    const runtimeForTaskWorkspace = createRuntime(forkedRuntimeConfig, {
+      projectPath: parentMeta.projectPath,
+      workspaceName,
     });
 
     let trunkBranch: string;
@@ -614,7 +636,7 @@ export class TaskService {
         name: workspaceName,
         title: args.title,
         createdAt,
-        runtimeConfig: taskRuntimeConfig,
+        runtimeConfig: forkedRuntimeConfig,
         aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
         agentId,
         parentWorkspaceId,
@@ -631,22 +653,21 @@ export class TaskService {
     // Emit metadata update so the UI sees the workspace immediately.
     await this.emitWorkspaceMetadata(taskId);
 
-    // Kick init hook (best-effort, async).
+    // Kick init (best-effort, async).
     const secrets = secretsToRecord(this.config.getProjectSecrets(parentMeta.projectPath));
-    void runtime
-      .initWorkspace({
+    runBackgroundInit(
+      runtimeForTaskWorkspace,
+      {
         projectPath: parentMeta.projectPath,
         branchName: workspaceName,
         trunkBranch,
         workspacePath,
         initLogger,
         env: secrets,
-      })
-      .catch((error: unknown) => {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        initLogger.logStderr(`Initialization failed: ${errorMessage}`);
-        initLogger.logComplete(-1);
-      });
+        skipInitHook,
+      },
+      taskId
+    );
 
     // Start immediately (counts towards parallel limit).
     const sendResult = await this.workspaceService.sendMessage(taskId, prompt, {
@@ -659,7 +680,12 @@ export class TaskService {
         typeof sendResult.error === "string"
           ? sendResult.error
           : formatSendMessageError(sendResult.error).message;
-      await this.rollbackFailedTaskCreate(runtime, parentMeta.projectPath, workspaceName, taskId);
+      await this.rollbackFailedTaskCreate(
+        runtimeForTaskWorkspace,
+        parentMeta.projectPath,
+        workspaceName,
+        taskId
+      );
       return Err(message);
     }
 
@@ -1395,15 +1421,18 @@ export class TaskService {
         continue;
       }
 
-      const runtimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
-      if (!runtimeConfig) {
+      const taskRuntimeConfig = task.runtimeConfig ?? parentEntry.workspace.runtimeConfig;
+      if (!taskRuntimeConfig) {
         log.error("Queued task missing runtimeConfig; cannot start", { taskId });
         continue;
       }
 
-      const runtime = createRuntime(runtimeConfig, {
+      const parentRuntimeConfig = parentEntry.workspace.runtimeConfig ?? taskRuntimeConfig;
+      const runtime = createRuntime(taskRuntimeConfig, {
         projectPath: taskEntry.projectPath,
       });
+      let runtimeForTaskWorkspace = runtime;
+      let forkedRuntimeConfig = taskRuntimeConfig;
 
       const workspaceName = task.name.trim();
       let workspacePath =
@@ -1460,7 +1489,7 @@ export class TaskService {
         workspaceName,
         parentId,
         parentWorkspaceName,
-        runtimeType: runtimeConfig.type,
+        runtimeType: taskRuntimeConfig.type,
         workspacePath,
         workspaceExists,
         trunkBranch,
@@ -1479,6 +1508,24 @@ export class TaskService {
           sourceWorkspaceName: parentWorkspaceName,
           newWorkspaceName: workspaceName,
           initLogger,
+        });
+
+        const { forkedRuntimeConfig: resolvedForkedRuntimeConfig } = await applyForkRuntimeUpdates(
+          this.config,
+          parentId,
+          parentRuntimeConfig,
+          forkResult
+        );
+        forkedRuntimeConfig = resolvedForkedRuntimeConfig;
+
+        if (forkResult.sourceRuntimeConfig) {
+          // Ensure UI gets the updated runtimeConfig for the parent workspace.
+          await this.emitWorkspaceMetadata(parentId);
+        }
+
+        runtimeForTaskWorkspace = createRuntime(forkedRuntimeConfig, {
+          projectPath: taskEntry.projectPath,
+          workspaceName,
         });
 
         trunkBranch = forkResult.success ? (forkResult.sourceBranch ?? trunkBranch) : trunkBranch;
@@ -1520,6 +1567,7 @@ export class TaskService {
           (ws) => {
             ws.path = workspacePath;
             ws.taskTrunkBranch = trunkBranch;
+            ws.runtimeConfig = forkedRuntimeConfig;
           },
           { allowMissing: true }
         );
@@ -1536,20 +1584,48 @@ export class TaskService {
           trunkBranch,
         });
         const secrets = secretsToRecord(this.config.getProjectSecrets(taskEntry.projectPath));
-        void runtime
-          .initWorkspace({
+        let skipInitHook = false;
+        const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
+        if (agentIdRaw) {
+          const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw.trim().toLowerCase());
+          if (parsedAgentId.success) {
+            const isInPlace = taskEntry.projectPath === parentWorkspaceName;
+            const parentWorkspacePath =
+              coerceNonEmptyString(parentEntry.workspace.path) ??
+              (isInPlace
+                ? taskEntry.projectPath
+                : runtime.getWorkspacePath(taskEntry.projectPath, parentWorkspaceName));
+
+            try {
+              const definition = await readAgentDefinition(
+                runtime,
+                parentWorkspacePath,
+                parsedAgentId.data
+              );
+              skipInitHook = definition.frontmatter.subagent?.skip_init_hook === true;
+            } catch (error: unknown) {
+              log.debug("Queued task: failed to read agent definition for skip_init_hook", {
+                taskId,
+                agentId: parsedAgentId.data,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+
+        runBackgroundInit(
+          runtimeForTaskWorkspace,
+          {
             projectPath: taskEntry.projectPath,
             branchName: workspaceName,
             trunkBranch,
             workspacePath,
             initLogger,
             env: secrets,
-          })
-          .catch((error: unknown) => {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            initLogger.logStderr(`Initialization failed: ${errorMessage}`);
-            initLogger.logComplete(-1);
-          });
+            skipInitHook,
+          },
+          taskId
+        );
       }
 
       const model = task.taskModelString ?? defaultModel;
@@ -2121,7 +2197,7 @@ export class TaskService {
       "</mux_subagent_report>",
     ].join("\n");
 
-    const messageId = `task-report-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    const messageId = createTaskReportMessageId();
     const reportMessage = createMuxMessage(messageId, "user", xml, {
       timestamp: Date.now(),
       synthetic: true,

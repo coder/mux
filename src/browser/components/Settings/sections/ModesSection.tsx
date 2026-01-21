@@ -9,7 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   normalizeModeAiDefaults,
@@ -21,7 +21,7 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { AGENT_AI_DEFAULTS_KEY, MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 
 const INHERIT = "__inherit__";
-const ALL_THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
+const ALL_THINKING_LEVELS = THINKING_LEVELS;
 
 const MODE_ORDER = [
   { id: "plan", label: "Plan" },

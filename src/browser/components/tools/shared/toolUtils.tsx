@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { AlertTriangle, Check, CircleDot, X } from "lucide-react";
 import { LoadingDots } from "./ToolPrimitives";
 import type { ToolErrorResult } from "@/common/types/tools";
 
@@ -37,25 +38,29 @@ export function getStatusDisplay(status: ToolStatus): React.ReactNode {
     case "completed":
       return (
         <>
-          ✓<span className="status-text"> completed</span>
+          <Check aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
+          <span className="status-text">completed</span>
         </>
       );
     case "failed":
       return (
         <>
-          ✗<span className="status-text"> failed</span>
+          <X aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
+          <span className="status-text">failed</span>
         </>
       );
     case "interrupted":
       return (
         <>
-          ⚠<span className="status-text"> interrupted</span>
+          <AlertTriangle aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
+          <span className="status-text">interrupted</span>
         </>
       );
     case "backgrounded":
       return (
         <>
-          ◎<span className="status-text"> backgrounded</span>
+          <CircleDot aria-hidden="true" className="mr-1 inline-block h-3 w-3 align-[-2px]" />
+          <span className="status-text">backgrounded</span>
         </>
       );
     default:

@@ -1,3 +1,4 @@
+import { Menu } from "lucide-react";
 import { useEffect, useCallback, useRef } from "react";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
@@ -12,7 +13,13 @@ import {
   updatePersistedState,
   readPersistedState,
 } from "./hooks/usePersistedState";
-import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
+import {
+  matchesKeybind,
+  KEYBINDS,
+  isEditableElement,
+  isTerminalFocused,
+} from "./utils/ui/keybinds";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
@@ -22,23 +29,23 @@ import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
-import { ThemeProvider, useTheme, type ThemeMode } from "./contexts/ThemeContext";
+import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   getAgentIdKey,
+  getAgentsInitNudgeKey,
   getModelKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
 } from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
@@ -46,6 +53,7 @@ import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useStartWorkspaceCreation, getFirstProjectPath } from "./hooks/useStartWorkspaceCreation";
 import { useAPI } from "@/browser/contexts/API";
 import { AuthTokenModal } from "@/browser/components/AuthTokenModal";
+import { Button } from "./components/ui/button";
 import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
@@ -54,12 +62,14 @@ import { SplashScreenProvider } from "./components/splashScreens/SplashScreenPro
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
+import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
+import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
-
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
+import { isDesktopMode } from "./hooks/useDesktopTitlebar";
+import { cn } from "@/common/lib/utils";
 
 function AppInner() {
   // Get workspace state from context
@@ -75,13 +85,14 @@ function AppInner() {
     beginWorkspaceCreation,
   } = useWorkspaceContext();
   const { theme, setTheme, toggleTheme } = useTheme();
-  const { open: openSettings } = useSettings();
+  const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
   const setThemePreference = useCallback(
     (nextTheme: ThemeMode) => {
       setTheme(nextTheme);
     },
     [setTheme]
   );
+  const { layoutPresets, applySlotToWorkspace, saveCurrentWorkspaceToSlot } = useUILayouts();
   const { api, status, error, authenticate } = useAPI();
 
   const {
@@ -95,7 +106,9 @@ function AppInner() {
 
   // Auto-collapse sidebar on mobile by default
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
-  const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile);
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile, {
+    listener: true,
+  });
 
   // Sync sidebar collapse state to root element for CSS-based titlebar insets
   useEffect(() => {
@@ -103,7 +116,7 @@ function AppInner() {
   }, [sidebarCollapsed]);
   const defaultProjectPath = getFirstProjectPath(projects);
   const creationProjectPath = !selectedWorkspace
-    ? (pendingNewWorkspaceProject ?? (projects.size === 1 ? defaultProjectPath : null))
+    ? (pendingNewWorkspaceProject ?? defaultProjectPath)
     : null;
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
@@ -306,12 +319,11 @@ function AppInner() {
 
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
       const model = getModelForWorkspace(workspaceId);
-      const effective = enforceThinkingPolicy(model, normalized);
       const key = getThinkingLevelKey(workspaceId);
 
       // Use the utility function which handles localStorage and event dispatch
       // ThinkingProvider will pick this up via its listener
-      updatePersistedState(key, effective);
+      updatePersistedState(key, normalized);
 
       type WorkspaceAISettingsByModeCache = Partial<
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
@@ -328,7 +340,7 @@ function AppInner() {
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [agentId]: { model, thinkingLevel: effective },
+            [agentId]: { model, thinkingLevel: normalized },
           };
         },
         {}
@@ -342,7 +354,7 @@ function AppInner() {
           .updateModeAISettings({
             workspaceId,
             mode,
-            aiSettings: { model, thinkingLevel: effective },
+            aiSettings: { model, thinkingLevel: normalized },
           })
           .catch(() => {
             // Best-effort only.
@@ -353,7 +365,7 @@ function AppInner() {
       if (typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent(CUSTOM_EVENTS.THINKING_LEVEL_TOAST, {
-            detail: { workspaceId, level: effective },
+            detail: { workspaceId, level: normalized },
           })
         );
       }
@@ -457,6 +469,19 @@ function AppInner() {
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,
+    layoutPresets,
+    onApplyLayoutSlot: (workspaceId, slot) => {
+      void applySlotToWorkspace(workspaceId, slot).catch(() => {
+        // Best-effort only.
+      });
+    },
+    onCaptureLayoutSlot: async (workspaceId, slot, name) => {
+      try {
+        await saveCurrentWorkspaceToSlot(workspaceId, slot, name);
+      } catch {
+        // Best-effort only.
+      }
+    },
     onClearTimingStats: (workspaceId: string) => workspaceStore.clearTimingStats(workspaceId),
     api,
   };
@@ -527,6 +552,75 @@ function AppInner() {
     openCommandPalette,
     creationProjectPath,
     openSettings,
+  ]);
+
+  // Layout slot hotkeys (Ctrl/Cmd+Alt+1..9 by default)
+  useEffect(() => {
+    const handleKeyDownCapture = (e: KeyboardEvent) => {
+      if (isCommandPaletteOpen || isSettingsOpen) {
+        return;
+      }
+
+      if (!selectedWorkspace) {
+        return;
+      }
+
+      // Don't let global slot hotkeys fire while the user is typing.
+      if (isEditableElement(e.target) || isTerminalFocused(e.target)) {
+        return;
+      }
+
+      // AltGr is commonly implemented as Ctrl+Alt; avoid treating it as our shortcut.
+      if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) {
+        return;
+      }
+
+      for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
+        const preset = getPresetForSlot(layoutPresets, slot);
+        if (!preset) {
+          continue;
+        }
+
+        const keybind = getEffectiveSlotKeybind(layoutPresets, slot);
+        if (!keybind || !matchesKeybind(e, keybind)) {
+          continue;
+        }
+
+        e.preventDefault();
+        void applySlotToWorkspace(selectedWorkspace.workspaceId, slot).catch(() => {
+          // Best-effort only.
+        });
+        return;
+      }
+
+      // Custom overrides for additional slots (10+).
+      for (const slotConfig of layoutPresets.slots) {
+        if (slotConfig.slot <= 9) {
+          continue;
+        }
+        if (!slotConfig.preset || !slotConfig.keybindOverride) {
+          continue;
+        }
+        if (!matchesKeybind(e, slotConfig.keybindOverride)) {
+          continue;
+        }
+
+        e.preventDefault();
+        void applySlotToWorkspace(selectedWorkspace.workspaceId, slotConfig.slot).catch(() => {
+          // Best-effort only.
+        });
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDownCapture, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDownCapture, { capture: true });
+  }, [
+    isCommandPaletteOpen,
+    isSettingsOpen,
+    selectedWorkspace,
+    layoutPresets,
+    applySlotToWorkspace,
   ]);
 
   // Subscribe to menu bar "Open Settings" (macOS Cmd+, from app menu)
@@ -645,6 +739,7 @@ function AppInner() {
           workspaceRecency={workspaceRecency}
         />
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
+          <WindowsToolchainBanner />
           <RosettaBanner />
           <div className="mobile-layout flex flex-1 overflow-hidden">
             {selectedWorkspace ? (
@@ -671,10 +766,11 @@ function AppInner() {
                     workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
                   >
                     <AIView
-                      key={selectedWorkspace.workspaceId}
                       workspaceId={selectedWorkspace.workspaceId}
                       projectPath={selectedWorkspace.projectPath}
                       projectName={selectedWorkspace.projectName}
+                      leftSidebarCollapsed={sidebarCollapsed}
+                      onToggleLeftSidebarCollapsed={handleToggleSidebar}
                       workspaceName={workspaceName}
                       namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata.runtimeConfig}
@@ -693,6 +789,8 @@ function AppInner() {
                   <ProjectPage
                     projectPath={projectPath}
                     projectName={projectName}
+                    leftSidebarCollapsed={sidebarCollapsed}
+                    onToggleLeftSidebarCollapsed={handleToggleSidebar}
                     pendingSectionId={pendingNewWorkspaceSectionId}
                     onProviderConfig={handleProviderConfig}
                     onWorkspaceCreated={(metadata) => {
@@ -729,17 +827,41 @@ function AppInner() {
                 );
               })()
             ) : (
-              <div
-                className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
-                style={{
-                  padding: "clamp(40px, 10vh, 100px) 20px",
-                  fontSize: "clamp(14px, 2vw, 16px)",
-                }}
-              >
-                <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                  Welcome to Mux
-                </h2>
-                <p>Select a workspace from the sidebar or add a new one to get started.</p>
+              <div className="bg-dark flex flex-1 flex-col overflow-hidden">
+                <div
+                  className={cn(
+                    "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
+                    isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
+                  )}
+                >
+                  {sidebarCollapsed && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleToggleSidebar}
+                      title="Open sidebar"
+                      aria-label="Open sidebar menu"
+                      className={cn(
+                        "mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0",
+                        isDesktopMode() && "titlebar-no-drag"
+                      )}
+                    >
+                      <Menu className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                <div
+                  className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl flex-1 text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
+                  style={{
+                    padding: "clamp(40px, 10vh, 100px) 20px",
+                    fontSize: "clamp(14px, 2vw, 16px)",
+                  }}
+                >
+                  <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+                    Welcome to Mux
+                  </h2>
+                  <p>Add a project from the sidebar to get started.</p>
+                </div>
               </div>
             )}
           </div>
@@ -755,6 +877,7 @@ function AppInner() {
           onClose={closeProjectCreateModal}
           onSuccess={(normalizedPath, projectConfig) => {
             addProject(normalizedPath, projectConfig);
+            updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
             beginWorkspaceCreation(normalizedPath);
           }}
         />
@@ -766,9 +889,9 @@ function AppInner() {
 
 function App() {
   return (
-    <ThemeProvider>
-      <ExperimentsProvider>
-        <FeatureFlagsProvider>
+    <ExperimentsProvider>
+      <FeatureFlagsProvider>
+        <UILayoutsProvider>
           <TooltipProvider delayDuration={200}>
             <SettingsProvider>
               <SplashScreenProvider>
@@ -780,9 +903,9 @@ function App() {
               </SplashScreenProvider>
             </SettingsProvider>
           </TooltipProvider>
-        </FeatureFlagsProvider>
-      </ExperimentsProvider>
-    </ThemeProvider>
+        </UILayoutsProvider>
+      </FeatureFlagsProvider>
+    </ExperimentsProvider>
   );
 }
 

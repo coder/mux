@@ -42,6 +42,11 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
         message: error.message,
       };
 
+    case "runtime_start_failed":
+      return {
+        message: error.message,
+      };
+
     case "unknown":
       return {
         message: error.raw || "An unexpected error occurred",

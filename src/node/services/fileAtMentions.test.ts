@@ -117,6 +117,23 @@ describe("injectFileAtMentions", () => {
     }
   });
 
+  it("ignores non-existent file mentions", async () => {
+    const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-file-at-mentions-"));
+
+    try {
+      const runtime = createRuntime({ type: "local" }, { projectPath: tmpDir });
+      const messages = [createMuxMessage("u1", "user", "Please check @src/missing.ts")];
+
+      const result = await injectFileAtMentions(messages, {
+        runtime,
+        workspacePath: tmpDir,
+      });
+
+      expect(result).toEqual(messages);
+    } finally {
+      await fsPromises.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
   it("injects root files like @Makefile", async () => {
     const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-file-at-mentions-"));
 
@@ -292,7 +309,7 @@ describe("materializeFileAtMentions", () => {
     }
   });
 
-  it("returns error block for non-existent files", async () => {
+  it("ignores non-existent files", async () => {
     const tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-materialize-"));
 
     try {
@@ -303,11 +320,7 @@ describe("materializeFileAtMentions", () => {
         workspacePath: tmpDir,
       });
 
-      expect(result).toHaveLength(1);
-      expect(result[0]?.token).toBe("src/nonexistent.ts");
-      expect(result[0]?.block).toContain("<mux-file-error");
-      expect(result[0]?.content).toBeUndefined();
-      expect(result[0]?.modifiedTimeMs).toBeUndefined();
+      expect(result).toHaveLength(0);
     } finally {
       await fsPromises.rm(tmpDir, { recursive: true, force: true });
     }

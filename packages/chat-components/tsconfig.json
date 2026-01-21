@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../src/*"],
+      "@shared/*": ["../../src/*"]
+    },
+    "typeRoots": ["../../node_modules/@types"],
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../../src/common/types/global.d.ts",
+    "../../src/vite-env.d.ts"
+  ]
+}

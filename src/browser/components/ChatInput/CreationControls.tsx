@@ -2,7 +2,17 @@ import React, { useCallback, useEffect } from "react";
 import { RUNTIME_MODE, type RuntimeMode, type ParsedRuntime } from "@/common/types/runtime";
 import type { RuntimeAvailabilityMap } from "./useCreationWorkspace";
 import { Select } from "../Select";
+import {
+  Select as RadixSelect,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Loader2, Wand2 } from "lucide-react";
+import { PlatformPaths } from "@/common/utils/paths";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { SSHIcon, WorktreeIcon, LocalIcon, DockerIcon } from "../icons/RuntimeIcons";
@@ -10,6 +20,7 @@ import { DocsLink } from "../DocsLink";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 import type { SectionConfig } from "@/common/types/project";
 import { resolveSectionColor } from "@/common/constants/ui";
+import { CoderControls, type CoderControlsProps } from "./CoderControls";
 
 interface CreationControlsProps {
   branches: string[];
@@ -24,6 +35,8 @@ interface CreationControlsProps {
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
   onSetDefaultRuntime: (mode: RuntimeMode) => void;
   disabled: boolean;
+  /** Project path to display (and used for project selector) */
+  projectPath: string;
   /** Project name to display as header */
   projectName: string;
   /** Workspace name/title generation state and actions */
@@ -38,6 +51,8 @@ interface CreationControlsProps {
   onSectionChange?: (sectionId: string | null) => void;
   /** Which runtime field (if any) is in error state for visual feedback */
   runtimeFieldError?: "docker" | "ssh" | null;
+  /** Coder workspace controls props (optional - only rendered when provided) */
+  coderProps?: Omit<CoderControlsProps, "disabled">;
 }
 
 /** Runtime type button group with icons and colors */
@@ -141,26 +156,28 @@ function SectionPicker(props: SectionPickerProps) {
           opacity: selectedSection ? 1 : 0.4,
         }}
       />
-      <label htmlFor="workspace-section" className="text-muted-foreground shrink-0 text-xs">
-        Section
-      </label>
-      <select
-        id="workspace-section"
+      <label className="text-muted-foreground shrink-0 text-xs">Section</label>
+      <RadixSelect
         value={selectedSectionId ?? ""}
-        onChange={(e) => onSectionChange(e.target.value || null)}
+        onValueChange={onSectionChange}
         disabled={disabled}
-        className={cn(
-          "bg-transparent text-sm font-medium focus:outline-none cursor-pointer disabled:cursor-not-allowed disabled:opacity-50",
-          selectedSection ? "text-foreground" : "text-muted"
-        )}
       >
-        <option value="">None</option>
-        {sections.map((section) => (
-          <option key={section.id} value={section.id}>
-            {section.name}
-          </option>
-        ))}
-      </select>
+        <SelectTrigger
+          className={cn(
+            "h-auto border-0 bg-transparent px-0 py-0 text-sm font-medium shadow-none focus:ring-0",
+            selectedSection ? "text-foreground" : "text-muted"
+          )}
+        >
+          <SelectValue placeholder="Select..." />
+        </SelectTrigger>
+        <SelectContent>
+          {sections.map((section) => (
+            <SelectItem key={section.id} value={section.id}>
+              {section.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </RadixSelect>
     </div>
   );
 }
@@ -231,6 +248,8 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
  * Displays project name as header, workspace name with magic wand, and runtime/branch selectors.
  */
 export function CreationControls(props: CreationControlsProps) {
+  const { projects } = useProjectContext();
+  const { beginWorkspaceCreation } = useWorkspaceContext();
   const { nameState, runtimeAvailability } = props;
 
   // Extract mode from discriminated union for convenience
@@ -277,7 +296,41 @@ export function CreationControls(props: CreationControlsProps) {
     <div className="mb-3 flex flex-col gap-4">
       {/* Project name / workspace name header row - wraps on narrow viewports */}
       <div className="flex flex-wrap items-center gap-y-2" data-component="WorkspaceNameGroup">
-        <h2 className="text-foreground shrink-0 text-lg font-semibold">{props.projectName}</h2>
+        {projects.size > 1 ? (
+          <RadixSelect
+            value={props.projectPath}
+            onValueChange={(path) => beginWorkspaceCreation(path)}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SelectTrigger
+                  aria-label="Select project"
+                  data-testid="project-selector"
+                  className="text-foreground hover:bg-toggle-bg/70 h-7 w-auto max-w-[280px] shrink-0 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none"
+                >
+                  <SelectValue placeholder={props.projectName} />
+                </SelectTrigger>
+              </TooltipTrigger>
+              <TooltipContent align="start">{props.projectPath}</TooltipContent>
+            </Tooltip>
+            <SelectContent>
+              {Array.from(projects.keys()).map((path) => (
+                <SelectItem key={path} value={path}>
+                  {PlatformPaths.basename(path)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </RadixSelect>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <h2 className="text-foreground shrink-0 text-lg font-semibold">
+                {props.projectName}
+              </h2>
+            </TooltipTrigger>
+            <TooltipContent align="start">{props.projectPath}</TooltipContent>
+          </Tooltip>
+        )}
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
         {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
@@ -416,8 +469,8 @@ export function CreationControls(props: CreationControlsProps) {
             </div>
           )}
 
-          {/* SSH Host Input */}
-          {selectedRuntime.mode === "ssh" && (
+          {/* SSH Host Input - hidden when Coder is enabled */}
+          {selectedRuntime.mode === "ssh" && !props.coderProps?.enabled && (
             <div className="flex items-center gap-2">
               <label className="text-muted-foreground text-xs">host</label>
               <input
@@ -461,28 +514,37 @@ export function CreationControls(props: CreationControlsProps) {
               />
             </div>
           )}
-
-          {/* Docker Credential Sharing */}
-          {selectedRuntime.mode === "docker" && (
-            <label className="flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
-                checked={selectedRuntime.shareCredentials ?? false}
-                onChange={(e) =>
-                  onSelectedRuntimeChange({
-                    mode: "docker",
-                    image: selectedRuntime.image,
-                    shareCredentials: e.target.checked,
-                  })
-                }
-                disabled={props.disabled}
-                className="accent-accent"
-              />
-              <span className="text-muted">Share credentials (SSH, Git)</span>
-              <DocsLink path="/runtime/docker#credential-sharing" />
-            </label>
-          )}
         </div>
+
+        {/* Docker Credential Sharing - separate row for consistency with Coder controls */}
+        {selectedRuntime.mode === "docker" && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <input
+              type="checkbox"
+              checked={selectedRuntime.shareCredentials ?? false}
+              onChange={(e) =>
+                onSelectedRuntimeChange({
+                  mode: "docker",
+                  image: selectedRuntime.image,
+                  shareCredentials: e.target.checked,
+                })
+              }
+              disabled={props.disabled}
+              className="accent-accent"
+            />
+            <span className="text-muted">Share credentials (SSH, Git)</span>
+            <DocsLink path="/runtime/docker#credential-sharing" />
+          </label>
+        )}
+
+        {/* Coder Controls - shown when SSH mode is selected and Coder is available */}
+        {selectedRuntime.mode === "ssh" && props.coderProps && (
+          <CoderControls
+            {...props.coderProps}
+            disabled={props.disabled}
+            hasError={props.runtimeFieldError === "ssh"}
+          />
+        )}
       </div>
     </div>
   );

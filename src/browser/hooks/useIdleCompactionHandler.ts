@@ -18,12 +18,25 @@
 import { useEffect, useRef } from "react";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import { executeCompaction } from "@/browser/utils/chatCommands";
+import {
+  executeCompaction as executeCompactionDefault,
+  type CompactionResult,
+} from "@/browser/utils/chatCommands";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
+// Type for executeCompaction function (for testing injection)
+type ExecuteCompactionFn = (opts: {
+  api: RouterClient<AppRouter>;
+  workspaceId: string;
+  sendMessageOptions: ReturnType<typeof buildSendMessageOptions>;
+  source: string;
+}) => Promise<CompactionResult>;
+
 export interface IdleCompactionHandlerParams {
   api: RouterClient<AppRouter> | null;
+  /** @internal For testing only - inject a mock executeCompaction */
+  _executeCompaction?: ExecuteCompactionFn;
 }
 
 /**
@@ -33,7 +46,7 @@ export interface IdleCompactionHandlerParams {
  * Compactions are serialized: only one runs at a time, with others queued.
  */
 export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): void {
-  const { api } = params;
+  const { api, _executeCompaction = executeCompactionDefault } = params;
 
   // Track which workspaces we've triggered compaction for (to prevent duplicates)
   const triggeredWorkspacesRef = useRef(new Set<string>());
@@ -69,7 +82,7 @@ export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): v
       };
 
       // Status is handled data-driven via displayStatus in the message metadata
-      executeCompaction({
+      _executeCompaction({
         api,
         workspaceId,
         sendMessageOptions,
@@ -101,5 +114,5 @@ export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): v
 
     const unsubscribe = workspaceStore.onIdleCompactionNeeded(handleIdleCompactionNeeded);
     return unsubscribe;
-  }, [api]);
+  }, [api, _executeCompaction]);
 }

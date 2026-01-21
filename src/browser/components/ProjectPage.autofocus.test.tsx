@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
+import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
 
 let focusMock: ReturnType<typeof mock> | null = null;
@@ -86,17 +87,27 @@ describe("ProjectPage", () => {
     const baseProps = {
       projectPath: "/projects/demo",
       projectName: "demo",
+      leftSidebarCollapsed: true,
+      onToggleLeftSidebarCollapsed: () => undefined,
       onProviderConfig: () => Promise.resolve(undefined),
       onWorkspaceCreated: () => undefined,
     };
 
-    const { rerender } = render(<ProjectPage {...baseProps} />);
+    const { rerender } = render(
+      <SettingsProvider>
+        <ProjectPage {...baseProps} />
+      </SettingsProvider>
+    );
 
     await waitFor(() => expect(readyCalls).toBe(1));
     await waitFor(() => expect(focusMock).toHaveBeenCalledTimes(1));
 
     // Simulate an unrelated App re-render that changes an inline callback identity.
-    rerender(<ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />);
+    rerender(
+      <SettingsProvider>
+        <ProjectPage {...baseProps} onWorkspaceCreated={() => undefined} />
+      </SettingsProvider>
+    );
 
     await waitFor(() => expect(readyCalls).toBe(2));
 

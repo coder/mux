@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       model_name:
-        description: "Model to use (e.g., anthropic:claude-opus-4-5)"
+        description: "Model to use (e.g., anthropic/claude-opus-4-5)"
         required: false
         type: string
       thinking_level:
@@ -15,57 +15,71 @@ on:
         description: "Terminal-Bench dataset to use"
         required: false
         type: string
-        default: "terminal-bench-core==0.1.1"
+        default: "terminal-bench@2.0"
       concurrency:
         description: "Number of concurrent tasks (--n-concurrent)"
         required: false
         type: string
         default: "4"
-      livestream:
-        description: "Enable livestream mode (verbose output to console)"
+      env:
+        description: "Environment to run in (local, daytona)"
         required: false
-        type: boolean
-        default: false
-      sample_size:
-        description: "Number of random tasks to run (empty = all tasks)"
+        type: string
+        default: ""
+      task_names:
+        description: "Space-separated task names to run (empty = all tasks)"
         required: false
         type: string
       extra_args:
-        description: "Additional arguments to pass to terminal-bench"
+        description: "Additional arguments to pass to harbor"
         required: false
         type: string
       experiments:
         description: "Experiments to enable (comma-separated)"
         required: false
         type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
+        default: ""
+      max_tasks:
+        description: "Maximum number of tasks to run (for faster iteration)"
+        required: false
+        type: string
+        default: ""
     secrets:
       ANTHROPIC_API_KEY:
         required: true
       OPENAI_API_KEY:
         required: true
+      DAYTONA_API_KEY:
+        required: false
+      GCP_SA_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       dataset:
         description: "Terminal-Bench dataset to use"
         required: false
-        default: "terminal-bench-core==0.1.1"
+        default: "terminal-bench@2.0"
         type: string
       concurrency:
         description: "Number of concurrent tasks (--n-concurrent)"
         required: false
         default: "4"
         type: string
-      livestream:
-        description: "Enable livestream mode (verbose output to console)"
+      env:
+        description: "Environment to run in (local, daytona)"
         required: false
-        default: false
-        type: boolean
-      sample_size:
-        description: "Number of random tasks to run (empty = all tasks)"
+        default: ""
+        type: string
+      task_names:
+        description: "Space-separated task names to run (empty = all tasks)"
         required: false
         type: string
       model_name:
-        description: "Model to use (e.g., anthropic:claude-opus-4-5, openai:gpt-5.2)"
+        description: "Model to use (e.g., anthropic/claude-opus-4-5, openai/gpt-5.2)"
         required: false
         type: string
       thinking_level:
@@ -73,11 +87,19 @@ on:
         required: false
         type: string
       extra_args:
-        description: "Additional arguments to pass to terminal-bench"
+        description: "Additional arguments to pass to harbor"
         required: false
         type: string
       experiments:
         description: "Experiments to enable (comma-separated)"
+        required: false
+        type: string
+      timeout:
+        description: "Agent timeout in seconds (default: 1800 = 30 min)"
+        required: false
+        type: string
+      max_tasks:
+        description: "Maximum number of tasks to run (for faster iteration)"
         required: false
         type: string
 
@@ -91,9 +113,10 @@ jobs:
     timeout-minutes: 240
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
@@ -101,7 +124,7 @@ jobs:
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - name: Add uv to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Generate version file
         run: ./scripts/generate-version.sh
@@ -114,63 +137,107 @@ jobs:
         env:
           TB_DATASET: ${{ inputs.dataset }}
           TB_CONCURRENCY: ${{ inputs.concurrency }}
-          TB_LIVESTREAM: ${{ inputs.livestream && '1' || '' }}
-          TB_SAMPLE_SIZE: ${{ inputs.sample_size }}
+          TB_ENV: ${{ inputs.env }}
+          TB_TASK_NAMES: ${{ inputs.task_names }}
+          TB_MODEL: ${{ inputs.model_name }}
+          MUX_MODEL: ${{ inputs.model_name }}
+          TB_TIMEOUT: ${{ inputs.timeout }}
           TB_ARGS: >-
-            ${{ inputs.model_name && format('--agent-kwarg model_name={0} --agent-kwarg thinking_level={1}', inputs.model_name, inputs.thinking_level) || '' }}
+            ${{ inputs.thinking_level && format('--agent-kwarg thinking_level={0}', inputs.thinking_level) || '' }}
+            ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
       - name: Print results summary
         if: always()
         run: |
           echo "=== Terminal-Bench Results Summary ==="
-          if [ -f "$(find runs -maxdepth 2 -name 'results.json' 2>/dev/null | head -1)" ]; then
-            RESULTS_FILE=$(find runs -maxdepth 2 -name 'results.json' | head -1)
-            cat "$RESULTS_FILE" | jq '{n_resolved, n_unresolved, accuracy}' 2>/dev/null || cat "$RESULTS_FILE"
+          # Harbor writes to jobs/<timestamp>/result.json (singular)
+          if [ -f "$(find jobs -maxdepth 2 -name 'result.json' 2>/dev/null | head -1)" ]; then
+            RESULTS_FILE=$(find jobs -maxdepth 2 -name 'result.json' | head -1)
+            jq '.' "$RESULTS_FILE" 2>/dev/null || cat "$RESULTS_FILE"
           else
-            echo "❌ No results.json found"
-            ls -laR runs/ 2>/dev/null || echo "runs/ directory missing"
+            echo "❌ No result.json found"
+            ls -laR jobs/ 2>/dev/null || echo "jobs/ directory missing"
           fi
 
-      - name: Verify at least one task resolved
+      - name: Verify agent ran successfully
         run: |
-          RESULTS_FILE=$(find runs -maxdepth 2 -name 'results.json' 2>/dev/null | head -1)
+          # Harbor writes to jobs/<timestamp>/result.json
+          RESULTS_FILE=$(find jobs -maxdepth 2 -name 'result.json' 2>/dev/null | head -1)
           if [ -z "$RESULTS_FILE" ]; then
-            echo "❌ No results.json found - benchmark failed to produce results"
+            echo "❌ No result.json found - benchmark failed to produce results"
             exit 1
           fi
-          N_RESOLVED=$(jq -r '.n_resolved' "$RESULTS_FILE")
-          N_TOTAL=$((N_RESOLVED + $(jq -r '.n_unresolved' "$RESULTS_FILE")))
-          echo "Resolved: $N_RESOLVED / $N_TOTAL"
-          if [ "$N_RESOLVED" -eq 0 ]; then
-            echo "❌ No tasks resolved - agent may be broken"
+          # Harbor format: n_total_trials, stats.n_trials, stats.n_errors, stats.evals.<key>.metrics[0].mean
+          N_TRIALS=$(jq -r '.n_total_trials // .stats.n_trials // 0' "$RESULTS_FILE")
+          N_ERRORS=$(jq -r '.stats.n_errors // 0' "$RESULTS_FILE")
+          # Get mean score from first eval entry (pass rate 0-1)
+          MEAN_SCORE=$(jq -r '[.stats.evals | to_entries[].value.metrics[0].mean] | add // 0' "$RESULTS_FILE")
+          echo "Trials: $N_TRIALS, Errors: $N_ERRORS, Mean score: $MEAN_SCORE"
+          if [ "$N_TRIALS" -eq 0 ]; then
+            echo "❌ No trials ran - benchmark configuration may be wrong"
             exit 1
           fi
-          echo "✅ At least one task resolved"
+          # Count timeout errors separately from other errors
+          # Both AgentTimeoutError and VerifierTimeoutError are expected for hard tasks
+          TIMEOUT_ERRORS=$(find jobs -name 'exception.txt' -exec grep -lE "(AgentTimeoutError|VerifierTimeoutError)" {} \; 2>/dev/null | wc -l | tr -d ' ')
+          OTHER_ERRORS=$((N_ERRORS - TIMEOUT_ERRORS))
+          if [ "$OTHER_ERRORS" -gt 0 ]; then
+            echo "❌ $OTHER_ERRORS task(s) had non-timeout errors - agent setup or execution failed"
+            echo "--- Exception details (excluding timeouts) ---"
+            find jobs -name 'exception.txt' -exec sh -c 'grep -qE "(AgentTimeoutError|VerifierTimeoutError)" "$1" || { echo "=== $1 ===" && cat "$1"; }' _ {} \; 2>/dev/null || true
+            exit 1
+          fi
+          if [ "$TIMEOUT_ERRORS" -gt 0 ]; then
+            echo "⏱️ $TIMEOUT_ERRORS task(s) timed out (expected for hard tasks)"
+          fi
+          echo "✅ Agent ran $N_TRIALS trial(s) successfully (mean score: $MEAN_SCORE)"
 
       - name: Set artifact name
         if: always()
         id: artifact-name
+        env:
+          MODEL_NAME: ${{ inputs.model_name }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          if [ -n "${{ inputs.model_name }}" ]; then
-            # Replace colons with hyphens for filesystem compatibility
-            ARTIFACT_NAME="terminal-bench-results-$(echo "${{ inputs.model_name }}-${{ github.run_id }}" | tr ':' '-')"
+          if [ -n "$MODEL_NAME" ]; then
+            # Replace colons and slashes with hyphens for filesystem compatibility
+            ARTIFACT_NAME="terminal-bench-results-$(echo "$MODEL_NAME-$RUN_ID" | tr ':/' '--')"
           else
-            ARTIFACT_NAME="terminal-bench-results-${{ github.run_id }}"
+            ARTIFACT_NAME="terminal-bench-results-$RUN_ID"
           fi
-          echo "name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+          echo "name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
           echo "Artifact name: $ARTIFACT_NAME"
+
+      - name: Upload results to BigQuery
+        if: always() && github.repository == 'coder/mux'
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: mux-benchmarks
+          BQ_DATASET: benchmarks
+          MUX_EXPERIMENTS: ${{ inputs.experiments }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "GCP_SA_KEY not set, skipping BigQuery upload"
+            exit 0
+          fi
+          echo "$GCP_SA_KEY" > /tmp/gcp-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
+          pip install --quiet google-cloud-bigquery
+          python scripts/upload-tbench-results.py
+          rm -f /tmp/gcp-sa.json
 
       - name: Upload benchmark results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.artifact-name.outputs.name }}
           path: |
-            runs/
+            jobs/
             benchmark.log
           if-no-files-found: warn
           retention-days: 30

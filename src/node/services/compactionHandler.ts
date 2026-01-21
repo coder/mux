@@ -9,6 +9,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createCompactionSummaryMessageId } from "@/node/services/utils/messageIds";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { log } from "@/node/services/log";
@@ -68,6 +69,7 @@ export class CompactionHandler {
   private readonly telemetryService?: TelemetryService;
   private readonly emitter: EventEmitter;
   private readonly processedCompactionRequestIds: Set<string> = new Set<string>();
+
   private readonly onCompactionComplete?: () => void;
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
@@ -125,7 +127,8 @@ export class CompactionHandler {
 
     const messages = historyResult.data;
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const isCompaction = lastUserMsg?.metadata?.muxMetadata?.type === "compaction-request";
+    const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+    const isCompaction = muxMeta?.type === "compaction-request";
 
     if (!isCompaction || !lastUserMsg) {
       return false;
@@ -140,6 +143,24 @@ export class CompactionHandler {
       .filter((part): part is { type: "text"; text: string } => part.type === "text")
       .map((part) => part.text)
       .join("");
+
+    // Self-healing: Reject empty summaries (stream crashed before producing content)
+    if (!summary.trim()) {
+      // Log detailed part info to help debug why no text was produced
+      const partsSummary = event.parts.map((p) => ({
+        type: p.type,
+        // Include preview for text-like parts to understand what the model produced
+        preview: "text" in p && typeof p.text === "string" ? p.text.slice(0, 100) : undefined,
+      }));
+      log.warn("Compaction summary is empty - aborting compaction to prevent corrupted history", {
+        workspaceId: this.workspaceId,
+        model: event.metadata.model,
+        partsCount: event.parts.length,
+        parts: partsSummary,
+      });
+      // Don't mark as processed so user can retry
+      return false;
+    }
 
     // Self-healing: Reject compaction if summary is just a raw JSON object.
     // This happens when tools are disabled but the model still tries to output a tool call.
@@ -157,10 +178,8 @@ export class CompactionHandler {
     }
 
     // Check if this was an idle-compaction (auto-triggered due to inactivity)
-    const muxMeta = lastUserMsg.metadata?.muxMetadata;
     const isIdleCompaction =
       muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
-
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
@@ -263,7 +282,7 @@ export class CompactionHandler {
     // or corrupted, pre-compaction costs are lost - this is acceptable since manual
     // file deletion is out of scope for data recovery.
     const summaryMessage = createMuxMessage(
-      `summary-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+      createCompactionSummaryMessageId(),
       "assistant",
       summary,
       {

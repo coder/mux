@@ -10,11 +10,17 @@ import type {
 } from "@/common/types/agentDefinition";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
+import {
+  DEFAULT_LAYOUT_PRESETS_CONFIG,
+  normalizeLayoutPresetsConfig,
+  type LayoutPresetsConfig,
+} from "@/common/types/uiLayouts";
 import type {
   WorkspaceChatMessage,
   ProvidersConfigMap,
   WorkspaceStatsSnapshot,
 } from "@/common/orpc/types";
+import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
 import type { ChatStats } from "@/common/types/chatStats";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -28,6 +34,12 @@ import {
 import { normalizeModeAiDefaults, type ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import type {
+  CoderInfo,
+  CoderTemplate,
+  CoderPreset,
+  CoderWorkspace,
+} from "@/common/orpc/schemas/coder";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
 /** Session usage data structure matching SessionUsageFileSchema */
@@ -59,6 +71,8 @@ export interface MockSessionUsage {
 }
 
 export interface MockORPCClientOptions {
+  /** Layout presets config for Settings → Layouts stories */
+  layoutPresets?: LayoutPresetsConfig;
   projects?: Map<string, ProjectConfig>;
   workspaces?: FrontendWorkspaceMetadata[];
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
@@ -103,6 +117,8 @@ export interface MockORPCClientOptions {
   /** Project secrets per project */
   projectSecrets?: Map<string, Secret[]>;
   sessionUsage?: Map<string, MockSessionUsage>;
+  /** Debug snapshot per workspace for the last LLM request modal */
+  lastLlmRequestSnapshots?: Map<string, DebugLlmRequestSnapshot | null>;
   /** MCP server configuration per project */
   mcpServers?: Map<
     string,
@@ -145,6 +161,14 @@ export interface MockORPCClientOptions {
     githubUser: string | null;
     error: { message: string; hasEncryptedKey: boolean } | null;
   };
+  /** Coder CLI availability info */
+  coderInfo?: CoderInfo;
+  /** Coder templates available for workspace creation */
+  coderTemplates?: CoderTemplate[];
+  /** Coder presets per template name */
+  coderPresets?: Map<string, CoderPreset[]>;
+  /** Existing Coder workspaces */
+  coderWorkspaces?: CoderWorkspace[];
 }
 
 interface MockBackgroundProcess {
@@ -198,6 +222,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     onProjectRemove,
     backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),
     sessionUsage = new Map<string, MockSessionUsage>(),
+    lastLlmRequestSnapshots = new Map<string, DebugLlmRequestSnapshot | null>(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     statsTabVariant = "control",
     projectSecrets = new Map<string, Secret[]>(),
@@ -213,6 +238,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     gitInit: customGitInit,
     runtimeAvailability: customRuntimeAvailability,
     signingCapabilities: customSigningCapabilities,
+    coderInfo = { state: "unavailable" as const, reason: "missing" as const },
+    coderTemplates = [],
+    coderPresets = new Map<string, CoderPreset[]>(),
+    coderWorkspaces = [],
+    layoutPresets: initialLayoutPresets,
   } = options;
 
   // Feature flags
@@ -300,6 +330,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     return normalizeSubagentAiDefaults(raw);
   };
 
+  let layoutPresets = initialLayoutPresets ?? DEFAULT_LAYOUT_PRESETS_CONFIG;
   let modeAiDefaults = deriveModeAiDefaults();
   let subagentAiDefaults = deriveSubagentAiDefaults();
 
@@ -330,6 +361,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       track: () => Promise.resolve(undefined),
       status: () => Promise.resolve({ enabled: true, explicit: false }),
     },
+    splashScreens: {
+      getViewedSplashScreens: () => Promise.resolve(["onboarding-wizard-v1"]),
+      markSplashScreenViewed: () => Promise.resolve(undefined),
+    },
     signing: {
       capabilities: () =>
         Promise.resolve(
@@ -351,6 +386,17 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getLaunchProject: () => Promise.resolve(null),
       getSshHost: () => Promise.resolve(null),
       setSshHost: () => Promise.resolve(undefined),
+    },
+    // Settings → Layouts (layout presets)
+    // Stored in-memory for Storybook only.
+    // Frontend code normalizes the response defensively, but we normalize here too so
+    // stories remain stable even if they mutate the config.
+    uiLayouts: {
+      getAll: () => Promise.resolve(layoutPresets),
+      saveAll: (input: { layoutPresets: unknown }) => {
+        layoutPresets = normalizeLayoutPresetsConfig(input.layoutPresets);
+        return Promise.resolve(undefined);
+      },
     },
     config: {
       getConfig: () =>
@@ -550,6 +596,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
       getInfo: (input: { workspaceId: string }) =>
         Promise.resolve(workspaceMap.get(input.workspaceId) ?? null),
+      getLastLlmRequest: (input: { workspaceId: string }) =>
+        Promise.resolve({
+          success: true,
+          data: lastLlmRequestSnapshots.get(input.workspaceId) ?? null,
+        }),
       executeBash: async (input: { workspaceId: string; script: string }) => {
         if (executeBash) {
           const result = await executeBash(input.workspaceId, input.script);
@@ -612,6 +663,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           await new Promise<void>(() => undefined);
         },
         terminate: () => Promise.resolve({ success: true, data: undefined }),
+        getOutput: () =>
+          Promise.resolve({
+            success: true,
+            data: { status: "running" as const, output: "", nextOffset: 0, truncatedStart: false },
+          }),
         sendToBackground: () => Promise.resolve({ success: true, data: undefined }),
       },
       stats: {
@@ -663,6 +719,20 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     window: {
       setTitle: () => Promise.resolve(undefined),
+    },
+    coder: {
+      getInfo: () => Promise.resolve(coderInfo),
+      listTemplates: () => Promise.resolve(coderTemplates),
+      listPresets: (input: { template: string }) =>
+        Promise.resolve(coderPresets.get(input.template) ?? []),
+      listWorkspaces: () => Promise.resolve(coderWorkspaces),
+    },
+    nameGeneration: {
+      generate: () =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-workspace", title: "Generated Workspace", modelUsed: "mock" },
+        }),
     },
     terminal: {
       listSessions: (_input: { workspaceId: string }) => Promise.resolve([]),

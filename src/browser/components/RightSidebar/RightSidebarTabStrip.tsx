@@ -6,7 +6,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { useDroppable, useDndContext } from "@dnd-kit/core";
 import { Plus } from "lucide-react";
 import type { TabType } from "@/browser/types/rightSidebar";
-import { isDesktopMode, getTitlebarRightInset } from "@/browser/hooks/useDesktopTitlebar";
+import {
+  isDesktopMode,
+  getTitlebarRightInset,
+  DESKTOP_TITLEBAR_MIN_HEIGHT_CLASS,
+} from "@/browser/hooks/useDesktopTitlebar";
 
 // Re-export for consumers that import from this file
 export { getTabName } from "./tabs";
@@ -28,6 +32,8 @@ export interface RightSidebarTabStripItem {
   disabled?: boolean;
   /** The tab type (used for drag identification) */
   tab: TabType;
+  /** Optional callback to close this tab (for closeable tabs like terminals) */
+  onClose?: () => void;
 }
 
 interface RightSidebarTabStripProps {
@@ -75,7 +81,7 @@ const SortableTab: React.FC<{
             {...attributes}
             {...listeners}
             className={cn(
-              "flex items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
+              "flex min-w-0 max-w-[240px] items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
               "cursor-grab touch-none active:cursor-grabbing",
               item.selected
                 ? "bg-hover text-foreground"
@@ -84,6 +90,13 @@ const SortableTab: React.FC<{
               isDragging && "cursor-grabbing opacity-50"
             )}
             onClick={item.onSelect}
+            onAuxClick={(e) => {
+              // Middle-click (button 1) closes closeable tabs
+              if (e.button === 1 && item.onClose) {
+                e.preventDefault();
+                item.onClose();
+              }
+            }}
             id={item.id}
             role="tab"
             type="button"
@@ -131,7 +144,8 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
     <div
       ref={setNodeRef}
       className={cn(
-        "border-border-light flex min-w-0 items-center gap-1 overflow-x-auto border-b px-2 py-1.5 transition-colors",
+        "border-border-light flex min-w-0 items-center border-b px-2 py-1.5 transition-colors",
+        isDesktop && DESKTOP_TITLEBAR_MIN_HEIGHT_CLASS,
         showDropHighlight && "bg-accent/30",
         isDraggingFromHere && "bg-accent/10",
         // In desktop mode, make header draggable for window movement
@@ -141,33 +155,35 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
       role="tablist"
       aria-label={ariaLabel}
     >
-      {items.map((item, index) => (
-        <SortableTab
-          key={item.id}
-          item={item}
-          index={index}
-          tabsetId={tabsetId}
-          isDesktop={isDesktop}
-        />
-      ))}
-      {onAddTerminal && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                "text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors",
-                isDesktop && "titlebar-no-drag"
-              )}
-              onClick={onAddTerminal}
-              aria-label="New terminal"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">New terminal</TooltipContent>
-        </Tooltip>
-      )}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+        {items.map((item, index) => (
+          <SortableTab
+            key={item.id}
+            item={item}
+            index={index}
+            tabsetId={tabsetId}
+            isDesktop={isDesktop}
+          />
+        ))}
+        {onAddTerminal && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  "text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors",
+                  isDesktop && "titlebar-no-drag"
+                )}
+                onClick={onAddTerminal}
+                aria-label="New terminal"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">New terminal</TooltipContent>
+          </Tooltip>
+        )}
+      </div>
     </div>
   );
 };

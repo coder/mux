@@ -16,12 +16,14 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
   InitLogger,
+  EnsureReadyResult,
 } from "./Runtime";
 import { RuntimeError as RuntimeErrorClass } from "./Runtime";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
+import { shellQuote } from "@/common/utils/shell";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
-import { DisposableProcess } from "@/node/utils/disposableExec";
+import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 
@@ -65,7 +67,17 @@ export abstract class LocalBaseRuntime implements Runtime {
 
     const bashPath = getBashPath();
     const spawnCommand = bashPath;
-    const spawnArgs = ["-c", command];
+
+    // Match RemoteRuntime behavior: ensure non-interactive env vars are set inside the shell.
+    //
+    // Why not rely solely on `env`?
+    // - On Windows, env var casing and shell startup state can be surprising.
+    // - These are non-sensitive vars that we want to guarantee for git/editor safety.
+    const nonInteractivePrelude = Object.entries(NON_INTERACTIVE_ENV_VARS)
+      .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
+      .join("\n");
+
+    const spawnArgs = ["-c", `${nonInteractivePrelude}\n${command}`];
 
     const defaultPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
     const effectivePath =
@@ -117,13 +129,11 @@ export abstract class LocalBaseRuntime implements Runtime {
         // Clean up any background processes (process group cleanup)
         // This prevents zombie processes when scripts spawn background tasks
         if (childProcess.pid !== undefined) {
-          try {
-            // Kill entire process group with SIGKILL - cannot be caught/ignored
-            // Use negative PID to signal the entire process group
-            process.kill(-childProcess.pid, "SIGKILL");
-          } catch {
-            // Process group already dead or doesn't exist - ignore
-          }
+          // Kill the full process tree to prevent hangs when scripts spawn background jobs.
+          //
+          // On Unix we can kill the whole group via process.kill(-pid).
+          // On Windows we must use taskkill to avoid leaking child processes.
+          killProcessTree(childProcess.pid);
         }
 
         // Check abort first (highest priority)
@@ -157,12 +167,8 @@ export abstract class LocalBaseRuntime implements Runtime {
     disposable.addCleanup(() => {
       if (childProcess.pid === undefined) return;
 
-      try {
-        // Kill entire process group with SIGKILL - cannot be caught/ignored
-        process.kill(-childProcess.pid, "SIGKILL");
-      } catch {
-        // Process group already dead or doesn't exist - ignore
-      }
+      // Kill the full process tree (see comment in exit handler).
+      killProcessTree(childProcess.pid);
     });
 
     // Handle abort signal
@@ -308,6 +314,19 @@ export abstract class LocalBaseRuntime implements Runtime {
     }
   }
 
+  async ensureDir(dirPath: string): Promise<void> {
+    const expandedPath = expandTilde(dirPath);
+    try {
+      await fsPromises.mkdir(expandedPath, { recursive: true });
+    } catch (err) {
+      throw new RuntimeErrorClass(
+        `Failed to create directory ${dirPath}: ${err instanceof Error ? err.message : String(err)}`,
+        "file_io",
+        err instanceof Error ? err : undefined
+      );
+    }
+  }
+
   resolvePath(filePath: string): Promise<string> {
     // Expand tilde to actual home directory path
     const expanded = expandTilde(filePath);
@@ -370,7 +389,7 @@ export abstract class LocalBaseRuntime implements Runtime {
   /**
    * Local runtimes are always ready.
    */
-  ensureReady(): Promise<{ ready: boolean; error?: string }> {
+  ensureReady(): Promise<EnsureReadyResult> {
     return Promise.resolve({ ready: true });
   }
 

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { BackgroundProcessManager, type BackgroundProcessMeta } from "./backgroundProcessManager";
+import {
+  BackgroundProcessManager,
+  computeTailStartOffset,
+  type BackgroundProcessMeta,
+} from "./backgroundProcessManager";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import type { Runtime } from "@/node/runtime/Runtime";
 import * as fs from "fs/promises";
@@ -39,6 +43,21 @@ describe("BackgroundProcessManager", () => {
     await fs
       .rm(`/tmp/mux-bashes/${testWorkspaceId2}`, { recursive: true, force: true })
       .catch(() => undefined);
+  });
+
+  describe("computeTailStartOffset", () => {
+    it("should return 0 when tailBytes exceeds file size", () => {
+      expect(computeTailStartOffset(10, 64_000)).toBe(0);
+    });
+
+    it("should return fileSize - tailBytes when fileSize is larger", () => {
+      expect(computeTailStartOffset(100, 10)).toBe(90);
+    });
+
+    it("should throw on invalid inputs", () => {
+      expect(() => computeTailStartOffset(-1, 10)).toThrow();
+      expect(() => computeTailStartOffset(10, 0)).toThrow();
+    });
   });
 
   describe("spawn", () => {
@@ -727,6 +746,32 @@ describe("BackgroundProcessManager", () => {
       // One call should get the content, the other should get empty (already read)
       const hasContent = output1.output.trim().length > 0 || output2.output.trim().length > 0;
       expect(hasContent).toBe(true);
+    });
+  });
+
+  describe("peekOutput", () => {
+    it("should not advance the output cursor used by getOutput", async () => {
+      const result = await manager.spawn(runtime, testWorkspaceId, "echo hello; sleep 0.2", {
+        cwd: process.cwd(),
+        displayName: "test",
+      });
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // Wait for output to be written
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const peek = await manager.peekOutput(result.processId, { fromOffset: 0 });
+      expect(peek.success).toBe(true);
+      if (!peek.success) return;
+      expect(peek.output).toContain("hello");
+
+      // peekOutput should not affect getOutput's cursor
+      const output = await manager.getOutput(result.processId, undefined, undefined, 1);
+      expect(output.success).toBe(true);
+      if (!output.success) return;
+      expect(output.output).toContain("hello");
     });
   });
 

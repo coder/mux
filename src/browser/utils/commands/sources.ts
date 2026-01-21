@@ -2,7 +2,8 @@ import { THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
+import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import {
   getAutoRetryKey,
@@ -12,6 +13,12 @@ import {
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
+import {
+  getEffectiveSlotKeybind,
+  getLayoutsConfigOrDefault,
+  getPresetForSlot,
+} from "@/browser/utils/uiLayouts";
+import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import {
   addToolToFocusedTabset,
   getDefaultRightSidebarLayoutState,
@@ -66,10 +73,17 @@ export interface BuildSourcesParams {
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
+
+  // Layout slots
+  layoutPresets?: LayoutPresetsConfig | null;
+  onApplyLayoutSlot?: (workspaceId: string, slot: LayoutSlotNumber) => void;
+  onCaptureLayoutSlot?: (
+    workspaceId: string,
+    slot: LayoutSlotNumber,
+    name: string
+  ) => Promise<void>;
   onClearTimingStats?: (workspaceId: string) => void;
 }
-
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh"];
 
 /**
  * Command palette section names
@@ -77,6 +91,7 @@ const THINKING_LEVELS: ThinkingLevel[] = ["off", "low", "medium", "high", "xhigh
  */
 export const COMMAND_SECTIONS = {
   WORKSPACES: "Workspaces",
+  LAYOUTS: "Layouts",
   NAVIGATION: "Navigation",
   CHAT: "Chat",
   MODE: "Modes & Model",
@@ -87,6 +102,7 @@ export const COMMAND_SECTIONS = {
 } as const;
 
 const section = {
+  layouts: COMMAND_SECTIONS.LAYOUTS,
   workspaces: COMMAND_SECTIONS.WORKSPACES,
   navigation: COMMAND_SECTIONS.NAVIGATION,
   chat: COMMAND_SECTIONS.CHAT,
@@ -476,6 +492,66 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           },
         }
       );
+    }
+
+    return list;
+  });
+
+  // Layout slots
+  actions.push(() => {
+    const list: CommandAction[] = [];
+    const selected = p.selectedWorkspace;
+    if (!selected) {
+      return list;
+    }
+
+    const config = getLayoutsConfigOrDefault(p.layoutPresets);
+
+    for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
+      const preset = getPresetForSlot(config, slot);
+      const keybind = getEffectiveSlotKeybind(config, slot);
+      assert(keybind, `Slot ${slot} must have a default keybind`);
+      const shortcutHint = formatKeybind(keybind);
+
+      list.push({
+        id: CommandIds.layoutApplySlot(slot),
+        title: `Layout: Apply Slot ${slot}`,
+        subtitle: preset ? preset.name : "Empty",
+        section: section.layouts,
+        shortcutHint,
+        enabled: () => Boolean(preset) && Boolean(p.onApplyLayoutSlot),
+        run: () => {
+          if (!preset) return;
+          void p.onApplyLayoutSlot?.(selected.workspaceId, slot);
+        },
+      });
+
+      if (p.onCaptureLayoutSlot) {
+        list.push({
+          id: CommandIds.layoutCaptureSlot(slot),
+          title: `Layout: Capture current to Slot ${slot}…`,
+          subtitle: preset ? preset.name : "Empty",
+          section: section.layouts,
+          run: () => undefined,
+          prompt: {
+            title: `Capture Layout Slot ${slot}`,
+            fields: [
+              {
+                type: "text",
+                name: "name",
+                label: "Name",
+                placeholder: `Slot ${slot}`,
+                initialValue: preset ? preset.name : `Slot ${slot}`,
+                getInitialValue: () => getPresetForSlot(config, slot)?.name ?? `Slot ${slot}`,
+                validate: (v) => (!v.trim() ? "Name is required" : null),
+              },
+            ],
+            onSubmit: async (vals) => {
+              await p.onCaptureLayoutSlot?.(selected.workspaceId, slot, vals.name.trim());
+            },
+          },
+        });
+      }
     }
 
     return list;

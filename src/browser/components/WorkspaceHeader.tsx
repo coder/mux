@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Pencil, Server } from "lucide-react";
+import { Menu, Pencil, Server } from "lucide-react";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
+import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
@@ -12,9 +14,17 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/ui/button";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
-import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  getTitlebarRightInset,
+  isDesktopMode,
+  DESKTOP_TITLEBAR_HEIGHT_CLASS,
+} from "@/browser/hooks/useDesktopTitlebar";
+import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
+import { WorkspaceLinks } from "./WorkspaceLinks";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -23,8 +33,10 @@ interface WorkspaceHeaderProps {
   workspaceName: string;
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
+  leftSidebarCollapsed: boolean;
+  onToggleLeftSidebarCollapsed: () => void;
   /** Callback to open integrated terminal in sidebar (optional, falls back to popout) */
-  onOpenTerminal?: () => void;
+  onOpenTerminal?: (options?: TerminalSessionCreateOptions) => void;
 }
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
@@ -34,15 +46,23 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   workspaceName,
   namedWorkspacePath,
   runtimeConfig,
+  leftSidebarCollapsed,
+  onToggleLeftSidebarCollapsed,
   onOpenTerminal,
 }) => {
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt } = useWorkspaceSidebarState(workspaceId);
-  const { startSequence: startTutorial, isSequenceCompleted } = useTutorial();
+  const { startSequence: startTutorial } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
+
+  const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
+    // This state is toggled from RightSidebar, so we need cross-component updates.
+    listener: true,
+  });
 
   const handleOpenTerminal = useCallback(() => {
     if (onOpenTerminal) {
@@ -63,27 +83,37 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     }
   }, [workspaceId, namedWorkspacePath, openInEditor, runtimeConfig]);
 
-  // Start workspace tutorial on first entry (only if settings tutorial is done)
+  // Start workspace tutorial on first entry
   useEffect(() => {
-    // Don't show workspace tutorial until settings tutorial is completed
-    // This prevents both tutorials from competing on first launch
-    if (!isSequenceCompleted("settings")) {
-      return;
-    }
     // Small delay to ensure UI is rendered
     const timer = setTimeout(() => {
       startTutorial("workspace");
     }, 300);
     return () => clearTimeout(timer);
-  }, [startTutorial, isSequenceCompleted]);
+  }, [startTutorial]);
 
+  // Listen for /debug-llm-request command to open modal
+  useEffect(() => {
+    const handler = () => setDebugLlmRequestOpen(true);
+    window.addEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
+    return () => window.removeEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
+  }, []);
+
+  // On Windows/Linux, the native window controls overlay the top-right of the app.
+  // When the right sidebar is collapsed (20px), this header stretches underneath
+  // those controls and the MCP/editor/terminal buttons become unclickable.
+  const titlebarRightInset = getTitlebarRightInset();
+  const headerRightPadding =
+    rightSidebarCollapsed && titlebarRightInset > 0 ? Math.max(0, titlebarRightInset - 20) : 0;
   const isDesktop = isDesktopMode();
 
   return (
     <div
+      style={headerRightPadding > 0 ? { paddingRight: headerRightPadding } : undefined}
       data-testid="workspace-header"
       className={cn(
-        "bg-sidebar border-border-light flex h-8 items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2 [@media(max-width:768px)]:pl-[60px]",
+        "bg-sidebar border-border-light flex items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2",
+        isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
         // In desktop mode, make header draggable for window movement
         isDesktop && "titlebar-drag"
       )}
@@ -94,10 +124,24 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           isDesktop && "titlebar-no-drag"
         )}
       >
+        {leftSidebarCollapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onToggleLeftSidebarCollapsed}
+            title="Open sidebar"
+            aria-label="Open sidebar menu"
+            className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+          >
+            <Menu className="h-4 w-4" />
+          </Button>
+        )}
         <RuntimeBadge
           runtimeConfig={runtimeConfig}
           isWorking={canInterrupt}
           workspacePath={namedWorkspacePath}
+          workspaceName={workspaceName}
+          tooltipSide="bottom"
         />
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
         <div className="flex items-center gap-1">
@@ -111,8 +155,9 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           />
         </div>
       </div>
-      <div className={cn("flex items-center", isDesktop && "titlebar-no-drag")}>
-        {editorError && <span className="text-danger-soft mr-2 text-xs">{editorError}</span>}
+      <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
+        <WorkspaceLinks workspaceId={workspaceId} />
+        {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -168,6 +213,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
         projectPath={projectPath}
         open={mcpModalOpen}
         onOpenChange={setMcpModalOpen}
+      />
+      <DebugLlmRequestModal
+        workspaceId={workspaceId}
+        open={debugLlmRequestOpen}
+        onOpenChange={setDebugLlmRequestOpen}
       />
     </div>
   );

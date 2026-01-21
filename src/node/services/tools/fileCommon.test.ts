@@ -1,6 +1,8 @@
 import { describe, it, expect } from "bun:test";
-import type { FileStat } from "@/node/runtime/Runtime";
+import type { ToolConfiguration } from "@/common/utils/tools/tools";
+import type { FileStat, Runtime } from "@/node/runtime/Runtime";
 import {
+  validatePlanModeAccess,
   validatePathInCwd,
   validateFileSize,
   validateNoRedundantPrefix,
@@ -232,6 +234,56 @@ describe("fileCommon", () => {
 
       // Should allow relative paths on SSH
       expect(validateNoRedundantPrefix("src/file.ts", sshCwd, sshRuntime)).toBeNull();
+    });
+  });
+
+  describe("validatePlanModeAccess", () => {
+    const planFilePath = "~/.mux/plans/plan.md";
+    const resolvedPlanFilePath = "/home/user/.mux/plans/plan.md";
+
+    const mockRuntime = {
+      resolvePath: (targetPath: string): Promise<string> => {
+        if (targetPath === planFilePath) {
+          return Promise.resolve(resolvedPlanFilePath);
+        }
+        if (targetPath === resolvedPlanFilePath) {
+          return Promise.resolve(resolvedPlanFilePath);
+        }
+        if (targetPath === "src/main.ts") {
+          return Promise.resolve("/home/user/project/src/main.ts");
+        }
+        return Promise.resolve(targetPath);
+      },
+    } as unknown as Runtime;
+
+    const config: ToolConfiguration = {
+      cwd: "/home/user/project",
+      runtime: mockRuntime,
+      runtimeTempDir: "/tmp",
+      mode: "plan",
+      planFilePath,
+    };
+
+    it("should allow editing when filePath is exactly planFilePath", async () => {
+      expect(await validatePlanModeAccess(planFilePath, config)).toBeNull();
+    });
+
+    it("should reject alternate paths that resolve to the plan file", async () => {
+      const result = await validatePlanModeAccess(resolvedPlanFilePath, config);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("exact plan file path");
+      expect(result?.error).toContain(planFilePath);
+      expect(result?.error).toContain(resolvedPlanFilePath);
+      expect(result?.error).toContain("resolves to the plan file");
+    });
+
+    it("should reject non-plan files in plan mode", async () => {
+      const result = await validatePlanModeAccess("src/main.ts", config);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("only the plan file can be edited");
+      expect(result?.error).toContain("exact plan file path");
+      expect(result?.error).toContain(planFilePath);
+      expect(result?.error).toContain("src/main.ts");
     });
   });
 });

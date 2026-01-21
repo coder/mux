@@ -9,20 +9,7 @@ from .mux_agent import MuxAgent
 
 @pytest.fixture(autouse=True)
 def _clear_mux_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    keys = [
-        "MUX_AGENT_GIT_URL",
-        "MUX_BUN_INSTALL_URL",
-        "MUX_PROJECT_PATH",
-        "MUX_PROJECT_CANDIDATES",
-        "MUX_TRUNK",
-        "MUX_MODEL",
-        "MUX_TIMEOUT_MS",
-        "MUX_THINKING_LEVEL",
-        "MUX_CONFIG_ROOT",
-        "MUX_APP_ROOT",
-        "MUX_WORKSPACE_ID",
-        "MUX_MODE",
-    ]
+    keys = (*MuxAgent._PROVIDER_ENV_KEYS, *MuxAgent._CONFIG_ENV_KEYS)
     for key in keys:
         monkeypatch.delenv(key, raising=False)
 

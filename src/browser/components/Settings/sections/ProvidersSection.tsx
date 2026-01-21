@@ -3,15 +3,16 @@ import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff, ExternalLink } from "
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
-import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ProviderName } from "@/common/constants/providers";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
-import { useAPI } from "@/browser/contexts/API";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import { useAPI } from "@/browser/contexts/API";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
-import { isProviderSupported, useGateway } from "@/browser/hooks/useGatewayModels";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import { Button } from "@/browser/components/ui/button";
 import {
   Select,
@@ -48,29 +49,6 @@ function getBackendBaseUrl(): string {
   return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
 }
 const GATEWAY_MODELS_KEY = "gateway-models";
-
-const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((model) => model.id);
-
-function getEligibleGatewayModels(config: ProvidersConfigMap | null): string[] {
-  const customModels: string[] = [];
-
-  if (config) {
-    for (const [provider, providerConfig] of Object.entries(config)) {
-      if (provider === "mux-gateway") continue;
-      for (const modelId of providerConfig.models ?? []) {
-        customModels.push(`${provider}:${modelId}`);
-      }
-    }
-  }
-
-  const unique = new Set<string>();
-  for (const modelId of [...customModels, ...BUILT_IN_MODELS]) {
-    if (!isProviderSupported(modelId)) continue;
-    unique.add(modelId);
-  }
-
-  return Array.from(unique).sort((a, b) => a.localeCompare(b));
-}
 
 interface FieldConfig {
   key: string;
@@ -184,6 +162,8 @@ const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
 };
 
 export function ProvidersSection() {
+  const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
+
   const { api } = useAPI();
   const { config, updateOptimistically } = useProvidersConfig();
 
@@ -223,11 +203,13 @@ export function ProvidersSection() {
   const [muxGatewayLoginStatus, setMuxGatewayLoginStatus] = useState<MuxGatewayLoginStatus>("idle");
   const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
 
+  const muxGatewayApplyDefaultModelsOnSuccessRef = useRef(false);
   const muxGatewayLoginAttemptRef = useRef(0);
   const [muxGatewayDesktopFlowId, setMuxGatewayDesktopFlowId] = useState<string | null>(null);
   const [muxGatewayServerState, setMuxGatewayServerState] = useState<string | null>(null);
 
   const cancelMuxGatewayLogin = () => {
+    muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
     muxGatewayLoginAttemptRef.current++;
 
     if (isDesktop && api && muxGatewayDesktopFlowId) {
@@ -262,6 +244,11 @@ export function ProvidersSection() {
 
   const startMuxGatewayLogin = async () => {
     const attempt = ++muxGatewayLoginAttemptRef.current;
+
+    // Enable Mux Gateway for all eligible models after the *first* successful login.
+    // (If config isn't loaded yet, fall back to the persisted gateway-available state.)
+    const isLoggedIn = config?.["mux-gateway"]?.couponCodeSet ?? gateway.isConfigured;
+    muxGatewayApplyDefaultModelsOnSuccessRef.current = !isLoggedIn;
 
     try {
       setMuxGatewayLoginError(null);
@@ -309,6 +296,22 @@ export function ProvidersSection() {
         }
 
         if (waitResult.success) {
+          if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
+            let latestConfig = config;
+            try {
+              latestConfig = await api.providers.getConfig();
+            } catch {
+              // Ignore errors fetching config; fall back to the current snapshot.
+            }
+
+            if (attempt !== muxGatewayLoginAttemptRef.current) {
+              return;
+            }
+
+            setGatewayModels(getEligibleGatewayModels(latestConfig));
+            muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
+          }
+
           setMuxGatewayLoginStatus("success");
           return;
         }
@@ -399,6 +402,24 @@ export function ProvidersSection() {
       if (data.state !== muxGatewayServerState) return;
 
       if (data.ok === true) {
+        if (muxGatewayApplyDefaultModelsOnSuccessRef.current) {
+          muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
+
+          const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
+            if (muxGatewayLoginAttemptRef.current !== attempt) return;
+            setGatewayModels(getEligibleGatewayModels(latestConfig));
+          };
+
+          if (api) {
+            api.providers
+              .getConfig()
+              .then(applyLatest)
+              .catch(() => applyLatest(config));
+          } else {
+            applyLatest(config);
+          }
+        }
+
         setMuxGatewayLoginStatus("success");
         return;
       }
@@ -410,7 +431,15 @@ export function ProvidersSection() {
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [isDesktop, muxGatewayLoginStatus, muxGatewayServerState, backendOrigin]);
+  }, [
+    isDesktop,
+    muxGatewayLoginStatus,
+    muxGatewayServerState,
+    backendOrigin,
+    api,
+    config,
+    setGatewayModels,
+  ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
   const muxGatewayLoginInProgress =
     muxGatewayLoginStatus === "waiting" || muxGatewayLoginStatus === "starting";
@@ -428,6 +457,15 @@ export function ProvidersSection() {
           : "Login to Mux Gateway";
 
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!providersExpandedProvider) {
+      return;
+    }
+
+    setExpandedProvider(providersExpandedProvider);
+    setProvidersExpandedProvider(null);
+  }, [providersExpandedProvider, setProvidersExpandedProvider]);
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;

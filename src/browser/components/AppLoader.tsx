@@ -1,9 +1,12 @@
 import { useState, useEffect } from "react";
 import App from "../App";
 import { AuthTokenModal } from "./AuthTokenModal";
+import { ThemeProvider } from "../contexts/ThemeContext";
 import { LoadingScreen } from "./LoadingScreen";
 import { useWorkspaceStoreRaw, workspaceStore } from "../stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
+import { useBackgroundBashStoreRaw } from "../stores/BackgroundBashStore";
+import { getPRStatusStoreInstance } from "../stores/PRStatusStore";
 import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
@@ -30,15 +33,17 @@ interface AppLoaderProps {
  */
 export function AppLoader(props: AppLoaderProps) {
   return (
-    <APIProvider client={props.client}>
-      <RouterProvider>
-        <ProjectProvider>
-          <WorkspaceProvider>
-            <AppLoaderInner />
-          </WorkspaceProvider>
-        </ProjectProvider>
-      </RouterProvider>
-    </APIProvider>
+    <ThemeProvider>
+      <APIProvider client={props.client}>
+        <RouterProvider>
+          <ProjectProvider>
+            <WorkspaceProvider>
+              <AppLoaderInner />
+            </WorkspaceProvider>
+          </ProjectProvider>
+        </RouterProvider>
+      </APIProvider>
+    </ThemeProvider>
   );
 }
 
@@ -55,6 +60,7 @@ function AppLoaderInner() {
   // Get store instances
   const workspaceStoreInstance = useWorkspaceStoreRaw();
   const gitStatusStore = useGitStatusStoreRaw();
+  const backgroundBashStore = useBackgroundBashStoreRaw();
 
   // Track whether stores have been synced
   const [storesSynced, setStoresSynced] = useState(false);
@@ -64,6 +70,8 @@ function AppLoaderInner() {
     if (api) {
       workspaceStoreInstance.setClient(api);
       gitStatusStore.setClient(api);
+      backgroundBashStore.setClient(api);
+      getPRStatusStoreInstance().setClient(api);
     }
 
     if (!workspaceContext.loading) {
@@ -84,6 +92,7 @@ function AppLoaderInner() {
     workspaceContext.workspaceMetadata,
     workspaceStoreInstance,
     gitStatusStore,
+    backgroundBashStore,
     api,
   ]);
 

@@ -180,6 +180,15 @@ export function getTrunkBranchKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for whether to show the "Initialize with AGENTS.md" nudge for a project.
+ * Set to true when a project is first added; cleared when user dismisses or runs /init.
+ * Format: "agentsInitNudge:{projectPath}"
+ */
+export function getAgentsInitNudgeKey(projectPath: string): string {
+  return `agentsInitNudge:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for the last runtime config used per provider for a project.
  *
  * Value shape is a provider-keyed object (e.g. { ssh: { host }, docker: { image } }) so we can
@@ -196,6 +205,12 @@ export function getLastRuntimeConfigKey(projectPath: string): string {
  * Format: "preferredCompactionModel"
  */
 export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
+
+/**
+ * Get the localStorage key for the preferred System 1 model (global)
+ * Format: "preferredSystem1Model"
+ */
+export const PREFERRED_SYSTEM_1_MODEL_KEY = "preferredSystem1Model";
 
 /**
  * Get the localStorage key for cached mode AI defaults (global).
@@ -255,11 +270,11 @@ export const DEFAULT_EDITOR_CONFIG: EditorConfig = {
 
 /**
  * Tutorial state storage key (global)
- * Stores: { disabled: boolean, completed: { settings?: true, creation?: true, workspace?: true } }
+ * Stores: { disabled: boolean, completed: { creation?: true, workspace?: true } }
  */
 export const TUTORIAL_STATE_KEY = "tutorialState";
 
-export type TutorialSequence = "settings" | "creation" | "workspace";
+export type TutorialSequence = "creation" | "workspace";
 
 export interface TutorialState {
   disabled: boolean;

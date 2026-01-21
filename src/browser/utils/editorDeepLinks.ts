@@ -19,21 +19,28 @@ export interface DeepLinkOptions {
 /**
  * Generate an editor deep link URL.
  *
- * @returns Deep link URL, or null if the editor doesn't support the requested config
- *          (e.g., Zed doesn't support SSH remote)
+ * @returns Deep link URL, or null if the editor doesn't support the requested config.
  */
 export function getEditorDeepLink(options: DeepLinkOptions): string | null {
   const { editor, path, sshHost, line, column } = options;
 
-  // Zed doesn't support Remote-SSH
-  if (sshHost && editor === "zed") {
-    return null;
-  }
-
   const scheme = editor; // vscode, cursor, zed all use their name as scheme
 
   if (sshHost) {
-    // Remote-SSH format: vscode://vscode-remote/ssh-remote+host/path
+    // Zed remote-SSH deep links use a different format than VS Code/Cursor.
+    // https://zed.dev/docs/remote-development
+    if (editor === "zed") {
+      let url = `${scheme}://ssh/${sshHost}${path}`;
+      if (line != null) {
+        url += `:${line}`;
+        if (column != null) {
+          url += `:${column}`;
+        }
+      }
+      return url;
+    }
+
+    // VS Code/Cursor Remote-SSH format: vscode://vscode-remote/ssh-remote+host/path
     let url = `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(sshHost)}${path}`;
     if (line != null) {
       url += `:${line}`;
@@ -45,7 +52,13 @@ export function getEditorDeepLink(options: DeepLinkOptions): string | null {
   }
 
   // Local format: vscode://file/path
-  let url = `${scheme}://file${path}`;
+  //
+  // Note: On Windows, callers may provide native paths like `C:\\Users\\...`.
+  // VS Code/Cursor/Zed expect forward slashes and a leading `/` after `file`:
+  //   vscode://file/C:/Users/...
+  const normalizedPath = normalizeLocalPathForEditorDeepLink(path);
+
+  let url = `${scheme}://file${normalizedPath}`;
   if (line != null) {
     url += `:${line}`;
     if (column != null) {
@@ -53,6 +66,24 @@ export function getEditorDeepLink(options: DeepLinkOptions): string | null {
     }
   }
   return url;
+}
+
+function normalizeLocalPathForEditorDeepLink(path: string): string {
+  const trimmed = path.trim();
+  const unquoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ? trimmed.slice(1, -1)
+      : trimmed;
+
+  const pathWithSlashes = unquoted.replace(/\\/g, "/");
+
+  // Ensure the URL parses as `scheme://file/<path>`.
+  if (pathWithSlashes.startsWith("/")) {
+    return pathWithSlashes;
+  }
+
+  return `/${pathWithSlashes}`;
 }
 
 /**

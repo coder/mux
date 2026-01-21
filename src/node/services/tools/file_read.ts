@@ -43,9 +43,14 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         if (!(await isPlanFilePath(filePath, config))) {
           const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
           if (pathValidation) {
+            // In plan mode, hint about the plan file path to help model recover
+            const hint =
+              config.mode === "plan" && config.planFilePath
+                ? ` In plan mode, use the exact plan file path string as provided: ${config.planFilePath}`
+                : "";
             return {
               success: false,
-              error: pathValidation.error,
+              error: pathValidation.error + hint,
             };
           }
         }

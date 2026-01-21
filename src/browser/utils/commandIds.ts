@@ -60,6 +60,9 @@ export const CommandIds = {
   themeToggle: () => "appearance:theme:toggle" as const,
   themeSet: (theme: string) => `appearance:theme:set:${theme}` as const,
 
+  // Layout commands
+  layoutApplySlot: (slot: number) => `layout:apply-slot:${slot}` as const,
+  layoutCaptureSlot: (slot: number) => `layout:capture-slot:${slot}` as const,
   // Settings commands
   settingsOpen: () => "settings:open" as const,
   settingsOpenSection: (section: string) => `settings:open:${section}` as const,

@@ -7,6 +7,7 @@ import type {
   MuxFrontendMetadata,
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
+import { buildCompactionDisplayText } from "@/browser/utils/compaction/format";
 import type {
   StreamStartEvent,
   StreamDeltaEvent,
@@ -18,6 +19,7 @@ import type {
   ToolCallEndEvent,
   ReasoningDeltaEvent,
   ReasoningEndEvent,
+  RuntimeStatusEvent,
 } from "@/common/types/stream";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { TodoItem, StatusSetToolResult, NotifyToolResult } from "@/common/types/tools";
@@ -163,6 +165,11 @@ export class StreamingMessageAggregator {
 
   // Derived value cache - invalidated as a unit on every mutation.
   // Adding a new cached value? Add it here and it will auto-invalidate.
+  private displayedMessageCache = new Map<
+    string,
+    { version: number; messages: DisplayedMessage[] }
+  >();
+  private messageVersions = new Map<string, number>();
   private cache: {
     allMessages?: MuxMessage[];
     displayedMessages?: DisplayedMessage[];
@@ -197,7 +204,9 @@ export class StreamingMessageAggregator {
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
 
-  // Workspace ID for localStorage persistence
+  // Debug: show synthetic messages + disable displayed message cap
+  private readonly debugShowAllMessages: boolean;
+  // Workspace ID (used for status persistence)
   private readonly workspaceId: string | undefined;
 
   // Workspace init hook state (ephemeral, not persisted to history)
@@ -221,6 +230,10 @@ export class StreamingMessageAggregator {
   // IMPORTANT: We intentionally keep this timestamp until a stream actually starts
   // (or the user retries) so retry UI/backoff logic doesn't misfire on send failures.
   private pendingStreamStartTime: number | null = null;
+
+  // Current runtime status (set during ensureReady for Coder workspaces)
+  // Used to show "Starting Coder workspace..." in StreamingBarrier
+  private runtimeStatus: RuntimeStatusEvent | null = null;
 
   // Pending compaction request metadata for the next stream (set when user message arrives).
   // This is used for UI before we receive stream-start (e.g., show compaction model while "starting").
@@ -269,11 +282,17 @@ export class StreamingMessageAggregator {
   // Used for notification click handling in browser mode
   onNavigateToWorkspace?: (workspaceId: string) => void;
 
-  constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
+  constructor(
+    createdAt: string,
+    workspaceId?: string,
+    unarchivedAt?: string,
+    options?: { debugShowAllMessages?: boolean }
+  ) {
     this.createdAt = createdAt;
     this.workspaceId = workspaceId;
     this.unarchivedAt = unarchivedAt;
-    // Load persisted state from localStorage
+    this.debugShowAllMessages = options?.debugShowAllMessages === true;
+    // Load persisted agent status from localStorage
     if (workspaceId) {
       const persistedStatus = this.loadPersistedAgentStatus();
       if (persistedStatus) {
@@ -356,6 +375,28 @@ export class StreamingMessageAggregator {
     assert(typeof serverTimestamp === "number", "translateServerTime requires serverTimestamp");
 
     return serverTimestamp + context.clockOffsetMs;
+  }
+
+  private bumpMessageVersion(messageId: string): void {
+    const current = this.messageVersions.get(messageId) ?? 0;
+    this.messageVersions.set(messageId, current + 1);
+  }
+
+  private markMessageDirty(messageId: string): void {
+    this.bumpMessageVersion(messageId);
+    this.invalidateCache();
+  }
+
+  private deleteMessage(messageId: string): boolean {
+    const didDelete = this.messages.delete(messageId);
+    if (didDelete) {
+      this.displayedMessageCache.delete(messageId);
+      this.messageVersions.delete(messageId);
+      // Clean up token tracking state to prevent memory leaks
+      this.deltaHistory.delete(messageId);
+      this.activeStreamUsage.delete(messageId);
+    }
+    return didDelete;
   }
   private invalidateCache(): void {
     this.cache = {};
@@ -458,6 +499,12 @@ export class StreamingMessageAggregator {
    * - lastCompletedStreamStats - timing stats from this stream for display after completion
    */
   private cleanupStreamState(messageId: string): void {
+    // Clear optimistic interrupt flag if this stream was being interrupted.
+    // This handles cases where streams end normally or with errors (not just abort).
+    if (this.interruptingMessageId === messageId) {
+      this.interruptingMessageId = null;
+    }
+
     // Capture timing stats before removing the stream context
     const context = this.activeStreams.get(messageId);
     if (context) {
@@ -479,10 +526,14 @@ export class StreamingMessageAggregator {
           ? Math.max(0, context.serverFirstTokenTime - context.serverStartTime)
           : null;
 
-      // Get output tokens from cumulative usage (if available)
+      // Get output tokens from cumulative usage (if available).
+      // Fall back to message metadata for abort/error cases where clearTokenState was
+      // called before cleanupStreamState (e.g., stream abort event handler ordering).
       const cumulativeUsage = this.activeStreamUsage.get(messageId)?.cumulative.usage;
-      const outputTokens = cumulativeUsage?.outputTokens ?? 0;
-      const reasoningTokens = cumulativeUsage?.reasoningTokens ?? 0;
+      const metadataUsage = message?.metadata?.usage;
+      const outputTokens = cumulativeUsage?.outputTokens ?? metadataUsage?.outputTokens ?? 0;
+      const reasoningTokens =
+        cumulativeUsage?.reasoningTokens ?? metadataUsage?.reasoningTokens ?? 0;
 
       // Account for in-progress tool calls (can happen on abort/error)
       let totalToolExecutionMs = context.toolExecutionMs;
@@ -575,15 +626,16 @@ export class StreamingMessageAggregator {
 
     // Just store the message - backend assigns historySequence
     this.messages.set(message.id, message);
-    this.invalidateCache();
+    this.markMessageDirty(message.id);
   }
 
   /**
    * Remove a message from the aggregator.
    * Used for dismissing ephemeral messages like /plan output.
+   * Rebuilds detected links to remove any that only existed in the removed message.
    */
   removeMessage(messageId: string): void {
-    if (this.messages.delete(messageId)) {
+    if (this.deleteMessage(messageId)) {
       this.invalidateCache();
     }
   }
@@ -596,7 +648,15 @@ export class StreamingMessageAggregator {
    * @param hasActiveStream - Whether there's an active stream in buffered events (for reconnection scenario)
    */
   loadHistoricalMessages(messages: MuxMessage[], hasActiveStream = false): void {
-    // First, add all messages to the map
+    // Clear existing state to prevent stale messages from persisting.
+    // This method replaces all messages, not merges them.
+    this.messages.clear();
+    this.displayedMessageCache.clear();
+    this.messageVersions.clear();
+    this.deltaHistory.clear();
+    this.activeStreamUsage.clear();
+
+    // Add all messages to the map
     for (const message of messages) {
       this.messages.set(message.id, message);
     }
@@ -658,6 +718,27 @@ export class StreamingMessageAggregator {
 
   getPendingStreamStartTime(): number | null {
     return this.pendingStreamStartTime;
+  }
+
+  /**
+   * Get the current runtime status (for Coder workspace starting UX).
+   * Returns null if no runtime status is active.
+   */
+  getRuntimeStatus(): RuntimeStatusEvent | null {
+    return this.runtimeStatus;
+  }
+
+  /**
+   * Handle runtime-status event (emitted during ensureReady for Coder workspaces).
+   * Used to show "Starting Coder workspace..." in StreamingBarrier.
+   */
+  handleRuntimeStatus(status: RuntimeStatusEvent): void {
+    // Clear status when ready/error or set new status
+    if (status.phase === "ready" || status.phase === "error") {
+      this.runtimeStatus = null;
+    } else {
+      this.runtimeStatus = status;
+    }
   }
 
   /**
@@ -920,12 +1001,26 @@ export class StreamingMessageAggregator {
   }
 
   clearActiveStreams(): void {
+    const activeMessageIds = Array.from(this.activeStreams.keys());
     this.activeStreams.clear();
+
+    // Clear optimistic interrupt flag since all streams are cleared
+    this.interruptingMessageId = null;
+
+    if (activeMessageIds.length > 0) {
+      for (const messageId of activeMessageIds) {
+        this.bumpMessageVersion(messageId);
+      }
+      this.invalidateCache();
+    }
   }
 
   clear(): void {
     this.messages.clear();
     this.activeStreams.clear();
+    this.displayedMessageCache.clear();
+    this.messageVersions.clear();
+    this.interruptingMessageId = null;
     this.invalidateCache();
   }
 
@@ -940,7 +1035,7 @@ export class StreamingMessageAggregator {
     for (const [messageId, message] of this.messages.entries()) {
       const historySeq = message.metadata?.historySequence;
       if (historySeq !== undefined && sequencesToDelete.has(historySeq)) {
-        this.messages.delete(messageId);
+        this.deleteMessage(messageId);
       }
     }
 
@@ -980,6 +1075,9 @@ export class StreamingMessageAggregator {
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
 
+    // Clear runtime status - runtime is ready now that stream has started
+    this.runtimeStatus = null;
+
     // NOTE: We do NOT clear agentStatus or currentTodos here.
     // They are cleared when a new user message arrives (see handleMessage),
     // ensuring consistent behavior whether loading from history or processing live events.
@@ -1011,7 +1109,7 @@ export class StreamingMessageAggregator {
     });
 
     this.messages.set(data.messageId, streamingMessage);
-    this.invalidateCache();
+    this.markMessageDirty(data.messageId);
   }
 
   handleStreamDelta(data: StreamDeltaEvent): void {
@@ -1038,7 +1136,7 @@ export class StreamingMessageAggregator {
     // Track delta for token counting and TPS calculation
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "text");
 
-    this.invalidateCache();
+    this.markMessageDirty(data.messageId);
   }
 
   handleStreamEnd(data: StreamEndEvent): void {
@@ -1109,7 +1207,8 @@ export class StreamingMessageAggregator {
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
     }
-    this.invalidateCache();
+    // Assistant message is now stable (completed or reconnected) - invalidate all caches.
+    this.markMessageDirty(data.messageId);
   }
 
   handleStreamAbort(data: StreamAbortEvent): void {
@@ -1123,6 +1222,9 @@ export class StreamingMessageAggregator {
     }
 
     // Direct lookup by messageId
+
+    // Clear runtime status (ensureReady is no longer relevant once stream aborts)
+    this.runtimeStatus = null;
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1141,7 +1243,8 @@ export class StreamingMessageAggregator {
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
-      this.invalidateCache();
+      // Assistant message is now stable (aborted) - invalidate all caches.
+      this.markMessageDirty(data.messageId);
     }
   }
 
@@ -1151,6 +1254,9 @@ export class StreamingMessageAggregator {
     this.setPendingStreamStartTime(null);
 
     // Direct lookup by messageId
+
+    // Clear runtime status - runtime start/ensureReady failed
+    this.runtimeStatus = null;
     const activeStream = this.activeStreams.get(data.messageId);
 
     if (activeStream) {
@@ -1167,7 +1273,8 @@ export class StreamingMessageAggregator {
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
-      this.invalidateCache();
+      // Assistant message is now stable (errored) - invalidate all caches.
+      this.markMessageDirty(data.messageId);
     } else {
       // Pre-stream error (e.g., API key not configured before streaming starts)
       // Create a synthetic error message since there's no active stream to attach to
@@ -1189,7 +1296,7 @@ export class StreamingMessageAggregator {
         },
       };
       this.messages.set(data.messageId, errorMessage);
-      this.invalidateCache();
+      this.markMessageDirty(data.messageId);
     }
   }
 
@@ -1213,7 +1320,7 @@ export class StreamingMessageAggregator {
           input: data.args,
           timestamp: data.timestamp,
         });
-        this.invalidateCache();
+        this.markMessageDirty(data.messageId);
         return;
       }
     }
@@ -1250,7 +1357,7 @@ export class StreamingMessageAggregator {
     // Track tokens for tool input
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "tool-args");
 
-    this.invalidateCache();
+    this.markMessageDirty(data.messageId);
   }
 
   handleToolCallDelta(data: ToolCallDeltaEvent): void {
@@ -1314,6 +1421,9 @@ export class StreamingMessageAggregator {
         this.sendBrowserNotification(result.title, result.message, result.workspaceId);
       }
     }
+
+    // Link extraction is derived from message history (see computeLinksFromMessages()).
+    // When a tool output becomes available, handleToolCallEnd invalidates the link cache.
   }
 
   /**
@@ -1354,7 +1464,8 @@ export class StreamingMessageAggregator {
 
       const startTime = context.pendingToolStarts.get(data.toolCallId);
       if (startTime !== undefined) {
-        context.toolExecutionMs += data.timestamp - startTime;
+        // Clamp to non-negative to handle out-of-order timestamps during replay
+        context.toolExecutionMs += Math.max(0, data.timestamp - startTime);
         context.pendingToolStarts.delete(data.toolCallId);
       }
     }
@@ -1380,7 +1491,7 @@ export class StreamingMessageAggregator {
                 : nc
             );
             message.parts[parentIndex] = { ...parentPart, nestedCalls: updatedNestedCalls };
-            this.invalidateCache();
+            this.markMessageDirty(data.messageId);
             return;
           }
         }
@@ -1400,8 +1511,13 @@ export class StreamingMessageAggregator {
         // Process tool result to update derived state (todos, agentStatus, etc.)
         // This is from a live stream, so use "streaming" context
         this.processToolResult(data.toolName, toolPart.input, data.result, "streaming");
+
+        // Tool output is now stable - invalidate all caches.
+        this.markMessageDirty(data.messageId);
+      } else {
+        // Tool part not found (shouldn't happen normally) - still invalidate display cache.
+        this.markMessageDirty(data.messageId);
       }
-      this.invalidateCache();
     }
   }
 
@@ -1429,7 +1545,7 @@ export class StreamingMessageAggregator {
     // Track delta for token counting and TPS calculation
     this.trackDelta(data.messageId, data.tokens, data.timestamp, "reasoning");
 
-    this.invalidateCache();
+    this.markMessageDirty(data.messageId);
   }
 
   handleReasoningEnd(_data: ReasoningEndEvent): void {
@@ -1497,6 +1613,11 @@ export class StreamingMessageAggregator {
         clearTimeout(this.initOutputThrottleTimer);
         this.initOutputThrottleTimer = null;
       }
+      // Reset pending stream start time so the grace period starts fresh after init completes.
+      // This prevents false retry barriers for slow init (e.g., Coder workspace provisioning).
+      if (this.pendingStreamStartTime !== null) {
+        this.setPendingStreamStartTime(Date.now());
+      }
       this.invalidateCache();
       return;
     }
@@ -1525,7 +1646,7 @@ export class StreamingMessageAggregator {
               }
             }
             for (const removeId of messagesToRemove) {
-              this.messages.delete(removeId);
+              this.deleteMessage(removeId);
             }
             break; // Found and handled the conflict
           }
@@ -1565,6 +1686,237 @@ export class StreamingMessageAggregator {
     }
   }
 
+  private buildDisplayedMessagesForMessage(message: MuxMessage): DisplayedMessage[] {
+    const displayedMessages: DisplayedMessage[] = [];
+    const baseTimestamp = message.metadata?.timestamp;
+    const historySequence = message.metadata?.historySequence ?? 0;
+
+    // Check for plan-display messages (ephemeral /plan output)
+    const muxMeta = message.metadata?.muxMetadata;
+    if (muxMeta?.type === "plan-display") {
+      const content = message.parts
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("");
+      displayedMessages.push({
+        type: "plan-display",
+        id: message.id,
+        historyId: message.id,
+        content,
+        path: muxMeta.path,
+        historySequence,
+      });
+      return displayedMessages;
+    }
+
+    if (message.role === "user") {
+      // User messages: combine all text parts into single block, extract images
+      const content = message.parts
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("");
+
+      const imageParts = message.parts
+        .filter((p): p is MuxImagePart => {
+          // Accept both new "file" type and legacy "image" type (from before PR #308)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+          return p.type === "file" || (p as any).type === "image";
+        })
+        .map((p) => ({
+          url: typeof p.url === "string" ? p.url : "",
+          mediaType: p.mediaType,
+        }));
+
+      // Check if this is a compaction request message
+      const compactionRequest =
+        muxMeta?.type === "compaction-request"
+          ? {
+              rawCommand: muxMeta.rawCommand,
+              parsed: {
+                model: muxMeta.parsed.model,
+                maxOutputTokens: muxMeta.parsed.maxOutputTokens,
+                continueMessage: muxMeta.parsed.continueMessage,
+              } satisfies CompactionRequestData,
+            }
+          : undefined;
+
+      // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
+      const reviews = muxMeta?.reviews;
+
+      displayedMessages.push({
+        type: "user",
+        id: message.id,
+        historyId: message.id,
+        content: compactionRequest ? buildCompactionDisplayText(compactionRequest) : content,
+        imageParts: imageParts.length > 0 ? imageParts : undefined,
+        historySequence,
+        isSynthetic: message.metadata?.synthetic === true ? true : undefined,
+        timestamp: baseTimestamp,
+        compactionRequest,
+        reviews,
+      });
+      return displayedMessages;
+    }
+
+    if (message.role === "assistant") {
+      // Assistant messages: each part becomes a separate DisplayedMessage
+      // Use streamSequence to order parts within this message
+      let streamSeq = 0;
+
+      // Check if this message has an active stream (for inferring streaming status)
+      // Direct Map.has() check - O(1) instead of O(n) iteration
+      const hasActiveStream = this.activeStreams.has(message.id);
+
+      // isPartial from metadata (set by stream-abort event)
+      const isPartial = message.metadata?.partial === true;
+
+      // Merge adjacent text/reasoning parts for display
+      const mergedParts = mergeAdjacentParts(message.parts);
+
+      // Find the last part that will produce a DisplayedMessage
+      // (reasoning, text parts with content, OR tool parts)
+      let lastPartIndex = -1;
+      for (let i = mergedParts.length - 1; i >= 0; i--) {
+        const part = mergedParts[i];
+        if (
+          part.type === "reasoning" ||
+          (part.type === "text" && part.text) ||
+          isDynamicToolPart(part)
+        ) {
+          lastPartIndex = i;
+          break;
+        }
+      }
+
+      mergedParts.forEach((part, partIndex) => {
+        const isLastPart = partIndex === lastPartIndex;
+        // Part is streaming if: active stream exists AND this is the last part
+        const isStreaming = hasActiveStream && isLastPart;
+
+        if (part.type === "reasoning") {
+          // Reasoning part - shows thinking/reasoning content
+          displayedMessages.push({
+            type: "reasoning",
+            id: `${message.id}-${partIndex}`,
+            historyId: message.id,
+            content: part.text,
+            historySequence,
+            streamSequence: streamSeq++,
+            isStreaming,
+            isPartial,
+            isLastPartOfMessage: isLastPart,
+            timestamp: part.timestamp ?? baseTimestamp,
+          });
+        } else if (part.type === "text" && part.text) {
+          // Skip empty text parts
+          displayedMessages.push({
+            type: "assistant",
+            id: `${message.id}-${partIndex}`,
+            historyId: message.id,
+            content: part.text,
+            historySequence,
+            streamSequence: streamSeq++,
+            isStreaming,
+            isPartial,
+            isLastPartOfMessage: isLastPart,
+            // Support both new enum ("user"|"idle") and legacy boolean (true)
+            isCompacted: !!message.metadata?.compacted,
+            isIdleCompacted: message.metadata?.compacted === "idle",
+            model: message.metadata?.model,
+            mode: message.metadata?.mode,
+            timestamp: part.timestamp ?? baseTimestamp,
+          });
+        } else if (isDynamicToolPart(part)) {
+          // Determine status based on part state and result
+          let status: "pending" | "executing" | "completed" | "failed" | "interrupted";
+          if (part.state === "output-available") {
+            // Check if result indicates failure (for tools that return { success: boolean })
+            status = hasFailureResult(part.output) ? "failed" : "completed";
+          } else if (part.state === "input-available") {
+            // Most unfinished tool calls in partial messages represent an interruption.
+            // ask_user_question is different: it's intentionally waiting on user input,
+            // so after restart we should keep it answerable ("executing") instead of
+            // showing retry/auto-resume UX.
+            if (part.toolName === "ask_user_question") {
+              status = "executing";
+            } else if (isPartial) {
+              status = "interrupted";
+            } else {
+              status = "executing";
+            }
+          } else {
+            status = "pending";
+          }
+
+          // For code_execution, use streaming nestedCalls if present, or reconstruct from result
+          let nestedCalls = part.nestedCalls;
+          if (
+            !nestedCalls &&
+            part.toolName === "code_execution" &&
+            part.state === "output-available"
+          ) {
+            // Reconstruct nestedCalls from result.toolCalls (for historical replay)
+            const result = part.output as
+              | {
+                  toolCalls?: Array<{
+                    toolName: string;
+                    args: unknown;
+                    result?: unknown;
+                    error?: string;
+                    duration_ms: number;
+                  }>;
+                }
+              | undefined;
+            if (result?.toolCalls) {
+              nestedCalls = result.toolCalls.map((tc, idx) => ({
+                toolCallId: `${part.toolCallId}-nested-${idx}`,
+                toolName: tc.toolName,
+                input: tc.args,
+                output: tc.result ?? (tc.error ? { error: tc.error } : undefined),
+                state: "output-available" as const,
+                timestamp: part.timestamp,
+              }));
+            }
+          }
+
+          displayedMessages.push({
+            type: "tool",
+            id: `${message.id}-${partIndex}`,
+            historyId: message.id,
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            args: part.input,
+            result: part.state === "output-available" ? part.output : undefined,
+            status,
+            isPartial,
+            historySequence,
+            streamSequence: streamSeq++,
+            isLastPartOfMessage: isLastPart,
+            timestamp: part.timestamp ?? baseTimestamp,
+            nestedCalls,
+          });
+        }
+      });
+
+      // Create stream-error DisplayedMessage if message has error metadata
+      // This happens after all parts are displayed, so error appears at the end
+      if (message.metadata?.error) {
+        displayedMessages.push({
+          type: "stream-error",
+          id: `${message.id}-error`,
+          historyId: message.id,
+          error: message.metadata.error,
+          errorType: message.metadata.errorType ?? "unknown",
+          historySequence,
+          model: message.metadata.model,
+          timestamp: baseTimestamp,
+        });
+      }
+    }
+
+    return displayedMessages;
+  }
+
   /**
    * Transform MuxMessages into DisplayedMessages for UI consumption
    * This splits complex messages with multiple parts into separate UI blocks
@@ -1579,233 +1931,26 @@ export class StreamingMessageAggregator {
       const allMessages = this.getAllMessages();
 
       for (const message of allMessages) {
-        // Skip synthetic messages - they're for model context only, not UI display
-        if (message.metadata?.synthetic) {
+        const isSynthetic = message.metadata?.synthetic === true;
+
+        // Synthetic messages are typically for model context only, but can be shown in debug mode.
+        if (isSynthetic && !this.debugShowAllMessages) {
           continue;
         }
 
-        const baseTimestamp = message.metadata?.timestamp;
-        // Get historySequence from backend (required field)
-        const historySequence = message.metadata?.historySequence ?? 0;
+        const version = this.messageVersions.get(message.id) ?? 0;
+        const cached = this.displayedMessageCache.get(message.id);
+        const messageDisplay =
+          cached?.version === version
+            ? cached.messages
+            : this.buildDisplayedMessagesForMessage(message);
 
-        // Check for plan-display messages (ephemeral /plan output)
-        const muxMeta = message.metadata?.muxMetadata;
-        if (muxMeta?.type === "plan-display") {
-          const content = message.parts
-            .filter((p) => p.type === "text")
-            .map((p) => p.text)
-            .join("");
-          displayedMessages.push({
-            type: "plan-display",
-            id: message.id,
-            historyId: message.id,
-            content,
-            path: muxMeta.path,
-            historySequence,
-          });
-          continue;
+        if (cached?.version !== version) {
+          this.displayedMessageCache.set(message.id, { version, messages: messageDisplay });
         }
 
-        if (message.role === "user") {
-          // User messages: combine all text parts into single block, extract images
-          const content = message.parts
-            .filter((p) => p.type === "text")
-            .map((p) => p.text)
-            .join("");
-
-          const imageParts = message.parts
-            .filter((p): p is MuxImagePart => {
-              // Accept both new "file" type and legacy "image" type (from before PR #308)
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-              return p.type === "file" || (p as any).type === "image";
-            })
-            .map((p) => ({
-              url: typeof p.url === "string" ? p.url : "",
-              mediaType: p.mediaType,
-            }));
-
-          // Check if this is a compaction request message
-          const muxMeta = message.metadata?.muxMetadata;
-          const compactionRequest =
-            muxMeta?.type === "compaction-request"
-              ? {
-                  rawCommand: muxMeta.rawCommand,
-                  parsed: {
-                    model: muxMeta.parsed.model,
-                    maxOutputTokens: muxMeta.parsed.maxOutputTokens,
-                    continueMessage: muxMeta.parsed.continueMessage,
-                  } satisfies CompactionRequestData,
-                }
-              : undefined;
-
-          // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
-          const reviews = muxMeta?.reviews;
-
-          displayedMessages.push({
-            type: "user",
-            id: message.id,
-            historyId: message.id,
-            content: compactionRequest ? compactionRequest.rawCommand : content,
-            imageParts: imageParts.length > 0 ? imageParts : undefined,
-            historySequence,
-            timestamp: baseTimestamp,
-            compactionRequest,
-            reviews,
-          });
-        } else if (message.role === "assistant") {
-          // Assistant messages: each part becomes a separate DisplayedMessage
-          // Use streamSequence to order parts within this message
-          let streamSeq = 0;
-
-          // Check if this message has an active stream (for inferring streaming status)
-          // Direct Map.has() check - O(1) instead of O(n) iteration
-          const hasActiveStream = this.activeStreams.has(message.id);
-
-          // isPartial from metadata (set by stream-abort event)
-          const isPartial = message.metadata?.partial === true;
-
-          // Merge adjacent text/reasoning parts for display
-          const mergedParts = mergeAdjacentParts(message.parts);
-
-          // Find the last part that will produce a DisplayedMessage
-          // (reasoning, text parts with content, OR tool parts)
-          let lastPartIndex = -1;
-          for (let i = mergedParts.length - 1; i >= 0; i--) {
-            const part = mergedParts[i];
-            if (
-              part.type === "reasoning" ||
-              (part.type === "text" && part.text) ||
-              isDynamicToolPart(part)
-            ) {
-              lastPartIndex = i;
-              break;
-            }
-          }
-
-          mergedParts.forEach((part, partIndex) => {
-            const isLastPart = partIndex === lastPartIndex;
-            // Part is streaming if: active stream exists AND this is the last part
-            const isStreaming = hasActiveStream && isLastPart;
-
-            if (part.type === "reasoning") {
-              // Reasoning part - shows thinking/reasoning content
-              displayedMessages.push({
-                type: "reasoning",
-                id: `${message.id}-${partIndex}`,
-                historyId: message.id,
-                content: part.text,
-                historySequence,
-                streamSequence: streamSeq++,
-                isStreaming,
-                isPartial,
-                isLastPartOfMessage: isLastPart,
-                timestamp: part.timestamp ?? baseTimestamp,
-              });
-            } else if (part.type === "text" && part.text) {
-              // Skip empty text parts
-              displayedMessages.push({
-                type: "assistant",
-                id: `${message.id}-${partIndex}`,
-                historyId: message.id,
-                content: part.text,
-                historySequence,
-                streamSequence: streamSeq++,
-                isStreaming,
-                isPartial,
-                isLastPartOfMessage: isLastPart,
-                // Support both new enum ("user"|"idle") and legacy boolean (true)
-                isCompacted: !!message.metadata?.compacted,
-                isIdleCompacted: message.metadata?.compacted === "idle",
-                model: message.metadata?.model,
-                mode: message.metadata?.mode,
-                timestamp: part.timestamp ?? baseTimestamp,
-              });
-            } else if (isDynamicToolPart(part)) {
-              // Determine status based on part state and result
-              let status: "pending" | "executing" | "completed" | "failed" | "interrupted";
-              if (part.state === "output-available") {
-                // Check if result indicates failure (for tools that return { success: boolean })
-                status = hasFailureResult(part.output) ? "failed" : "completed";
-              } else if (part.state === "input-available") {
-                // Most unfinished tool calls in partial messages represent an interruption.
-                // ask_user_question is different: it's intentionally waiting on user input,
-                // so after restart we should keep it answerable ("executing") instead of
-                // showing retry/auto-resume UX.
-                if (part.toolName === "ask_user_question") {
-                  status = "executing";
-                } else if (isPartial) {
-                  status = "interrupted";
-                } else {
-                  status = "executing";
-                }
-              } else {
-                status = "pending";
-              }
-
-              // For code_execution, use streaming nestedCalls if present, or reconstruct from result
-              let nestedCalls = part.nestedCalls;
-              if (
-                !nestedCalls &&
-                part.toolName === "code_execution" &&
-                part.state === "output-available"
-              ) {
-                // Reconstruct nestedCalls from result.toolCalls (for historical replay)
-                const result = part.output as
-                  | {
-                      toolCalls?: Array<{
-                        toolName: string;
-                        args: unknown;
-                        result?: unknown;
-                        error?: string;
-                        duration_ms: number;
-                      }>;
-                    }
-                  | undefined;
-                if (result?.toolCalls) {
-                  nestedCalls = result.toolCalls.map((tc, idx) => ({
-                    toolCallId: `${part.toolCallId}-nested-${idx}`,
-                    toolName: tc.toolName,
-                    input: tc.args,
-                    output: tc.result ?? (tc.error ? { error: tc.error } : undefined),
-                    state: "output-available" as const,
-                    timestamp: part.timestamp,
-                  }));
-                }
-              }
-
-              displayedMessages.push({
-                type: "tool",
-                id: `${message.id}-${partIndex}`,
-                historyId: message.id,
-                toolCallId: part.toolCallId,
-                toolName: part.toolName,
-                args: part.input,
-                result: part.state === "output-available" ? part.output : undefined,
-                status,
-                isPartial,
-                historySequence,
-                streamSequence: streamSeq++,
-                isLastPartOfMessage: isLastPart,
-                timestamp: part.timestamp ?? baseTimestamp,
-                nestedCalls,
-              });
-            }
-          });
-
-          // Create stream-error DisplayedMessage if message has error metadata
-          // This happens after all parts are displayed, so error appears at the end
-          if (message.metadata?.error) {
-            displayedMessages.push({
-              type: "stream-error",
-              id: `${message.id}-error`,
-              historyId: message.id,
-              error: message.metadata.error,
-              errorType: message.metadata.errorType ?? "unknown",
-              historySequence,
-              model: message.metadata.model,
-              timestamp: baseTimestamp,
-            });
-          }
+        if (messageDisplay.length > 0) {
+          displayedMessages.push(...messageDisplay);
         }
       }
 
@@ -1832,7 +1977,7 @@ export class StreamingMessageAggregator {
 
       // Limit to last N messages for DOM performance
       // Full history is still maintained internally for token counting
-      if (displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
+      if (!this.debugShowAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
         const hiddenCount = displayedMessages.length - MAX_DISPLAYED_MESSAGES;
         const slicedMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
 
@@ -1844,7 +1989,10 @@ export class StreamingMessageAggregator {
           historySequence: -1, // Place it before all messages
         };
 
-        return [historyHiddenMessage, ...slicedMessages];
+        // Cache the sliced result to maintain stable references and avoid recomputation
+        const result = [historyHiddenMessage, ...slicedMessages];
+        this.cache.displayedMessages = result;
+        return result;
       }
 
       // Return the full array

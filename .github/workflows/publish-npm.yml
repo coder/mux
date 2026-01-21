@@ -29,15 +29,16 @@ jobs:
       id-token: write # Required for OIDC trusted publishing
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0 # Required for git describe to find tags
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-mux
 
       # Setup Node.js 24+ for npm v11+ required by OIDC trusted publishing.
       # Node 22 ships with npm 10.x which does NOT support OIDC.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -48,8 +49,8 @@ jobs:
           # Get base version from package.json
           BASE_VERSION=$(node -p "require('./package.json').version")
 
-          # Generate git describe version
-          GIT_DESCRIBE=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
+          # Generate git describe version (for debugging; used indirectly via commits_since_tag)
+          git describe --tags --always --dirty 2>/dev/null || echo "unknown"
 
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             # For tags, use the base version as-is (stable release)
@@ -60,14 +61,15 @@ jobs:
             # For main branch, create a pre-release version using git describe
             # Format: 0.3.0-next.5.g1a2b3c4 (base-next.commits.hash)
             GIT_COMMIT=$(git rev-parse --short HEAD)
-            COMMITS_SINCE_TAG=$(git rev-list --count HEAD ^$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD) 2>/dev/null || echo "0")
+            TAG_BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)
+            COMMITS_SINCE_TAG=$(git rev-list --count HEAD "^$TAG_BASE" 2>/dev/null || echo "0")
             NPM_VERSION="${BASE_VERSION}-next.${COMMITS_SINCE_TAG}.g${GIT_COMMIT}"
             NPM_TAG="next"
             echo "Publishing pre-release: ${NPM_VERSION}"
           fi
 
-          echo "version=${NPM_VERSION}" >> $GITHUB_OUTPUT
-          echo "tag=${NPM_TAG}" >> $GITHUB_OUTPUT
+          echo "version=${NPM_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
 
           # Update package.json with the new version
           node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json')); pkg.version = '${NPM_VERSION}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
@@ -76,6 +78,9 @@ jobs:
 
       - name: Generate version file
         run: ./scripts/generate-version.sh
+
+      - name: Generate npm shrinkwrap
+        run: ./scripts/generate-npm-shrinkwrap.sh
 
       - name: Build application
         run: make build
@@ -86,8 +91,9 @@ jobs:
       - name: Find package tarball
         id: find-tarball
         run: |
+          # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
           TARBALL=$(ls mux-*.tgz | head -1)
-          echo "tarball=$TARBALL" >> $GITHUB_OUTPUT
+          echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "Found package: $TARBALL"
 
       - name: Run smoke test
@@ -101,7 +107,7 @@ jobs:
 
       - name: Upload server logs on smoke test failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: smoke-test-logs
           path: |
@@ -117,21 +123,103 @@ jobs:
         id: check-exists
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${STEPS_VERSION_OUTPUTS_VERSION}"
 
           if npm view "${PACKAGE_NAME}@${VERSION}" version &>/dev/null; then
-            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Version ${VERSION} already exists on npm"
           else
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "exists=false" >> "$GITHUB_OUTPUT"
             echo "Version ${VERSION} does not exist, will publish"
           fi
+        env:
+          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
+
 
       - name: Publish to NPM
         if: steps.check-exists.outputs.exists == 'false'
-        run: npm publish --tag ${{ steps.version.outputs.tag }}
+        run: npm publish --tag "$STEPS_VERSION_OUTPUTS_TAG"
+        env:
+          STEPS_VERSION_OUTPUTS_TAG: ${{ steps.version.outputs.tag }}
 
       - name: Skip (version already exists)
         if: steps.check-exists.outputs.exists == 'true'
         run: |
-          echo "Version ${{ steps.version.outputs.version }} already exists on npm; skipping publish."
+          echo "Version ${STEPS_VERSION_OUTPUTS_VERSION} already exists on npm; skipping publish."
+        env:
+          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
+
+
+      - name: Generate chat-components version
+        id: chat-components-version
+        working-directory: packages/chat-components
+        run: |
+          # Get base version from package.json
+          BASE_VERSION=$(node -p "require('./package.json').version")
+
+          # Generate git describe version (for debugging; used indirectly via commits_since_tag)
+          git describe --tags --always --dirty 2>/dev/null || echo "unknown"
+
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            # For tags, use the base version as-is (stable release)
+            NPM_VERSION="${BASE_VERSION}"
+            NPM_TAG="latest"
+            echo "Publishing stable release: ${NPM_VERSION}"
+          else
+            # For main branch, create a pre-release version using git describe
+            # Format: 0.3.0-next.5.g1a2b3c4 (base-next.commits.hash)
+            GIT_COMMIT=$(git rev-parse --short HEAD)
+            TAG_BASE=$(git describe --tags --abbrev=0 2>/dev/null || echo HEAD)
+            COMMITS_SINCE_TAG=$(git rev-list --count HEAD "^$TAG_BASE" 2>/dev/null || echo "0")
+            NPM_VERSION="${BASE_VERSION}-next.${COMMITS_SINCE_TAG}.g${GIT_COMMIT}"
+            NPM_TAG="next"
+            echo "Publishing pre-release: ${NPM_VERSION}"
+          fi
+
+          echo "version=${NPM_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Update package.json with the new version
+          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json')); pkg.version = '${NPM_VERSION}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+
+          echo "Updated package.json to version ${NPM_VERSION}"
+
+      - name: Install chat-components deps
+        working-directory: packages/chat-components
+        run: bun install
+
+      - name: Build chat-components package
+        working-directory: packages/chat-components
+        run: bun run build
+
+
+      - name: Check if chat-components version exists
+        id: chat-components-check-exists
+        working-directory: packages/chat-components
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          VERSION="${STEPS_CHAT_COMPONENTS_VERSION}"
+
+          if npm view "${PACKAGE_NAME}@${VERSION}" version &>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${VERSION} already exists on npm"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Version ${VERSION} does not exist, will publish"
+          fi
+        env:
+          STEPS_CHAT_COMPONENTS_VERSION: ${{ steps.chat-components-version.outputs.version }}
+
+      - name: Publish chat-components to NPM
+        if: steps.chat-components-check-exists.outputs.exists == 'false'
+        working-directory: packages/chat-components
+        run: npm publish --tag "$STEPS_CHAT_COMPONENTS_TAG"
+        env:
+          STEPS_CHAT_COMPONENTS_TAG: ${{ steps.chat-components-version.outputs.tag }}
+
+      - name: Skip chat-components (version already exists)
+        if: steps.chat-components-check-exists.outputs.exists == 'true'
+        run: |
+          echo "Version ${STEPS_CHAT_COMPONENTS_VERSION} already exists on npm; skipping publish."
+        env:
+          STEPS_CHAT_COMPONENTS_VERSION: ${{ steps.chat-components-version.outputs.version }}

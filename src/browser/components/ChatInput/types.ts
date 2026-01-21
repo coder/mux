@@ -6,6 +6,7 @@ import type { Review } from "@/common/types/review";
 
 export interface ChatInputAPI {
   focus: () => void;
+  send: () => Promise<void>;
   restoreText: (text: string) => void;
   appendText: (text: string) => void;
   prependText: (text: string) => void;

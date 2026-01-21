@@ -9,6 +9,7 @@ import { ResultSchema } from "./result";
 import { RuntimeConfigSchema, RuntimeModeSchema } from "./runtime";
 import { SecretSchema } from "./secrets";
 import { SendMessageOptionsSchema, UpdateStatusSchema, WorkspaceChatMessageSchema } from "./stream";
+import { LayoutPresetsConfigSchema } from "./uiLayouts";
 import {
   TerminalCreateParamsSchema,
   TerminalResizeParamsSchema,
@@ -18,6 +19,7 @@ import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { AgentSkillDescriptorSchema, AgentSkillPackageSchema, SkillNameSchema } from "./agentSkill";
 import {
   AgentDefinitionDescriptorSchema,
   AgentDefinitionPackageSchema,
@@ -327,7 +329,33 @@ export const projects = {
   },
 };
 
+// Re-export Coder schemas from dedicated file
+export {
+  coder,
+  CoderInfoSchema,
+  CoderPresetSchema,
+  CoderTemplateSchema,
+  CoderWorkspaceConfigSchema,
+  CoderWorkspaceSchema,
+  CoderWorkspaceStatusSchema,
+} from "./coder";
+
 // Workspace
+const DebugLlmRequestSnapshotSchema = z
+  .object({
+    capturedAt: z.number(),
+    workspaceId: z.string(),
+    model: z.string(),
+    providerName: z.string(),
+    thinkingLevel: z.string(),
+    mode: z.string().optional(),
+    agentId: z.string().optional(),
+    maxOutputTokens: z.number().optional(),
+    systemMessage: z.string(),
+    messages: z.array(z.unknown()),
+  })
+  .strict();
+
 export const workspace = {
   list: {
     input: z
@@ -468,6 +496,10 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: FrontendWorkspaceMetadataSchema.nullable(),
   },
+  getLastLlmRequest: {
+    input: z.object({ workspaceId: z.string() }),
+    output: ResultSchema(DebugLlmRequestSnapshotSchema.nullable(), z.string()),
+  },
   getFullReplay: {
     input: z.object({ workspaceId: z.string() }),
     output: z.array(WorkspaceChatMessageSchema),
@@ -564,6 +596,26 @@ export const workspace = {
     sendToBackground: {
       input: z.object({ workspaceId: z.string(), toolCallId: z.string() }),
       output: ResultSchema(z.void(), z.string()),
+    },
+    /**
+     * Peek output for a background bash process without consuming the bash_output cursor.
+     */
+    getOutput: {
+      input: z.object({
+        workspaceId: z.string(),
+        processId: z.string(),
+        fromOffset: z.number().int().nonnegative().optional(),
+        tailBytes: z.number().int().positive().max(1_000_000).optional(),
+      }),
+      output: ResultSchema(
+        z.object({
+          status: z.enum(["running", "exited", "killed", "failed"]),
+          output: z.string(),
+          nextOffset: z.number().int().nonnegative(),
+          truncatedStart: z.boolean(),
+        }),
+        z.string()
+      ),
     },
   },
   /**
@@ -699,6 +751,18 @@ export const agents = {
   get: {
     input: AgentDiscoveryInputSchema.and(z.object({ agentId: AgentIdSchema })),
     output: AgentDefinitionPackageSchema,
+  },
+};
+
+// Agent skills
+export const agentSkills = {
+  list: {
+    input: AgentDiscoveryInputSchema,
+    output: z.array(AgentSkillDescriptorSchema),
+  },
+  get: {
+    input: AgentDiscoveryInputSchema.and(z.object({ skillName: SkillNameSchema })),
+    output: AgentSkillPackageSchema,
   },
 };
 
@@ -915,6 +979,22 @@ export const config = {
     input: z.object({
       modeAiDefaults: ModeAiDefaultsSchema,
     }),
+    output: z.void(),
+  },
+};
+
+// UI Layouts (global settings)
+export const uiLayouts = {
+  getAll: {
+    input: z.void(),
+    output: LayoutPresetsConfigSchema,
+  },
+  saveAll: {
+    input: z
+      .object({
+        layoutPresets: LayoutPresetsConfigSchema,
+      })
+      .strict(),
     output: z.void(),
   },
 };
