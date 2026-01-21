@@ -101,17 +101,61 @@ function formatCssFontFamilyList(value: string): string {
   return parts.map(quoteCssFontFamily).join(", ");
 }
 
-async function canLoadFontFamily(primary: string, fontSize: number): Promise<boolean> {
+const FONT_AVAILABILITY_TEST_STRING = "abcdefghijklmnopqrstuvwxyz0123456789";
+const FONT_AVAILABILITY_BASE_FAMILIES = ["monospace", "serif", "sans-serif"] as const;
+
+function isFontFamilyAvailableInBrowser(family: string, fontSize: number): boolean {
   if (typeof document === "undefined") {
     return true;
   }
 
-  // Some environments (or test runners) may not expose the CSS Font Loading API.
-  if (!document.fonts?.load || !document.fonts?.check) {
+  const body = document.body;
+  if (!body) {
     return true;
   }
 
-  const family = primary.trim();
+  const span = document.createElement("span");
+  span.textContent = FONT_AVAILABILITY_TEST_STRING;
+  span.style.position = "absolute";
+  span.style.left = "-9999px";
+  span.style.top = "-9999px";
+  span.style.fontSize = `${fontSize}px`;
+  span.style.fontVariant = "normal";
+  span.style.fontStyle = "normal";
+  span.style.fontWeight = "400";
+  span.style.letterSpacing = "0";
+  span.style.whiteSpace = "nowrap";
+  body.appendChild(span);
+
+  try {
+    const baselineWidths = new Map<string, number>();
+
+    for (const baseFamily of FONT_AVAILABILITY_BASE_FAMILIES) {
+      span.style.fontFamily = baseFamily;
+      baselineWidths.set(baseFamily, span.offsetWidth);
+    }
+
+    for (const baseFamily of FONT_AVAILABILITY_BASE_FAMILIES) {
+      span.style.fontFamily = `${quoteCssFontFamily(family)}, ${baseFamily}`;
+
+      const baseline = baselineWidths.get(baseFamily);
+      if (baseline === undefined) {
+        continue;
+      }
+
+      if (span.offsetWidth !== baseline) {
+        return true;
+      }
+    }
+
+    return false;
+  } finally {
+    span.remove();
+  }
+}
+
+function canLoadFontFamily(primary: string, fontSize: number): boolean {
+  const family = stripOuterQuotes(primary).trim();
   if (!family) {
     return false;
   }
@@ -120,21 +164,10 @@ async function canLoadFontFamily(primary: string, fontSize: number): Promise<boo
     return true;
   }
 
-  const spec = `${fontSize}px ${quoteCssFontFamily(family)}`;
-
-  try {
-    const faces = await document.fonts.load(spec);
-    if (faces.length === 0) {
-      return false;
-    }
-  } catch {
-    // Ignore font load errors; fall back to check().
-  }
-
-  return document.fonts.check(spec);
+  return isFontFamilyAvailableInBrowser(family, fontSize);
 }
 
-async function resolveTerminalFontFamily(fontFamily: string, fontSize: number): Promise<string> {
+function resolveTerminalFontFamily(fontFamily: string, fontSize: number): string {
   const formatted = formatCssFontFamilyList(fontFamily);
   const parts = splitFontFamilyList(fontFamily).map(stripOuterQuotes).filter(Boolean);
   const primary = parts.at(0);
@@ -142,7 +175,7 @@ async function resolveTerminalFontFamily(fontFamily: string, fontSize: number): 
     return formatted;
   }
 
-  const primaryOk = await canLoadFontFamily(primary, fontSize);
+  const primaryOk = canLoadFontFamily(primary, fontSize);
   if (primaryOk) {
     return formatted;
   }
@@ -151,7 +184,7 @@ async function resolveTerminalFontFamily(fontFamily: string, fontSize: number): 
   // didn't list it explicitly.
   if (primary.endsWith("Nerd Font") && !primary.endsWith("Nerd Font Mono")) {
     const monoCandidate = `${primary} Mono`;
-    const monoOk = await canLoadFontFamily(monoCandidate, fontSize);
+    const monoOk = canLoadFontFamily(monoCandidate, fontSize);
     if (monoOk) {
       const remaining = parts.slice(1).join(", ");
       const withMono = remaining ? `${monoCandidate}, ${remaining}` : monoCandidate;
@@ -165,7 +198,7 @@ async function resolveTerminalFontFamily(fontFamily: string, fontSize: number): 
       continue;
     }
 
-    const candidateOk = await canLoadFontFamily(candidate, fontSize);
+    const candidateOk = canLoadFontFamily(candidate, fontSize);
     if (candidateOk) {
       const remaining = parts.filter((part) => part !== candidate).join(", ");
       const reordered = remaining ? `${candidate}, ${remaining}` : candidate;
@@ -446,7 +479,7 @@ export function TerminalView({
         const styles = getComputedStyle(document.documentElement);
         const terminalBg = styles.getPropertyValue("--color-terminal-bg").trim() || "#1e1e1e";
 
-        const resolvedFontFamily = await resolveTerminalFontFamily(
+        const resolvedFontFamily = resolveTerminalFontFamily(
           terminalFontConfig.fontFamily,
           terminalFontConfig.fontSize
         );
@@ -622,7 +655,7 @@ export function TerminalView({
     let cancelled = false;
 
     const applyFont = async () => {
-      const resolvedFontFamily = await resolveTerminalFontFamily(
+      const resolvedFontFamily = resolveTerminalFontFamily(
         terminalFontConfig.fontFamily,
         terminalFontConfig.fontSize
       );

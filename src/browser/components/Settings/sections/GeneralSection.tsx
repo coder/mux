@@ -123,11 +123,60 @@ function getPrimaryFontFamily(value: string): string | undefined {
   return stripped || undefined;
 }
 
-async function canLoadFontFamily(primary: string, fontSize: number): Promise<boolean> {
+const FONT_AVAILABILITY_TEST_STRING = "abcdefghijklmnopqrstuvwxyz0123456789";
+const FONT_AVAILABILITY_BASE_FAMILIES = ["monospace", "serif", "sans-serif"] as const;
+
+function isFontFamilyAvailableInBrowser(family: string, fontSize: number): boolean {
   if (typeof document === "undefined") {
     return true;
   }
 
+  const body = document.body;
+  if (!body) {
+    return true;
+  }
+
+  const span = document.createElement("span");
+  span.textContent = FONT_AVAILABILITY_TEST_STRING;
+  span.style.position = "absolute";
+  span.style.left = "-9999px";
+  span.style.top = "-9999px";
+  span.style.fontSize = `${fontSize}px`;
+  span.style.fontVariant = "normal";
+  span.style.fontStyle = "normal";
+  span.style.fontWeight = "400";
+  span.style.letterSpacing = "0";
+  span.style.whiteSpace = "nowrap";
+  body.appendChild(span);
+
+  try {
+    const baselineWidths = new Map<string, number>();
+
+    for (const baseFamily of FONT_AVAILABILITY_BASE_FAMILIES) {
+      span.style.fontFamily = baseFamily;
+      baselineWidths.set(baseFamily, span.offsetWidth);
+    }
+
+    for (const baseFamily of FONT_AVAILABILITY_BASE_FAMILIES) {
+      span.style.fontFamily = `${quoteCssFontFamily(family)}, ${baseFamily}`;
+
+      const baseline = baselineWidths.get(baseFamily);
+      if (baseline === undefined) {
+        continue;
+      }
+
+      if (span.offsetWidth !== baseline) {
+        return true;
+      }
+    }
+
+    return false;
+  } finally {
+    span.remove();
+  }
+}
+
+function canLoadFontFamily(primary: string, fontSize: number): boolean {
   const family = stripOuterQuotes(primary).trim();
   if (!family) {
     return false;
@@ -137,25 +186,10 @@ async function canLoadFontFamily(primary: string, fontSize: number): Promise<boo
     return true;
   }
 
-  const spec = `${fontSize}px ${quoteCssFontFamily(family)}`;
-
-  if (!document.fonts?.load) {
-    return document.fonts?.check ? document.fonts.check(spec) : true;
-  }
-
-  try {
-    const faces = await document.fonts.load(spec);
-    if (faces.length === 0) {
-      return false;
-    }
-  } catch {
-    // Ignore font load errors; fall back to check() when available.
-  }
-
-  return document.fonts?.check ? document.fonts.check(spec) : true;
+  return isFontFamilyAvailableInBrowser(family, fontSize);
 }
 
-async function filterFontFamiliesForBrowser(fonts: string[], fontSize: number): Promise<string[]> {
+function filterFontFamiliesForBrowser(fonts: string[], fontSize: number): string[] {
   const available: string[] = [];
 
   for (const family of fonts) {
@@ -164,7 +198,7 @@ async function filterFontFamiliesForBrowser(fonts: string[], fontSize: number): 
       continue;
     }
 
-    const ok = await canLoadFontFamily(trimmed, fontSize);
+    const ok = canLoadFontFamily(trimmed, fontSize);
     if (ok) {
       available.push(trimmed);
     }
@@ -175,10 +209,6 @@ async function filterFontFamiliesForBrowser(fonts: string[], fontSize: number): 
 
 function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string | undefined {
   if (typeof document === "undefined") {
-    return undefined;
-  }
-
-  if (!document.fonts?.check) {
     return undefined;
   }
 
@@ -198,13 +228,11 @@ function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string 
 
   const wantsNerdFontIcons = config.fontFamily.toLowerCase().includes("nerd font");
 
-  const primarySpec = `${config.fontSize}px ${quoteCssFontFamily(normalizedPrimary)}`;
-  const primaryAvailable = document.fonts.check(primarySpec);
+  const primaryAvailable = isFontFamilyAvailableInBrowser(normalizedPrimary, config.fontSize);
   if (!primaryAvailable) {
     if (normalizedPrimary.endsWith("Nerd Font") && !normalizedPrimary.endsWith("Nerd Font Mono")) {
       const monoCandidate = `${normalizedPrimary} Mono`;
-      const monoSpec = `${config.fontSize}px ${quoteCssFontFamily(monoCandidate)}`;
-      if (document.fonts.check(monoSpec)) {
+      if (isFontFamilyAvailableInBrowser(monoCandidate, config.fontSize)) {
         return `Font "${normalizedPrimary}" not found. Try "${monoCandidate}".`;
       }
     }
@@ -217,6 +245,10 @@ function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string 
   }
 
   // Nerd Font glyph checks: many TUIs now use Nerd Fonts v3 glyphs in the supplemental PUA.
+  if (!document.fonts?.check) {
+    return undefined;
+  }
+
   const nerdIconV2 = String.fromCodePoint(0xf15b);
   const nerdIconV3 = String.fromCodePoint(0xf024b);
   const formattedList = formatCssFontFamilyList(config.fontFamily);
@@ -291,14 +323,11 @@ export function GeneralSection() {
 
     api.server
       .listInstalledFonts({ filter: "nerd" })
-      .then(async (result) => {
+      .then((result) => {
         setSelectedDiscoveredNerdFont("");
 
         const serverFonts = result.fonts;
-        const browserFonts = await filterFontFamiliesForBrowser(
-          serverFonts,
-          terminalFontConfig.fontSize
-        );
+        const browserFonts = filterFontFamiliesForBrowser(serverFonts, terminalFontConfig.fontSize);
 
         setDiscoveredNerdFonts(browserFonts);
 
@@ -449,7 +478,7 @@ export function GeneralSection() {
 
                 {discoveredNerdFonts.length > 0 ? (
                   <Select
-                    value={selectedDiscoveredNerdFont || undefined}
+                    value={selectedDiscoveredNerdFont}
                     onValueChange={handleDiscoveredNerdFontSelect}
                   >
                     <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-8 w-48 cursor-pointer rounded-md border px-3 text-xs transition-colors">
