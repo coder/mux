@@ -1143,4 +1143,48 @@ describe("StreamingMessageAggregator", () => {
       }
     });
   });
+
+  describe("abort reason tracking", () => {
+    test("stores last abort reason and clears on stream-start", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamAbort({
+        type: "stream-abort",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        abortReason: "startup",
+      });
+
+      expect(aggregator.getLastAbortReason()?.reason).toBe("startup");
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        historySequence: 1,
+        model: "claude-3-5-sonnet-20241022",
+        startTime: Date.now(),
+      });
+
+      expect(aggregator.getLastAbortReason()).toBeNull();
+    });
+
+    test("clears last abort reason on new user message", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamAbort({
+        type: "stream-abort",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        abortReason: "user",
+      });
+
+      aggregator.handleMessage({
+        ...createMuxMessage("user-1", "user", "Hello", { historySequence: 1 }),
+        type: "message",
+      });
+
+      expect(aggregator.getLastAbortReason()).toBeNull();
+    });
+  });
 });

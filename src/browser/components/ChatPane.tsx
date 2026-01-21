@@ -26,7 +26,7 @@ import {
   getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
-import { hasInterruptedStream } from "@/browser/utils/messages/retryEligibility";
+import { getInterruptionContext } from "@/browser/utils/messages/retryEligibility";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
@@ -455,13 +455,17 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // Compute showRetryBarrier once for both keybinds and UI
   // Track if last message was interrupted or errored (for RetryBarrier)
   // Uses same logic as useResumeManager for DRY
-  const showRetryBarrier = workspaceState
-    ? !workspaceState.canInterrupt &&
-      hasInterruptedStream(
+  const interruption = workspaceState
+    ? getInterruptionContext(
         workspaceState.messages,
         workspaceState.pendingStreamStartTime,
-        workspaceState.runtimeStatus
+        workspaceState.runtimeStatus,
+        workspaceState.lastAbortReason
       )
+    : null;
+
+  const showRetryBarrier = workspaceState
+    ? !workspaceState.canInterrupt && (interruption?.hasInterruptedStream ?? false)
     : false;
 
   const lastMessage = workspaceState.messages[workspaceState.messages.length - 1];

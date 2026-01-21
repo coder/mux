@@ -4,7 +4,7 @@ import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePers
 import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
-  isEligibleForAutoRetry,
+  getInterruptionContext,
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
 import { calculateBackoffDelay, createManualRetryState } from "@/browser/utils/messages/retryState";
@@ -58,10 +58,11 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     }
 
     // Check if current state is eligible for auto-retry
-    const messagesEligible = isEligibleForAutoRetry(
+    const { isEligibleForAutoRetry: messagesEligible } = getInterruptionContext(
       workspaceState.messages,
       workspaceState.pendingStreamStartTime,
-      workspaceState.runtimeStatus
+      workspaceState.runtimeStatus,
+      workspaceState.lastAbortReason
     );
 
     // Also check RetryState for SendMessageErrors (from resumeStream failures)

@@ -620,6 +620,34 @@ describe("isEligibleForAutoRetry", () => {
       expect(isEligibleForAutoRetry(messages, null)).toBe(true);
     });
 
+    it("suppresses auto-retry after user abort while keeping manual retry eligible", () => {
+      const messages: DisplayedMessage[] = [
+        {
+          type: "user",
+          id: "user-1",
+          historyId: "user-1",
+          content: "Hello",
+          historySequence: 1,
+        },
+      ];
+      const lastAbortReason = { reason: "user" as const, at: Date.now() };
+      expect(hasInterruptedStream(messages, null, null, lastAbortReason)).toBe(true);
+      expect(isEligibleForAutoRetry(messages, null, null, lastAbortReason)).toBe(false);
+    });
+
+    it("suppresses auto-retry after startup abort", () => {
+      const messages: DisplayedMessage[] = [
+        {
+          type: "user",
+          id: "user-1",
+          historyId: "user-1",
+          content: "Hello",
+          historySequence: 1,
+        },
+      ];
+      const lastAbortReason = { reason: "startup" as const, at: Date.now() };
+      expect(isEligibleForAutoRetry(messages, null, null, lastAbortReason)).toBe(false);
+    });
     it("returns false when user message sent very recently (within grace period)", () => {
       const messages: DisplayedMessage[] = [
         {

@@ -139,10 +139,13 @@ export const StreamEndEventSchema = z.object({
   }),
 });
 
+export const StreamAbortReasonSchema = z.enum(["user", "startup", "system"]);
+
 export const StreamAbortEventSchema = z.object({
   type: z.literal("stream-abort"),
   workspaceId: z.string(),
   messageId: z.string(),
+  abortReason: StreamAbortReasonSchema.optional(),
   metadata: z
     .object({
       // Total usage across all steps (for cost calculation)

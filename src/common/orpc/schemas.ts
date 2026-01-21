@@ -126,6 +126,7 @@ export {
   RestoreToInputEventSchema,
   RuntimeStatusEventSchema,
   SendMessageOptionsSchema,
+  StreamAbortReasonSchema,
   StreamAbortEventSchema,
   StreamDeltaEventSchema,
   StreamEndEventSchema,

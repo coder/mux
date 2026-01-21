@@ -18,6 +18,7 @@ import { log } from "./log";
 import type {
   StreamStartEvent,
   StreamEndEvent,
+  StreamAbortReason,
   UsageDeltaEvent,
   ErrorEvent,
   ToolCallEndEvent,
@@ -158,7 +159,9 @@ interface WorkspaceStreamInfo {
   // Track background processing promise for guaranteed cleanup
   processingPromise: Promise<void>;
   // Soft-interrupt state: when pending, stream will end at next block boundary
-  softInterrupt: { pending: false } | { pending: true; abandonPartial: boolean };
+  softInterrupt:
+    | { pending: false }
+    | { pending: true; abandonPartial: boolean; abortReason: StreamAbortReason };
   // Temporary directory for tool outputs (auto-cleaned when stream ends)
   runtimeTempDir: string;
   // Runtime for temp directory cleanup
@@ -295,7 +298,7 @@ export class StreamManager extends EventEmitter {
     const existing = this.workspaceStreams.get(workspaceId);
 
     if (existing && existing.state !== StreamState.IDLE) {
-      await this.cancelStreamSafely(workspaceId, existing, undefined);
+      await this.cancelStreamSafely(workspaceId, existing, "system", undefined);
     }
 
     // Generate unique token for this stream (8 hex chars for context efficiency)
@@ -597,6 +600,7 @@ export class StreamManager extends EventEmitter {
   private async cancelStreamSafely(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
+    abortReason: StreamAbortReason,
     abandonPartial?: boolean
   ): Promise<void> {
     // If stream already completed normally (emitted stream-end), wait for its
@@ -621,7 +625,7 @@ export class StreamManager extends EventEmitter {
       streamInfo.abortController.abort();
 
       // Unlike checkSoftCancelStream, await cleanup (blocking)
-      await this.cleanupAbortedStream(workspaceId, streamInfo, abandonPartial);
+      await this.cleanupAbortedStream(workspaceId, streamInfo, abortReason, abandonPartial);
     } catch (error) {
       log.error("Error during stream cancellation:", error);
       // Force cleanup even if cancellation fails
@@ -646,10 +650,8 @@ export class StreamManager extends EventEmitter {
 
       // Return back to the stream loop so we can wait for it to finish before
       // sending the stream abort event.
-      const abandonPartial = streamInfo.softInterrupt.pending
-        ? streamInfo.softInterrupt.abandonPartial
-        : false;
-      void this.cleanupAbortedStream(workspaceId, streamInfo, abandonPartial);
+      const { abandonPartial, abortReason } = streamInfo.softInterrupt;
+      void this.cleanupAbortedStream(workspaceId, streamInfo, abortReason, abandonPartial);
     } catch (error) {
       log.error("Error during stream cancellation:", error);
       // Force cleanup even if cancellation fails
@@ -660,6 +662,7 @@ export class StreamManager extends EventEmitter {
   private async cleanupAbortedStream(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
+    abortReason: StreamAbortReason,
     abandonPartial?: boolean
   ): Promise<void> {
     // CRITICAL: Wait for processing to fully complete before cleanup
@@ -698,6 +701,7 @@ export class StreamManager extends EventEmitter {
       workspaceId,
       streamInfo.messageId,
       { usage, contextUsage, duration, providerMetadata, contextProviderMetadata },
+      abortReason,
       abandonPartial
     );
 
@@ -1115,12 +1119,14 @@ export class StreamManager extends EventEmitter {
     workspaceId: WorkspaceId,
     messageId: string,
     metadata: Record<string, unknown>,
+    abortReason: StreamAbortReason,
     abandonPartial?: boolean
   ): void {
     this.emit("stream-abort", {
       type: "stream-abort",
       workspaceId: workspaceId as string,
       messageId,
+      abortReason,
       metadata,
       abandonPartial,
     });
@@ -2218,20 +2224,22 @@ export class StreamManager extends EventEmitter {
    */
   async stopStream(
     workspaceId: string,
-    options?: { soft?: boolean; abandonPartial?: boolean }
+    options?: { soft?: boolean; abandonPartial?: boolean; abortReason?: StreamAbortReason }
   ): Promise<Result<void>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
     try {
       const streamInfo = this.workspaceStreams.get(typedWorkspaceId);
       if (!streamInfo) {
+        const abortReason = options?.abortReason ?? "startup";
         // Emit abort event so frontend clears pending stream state.
         // This handles the case where user interrupts before stream-start arrives.
         // Use empty messageId - frontend handles gracefully (just clears pendingStreamStartTime).
-        this.emitStreamAbort(typedWorkspaceId, "", {}, options?.abandonPartial);
+        this.emitStreamAbort(typedWorkspaceId, "", {}, abortReason, options?.abandonPartial);
         return Ok(undefined);
       }
 
+      const abortReason = options?.abortReason ?? "system";
       const soft = options?.soft ?? false;
 
       if (soft) {
@@ -2239,10 +2247,16 @@ export class StreamManager extends EventEmitter {
         streamInfo.softInterrupt = {
           pending: true,
           abandonPartial: options?.abandonPartial ?? false,
+          abortReason,
         };
       } else {
         // Hard interrupt: cancel immediately
-        await this.cancelStreamSafely(typedWorkspaceId, streamInfo, options?.abandonPartial);
+        await this.cancelStreamSafely(
+          typedWorkspaceId,
+          streamInfo,
+          abortReason,
+          options?.abandonPartial
+        );
       }
       return Ok(undefined);
     } catch (error) {

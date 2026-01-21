@@ -8,6 +8,7 @@ import type {
   ErrorEventSchema,
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,
+  StreamAbortReasonSchema,
   StreamAbortEventSchema,
   StreamDeltaEventSchema,
   StreamEndEventSchema,
@@ -29,6 +30,11 @@ export type CompletedMessagePart = MuxReasoningPart | MuxTextPart | MuxToolPart;
 export type StreamStartEvent = z.infer<typeof StreamStartEventSchema>;
 export type StreamDeltaEvent = z.infer<typeof StreamDeltaEventSchema>;
 export type StreamEndEvent = z.infer<typeof StreamEndEventSchema>;
+export type StreamAbortReason = z.infer<typeof StreamAbortReasonSchema>;
+export interface StreamAbortReasonSnapshot {
+  reason: StreamAbortReason;
+  at: number;
+}
 export type StreamAbortEvent = z.infer<typeof StreamAbortEventSchema>;
 
 export type ErrorEvent = z.infer<typeof ErrorEventSchema>;

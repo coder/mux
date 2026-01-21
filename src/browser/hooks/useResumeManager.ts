@@ -5,7 +5,7 @@ import { getAutoRetryKey, getRetryStateKey } from "@/common/constants/storage";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { readPersistedState, updatePersistedState } from "./usePersistedState";
 import {
-  isEligibleForAutoRetry,
+  getInterruptionContext,
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
@@ -105,9 +105,13 @@ export function useResumeManager() {
     // 1. Must have interrupted stream that's eligible for auto-retry (not currently streaming)
     if (state.canInterrupt) return false; // Currently streaming
 
-    if (
-      !isEligibleForAutoRetry(state.messages, state.pendingStreamStartTime, state.runtimeStatus)
-    ) {
+    const { isEligibleForAutoRetry } = getInterruptionContext(
+      state.messages,
+      state.pendingStreamStartTime,
+      state.runtimeStatus,
+      state.lastAbortReason
+    );
+    if (!isEligibleForAutoRetry) {
       return false;
     }
 

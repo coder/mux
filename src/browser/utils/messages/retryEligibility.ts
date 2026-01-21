@@ -1,6 +1,6 @@
 import type { DisplayedMessage } from "@/common/types/message";
 import type { StreamErrorType, SendMessageError } from "@/common/types/errors";
-import type { RuntimeStatusEvent } from "@/common/types/stream";
+import type { RuntimeStatusEvent, StreamAbortReasonSnapshot } from "@/common/types/stream";
 
 /**
  * Debug flag to force all errors to be retryable
@@ -63,6 +63,17 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
   }
 }
 
+interface InterruptionContext {
+  hasInterruptedStream: boolean;
+  isEligibleForAutoRetry: boolean;
+}
+
+function shouldSuppressAutoRetry(
+  lastAbortReason: StreamAbortReasonSnapshot | null | undefined
+): boolean {
+  return lastAbortReason?.reason === "user" || lastAbortReason?.reason === "startup";
+}
+
 /**
  * Check if messages contain an interrupted stream
  *
@@ -78,7 +89,7 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
  *    - User messages are only at the end when response hasn't started/completed
  *    - EXCEPT: Not if recently sent (within PENDING_STREAM_START_GRACE_PERIOD_MS) - prevents flash during normal send flow
  */
-export function hasInterruptedStream(
+function computeHasInterruptedStream(
   messages: DisplayedMessage[],
   pendingStreamStartTime: number | null = null,
   runtimeStatus: RuntimeStatusEvent | null = null
@@ -137,6 +148,55 @@ export function hasInterruptedStream(
 }
 
 /**
+ * Shared interruption + retry eligibility helper.
+ */
+export function getInterruptionContext(
+  messages: DisplayedMessage[],
+  pendingStreamStartTime: number | null = null,
+  runtimeStatus: RuntimeStatusEvent | null = null,
+  lastAbortReason: StreamAbortReasonSnapshot | null = null
+): InterruptionContext {
+  const hasInterrupted = computeHasInterruptedStream(
+    messages,
+    pendingStreamStartTime,
+    runtimeStatus
+  );
+
+  if (!hasInterrupted) {
+    return { hasInterruptedStream: false, isEligibleForAutoRetry: false };
+  }
+
+  if (shouldSuppressAutoRetry(lastAbortReason)) {
+    return { hasInterruptedStream: true, isEligibleForAutoRetry: false };
+  }
+
+  const lastMessage = messages[messages.length - 1];
+  if (lastMessage.type === "stream-error") {
+    // Debug flag: force all errors to be retryable
+    if (isForceAllRetryableEnabled()) {
+      return { hasInterruptedStream: true, isEligibleForAutoRetry: true };
+    }
+    return {
+      hasInterruptedStream: true,
+      isEligibleForAutoRetry: !NON_RETRYABLE_STREAM_ERRORS.includes(lastMessage.errorType),
+    };
+  }
+
+  // Other interrupted states (partial messages, user messages) are auto-retryable
+  return { hasInterruptedStream: true, isEligibleForAutoRetry: true };
+}
+
+export function hasInterruptedStream(
+  messages: DisplayedMessage[],
+  pendingStreamStartTime: number | null = null,
+  runtimeStatus: RuntimeStatusEvent | null = null,
+  lastAbortReason: StreamAbortReasonSnapshot | null = null
+): boolean {
+  return getInterruptionContext(messages, pendingStreamStartTime, runtimeStatus, lastAbortReason)
+    .hasInterruptedStream;
+}
+
+/**
  * Check if messages are eligible for automatic retry
  *
  * Used by useResumeManager to determine if workspace should be auto-retried.
@@ -150,24 +210,9 @@ export function hasInterruptedStream(
 export function isEligibleForAutoRetry(
   messages: DisplayedMessage[],
   pendingStreamStartTime: number | null = null,
-  runtimeStatus: RuntimeStatusEvent | null = null
+  runtimeStatus: RuntimeStatusEvent | null = null,
+  lastAbortReason: StreamAbortReasonSnapshot | null = null
 ): boolean {
-  // First check if there's an interrupted stream at all
-  if (!hasInterruptedStream(messages, pendingStreamStartTime, runtimeStatus)) {
-    return false;
-  }
-
-  // If the last message is a non-retryable error, don't auto-retry
-  // (but manual retry is still available via hasInterruptedStream)
-  const lastMessage = messages[messages.length - 1];
-  if (lastMessage.type === "stream-error") {
-    // Debug flag: force all errors to be retryable
-    if (isForceAllRetryableEnabled()) {
-      return true;
-    }
-    return !NON_RETRYABLE_STREAM_ERRORS.includes(lastMessage.errorType);
-  }
-
-  // Other interrupted states (partial messages, user messages) are auto-retryable
-  return true;
+  return getInterruptionContext(messages, pendingStreamStartTime, runtimeStatus, lastAbortReason)
+    .isEligibleForAutoRetry;
 }

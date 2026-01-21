@@ -65,6 +65,7 @@ import type { ThinkingLevel } from "@/common/types/thinking";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type {
   StreamAbortEvent,
+  StreamAbortReason,
   StreamDeltaEvent,
   StreamEndEvent,
   StreamStartEvent,
@@ -1997,7 +1998,7 @@ export class AIService extends EventEmitter {
 
   async stopStream(
     workspaceId: string,
-    options?: { soft?: boolean; abandonPartial?: boolean }
+    options?: { soft?: boolean; abandonPartial?: boolean; abortReason?: StreamAbortReason }
   ): Promise<Result<void>> {
     const pending = this.pendingStreamStarts.get(workspaceId);
     const isActuallyStreaming =
@@ -2010,10 +2011,12 @@ export class AIService extends EventEmitter {
 
       // If we're still in pre-stream startup (no StreamManager stream yet), emit a synthetic
       // stream-abort so the renderer can exit the "starting..." UI immediately.
+      const abortReason = options?.abortReason ?? "startup";
       if (!isActuallyStreaming) {
         this.emit("stream-abort", {
           type: "stream-abort",
           workspaceId,
+          abortReason,
           messageId: pending.syntheticMessageId,
           metadata: { duration: Date.now() - pending.startTime },
           abandonPartial: options?.abandonPartial,

@@ -21,7 +21,12 @@ import {
   isQueuedMessageChanged,
   isRestoreToInput,
 } from "@/common/orpc/types";
-import type { StreamEndEvent, StreamAbortEvent, RuntimeStatusEvent } from "@/common/types/stream";
+import type {
+  StreamAbortEvent,
+  StreamAbortReasonSnapshot,
+  StreamEndEvent,
+  RuntimeStatusEvent,
+} from "@/common/types/stream";
 import { MapStore } from "./MapStore";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
@@ -53,6 +58,7 @@ export interface WorkspaceState {
   recencyTimestamp: number | null;
   todos: TodoItem[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  lastAbortReason: StreamAbortReasonSnapshot | null;
   pendingStreamStartTime: number | null;
   // Model override from pending compaction request (used during "starting" phase)
   pendingCompactionModel: string | null;
@@ -869,6 +875,7 @@ export class WorkspaceStore {
         currentModel: aggregator.getCurrentModel() ?? null,
         recencyTimestamp: aggregator.getRecencyTimestamp(),
         todos: aggregator.getCurrentTodos(),
+        lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
         pendingCompactionModel: aggregator.getPendingCompactionModel(),

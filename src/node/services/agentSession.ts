@@ -727,7 +727,10 @@ export class AgentSession {
       }
     }
 
-    const stopResult = await this.aiService.stopStream(this.workspaceId, options);
+    const stopResult = await this.aiService.stopStream(this.workspaceId, {
+      ...options,
+      abortReason: "user",
+    });
     if (!stopResult.success) {
       return Err(stopResult.error);
     }
