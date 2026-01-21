@@ -304,11 +304,14 @@ export class TerminalService {
           command: `docker exec -it ${containerName} /bin/sh -c "cd ${workspace.namedWorkspacePath} && exec /bin/sh"`,
         });
       } else if (isDevcontainerRuntime(runtimeConfig)) {
-        const configArg = runtimeConfig.configPath ? ` --config ${runtimeConfig.configPath}` : "";
+        const quotedPath = JSON.stringify(workspace.namedWorkspacePath);
+        const configArg = runtimeConfig.configPath
+          ? ` --config ${JSON.stringify(runtimeConfig.configPath)}`
+          : "";
         await this.openNativeTerminal({
           type: "local",
           workspacePath: workspace.namedWorkspacePath,
-          command: `devcontainer exec --workspace-folder ${workspace.namedWorkspacePath}${configArg} -- /bin/sh`,
+          command: `devcontainer exec --workspace-folder ${quotedPath}${configArg} -- /bin/sh`,
         });
       } else {
         // Local workspace - spawn terminal with cwd set

@@ -176,7 +176,10 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
         const isActive = props.value === option.value;
         const isDefault = props.defaultMode === option.value;
         const availability = props.runtimeAvailability?.[option.value];
-        const isModeDisabled = availability !== undefined && !availability.available;
+        // Disable if explicitly unavailable, or if devcontainer and availability not yet loaded
+        const isModeDisabled =
+          (availability !== undefined && !availability.available) ||
+          (option.value === RUNTIME_MODE.DEVCONTAINER && availability === undefined);
         const disabledReason =
           availability && !availability.available ? availability.reason : undefined;
         const Icon = option.Icon;
