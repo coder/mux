@@ -112,47 +112,7 @@ describe("MCPServerManager", () => {
     expect(close).toHaveBeenCalledTimes(0);
   });
 
-  test("releaseLease triggers a deferred restart when pendingRestart is set", () => {
-    const workspaceId = "ws-pending-restart";
-
-    const close = mock(() => Promise.resolve(undefined));
-
-    const instance = {
-      name: "server",
-      resolvedTransport: "stdio",
-      autoFallbackUsed: false,
-      tools: {},
-      isClosed: false,
-      close,
-    };
-
-    const entry = {
-      configSignature: "sig",
-      instances: new Map([["server", instance]]),
-      stats: {
-        enabledServerCount: 1,
-        startedServerCount: 1,
-        failedServerCount: 0,
-        autoFallbackCount: 0,
-        hasStdio: true,
-        hasHttp: false,
-        hasSse: false,
-        transportMode: "stdio_only",
-      },
-      lastActivity: Date.now(),
-      pendingRestart: true,
-    };
-
-    access.workspaceServers.set(workspaceId, entry);
-
-    manager.acquireLease(workspaceId);
-    manager.releaseLease(workspaceId);
-
-    expect(access.workspaceServers.has(workspaceId)).toBe(false);
-    expect(close).toHaveBeenCalledTimes(1);
-  });
-
-  test("getToolsForWorkspace defers restarts while leased and applies them on release", async () => {
+  test("getToolsForWorkspace defers restarts while leased and applies them on next request", async () => {
     const workspaceId = "ws-defer";
     const projectPath = "/tmp/project";
     const workspacePath = "/tmp/workspace";
@@ -211,12 +171,22 @@ describe("MCPServerManager", () => {
 
     expect(startServersMock).toHaveBeenCalledTimes(1);
 
-    const deferredEntry = access.workspaceServers.get(workspaceId) as { pendingRestart?: boolean };
-    expect(deferredEntry.pendingRestart).toBe(true);
-
     manager.releaseLease(workspaceId);
 
-    expect(access.workspaceServers.has(workspaceId)).toBe(false);
+    // No automatic restart on lease release (avoids closing clients out from under a
+    // subsequent stream that already captured the tool objects).
+    expect(access.workspaceServers.has(workspaceId)).toBe(true);
+    expect(close).toHaveBeenCalledTimes(0);
+
+    // Next request (no lease) applies the pending restart.
+    await manager.getToolsForWorkspace({
+      workspaceId,
+      projectPath,
+      runtime: {} as unknown as Runtime,
+      workspacePath,
+    });
+
+    expect(startServersMock).toHaveBeenCalledTimes(2);
     expect(close).toHaveBeenCalledTimes(1);
   });
 
@@ -262,6 +232,9 @@ describe("MCPServerManager", () => {
       runtime: {} as unknown as Runtime,
       workspacePath,
     });
+
+    // Simulate an active stream lease.
+    manager.acquireLease(workspaceId);
 
     const cached = access.workspaceServers.get(workspaceId) as {
       instances: Map<string, { isClosed: boolean }>;

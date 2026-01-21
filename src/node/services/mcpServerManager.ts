@@ -282,11 +282,6 @@ interface WorkspaceServers {
   instances: Map<string, MCPServerInstance>;
   stats: MCPWorkspaceStats;
   lastActivity: number;
-  /**
-   * If true, the workspace's MCP servers should be restarted once the workspace
-   * is no longer leased (i.e., no stream is actively using MCP tools).
-   */
-  pendingRestart?: boolean;
 }
 
 export interface MCPServerManagerOptions {
@@ -352,18 +347,6 @@ export class MCPServerManager {
 
     if (current === 1) {
       this.workspaceLeases.delete(workspaceId);
-
-      const entry = this.workspaceServers.get(workspaceId);
-      if (entry?.pendingRestart) {
-        log.info("[MCP] Applying deferred restart", {
-          workspaceId,
-        });
-
-        // Note: do not await; stream cleanup should not block on shutting down
-        // child processes or network transports.
-        void this.stopServers(workspaceId);
-      }
-
       return;
     }
 
@@ -590,12 +573,13 @@ export class MCPServerManager {
     }
 
     // If a stream is actively running, avoid closing MCP clients out from under it.
-    // Defer restarts to the end of the stream via releaseLease().
-    if (existing && leaseCount > 0) {
+    //
+    // Note: AIService may fetch tools before StreamManager interrupts an existing stream,
+    // so closing servers here can hand out tool objects backed by a client that's about to close.
+    if (existing && leaseCount > 0 && !hasClosedInstance) {
       existing.lastActivity = Date.now();
-      existing.pendingRestart = true;
 
-      log.info("[MCP] Deferring MCP server restart until stream completes", {
+      log.info("[MCP] Deferring MCP server restart while stream is active", {
         workspaceId,
       });
 
