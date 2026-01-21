@@ -110,12 +110,13 @@ export const NonGitRepository: AppStory = {
           // Return empty branches (indicates non-git repo)
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
           // Mark non-local runtimes as unavailable for non-git repos
+          // Dev container hidden (no config found) rather than disabled
           runtimeAvailability: {
             local: { available: true },
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
-            devcontainer: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "No devcontainer.json found" },
           },
         });
       }}
@@ -146,12 +147,13 @@ export const NonGitRepositorySuccess: AppStory = {
           // Always return empty branches so banner stays visible after success
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
           // Mark non-local runtimes as unavailable for non-git repos
+          // Dev container hidden (no config found) rather than disabled
           runtimeAvailability: {
             local: { available: true },
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
-            devcontainer: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "No devcontainer.json found" },
           },
           // Simulate git init success
           gitInit: () => Promise.resolve({ success: true as const }),
@@ -196,12 +198,13 @@ export const NonGitRepositoryInProgress: AppStory = {
           projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
           workspaces: [],
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          // Dev container hidden (no config found) rather than disabled
           runtimeAvailability: {
             local: { available: true },
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
-            devcontainer: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "No devcontainer.json found" },
           },
           // Never resolve - keeps in loading state
           // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -247,12 +250,13 @@ export const NonGitRepositoryError: AppStory = {
           projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
           workspaces: [],
           listBranches: () => Promise.resolve({ branches: [], recommendedTrunk: null }),
+          // Dev container hidden (no config found) rather than disabled
           runtimeAvailability: {
             local: { available: true },
             worktree: { available: false, reason: "Requires git repository" },
             ssh: { available: false, reason: "Requires git repository" },
             docker: { available: false, reason: "Requires git repository" },
-            devcontainer: { available: false, reason: "Requires git repository" },
+            devcontainer: { available: false, reason: "No devcontainer.json found" },
           },
           // Return error
           gitInit: () =>
@@ -301,12 +305,13 @@ export const DockerUnavailable: AppStory = {
           projects: new Map([projectWithNoWorkspaces("/Users/dev/new-project")]),
           workspaces: [],
           // Docker unavailable, but git repo exists
+          // Dev container hidden (no config found) rather than disabled
           runtimeAvailability: {
             local: { available: true },
             worktree: { available: true },
             ssh: { available: true },
             docker: { available: false, reason: "Docker daemon not running" },
-            devcontainer: { available: false, reason: "Docker daemon not running" },
+            devcontainer: { available: false, reason: "No devcontainer.json found" },
           },
         });
       }}

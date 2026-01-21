@@ -191,10 +191,9 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
 
     case "devcontainer": {
       // Devcontainer uses worktrees on host + container exec
-      // srcBaseDir defaults to ~/.mux/src (same as worktree runtime)
-      const srcBaseDir = "~/.mux/src";
+      // srcBaseDir sourced from config to honor MUX_ROOT and dev-mode suffixes
       const runtime = new DevcontainerRuntime({
-        srcBaseDir,
+        srcBaseDir: new Config().srcDir,
         configPath: config.configPath,
         shareCredentials: config.shareCredentials,
       });

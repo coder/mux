@@ -5,6 +5,7 @@ interface RuntimeState {
   remoteHomeDir?: string;
   remoteUser?: string;
   remoteWorkspaceFolder?: string;
+  currentWorkspacePath?: string;
 }
 
 function createRuntime(state: RuntimeState): DevcontainerRuntime {
@@ -16,6 +17,7 @@ function createRuntime(state: RuntimeState): DevcontainerRuntime {
   internal.remoteHomeDir = state.remoteHomeDir;
   internal.remoteUser = state.remoteUser;
   internal.remoteWorkspaceFolder = state.remoteWorkspaceFolder;
+  internal.currentWorkspacePath = state.currentWorkspacePath;
   return runtime;
 }
 
@@ -54,5 +56,57 @@ describe("DevcontainerRuntime.resolvePath", () => {
   it("passes absolute paths through", async () => {
     const runtime = createRuntime({});
     expect(await runtime.resolvePath("/tmp/test")).toBe("/tmp/test");
+  });
+});
+
+describe("DevcontainerRuntime.mapHostPathToContainer", () => {
+  // Access the private method for testing
+  function mapHostPathToContainer(runtime: DevcontainerRuntime, hostPath: string): string | null {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+    return (runtime as any).mapHostPathToContainer(hostPath);
+  }
+
+  it("maps host workspace root to container workspace", () => {
+    const runtime = createRuntime({
+      remoteWorkspaceFolder: "/workspaces/project",
+      currentWorkspacePath: "/home/user/mux/project/branch",
+    });
+    expect(mapHostPathToContainer(runtime, "/home/user/mux/project/branch")).toBe(
+      "/workspaces/project"
+    );
+  });
+
+  it("maps host subpath to container subpath", () => {
+    const runtime = createRuntime({
+      remoteWorkspaceFolder: "/workspaces/project",
+      currentWorkspacePath: "/home/user/mux/project/branch",
+    });
+    expect(mapHostPathToContainer(runtime, "/home/user/mux/project/branch/src/file.ts")).toBe(
+      "/workspaces/project/src/file.ts"
+    );
+  });
+
+  it("normalizes Windows backslashes to forward slashes", () => {
+    const runtime = createRuntime({
+      remoteWorkspaceFolder: "/workspaces/project",
+      currentWorkspacePath: "C:\\Users\\dev\\mux\\project\\branch",
+    });
+    // Windows-style path with backslashes should map correctly
+    expect(
+      mapHostPathToContainer(runtime, "C:\\Users\\dev\\mux\\project\\branch\\src\\file.ts")
+    ).toBe("/workspaces/project/src/file.ts");
+  });
+
+  it("returns null for paths outside workspace", () => {
+    const runtime = createRuntime({
+      remoteWorkspaceFolder: "/workspaces/project",
+      currentWorkspacePath: "/home/user/mux/project/branch",
+    });
+    expect(mapHostPathToContainer(runtime, "/tmp/other")).toBeNull();
+  });
+
+  it("returns null when workspace not set", () => {
+    const runtime = createRuntime({});
+    expect(mapHostPathToContainer(runtime, "/some/path")).toBeNull();
   });
 });

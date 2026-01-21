@@ -332,10 +332,13 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   private mapHostPathToContainer(hostPath: string): string | null {
     if (!this.remoteWorkspaceFolder || !this.currentWorkspacePath) return null;
 
-    const hostRoot = this.currentWorkspacePath.replace(/\/+$/, "");
-    if (hostPath !== hostRoot && !hostPath.startsWith(`${hostRoot}/`)) return null;
+    // Normalize to forward slashes for cross-platform comparison (Windows uses backslashes)
+    const normalizedHostPath = hostPath.replaceAll("\\", "/");
+    const hostRoot = this.currentWorkspacePath.replaceAll("\\", "/").replace(/\/+$/, "");
+    if (normalizedHostPath !== hostRoot && !normalizedHostPath.startsWith(`${hostRoot}/`))
+      return null;
 
-    const suffix = hostPath.slice(hostRoot.length).replace(/^\/+/, "");
+    const suffix = normalizedHostPath.slice(hostRoot.length).replace(/^\/+/, "");
     return suffix.length === 0
       ? this.remoteWorkspaceFolder
       : path.posix.join(this.remoteWorkspaceFolder, suffix);
