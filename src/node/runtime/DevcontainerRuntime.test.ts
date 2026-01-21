@@ -1,11 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { DevcontainerRuntime } from "./DevcontainerRuntime";
 
-type RuntimeState = {
+interface RuntimeState {
   remoteHomeDir?: string;
   remoteUser?: string;
   remoteWorkspaceFolder?: string;
-};
+}
 
 function createRuntime(state: RuntimeState): DevcontainerRuntime {
   const runtime = new DevcontainerRuntime({

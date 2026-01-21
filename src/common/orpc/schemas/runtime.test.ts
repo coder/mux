@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RuntimeAvailabilityStatusSchema, DevcontainerConfigInfoSchema } from "./runtime";
+import { RuntimeAvailabilityStatusSchema } from "./runtime";
 import { getDevcontainerConfigs, type RuntimeAvailabilityStatus } from "@/common/types/runtime";
 
 describe("RuntimeAvailabilityStatusSchema", () => {

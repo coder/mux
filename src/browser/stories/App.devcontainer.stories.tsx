@@ -101,11 +101,16 @@ export const DevcontainerUnavailable: AppStory = {
       { timeout: 10000 }
     );
 
-    // Dev container button should be disabled
+    // Dev container button should be disabled (wait for availability data to load)
     const groupCanvas = within(runtimeGroup);
     const devcontainerButton = groupCanvas.getByText("Dev container").closest("button");
     if (!devcontainerButton) throw new Error("Dev container button not found");
-    await expect(devcontainerButton).toBeDisabled();
+    await waitFor(
+      async () => {
+        await expect(devcontainerButton).toBeDisabled();
+      },
+      { timeout: 5000 }
+    );
   },
 };
 

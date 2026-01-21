@@ -24,7 +24,7 @@ export interface DevcontainerUpResultLine {
   description?: string;
 }
 
-interface DevcontainerLogLine {
+interface _DevcontainerLogLine {
   type?: string;
   level?: number;
   text?: string;
@@ -74,7 +74,7 @@ function extractDevcontainerLogText(value: Record<string, unknown>): string | nu
   return null;
 }
 
-function parseJsonLine(line: string): unknown | null {
+function parseJsonLine(line: string): unknown {
   try {
     return JSON.parse(line) as unknown;
   } catch {
@@ -333,9 +333,7 @@ export async function devcontainerUp(
       const stderrLineBuffer = new LineBuffer((line) => {
         const parsed = parseDevcontainerStdoutLine(line);
         if (parsed?.kind === "result") {
-          if (!lastResultLine) {
-            lastResultLine = parsed.result;
-          }
+          lastResultLine ??= parsed.result;
           return;
         }
         const summaryText = parsed ? parsed.text : line;
@@ -486,12 +484,14 @@ export async function devcontainerExec(
     let stderr = "";
     let settled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let abortHandler: (() => void) | undefined;
+
+    const abortHandler = () => {
+      proc.kill("SIGTERM");
+      settleReject(new Error("devcontainer exec aborted"));
+    };
 
     const clearAbortHandler = () => {
-      if (abortHandler) {
-        abortSignal?.removeEventListener("abort", abortHandler);
-      }
+      abortSignal?.removeEventListener("abort", abortHandler);
     };
 
     const settleResolve = (exitCode: number) => {
@@ -518,10 +518,6 @@ export async function devcontainerExec(
       stderr += data.toString();
     });
 
-    abortHandler = () => {
-      proc.kill("SIGTERM");
-      settleReject(new Error("devcontainer exec aborted"));
-    };
     abortSignal?.addEventListener("abort", abortHandler);
 
     if (timeoutMs && timeoutMs > 0) {
