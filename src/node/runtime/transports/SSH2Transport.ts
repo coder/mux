@@ -45,8 +45,12 @@ class SSH2ChildProcess extends EventEmitter {
       this.signalCode = typeof signal === "string" ? signal : null;
     });
 
-    channel.on("close", () => {
-      this.emit("close", this.exitCode ?? 0, this.signalCode);
+    channel.on("close", (code?: number | null, signal?: string | null) => {
+      // Prefer code from close event args (ssh2 passes exit args to close),
+      // fall back to stored exitCode from exit event handler
+      const finalCode = typeof code === "number" ? code : this.exitCode;
+      const finalSignal = typeof signal === "string" ? signal : this.signalCode;
+      this.emit("close", finalCode ?? 0, finalSignal);
     });
 
     channel.on("error", (err: Error) => {
