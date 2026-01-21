@@ -10,6 +10,7 @@ import {
   BASH_TRUNCATE_MAX_TOTAL_BYTES,
   BASH_TRUNCATE_MAX_FILE_BYTES,
 } from "@/common/constants/toolLimits";
+import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 
 import type { BashOutputEvent } from "@/common/types/stream";
@@ -355,7 +356,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 ${scriptWithEnv}`;
       const execStream = await config.runtime.exec(scriptWithClosedStdin, {
         cwd: config.cwd,
-        env: { ...config.muxEnv, ...config.secrets },
+        env: { ...config.muxEnv, ...config.secrets, ...NON_INTERACTIVE_ENV_VARS },
         timeout: effectiveTimeout,
         abortSignal: wrappedAbortController.signal,
       });
