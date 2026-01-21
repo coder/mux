@@ -80,7 +80,7 @@ const getStatusColor = (status: string, severity?: ToolOutputSeverity) => {
     case "executing":
       return "text-pending";
     case "completed":
-      return "text-success";
+      return severity === "soft" ? "text-warning" : "text-success";
     case "failed":
       return severity === "soft" ? "text-warning" : "text-danger";
     case "interrupted":

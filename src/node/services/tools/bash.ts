@@ -759,9 +759,13 @@ ${scriptWithEnv}`;
 
       // Handle tmpfile overflow policy separately (writes to file)
       if (truncated && (config.overflow_policy ?? "tmpfile") === "tmpfile") {
-        // tmpfile policy: Save overflow output to temp file instead of returning an error
+        // tmpfile policy: Save overflow output to temp file and return a successful response.
         // We don't show ANY of the actual output to avoid overwhelming context.
         // Instead, save it to a temp file and encourage the agent to use filtering tools.
+        const truncationInfo = {
+          reason: overflowReason ?? "unknown reason",
+          totalLines: lines.length,
+        };
         try {
           // Use 8 hex characters for short, memorable temp file IDs
           const fileId = Math.random().toString(16).substring(2, 10);
@@ -788,10 +792,11 @@ Use selective filtering tools (e.g. grep) to extract relevant information and co
 File will be automatically cleaned up when stream ends.`;
 
           return {
-            success: false,
-            error: output,
-            exitCode: -1,
+            success: true,
+            output,
+            exitCode: 0,
             wall_duration_ms,
+            truncated: truncationInfo,
             ui_only: {
               severity: "soft",
             },

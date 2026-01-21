@@ -342,7 +342,12 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               )}
 
               {truncatedInfo && (
-                <div className="text-muted px-2 text-[10px] italic">
+                <div
+                  className={cn(
+                    "px-2 text-[10px] italic",
+                    severity === "soft" ? "text-warning" : "text-muted"
+                  )}
+                >
                   Output truncated — reason: {truncatedInfo.reason} • totalLines:{" "}
                   {truncatedInfo.totalLines}
                 </div>
