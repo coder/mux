@@ -68,6 +68,8 @@ import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
+import { isDesktopMode } from "./hooks/useDesktopTitlebar";
+import { cn } from "@/common/lib/utils";
 
 function AppInner() {
   // Get workspace state from context
@@ -826,7 +828,12 @@ function AppInner() {
               })()
             ) : (
               <div className="bg-dark flex flex-1 flex-col overflow-hidden">
-                <div className="bg-sidebar border-border-light flex h-8 shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2">
+                <div
+                  className={cn(
+                    "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
+                    isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
+                  )}
+                >
                   {sidebarCollapsed && (
                     <Button
                       variant="ghost"
@@ -834,7 +841,10 @@ function AppInner() {
                       onClick={handleToggleSidebar}
                       title="Open sidebar"
                       aria-label="Open sidebar menu"
-                      className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
+                      className={cn(
+                        "mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0",
+                        isDesktopMode() && "titlebar-no-drag"
+                      )}
                     >
                       <Menu className="h-4 w-4" />
                     </Button>
