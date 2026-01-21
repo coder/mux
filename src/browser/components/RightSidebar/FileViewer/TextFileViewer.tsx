@@ -223,7 +223,7 @@ export const TextFileViewer: React.FC<TextFileViewerProps> = (props) => {
   const shouldUseSelectable = Boolean(props.onReviewNote) || inlineReviews.length > 0;
 
   return (
-    <div data-testid="text-file-viewer" className="bg-background flex h-full flex-col">
+    <div data-testid="text-file-viewer" className="bg-code-bg flex h-full flex-col">
       <div className="border-border-light flex flex-col border-b">
         <div className="text-muted-foreground flex items-center gap-3 px-2 py-1 text-[11px]">
           <span className="min-w-0 truncate">{props.filePath}</span>
