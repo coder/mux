@@ -480,6 +480,13 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     isLatest &&
     status === "completed" &&
     !errorMessage;
+
+  const isLoopStateRelevant = (state: HarnessLoopState) =>
+    state.status !== "stopped" ||
+    state.iteration > 0 ||
+    state.consecutiveFailures > 0 ||
+    state.lastError !== null ||
+    state.stoppedReason !== null;
   const statusDisplay = getStatusDisplay(status);
 
   // Build action buttons array (similar to AssistantMessage)
@@ -617,26 +624,24 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
       {/* Loop status + completion guidance */}
 
-      {showInlineLoopState && (
+      {showInlineLoopState && loopState && isLoopStateRelevant(loopState) && (
         <div className="border-border-light mt-3 rounded border p-3">
           <div className="text-secondary text-xs">Loop status</div>
-          <div className="mt-1 text-sm">
-            {loopState ? `${loopState.status} • iteration ${loopState.iteration}` : "Loading…"}
-          </div>
-          {loopState?.currentItemTitle && (
+          <div className="mt-1 text-sm">{`${loopState.status} • iteration ${loopState.iteration}`}</div>
+          {loopState.currentItemTitle && (
             <div className="text-secondary mt-1 text-xs">
               Current: <span className="text-light">{loopState.currentItemTitle}</span>
             </div>
           )}
-          {loopState && loopState.consecutiveFailures > 0 && (
+          {loopState.consecutiveFailures > 0 && (
             <div className="text-error mt-1 text-xs">
               Consecutive failures: {loopState.consecutiveFailures}
             </div>
           )}
-          {loopState?.stoppedReason && (
+          {loopState.stoppedReason && (
             <div className="text-secondary mt-1 text-xs">Stopped: {loopState.stoppedReason}</div>
           )}
-          {loopState?.lastError && (
+          {loopState.lastError && (
             <div className="text-error mt-2 text-xs">{loopState.lastError}</div>
           )}
         </div>
