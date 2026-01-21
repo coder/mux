@@ -21,19 +21,19 @@ Always check `$MUX_MODEL_STRING`, `$MUX_THINKING_LEVEL`, and `$MUX_COSTS_USD` vi
 
 ## Lifecycle Rules
 
-- Before submitting a PR, ensure the current branch is well-named to represent the work and the branch base is as expected.
-    - PRs are always squash-merged into main
-    - Often, users will begin work off the working state of another, merged PR. In such cases you may need to rebase the work onto main before submitting a new PR.
+- Before submitting a PR, ensure the branch name reflects the work and the base branch is correct.
+  - PRs are always squash-merged into `main`.
+  - Often, work begins from another PR's merged state; rebase onto `main` before submitting a new PR.
 - Reuse existing PRs; never close or recreate without instruction.
-- Force push minor PR updates, otherwise use a new commit to capture the timeline of the change.
+- Force-push minor PR updates; otherwise add a new commit to preserve the change timeline.
 - If a PR is already open for your change, keep it up to date with the latest commits; don't leave it stale.
-- Never enable auto-merge or merge into `main` yourself. User must explicitely merge PRs into main themselves.
+- Never enable auto-merge or merge into `main` yourself. The user must explicitly merge PRs.
 
 ## CI & Validation
 
-- After pushing you may use `./scripts/wait_pr_checks.sh <pr_number>` to wait until CI passes.
-- Use `wait_pr_checks` as a final step when there is no more useful work to do.
-- Waiting for PR checks can take 10+ minutes, prefer locally validating changes (e.g. running a subset of integration tests) before waiting for checks to catch issues early.
+- After pushing, you may use `./scripts/wait_pr_checks.sh <pr_number>` to wait for CI to pass.
+- Use `wait_pr_checks` only when there's no more useful work to do.
+- Waiting for PR checks can take 10+ minutes, so prefer local validation (e.g., run a subset of integration tests) to catch issues early.
 
 ## Status Decoding
 
@@ -78,20 +78,19 @@ If Codex left review comments and you addressed them:
 
 ### Structure
 
-PR bodies should broadly follow the following structure, but you should omit sections that are N/A or trivially inferrable from a change.
+PR bodies should generally follow this structure; omit sections that are N/A or trivially inferable for the change.
 
 - Summary
-  - Single paragraph executive summary of the change
+  - Single-paragraph executive summary of the change
 - Background
-  - The "Why" behind the change
-  - What problem is this solving
-  - Relevant commits, issues, PRs the capture more of the context behind a change
+  - The "why" behind the change
+  - What problem this solves
+  - Relevant commits, issues, or PRs that capture more context
 - Implementation
 - Validation
-  - What steps were taken to prove this change works as intended
-  - Avoid standard boilerplate like `ran tests`, only include this section if novel, change-specific steps were taken.
-  - Do not include steps that are implied by the PR checks passing.
+  - Steps taken to prove the change works as intended
+  - Avoid boilerplate like `ran tests`; include this section only for novel, change-specific steps
+  - Do not include steps implied by passing PR checks
 - Risks
   - PRs that touch intricate logic must include an assessment of regression risk
-  - Regression risk should be explainined in terms of severity as well as affected product areas
-
+  - Explain regression risk in terms of severity and affected product areas
