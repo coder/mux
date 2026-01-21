@@ -27,6 +27,11 @@ describe("DevcontainerRuntime.resolvePath", () => {
     expect(await runtime.resolvePath("~")).toBe("/home/coder");
   });
 
+  it("leaves ~ unexpanded when home is unknown", async () => {
+    const runtime = createRuntime({});
+    expect(await runtime.resolvePath("~")).toBe("~");
+  });
+
   it("resolves ~/path to cached remoteHomeDir", async () => {
     const runtime = createRuntime({ remoteHomeDir: "/opt/user" });
     expect(await runtime.resolvePath("~/.mux")).toBe("/opt/user/.mux");
@@ -56,6 +61,18 @@ describe("DevcontainerRuntime.resolvePath", () => {
   it("passes absolute paths through", async () => {
     const runtime = createRuntime({});
     expect(await runtime.resolvePath("/tmp/test")).toBe("/tmp/test");
+  });
+});
+
+describe("DevcontainerRuntime.quoteForContainer", () => {
+  function quoteForContainer(runtime: DevcontainerRuntime, filePath: string): string {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+    return (runtime as any).quoteForContainer(filePath);
+  }
+
+  it("uses $HOME expansion for tilde paths", () => {
+    const runtime = createRuntime({});
+    expect(quoteForContainer(runtime, "~/.mux")).toBe('"$HOME/.mux"');
   });
 });
 

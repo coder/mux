@@ -18,6 +18,7 @@ import type {
 import { RuntimeError } from "./Runtime";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import { WorktreeManager } from "@/node/worktree/WorktreeManager";
+import { expandTildeForSSH } from "./tildeExpansion";
 import { shescape, streamToString } from "./streamUtils";
 import {
   readHostGitconfig,
@@ -127,22 +128,39 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private quoteForContainer(filePath: string): string {
+    if (filePath === "~" || filePath.startsWith("~/")) {
+      return expandTildeForSSH(filePath);
+    }
     return shescape.quote(filePath);
   }
 
   /**
    * Expand tilde in file paths for container operations.
-   * This is a sync version of resolvePath's tilde logic, used before quoting
-   * in *ViaExec methods where we can't await.
+   * Returns unexpanded path when container user is unknown (before ensureReady).
+   * Callers must check for unexpanded tilde and handle appropriately.
    */
   private expandTildeForContainer(filePath: string): string {
     if (filePath === "~" || filePath.startsWith("~/")) {
-      const fallbackHome =
-        this.remoteUser === "root" ? "/root" : `/home/${this.remoteUser ?? "root"}`;
-      const homeDir = this.remoteHomeDir ?? fallbackHome;
-      return filePath === "~" ? homeDir : homeDir + filePath.slice(1);
+      // If we know the home directory, use it
+      if (this.remoteHomeDir) {
+        return filePath === "~" ? this.remoteHomeDir : this.remoteHomeDir + filePath.slice(1);
+      }
+      // If we know the user, derive home directory
+      if (this.remoteUser !== undefined) {
+        const homeDir = this.remoteUser === "root" ? "/root" : `/home/${this.remoteUser}`;
+        return filePath === "~" ? homeDir : homeDir + filePath.slice(1);
+      }
+      // User unknown - return unexpanded to signal caller should handle
+      return filePath;
     }
     return filePath;
+  }
+
+  /**
+   * Check if a path contains unexpanded tilde (container user unknown).
+   */
+  private hasUnexpandedTilde(filePath: string): boolean {
+    return filePath === "~" || filePath.startsWith("~/");
   }
 
   private async setupCredentials(env?: Record<string, string>): Promise<void> {
@@ -199,11 +217,10 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private readFileViaExec(filePath: string, abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
-    const expanded = this.expandTildeForContainer(filePath);
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
-          const stream = await this.exec(`cat ${this.quoteForContainer(expanded)}`, {
+          const stream = await this.exec(`cat ${this.quoteForContainer(filePath)}`, {
             cwd: this.getContainerBasePath(),
             timeout: 300,
             abortSignal,
@@ -246,9 +263,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     filePath: string,
     abortSignal?: AbortSignal
   ): WritableStream<Uint8Array> {
-    const expanded = this.expandTildeForContainer(filePath);
-    const quotedPath = this.quoteForContainer(expanded);
-    const tempPath = `${expanded}.tmp.${Date.now()}`;
+    const quotedPath = this.quoteForContainer(filePath);
+    const tempPath = `${filePath}.tmp.${Date.now()}`;
     const quotedTempPath = this.quoteForContainer(tempPath);
     const writeCommand = `mkdir -p $(dirname ${quotedPath}) && cat > ${quotedTempPath} && mv ${quotedTempPath} ${quotedPath}`;
 
@@ -292,8 +308,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private async ensureDirViaExec(dirPath: string): Promise<void> {
-    const expanded = this.expandTildeForContainer(dirPath);
-    const stream = await this.exec(`mkdir -p ${this.quoteForContainer(expanded)}`, {
+    const stream = await this.exec(`mkdir -p ${this.quoteForContainer(dirPath)}`, {
       cwd: "/",
       timeout: 10,
     });
@@ -316,8 +331,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private async statViaExec(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    const expanded = this.expandTildeForContainer(filePath);
-    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForContainer(expanded)}`, {
+    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
       cwd: this.getContainerBasePath(),
       timeout: 10,
       abortSignal,
@@ -623,6 +637,12 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
 
   override resolvePath(filePath: string): Promise<string> {
     const expanded = this.expandTildeForContainer(filePath);
+
+    // If tilde couldn't be expanded (user unknown), return as-is to avoid
+    // resolving against wrong base path. Callers handle unexpanded tilde.
+    if (this.hasUnexpandedTilde(expanded)) {
+      return Promise.resolve(expanded);
+    }
 
     // Resolve relative paths against container workspace (avoid host cwd leakage)
     if (!expanded.startsWith("/")) {

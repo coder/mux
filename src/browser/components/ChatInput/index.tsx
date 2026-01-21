@@ -614,7 +614,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           projectPath: props.projectPath,
           projectName: props.projectName,
           nameState: creationState.nameState,
-          runtimeAvailability: creationState.runtimeAvailability,
+          runtimeAvailabilityState: creationState.runtimeAvailabilityState,
           sections: creationSections,
           selectedSectionId,
           onSectionChange: setSelectedSectionId,

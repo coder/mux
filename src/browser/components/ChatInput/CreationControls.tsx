@@ -5,7 +5,7 @@ import {
   type ParsedRuntime,
   getDevcontainerConfigs,
 } from "@/common/types/runtime";
-import type { RuntimeAvailabilityMap } from "./useCreationWorkspace";
+import type { RuntimeAvailabilityState } from "./useCreationWorkspace";
 import { Select } from "../Select";
 import {
   Select as RadixSelect,
@@ -46,8 +46,8 @@ interface CreationControlsProps {
   projectName: string;
   /** Workspace name/title generation state and actions */
   nameState: WorkspaceNameState;
-  /** Runtime availability for each mode (null while loading) */
-  runtimeAvailability: RuntimeAvailabilityMap | null;
+  /** Runtime availability state for each mode */
+  runtimeAvailabilityState: RuntimeAvailabilityState;
   /** Available sections for this project */
   sections?: SectionConfig[];
   /** Currently selected section ID */
@@ -67,7 +67,7 @@ interface RuntimeButtonGroupProps {
   defaultMode: RuntimeMode;
   onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
-  runtimeAvailability?: RuntimeAvailabilityMap | null;
+  runtimeAvailabilityState?: RuntimeAvailabilityState;
 }
 
 const RUNTIME_ORDER: RuntimeMode[] = [
@@ -162,9 +162,13 @@ function SectionPicker(props: SectionPickerProps) {
 }
 
 function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
+  const availabilityMap =
+    props.runtimeAvailabilityState?.status === "loaded"
+      ? props.runtimeAvailabilityState.data
+      : null;
   const hideDevcontainer =
-    props.runtimeAvailability?.devcontainer?.available === false &&
-    props.runtimeAvailability.devcontainer.reason === "No devcontainer.json found";
+    availabilityMap?.devcontainer?.available === false &&
+    availabilityMap.devcontainer.reason === "No devcontainer.json found";
 
   const runtimeOptions = hideDevcontainer
     ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
@@ -175,11 +179,11 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
         const isDefault = props.defaultMode === option.value;
-        const availability = props.runtimeAvailability?.[option.value];
-        // Disable if explicitly unavailable, or if devcontainer and availability not yet loaded
-        const isModeDisabled =
-          (availability !== undefined && !availability.available) ||
-          (option.value === RUNTIME_MODE.DEVCONTAINER && availability === undefined);
+        const availability = availabilityMap?.[option.value];
+        // Disable only if availability is explicitly known and unavailable.
+        // When availability is undefined (loading or fetch failed), allow selection
+        // as fallback - the config picker will validate before creation.
+        const isModeDisabled = availability !== undefined && !availability.available;
         const disabledReason =
           availability && !availability.available ? availability.reason : undefined;
         const Icon = option.Icon;
@@ -240,27 +244,30 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
 export function CreationControls(props: CreationControlsProps) {
   const { projects } = useProjectContext();
   const { beginWorkspaceCreation } = useWorkspaceContext();
-  const { nameState, runtimeAvailability } = props;
+  const { nameState, runtimeAvailabilityState } = props;
 
   // Extract mode from discriminated union for convenience
   const runtimeMode = props.selectedRuntime.mode;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
+
+  const availabilityMap =
+    runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
   const showTrunkBranchSelector = props.branches.length > 0 && runtimeMode !== RUNTIME_MODE.LOCAL;
 
   const isDevcontainerMissing =
-    runtimeAvailability?.devcontainer?.available === false &&
-    runtimeAvailability.devcontainer.reason === "No devcontainer.json found";
+    availabilityMap?.devcontainer?.available === false &&
+    availabilityMap.devcontainer.reason === "No devcontainer.json found";
 
-  const devcontainerConfigs = runtimeAvailability?.devcontainer
-    ? getDevcontainerConfigs(runtimeAvailability.devcontainer)
+  const devcontainerConfigs = availabilityMap?.devcontainer
+    ? getDevcontainerConfigs(availabilityMap.devcontainer)
     : [];
   const { selectedRuntime, onSelectedRuntimeChange } = props;
 
   // Check if git is required (worktree unavailable due to git or no branches)
   const isNonGitRepo =
-    (runtimeAvailability?.worktree?.available === false &&
-      runtimeAvailability.worktree.reason === "Requires git repository") ||
+    (availabilityMap?.worktree?.available === false &&
+      availabilityMap.worktree.reason === "Requires git repository") ||
     (props.branchesLoaded && props.branches.length === 0);
 
   // Keep selected runtime aligned with availability constraints
@@ -462,7 +469,7 @@ export function CreationControls(props: CreationControlsProps) {
             defaultMode={props.defaultRuntimeMode}
             onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
-            runtimeAvailability={runtimeAvailability}
+            runtimeAvailabilityState={runtimeAvailabilityState}
           />
 
           {/* Branch selector - shown for worktree/SSH */}

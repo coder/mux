@@ -112,22 +112,28 @@ interface UseCreationWorkspaceReturn {
   creatingWithIdentity: WorkspaceIdentity | null;
   /** Reload branches (e.g., after git init) */
   reloadBranches: () => Promise<void>;
-  /** Runtime availability for each mode (null while loading) */
-  runtimeAvailability: RuntimeAvailabilityMap | null;
+  /** Runtime availability state for each mode (loading/failed/loaded) */
+  runtimeAvailabilityState: RuntimeAvailabilityState;
 }
 
 /** Runtime availability status for each mode */
 export type RuntimeAvailabilityMap = Record<RuntimeMode, RuntimeAvailabilityStatus>;
 
+export type RuntimeAvailabilityState =
+  | { status: "loading" }
+  | { status: "failed" }
+  | { status: "loaded"; data: RuntimeAvailabilityMap };
+
 function resolveDevcontainerConfigPath(
   selectedRuntime: ParsedRuntime,
-  availability: RuntimeAvailabilityMap | null
+  availabilityState: RuntimeAvailabilityState
 ): string | null {
   if (selectedRuntime.mode !== RUNTIME_MODE.DEVCONTAINER) {
     return null;
   }
 
   const selectedPath = selectedRuntime.configPath.trim();
+  const availability = availabilityState.status === "loaded" ? availabilityState.data : null;
   const configs = availability?.devcontainer
     ? getDevcontainerConfigs(availability.devcontainer)
     : [];
@@ -166,9 +172,8 @@ export function useCreationWorkspace({
   const [isSending, setIsSending] = useState(false);
   // The confirmed identity being used for workspace creation (set after waitForGeneration resolves)
   const [creatingWithIdentity, setCreatingWithIdentity] = useState<WorkspaceIdentity | null>(null);
-  const [runtimeAvailability, setRuntimeAvailability] = useState<RuntimeAvailabilityMap | null>(
-    null
-  );
+  const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
+    useState<RuntimeAvailabilityState>({ status: "loading" });
 
   // Centralized draft workspace settings with automatic persistence
   const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch } =
@@ -209,7 +214,7 @@ export function useCreationWorkspace({
     if (!projectPath.length || !api) return;
     let mounted = true;
     setBranchesLoaded(false);
-    setRuntimeAvailability(null);
+    setRuntimeAvailabilityState({ status: "loading" });
     const doLoad = async () => {
       try {
         // Use allSettled so failures are independent - branches can load even if availability fails
@@ -225,9 +230,10 @@ export function useCreationWorkspace({
           console.error("Failed to load branches:", branchResult.reason);
         }
         if (availabilityResult.status === "fulfilled") {
-          setRuntimeAvailability(availabilityResult.value);
+          setRuntimeAvailabilityState({ status: "loaded", data: availabilityResult.value });
+        } else {
+          setRuntimeAvailabilityState({ status: "failed" });
         }
-        // If availability fails, runtimeAvailability stays null and UI shows all runtimes enabled
       } finally {
         if (mounted) {
           setBranchesLoaded(true);
@@ -253,7 +259,7 @@ export function useCreationWorkspace({
 
       if (runtimeSelection.mode === RUNTIME_MODE.DEVCONTAINER) {
         const resolvedPath = (
-          resolveDevcontainerConfigPath(runtimeSelection, runtimeAvailability) ?? ""
+          resolveDevcontainerConfigPath(runtimeSelection, runtimeAvailabilityState) ?? ""
         ).trim();
 
         if (!resolvedPath) {
@@ -402,7 +408,7 @@ export function useCreationWorkspace({
       projectScopeId,
       onWorkspaceCreated,
       settings.selectedRuntime,
-      runtimeAvailability,
+      runtimeAvailabilityState,
       setSelectedRuntime,
       settings.mode,
       settings.model,
@@ -432,7 +438,7 @@ export function useCreationWorkspace({
     creatingWithIdentity,
     // Reload branches (e.g., after git init)
     reloadBranches: loadBranches,
-    // Runtime availability for each mode
-    runtimeAvailability,
+    // Runtime availability state for each mode
+    runtimeAvailabilityState,
   };
 }
