@@ -281,31 +281,6 @@ export class WorkspaceHarnessService {
     return { metadata, runtime, workspacePath };
   }
 
-  private getLegacyHarnessFilePaths(
-    workspacePath: string,
-    runtimeConfig: RuntimeConfig | undefined,
-    workspaceName: string
-  ): WorkspaceHarnessFilePaths {
-    assert(typeof workspacePath === "string", "workspacePath must be a string");
-    assert(typeof workspaceName === "string", "workspaceName must be a string");
-
-    const prefix = workspaceName.trim().length > 0 ? workspaceName.trim() : "workspace";
-
-    return {
-      configPath: joinForRuntime(
-        runtimeConfig,
-        workspacePath,
-        HARNESS_DIR,
-        `${prefix}.harness.jsonc`
-      ),
-      progressPath: joinForRuntime(
-        runtimeConfig,
-        workspacePath,
-        HARNESS_DIR,
-        `${prefix}.harness.progress.md`
-      ),
-    };
-  }
   private getHarnessFilePaths(
     workspacePath: string,
     runtimeConfig: RuntimeConfig | undefined,
@@ -438,7 +413,6 @@ export class WorkspaceHarnessService {
     workspacePath: string;
     runtimeConfig: RuntimeConfig | undefined;
     paths: WorkspaceHarnessFilePaths;
-    legacyPaths: WorkspaceHarnessFilePaths;
   }): Promise<void> {
     try {
       await this.ensureHarnessDir(params.runtime, params.workspacePath, params.runtimeConfig);
@@ -448,33 +422,10 @@ export class WorkspaceHarnessService {
         return;
       }
 
-      let legacyProgressContents = "";
-      const legacyExists = await statIsFile(params.runtime, params.legacyPaths.progressPath);
-      if (legacyExists) {
-        try {
-          legacyProgressContents = await readFileString(
-            params.runtime,
-            params.legacyPaths.progressPath
-          );
-        } catch (error) {
-          log.debug("[HARNESS] Failed to read legacy harness progress file", {
-            filePath: params.legacyPaths.progressPath,
-            error,
-          });
-        }
-      }
-
-      let markdown = renderHarnessJournalBootstrapMarkdown({
+      const markdown = renderHarnessJournalBootstrapMarkdown({
         metadata: params.metadata,
         paths: params.paths,
       });
-
-      if (legacyProgressContents.trim().length > 0) {
-        markdown +=
-          "\n## Migrated content (legacy progress file)\n\n" +
-          legacyProgressContents.trimEnd() +
-          "\n";
-      }
 
       await writeFileString(
         params.runtime,
@@ -494,6 +445,17 @@ export class WorkspaceHarnessService {
     }
   }
 
+  async getHarnessPresenceForWorkspace(workspaceId: string): Promise<{
+    exists: boolean;
+    paths: WorkspaceHarnessFilePaths;
+  }> {
+    const { metadata, runtime, workspacePath } = await this.getRuntimeAndWorkspacePath(workspaceId);
+    const paths = this.getHarnessFilePaths(workspacePath, metadata.runtimeConfig, metadata.name);
+
+    const exists = await statIsFile(runtime, paths.configPath);
+    return { exists, paths };
+  }
+
   async getHarnessForWorkspace(workspaceId: string): Promise<{
     config: WorkspaceHarnessConfig;
     paths: WorkspaceHarnessFilePaths;
@@ -501,40 +463,7 @@ export class WorkspaceHarnessService {
   }> {
     const { metadata, runtime, workspacePath } = await this.getRuntimeAndWorkspacePath(workspaceId);
     const paths = this.getHarnessFilePaths(workspacePath, metadata.runtimeConfig, metadata.name);
-    const legacyPaths = this.getLegacyHarnessFilePaths(
-      workspacePath,
-      metadata.runtimeConfig,
-      metadata.name
-    );
-
-    let exists = await statIsFile(runtime, paths.configPath);
-    if (!exists) {
-      const legacyExists = await statIsFile(runtime, legacyPaths.configPath);
-      if (legacyExists) {
-        try {
-          const rawLegacy = await readFileString(runtime, legacyPaths.configPath);
-          await this.ensureHarnessDir(runtime, workspacePath, metadata.runtimeConfig);
-          await writeFileString(
-            runtime,
-            paths.configPath,
-            rawLegacy.endsWith("\n") ? rawLegacy : `${rawLegacy}\n`
-          );
-          await this.ensureHarnessGitignored(runtime, workspacePath, metadata.runtimeConfig);
-          exists = true;
-        } catch (error) {
-          log.debug("[HARNESS] Failed to migrate legacy harness config file", {
-            workspaceId,
-            error,
-          });
-          const parsedLegacy = await this.readHarnessFile(runtime, legacyPaths.configPath);
-          return {
-            config: normalizeWorkspaceHarnessConfig(parsedLegacy),
-            paths: legacyPaths,
-            exists: true,
-          };
-        }
-      }
-    }
+    const exists = await statIsFile(runtime, paths.configPath);
 
     if (!exists) {
       return { config: { ...DEFAULT_HARNESS_CONFIG }, paths, exists: false };
@@ -556,12 +485,6 @@ export class WorkspaceHarnessService {
 
     const { metadata, runtime, workspacePath } = await this.getRuntimeAndWorkspacePath(workspaceId);
     const paths = this.getHarnessFilePaths(workspacePath, metadata.runtimeConfig, metadata.name);
-    const legacyPaths = this.getLegacyHarnessFilePaths(
-      workspacePath,
-      metadata.runtimeConfig,
-      metadata.name
-    );
-
     const normalized = normalizeWorkspaceHarnessConfig(config);
     const serialized = JSON.stringify(normalized, null, 2) + "\n";
 
@@ -570,23 +493,12 @@ export class WorkspaceHarnessService {
     await writeFileString(runtime, paths.configPath, serialized);
     await this.ensureHarnessGitignored(runtime, workspacePath, metadata.runtimeConfig);
 
-    // Best-effort: keep the legacy file updated for downgrade compatibility.
-    try {
-      const legacyExists = await statIsFile(runtime, legacyPaths.configPath);
-      if (legacyExists) {
-        await writeFileString(runtime, legacyPaths.configPath, serialized);
-      }
-    } catch (error) {
-      log.debug("[HARNESS] Failed to update legacy harness config file", { workspaceId, error });
-    }
-
     await this.ensureHarnessJournalExists({
       metadata,
       runtime,
       workspacePath,
       runtimeConfig: metadata.runtimeConfig,
       paths,
-      legacyPaths,
     });
 
     return normalized;
@@ -598,19 +510,12 @@ export class WorkspaceHarnessService {
         await this.getRuntimeAndWorkspacePath(workspaceId);
 
       const paths = this.getHarnessFilePaths(workspacePath, metadata.runtimeConfig, metadata.name);
-      const legacyPaths = this.getLegacyHarnessFilePaths(
-        workspacePath,
-        metadata.runtimeConfig,
-        metadata.name
-      );
-
       await this.ensureHarnessJournalExists({
         metadata,
         runtime,
         workspacePath,
         runtimeConfig: metadata.runtimeConfig,
         paths,
-        legacyPaths,
       });
     } catch (error) {
       log.debug("[HARNESS] Failed to ensure harness journal exists", { workspaceId, error });

@@ -1703,6 +1703,20 @@ export const router = (authToken?: string) => {
           }),
       },
       harness: {
+        exists: t
+          .input(schemas.workspace.harness.exists.input)
+          .output(schemas.workspace.harness.exists.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const presence = await context.workspaceHarnessService.getHarnessPresenceForWorkspace(
+                input.workspaceId
+              );
+              return { success: true, data: presence };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
         get: t
           .input(schemas.workspace.harness.get.input)
           .output(schemas.workspace.harness.get.output)

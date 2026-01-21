@@ -703,6 +703,18 @@ export const workspace = {
 
   /** Workspace-local harness config + gates */
   harness: {
+    exists: {
+      input: z.object({ workspaceId: z.string() }),
+      output: ResultSchema(
+        z
+          .object({
+            exists: z.boolean(),
+            paths: WorkspaceHarnessFilePathsSchema,
+          })
+          .strict(),
+        z.string()
+      ),
+    },
     get: {
       input: z.object({ workspaceId: z.string() }),
       output: ResultSchema(
