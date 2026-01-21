@@ -71,11 +71,18 @@ describeIntegration("sendMessage context handling tests", () => {
           expect(result2.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);
 
-          // Check that response mentions the name
-          const deltas = collector.getDeltas();
-          const responseText = deltas
-            .map((d) => ("delta" in d ? (d as { delta?: string }).delta || "" : ""))
-            .join("");
+          // Check that response mentions the name.
+          // Some provider/model combinations may emit no stream-delta events and only include
+          // assistant text in the final stream-end message parts.
+          const finalMessage = collector.getFinalMessage() as unknown as
+            | { parts?: Array<{ type?: string; text?: string }> }
+            | undefined;
+
+          const responseText =
+            (finalMessage?.parts ?? [])
+              .filter((part) => part.type === "text" && typeof part.text === "string")
+              .map((part) => part.text)
+              .join("") || collector.getStreamContent();
 
           expect(responseText.toLowerCase()).toContain("testuser");
         });
