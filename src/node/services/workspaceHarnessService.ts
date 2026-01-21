@@ -193,6 +193,32 @@ function normalizeWorkspaceHarnessConfig(raw: unknown): WorkspaceHarnessConfig {
   return normalized;
 }
 
+function isNotFoundStatError(error: unknown): boolean {
+  if (!error) {
+    return false;
+  }
+
+  if (typeof error === "object") {
+    if ("code" in error && (error as { code?: unknown }).code === "ENOENT") {
+      return true;
+    }
+
+    if ("cause" in error) {
+      const cause = (error as { cause?: unknown }).cause;
+      if (cause && cause !== error) {
+        return isNotFoundStatError(cause);
+      }
+    }
+  }
+
+  if (error instanceof Error) {
+    const message = error.message;
+    return message.includes("ENOENT") || message.includes("No such file or directory");
+  }
+
+  return false;
+}
+
 async function statIsFile(
   runtime: ReturnType<typeof createRuntime>,
   filePath: string
@@ -200,8 +226,12 @@ async function statIsFile(
   try {
     const stat = await runtime.stat(filePath);
     return !stat.isDirectory;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isNotFoundStatError(error)) {
+      return false;
+    }
+
+    throw error;
   }
 }
 
