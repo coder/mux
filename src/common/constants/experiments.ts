@@ -10,6 +10,7 @@ export const EXPERIMENT_IDS = {
   PROGRAMMATIC_TOOL_CALLING: "programmatic-tool-calling",
   PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE: "programmatic-tool-calling-exclusive",
   CONFIGURABLE_BIND_URL: "configurable-bind-url",
+  SYSTEM_1: "system-1",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -66,6 +67,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Expose API server on LAN/VPN",
     description:
       "Allow mux to listen on a non-localhost address so other devices on your LAN/VPN can connect. Anyone on your network with the auth token can access your mux API. HTTP only; use only on trusted networks (Tailscale recommended).",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.SYSTEM_1]: {
+    id: EXPERIMENT_IDS.SYSTEM_1,
+    name: "System 1",
+    description: "Context optimization helpers inspired by Thinking, Fast and Slow (Kahneman)",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,
