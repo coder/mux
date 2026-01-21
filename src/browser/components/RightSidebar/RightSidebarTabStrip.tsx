@@ -155,14 +155,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
       role="tablist"
       aria-label={ariaLabel}
     >
-      <div
-        className={cn(
-          "flex min-w-0 flex-1 flex-wrap items-center gap-1",
-          // In desktop mode, the tab strip sits in the titlebar drag region.
-          // Mark the tab container as no-drag so tab interaction works.
-          isDesktop && "titlebar-no-drag"
-        )}
-      >
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
         {items.map((item, index) => (
           <SortableTab
             key={item.id}
