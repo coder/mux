@@ -22,6 +22,7 @@ import {
   IncompatibleRuntimeError,
   runBackgroundInit,
 } from "@/node/runtime/runtimeFactory";
+import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -448,7 +449,7 @@ export class WorkspaceService extends EventEmitter {
       return { planPath: null, trackedFilePaths: [], excludedItems: exclusions.excludedItems };
     }
 
-    const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+    const runtime = createRuntimeForWorkspace(metadata);
     const muxHome = runtime.getMuxHome();
     const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
     // For local/SSH: expand tilde for comparison with message history paths
@@ -2147,9 +2148,7 @@ export class WorkspaceService extends EventEmitter {
     metadata: FrontendWorkspaceMetadata
   ): Promise<void> {
     // Create runtime to get correct muxHome (Docker uses /var/mux, others use ~/.mux)
-    const runtime = createRuntime(metadata.runtimeConfig, {
-      projectPath: metadata.projectPath,
-    });
+    const runtime = createRuntimeForWorkspace(metadata);
     const muxHome = runtime.getMuxHome();
     const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
     const legacyPlanPath = getLegacyPlanFilePath(workspaceId);

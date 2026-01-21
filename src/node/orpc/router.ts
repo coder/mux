@@ -16,6 +16,7 @@ import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
+import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
@@ -63,7 +64,7 @@ async function resolveAgentDiscoveryContext(
       throw new Error(metadataResult.error);
     }
     const metadata = metadataResult.data;
-    const runtime = createRuntime(metadata.runtimeConfig, { projectPath: metadata.projectPath });
+    const runtime = createRuntimeForWorkspace(metadata);
     // When workspace agents disabled, discover from project path instead of worktree
     // (but still use the workspace's runtime for SSH compatibility)
     const discoveryPath = input.disableWorkspaceAgents
@@ -1525,9 +1526,7 @@ export const router = (authToken?: string) => {
           }
 
           // Create runtime to read plan file (supports both local and SSH)
-          const runtime = createRuntime(metadata.runtimeConfig, {
-            projectPath: metadata.projectPath,
-          });
+          const runtime = createRuntimeForWorkspace(metadata);
 
           const result = await readPlanFile(
             runtime,
