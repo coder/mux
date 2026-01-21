@@ -5,7 +5,7 @@ description: Share reusable workflows and references with skills
 
 ## Overview
 
-Agent Skills are reusable, file-based “playbooks” that you can share across projects or keep project-local.
+Agent Skills are reusable, file-based “playbooks” that you can share across projects or keep workspace-local.
 
 Mux follows the Agent Skills specification and exposes skills to models in two steps:
 
@@ -18,11 +18,11 @@ This keeps the system prompt small while still making skills discoverable.
 
 Mux discovers skills from three roots:
 
-- **Project-local**: `<projectRoot>/.mux/skills/<skill-name>/SKILL.md`
+- **Workspace-local**: `.mux/skills/<skill-name>/SKILL.md` (in the workspace working directory)
 - **Global**: `~/.mux/skills/<skill-name>/SKILL.md`
 - **Built-in**: shipped with Mux
 
-If a skill exists in multiple locations, the precedence order is: **project-local > global > built-in**.
+If a skill exists in multiple locations, the precedence order is: **workspace-local > global > built-in**.
 
 <Info>
   Mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
