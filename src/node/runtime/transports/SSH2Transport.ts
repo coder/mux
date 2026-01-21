@@ -40,17 +40,60 @@ class SSH2ChildProcess extends EventEmitter {
     this.stderr = stderrPipe;
     this.stdin = stdinPipe;
 
+    let closeEventFired = false;
+    let closeTimer: ReturnType<typeof setTimeout> | null = null;
+    let closeEmitted = false;
+
+    const emitClose = () => {
+      if (closeEmitted) {
+        return;
+      }
+      closeEmitted = true;
+
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+        closeTimer = null;
+      }
+
+      this.emit("close", this.exitCode ?? 0, this.signalCode);
+    };
+
     channel.on("exit", (code: number | null, signal: string | null) => {
       this.exitCode = typeof code === "number" ? code : null;
       this.signalCode = typeof signal === "string" ? signal : null;
+
+      // ssh2 sometimes emits "close" before "exit"; if that happens, ensure we still
+      // report the real exit code.
+      if (closeEventFired) {
+        emitClose();
+      }
     });
 
-    channel.on("close", (code?: number | null, signal?: string | null) => {
-      // Prefer code from close event args (ssh2 passes exit args to close),
-      // fall back to stored exitCode from exit event handler
-      const finalCode = typeof code === "number" ? code : this.exitCode;
-      const finalSignal = typeof signal === "string" ? signal : this.signalCode;
-      this.emit("close", finalCode ?? 0, finalSignal);
+    channel.on("close", (...args: unknown[]) => {
+      closeEventFired = true;
+
+      // ssh2 sometimes emits "close" with the exit code/signal. Capture it so we still
+      // report the correct exit status even if we missed the earlier "exit" event
+      // (e.g. extremely fast commands).
+      const [code, signal] = args;
+
+      if (this.exitCode === null && typeof code === "number") {
+        this.exitCode = code;
+      }
+
+      if (this.signalCode === null && typeof signal === "string") {
+        this.signalCode = signal;
+      }
+
+      if (this.exitCode !== null || this.signalCode !== null) {
+        emitClose();
+        return;
+      }
+
+      // Grace period: allow the "exit" event to arrive after "close".
+      // Without this, we can incorrectly report exitCode=0 for failed commands.
+      closeTimer = setTimeout(() => emitClose(), 250);
+      closeTimer.unref?.();
     });
 
     channel.on("error", (err: Error) => {

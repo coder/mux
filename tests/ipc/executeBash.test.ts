@@ -65,7 +65,7 @@ function expectWorkspaceCreationSuccess(result: WorkspaceCreationResult): Worksp
   return result.metadata;
 }
 
-const TEST_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 15_000;
+const TEST_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 15_000;
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 

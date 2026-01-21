@@ -303,6 +303,7 @@ export class MCPServerManager {
     options?: MCPServerManagerOptions
   ) {
     this.idleCheckInterval = setInterval(() => this.cleanupIdleServers(), IDLE_CHECK_INTERVAL_MS);
+    this.idleCheckInterval.unref?.();
     if (options?.inlineServers) {
       this.inlineServers = options.inlineServers;
     }
