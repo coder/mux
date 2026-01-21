@@ -22,6 +22,7 @@ import { NotifyToolCall } from "../NotifyToolCall";
 import { BashBackgroundListToolCall } from "../BashBackgroundListToolCall";
 import { BashBackgroundTerminateToolCall } from "../BashBackgroundTerminateToolCall";
 import { BashOutputToolCall } from "../BashOutputToolCall";
+import { AgentReportToolCall } from "../AgentReportToolCall";
 import { CodeExecutionToolCall } from "../CodeExecutionToolCall";
 import {
   TaskToolCall,
@@ -99,6 +100,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   task_terminate: {
     component: TaskTerminateToolCall,
     schema: TOOL_DEFINITIONS.task_terminate.schema,
+  },
+  agent_report: {
+    component: AgentReportToolCall,
+    schema: TOOL_DEFINITIONS.agent_report.schema,
   },
   // Provider-defined tool (Anthropic/OpenAI) - no TOOL_DEFINITIONS entry
   // Anthropic: args.query, OpenAI: args={}, query in result.action.query
