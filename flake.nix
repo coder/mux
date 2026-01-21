@@ -75,7 +75,7 @@
             '';
 
             outputHashMode = "recursive";
-            outputHash = "sha256-oEwikiwbtVEybNHtE0fwnfDuBvxmKk+KwgxLgDj35Xg=";
+            outputHash = "sha256-SigbtImuYQHwq+fmsStLTK7rhs5FcAdRC9902UAhi5s=";
           };
 
           configurePhase = ''
