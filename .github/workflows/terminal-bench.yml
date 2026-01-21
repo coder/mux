@@ -182,18 +182,26 @@ jobs:
             echo "❌ No trials ran - benchmark configuration may be wrong"
             exit 1
           fi
-          # Count timeout errors separately from other errors
-          # Both AgentTimeoutError and VerifierTimeoutError are expected for hard tasks
-          TIMEOUT_ERRORS=$(find jobs -name 'exception.txt' -exec grep -lE "(AgentTimeoutError|VerifierTimeoutError)" {} \; 2>/dev/null | wc -l | tr -d ' ')
-          OTHER_ERRORS=$((N_ERRORS - TIMEOUT_ERRORS))
+          # Count infrastructure/timeout errors separately from other errors
+          # These error types are expected and should not fail the workflow:
+          # - AgentTimeoutError: Agent exceeded task time limit (hard tasks)
+          # - VerifierTimeoutError: Verification timed out
+          # - AgentSetupTimeoutError: Agent install.sh timed out (slow network/packages)
+          # - EnvironmentStartTimeoutError: Daytona environment slow to start
+          # - DaytonaError: Daytona infrastructure issues (sandbox not started, no IP, etc.)
+          INFRA_PATTERN="(AgentTimeoutError|VerifierTimeoutError|AgentSetupTimeoutError|EnvironmentStartTimeoutError|DaytonaError)"
+          INFRA_ERRORS=$(find jobs -name 'exception.txt' -exec grep -lE "$INFRA_PATTERN" {} \; 2>/dev/null | wc -l | tr -d ' ')
+          OTHER_ERRORS=$((N_ERRORS - INFRA_ERRORS))
+          # Clamp to 0 in case exception.txt files exceed n_errors (defensive)
+          if [ "$OTHER_ERRORS" -lt 0 ]; then OTHER_ERRORS=0; fi
           if [ "$OTHER_ERRORS" -gt 0 ]; then
-            echo "❌ $OTHER_ERRORS task(s) had non-timeout errors - agent setup or execution failed"
-            echo "--- Exception details (excluding timeouts) ---"
-            find jobs -name 'exception.txt' -exec sh -c 'grep -qE "(AgentTimeoutError|VerifierTimeoutError)" "$1" || { echo "=== $1 ===" && cat "$1"; }' _ {} \; 2>/dev/null || true
+            echo "❌ $OTHER_ERRORS task(s) had non-infrastructure errors - agent execution failed"
+            echo "--- Exception details (excluding infra errors) ---"
+            find jobs -name 'exception.txt' -exec sh -c 'grep -qE "'"$INFRA_PATTERN"'" "$1" || { echo "=== $1 ===" && cat "$1"; }' _ {} \; 2>/dev/null || true
             exit 1
           fi
-          if [ "$TIMEOUT_ERRORS" -gt 0 ]; then
-            echo "⏱️ $TIMEOUT_ERRORS task(s) timed out (expected for hard tasks)"
+          if [ "$INFRA_ERRORS" -gt 0 ]; then
+            echo "⏱️ $INFRA_ERRORS task(s) had infrastructure/timeout errors (expected for hard tasks or transient infra issues)"
           fi
           echo "✅ Agent ran $N_TRIALS trial(s) successfully (mean score: $MEAN_SCORE)"
 
