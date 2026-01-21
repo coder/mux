@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useWorkspaceStoreRaw, type WorkspaceState } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS, type CustomEventType } from "@/common/constants/events";
-import { getAutoRetryKey, getRetryStateKey } from "@/common/constants/storage";
+import { getRetryStateKey } from "@/common/constants/storage";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { readPersistedState, updatePersistedState } from "./usePersistedState";
+import { readAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import {
   getInterruptionContext,
   isNonRetryableSendError,
@@ -116,7 +117,7 @@ export function useResumeManager() {
     }
 
     // 2. Auto-retry must be enabled (user didn't press Ctrl+C)
-    const autoRetry = readPersistedState<boolean>(getAutoRetryKey(workspaceId), true);
+    const autoRetry = readAutoRetryPreference(workspaceId);
     if (!autoRetry) return false;
 
     // 3. Must not already be retrying

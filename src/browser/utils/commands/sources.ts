@@ -5,12 +5,9 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import {
-  getAutoRetryKey,
-  getRightSidebarLayoutKey,
-  RIGHT_SIDEBAR_TAB_KEY,
-} from "@/common/constants/storage";
+import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
@@ -614,7 +611,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           if (p.selectedWorkspaceState?.awaitingUserQuestion) {
             return;
           }
-          updatePersistedState(getAutoRetryKey(id), false);
+          disableAutoRetryPreference(id);
           await p.api?.workspace.interruptStream({ workspaceId: id });
         },
       });

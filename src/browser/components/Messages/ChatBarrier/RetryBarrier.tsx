@@ -4,13 +4,18 @@ import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePers
 import type { RetryState } from "@/browser/hooks/useResumeManager";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
+  disableAutoRetryPreference,
+  enableAutoRetryPreference,
+  useAutoRetryPreference,
+} from "@/browser/utils/messages/autoRetryPreference";
+import {
   getInterruptionContext,
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
 import { calculateBackoffDelay, createManualRetryState } from "@/browser/utils/messages/retryState";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { getAutoRetryKey, getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
+import { getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 
@@ -28,11 +33,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   // Get workspace state for computing effective autoRetry
   const workspaceState = useWorkspaceState(props.workspaceId);
 
-  const [autoRetry, setAutoRetry] = usePersistedState<boolean>(
-    getAutoRetryKey(props.workspaceId),
-    true, // Default to true
-    { listener: true }
-  );
+  const [autoRetry] = useAutoRetryPreference(props.workspaceId);
 
   // Read vim mode for displaying correct stop keybind
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
@@ -97,7 +98,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   // Emits event to useResumeManager instead of calling resumeStream directly
   // This keeps all retry logic centralized in one place
   const handleManualRetry = () => {
-    setAutoRetry(true); // Re-enable auto-retry for next failure
+    enableAutoRetryPreference(props.workspaceId); // Re-enable auto-retry for next failure
 
     // Create manual retry state: immediate retry BUT preserves attempt counter
     // This prevents infinite retry loops without backoff if the retry fails
@@ -116,7 +117,7 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   // Stop auto-retry handler
   const handleStopAutoRetry = () => {
     setCountdown(0);
-    setAutoRetry(false);
+    disableAutoRetryPreference(props.workspaceId);
   };
 
   // Format error message for display (centralized logic)

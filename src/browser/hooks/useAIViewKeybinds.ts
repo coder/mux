@@ -9,12 +9,12 @@ import {
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 import { useAPI } from "@/browser/contexts/API";
+import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 
 interface UseAIViewKeybindsParams {
   workspaceId: string;
   canInterrupt: boolean;
   showRetryBarrier: boolean;
-  setAutoRetry: (value: boolean) => void;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
   handleOpenTerminal: () => void;
@@ -39,7 +39,6 @@ export function useAIViewKeybinds({
   workspaceId,
   canInterrupt,
   showRetryBarrier,
-  setAutoRetry,
   chatInputAPI,
   jumpToBottom,
   handleOpenTerminal,
@@ -78,7 +77,7 @@ export function useAIViewKeybinds({
               setEditingMessage({ id: messageId, content: command });
             });
           }
-          setAutoRetry(false);
+          disableAutoRetryPreference(workspaceId);
           return;
         }
 
@@ -87,7 +86,7 @@ export function useAIViewKeybinds({
         // Non-vim mode: Esc always interrupts
         if (canInterrupt || showRetryBarrier) {
           e.preventDefault();
-          setAutoRetry(false); // User explicitly stopped - don't auto-retry
+          disableAutoRetryPreference(workspaceId); // User explicitly stopped - don't auto-retry
           void api?.workspace.interruptStream({ workspaceId });
           return;
         }
@@ -143,7 +142,6 @@ export function useAIViewKeybinds({
     workspaceId,
     canInterrupt,
     showRetryBarrier,
-    setAutoRetry,
     chatInputAPI,
     aggregator,
     setEditingMessage,

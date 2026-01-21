@@ -16,8 +16,7 @@ import { EditCutoffBarrier } from "./Messages/ChatBarrier/EditCutoffBarrier";
 import { StreamingBarrier } from "./Messages/ChatBarrier/StreamingBarrier";
 import { RetryBarrier } from "./Messages/ChatBarrier/RetryBarrier";
 import { PinnedTodoList } from "./PinnedTodoList";
-import { getAutoRetryKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChatInput, type ChatInputAPI } from "./ChatInput/index";
 import {
   shouldShowInterruptedBarrier,
@@ -26,6 +25,7 @@ import {
   getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
+import { enableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { getInterruptionContext } from "@/browser/utils/messages/retryEligibility";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
@@ -228,16 +228,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // Idle compaction - trigger compaction when backend signals workspace has been idle
   useIdleCompactionHandler({ api });
 
-  // Auto-retry state - minimal setter for keybinds and message sent handler
-  // RetryBarrier manages its own state, but we need this for interrupt keybind
-  const [, setAutoRetry] = usePersistedState<boolean>(
-    getAutoRetryKey(workspaceId),
-    WORKSPACE_DEFAULTS.autoRetry,
-    {
-      listener: true,
-    }
-  );
-
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
 
@@ -399,8 +389,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
     // Reset autoRetry when user sends a message
     // User action = clear intent: "I'm actively using this workspace"
-    setAutoRetry(true);
-  }, [setAutoScroll, setAutoRetry, autoBackgroundOnSend]);
+    enableAutoRetryPreference(workspaceId);
+  }, [setAutoScroll, autoBackgroundOnSend, workspaceId]);
 
   const handleClearHistory = useCallback(
     async (percentage = 1.0) => {
@@ -481,7 +471,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       (workspaceState?.canInterrupt ?? false) ||
       typeof workspaceState?.pendingStreamStartTime === "number",
     showRetryBarrier,
-    setAutoRetry,
     chatInputAPI,
     jumpToBottom,
     handleOpenTerminal: onOpenTerminal,
