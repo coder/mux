@@ -5,7 +5,8 @@ import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Config } from "@/node/config";
-import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { type createRuntime } from "@/node/runtime/runtimeFactory";
+import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { log } from "@/node/services/log";
 
@@ -165,10 +166,11 @@ export class WorkspaceMcpOverridesService {
   }> {
     const metadata = await this.getWorkspaceMetadata(workspaceId);
 
-    const runtime = createRuntime(
-      metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-      { projectPath: metadata.projectPath }
-    );
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig: metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+      projectPath: metadata.projectPath,
+      name: metadata.name,
+    });
 
     // In-place workspaces (CLI/benchmarks) store the workspace path directly by setting
     // metadata.projectPath === metadata.name.

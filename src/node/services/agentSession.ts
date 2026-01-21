@@ -45,6 +45,7 @@ import {
   type MuxMessage,
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
@@ -1271,10 +1272,14 @@ export class AgentSession {
 
         return attachments;
       }
-      const runtime = createRuntime(
-        metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-        { projectPath: metadataResult.data.projectPath }
-      );
+      const runtime = createRuntimeForWorkspace({
+        runtimeConfig: metadataResult.data.runtimeConfig ?? {
+          type: "local",
+          srcBaseDir: this.config.srcDir,
+        },
+        projectPath: metadataResult.data.projectPath,
+        name: metadataResult.data.name,
+      });
 
       const attachments = await AttachmentService.generatePostCompactionAttachments(
         metadataResult.data.name,
@@ -1338,10 +1343,14 @@ export class AgentSession {
 
       return attachments;
     }
-    const runtime = createRuntime(
-      metadataResult.data.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-      { projectPath: metadataResult.data.projectPath }
-    );
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig: metadataResult.data.runtimeConfig ?? {
+        type: "local",
+        srcBaseDir: this.config.srcDir,
+      },
+      projectPath: metadataResult.data.projectPath,
+      name: metadataResult.data.name,
+    });
 
     const attachments = await AttachmentService.generatePostCompactionAttachments(
       metadataResult.data.name,
@@ -1390,10 +1399,11 @@ export class AgentSession {
     }
 
     const metadata = metadataResult.data;
-    const runtime = createRuntime(
-      metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-      { projectPath: metadata.projectPath }
-    );
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig: metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
+      projectPath: metadata.projectPath,
+      name: metadata.name,
+    });
     const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
     const materialized = await materializeFileAtMentions(messageText, {

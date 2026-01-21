@@ -130,6 +130,21 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     return shescape.quote(filePath);
   }
 
+  /**
+   * Expand tilde in file paths for container operations.
+   * This is a sync version of resolvePath's tilde logic, used before quoting
+   * in *ViaExec methods where we can't await.
+   */
+  private expandTildeForContainer(filePath: string): string {
+    if (filePath === "~" || filePath.startsWith("~/")) {
+      const fallbackHome =
+        this.remoteUser === "root" ? "/root" : `/home/${this.remoteUser ?? "root"}`;
+      const homeDir = this.remoteHomeDir ?? fallbackHome;
+      return filePath === "~" ? homeDir : homeDir + filePath.slice(1);
+    }
+    return filePath;
+  }
+
   private async setupCredentials(env?: Record<string, string>): Promise<void> {
     if (!this.shareCredentials) return;
 
@@ -184,10 +199,11 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private readFileViaExec(filePath: string, abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
+    const expanded = this.expandTildeForContainer(filePath);
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
-          const stream = await this.exec(`cat ${this.quoteForContainer(filePath)}`, {
+          const stream = await this.exec(`cat ${this.quoteForContainer(expanded)}`, {
             cwd: this.getContainerBasePath(),
             timeout: 300,
             abortSignal,
@@ -230,8 +246,9 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     filePath: string,
     abortSignal?: AbortSignal
   ): WritableStream<Uint8Array> {
-    const quotedPath = this.quoteForContainer(filePath);
-    const tempPath = `${filePath}.tmp.${Date.now()}`;
+    const expanded = this.expandTildeForContainer(filePath);
+    const quotedPath = this.quoteForContainer(expanded);
+    const tempPath = `${expanded}.tmp.${Date.now()}`;
     const quotedTempPath = this.quoteForContainer(tempPath);
     const writeCommand = `mkdir -p $(dirname ${quotedPath}) && cat > ${quotedTempPath} && mv ${quotedTempPath} ${quotedPath}`;
 
@@ -275,7 +292,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private async ensureDirViaExec(dirPath: string): Promise<void> {
-    const stream = await this.exec(`mkdir -p ${this.quoteForContainer(dirPath)}`, {
+    const expanded = this.expandTildeForContainer(dirPath);
+    const stream = await this.exec(`mkdir -p ${this.quoteForContainer(expanded)}`, {
       cwd: "/",
       timeout: 10,
     });
@@ -298,7 +316,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private async statViaExec(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
+    const expanded = this.expandTildeForContainer(filePath);
+    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForContainer(expanded)}`, {
       cwd: this.getContainerBasePath(),
       timeout: 10,
       abortSignal,
@@ -603,23 +622,16 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   override resolvePath(filePath: string): Promise<string> {
-    // Expand tilde to container user's home directory (not host's home)
-    if (filePath === "~" || filePath.startsWith("~/")) {
-      const fallbackHome =
-        this.remoteUser === "root" ? "/root" : `/home/${this.remoteUser ?? "root"}`;
-      const homeDir = this.remoteHomeDir ?? fallbackHome;
-      const expanded = filePath === "~" ? homeDir : homeDir + filePath.slice(1);
-      return Promise.resolve(path.posix.resolve(expanded));
-    }
+    const expanded = this.expandTildeForContainer(filePath);
 
     // Resolve relative paths against container workspace (avoid host cwd leakage)
-    if (!filePath.startsWith("/")) {
+    if (!expanded.startsWith("/")) {
       const basePath = this.remoteWorkspaceFolder ?? "/";
-      return Promise.resolve(path.posix.resolve(basePath, filePath));
+      return Promise.resolve(path.posix.resolve(basePath, expanded));
     }
 
     // For absolute paths, resolve using posix (container is Linux)
-    return Promise.resolve(path.posix.resolve(filePath));
+    return Promise.resolve(path.posix.resolve(expanded));
   }
 
   override tempDir(): Promise<string> {
