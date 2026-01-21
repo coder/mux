@@ -112,13 +112,6 @@ function isUiOnlyRecord(value: unknown): value is ToolOutputUiOnly {
 
   const record = value;
 
-  if ("severity" in record) {
-    const severity = record.severity;
-    if (severity !== undefined && severity !== "soft" && severity !== "hard") {
-      return false;
-    }
-  }
-
   if ("ask_user_question" in record && !isAskUserQuestionUiOnly(record.ask_user_question)) {
     return false;
   }

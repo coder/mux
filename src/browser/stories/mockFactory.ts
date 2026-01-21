@@ -282,6 +282,37 @@ export function createFileEditTool(toolCallId: string, filePath: string, diff: s
   };
 }
 
+export function createBashOverflowTool(
+  toolCallId: string,
+  script: string,
+  notice: string,
+  truncated: { reason: string; totalLines: number },
+  timeoutSecs = 3,
+  durationMs = 50,
+  displayName = "Bash"
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "bash",
+    state: "output-available",
+    input: {
+      script,
+      run_in_background: false,
+      timeout_secs: timeoutSecs,
+      display_name: displayName,
+    },
+    output: {
+      success: true,
+      output: "",
+      note: notice,
+      exitCode: 0,
+      wall_duration_ms: durationMs,
+      truncated,
+    },
+  };
+}
+
 export function createBashTool(
   toolCallId: string,
   script: string,

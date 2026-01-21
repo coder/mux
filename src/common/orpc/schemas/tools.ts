@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 const ToolOutputUiOnlySchema = z.object({
-  severity: z.enum(["soft", "hard"]).optional(),
   ask_user_question: z
     .object({
       questions: z.array(z.unknown()),

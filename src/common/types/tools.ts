@@ -54,8 +54,6 @@ export type AgentSkillReadFileToolArgs = z.infer<
 >;
 export type AgentSkillReadFileToolResult = z.infer<typeof AgentSkillReadFileToolResultSchema>;
 
-export type ToolOutputSeverity = "soft" | "hard";
-
 export interface AskUserQuestionUiOnlyPayload {
   questions: AskUserQuestionQuestion[];
   answers: Record<string, string>;
@@ -71,7 +69,6 @@ export interface NotifyUiOnlyPayload {
 }
 
 export interface ToolOutputUiOnly {
-  severity?: ToolOutputSeverity;
   ask_user_question?: AskUserQuestionUiOnlyPayload;
   file_edit?: FileEditUiOnlyPayload;
   notify?: NotifyUiOnlyPayload;

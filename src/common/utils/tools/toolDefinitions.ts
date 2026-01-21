@@ -64,7 +64,6 @@ const AskUserQuestionUiOnlySchema = z.object({
 });
 
 const ToolOutputUiOnlySchema = z.object({
-  severity: z.enum(["soft", "hard"]).optional(),
   ask_user_question: AskUserQuestionUiOnlySchema.optional(),
   file_edit: z
     .object({

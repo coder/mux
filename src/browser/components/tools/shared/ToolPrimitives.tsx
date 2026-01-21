@@ -1,4 +1,3 @@
-import type { ToolOutputSeverity } from "@/common/types/tools";
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { LucideIcon } from "lucide-react";
@@ -72,17 +71,16 @@ export const ToolName: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
 
 interface StatusIndicatorProps extends React.HTMLAttributes<HTMLSpanElement> {
   status: string;
-  severity?: ToolOutputSeverity;
 }
 
-const getStatusColor = (status: string, severity?: ToolOutputSeverity) => {
+const getStatusColor = (status: string) => {
   switch (status) {
     case "executing":
       return "text-pending";
     case "completed":
-      return severity === "soft" ? "text-warning" : "text-success";
+      return "text-success";
     case "failed":
-      return severity === "soft" ? "text-warning" : "text-danger";
+      return "text-danger";
     case "interrupted":
       return "text-interrupted";
     case "backgrounded":
@@ -94,7 +92,6 @@ const getStatusColor = (status: string, severity?: ToolOutputSeverity) => {
 
 export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
   status,
-  severity,
   className,
   children,
   ...props
@@ -103,7 +100,7 @@ export const StatusIndicator: React.FC<StatusIndicatorProps> = ({
     className={cn(
       "text-[10px] ml-auto opacity-80 whitespace-nowrap shrink-0",
       "[&_.status-text]:inline [@container(max-width:350px)]:[&_.status-text]:hidden",
-      getStatusColor(status, severity),
+      getStatusColor(status),
       className
     )}
     {...props}
@@ -233,17 +230,12 @@ export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, className }
 /**
  * Error display box with danger styling
  */
-interface ErrorBoxProps extends React.HTMLAttributes<HTMLDivElement> {
-  severity?: ToolOutputSeverity;
-}
+type ErrorBoxProps = React.HTMLAttributes<HTMLDivElement>;
 
-export const ErrorBox: React.FC<ErrorBoxProps> = ({ className, severity, ...props }) => (
+export const ErrorBox: React.FC<ErrorBoxProps> = ({ className, ...props }) => (
   <div
     className={cn(
-      "rounded border-l-2 px-2 py-1.5 text-[11px]",
-      severity === "soft"
-        ? "text-warning bg-warning-overlay border-warning"
-        : "text-danger bg-danger-overlay border-danger",
+      "rounded border-l-2 px-2 py-1.5 text-[11px] text-danger bg-danger-overlay border-danger",
       className
     )}
     {...props}
@@ -256,18 +248,13 @@ export const ErrorBox: React.FC<ErrorBoxProps> = ({ className, severity, ...prop
 interface ExitCodeBadgeProps {
   exitCode: number;
   className?: string;
-  severity?: ToolOutputSeverity;
 }
 
-export const ExitCodeBadge: React.FC<ExitCodeBadgeProps> = ({ exitCode, className, severity }) => (
+export const ExitCodeBadge: React.FC<ExitCodeBadgeProps> = ({ exitCode, className }) => (
   <span
     className={cn(
       "inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium whitespace-nowrap",
-      exitCode === 0
-        ? "bg-success text-on-success"
-        : severity === "soft"
-          ? "bg-warning text-on-warning"
-          : "bg-danger text-on-danger",
+      exitCode === 0 ? "bg-success text-on-success" : "bg-danger text-on-danger",
       className
     )}
   >

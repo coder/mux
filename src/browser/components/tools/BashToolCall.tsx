@@ -19,7 +19,6 @@ import {
   useToolExpansion,
   getStatusDisplay,
   formatDuration,
-  getToolOutputSeverity,
   type ToolStatus,
 } from "./shared/toolUtils";
 import { cn } from "@/common/lib/utils";
@@ -196,7 +195,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
 
-  const severity = getToolOutputSeverity(result);
   const canSendToBackground = Boolean(
     toolCallId && workspaceId && foregroundBashToolCallIds.has(toolCallId)
   );
@@ -207,6 +205,7 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         }
       : undefined;
   const truncatedInfo = result && "truncated" in result ? result.truncated : undefined;
+  const note = result && "note" in result ? result.note : undefined;
 
   const handleToggle = () => {
     userToggledRef.current = true;
@@ -255,13 +254,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
               {result && ` • took ${formatDuration(result.wall_duration_ms)}`}
               {!result && <ElapsedTimeDisplay startedAt={startedAt} isActive={isPending} />}
             </span>
-            {result && (
-              <ExitCodeBadge exitCode={result.exitCode} className="ml-2" severity={severity} />
-            )}
+            {result && <ExitCodeBadge exitCode={result.exitCode} className="ml-2" />}
           </>
         )}
-        <StatusIndicator status={effectiveStatus} severity={severity}>
-          {getStatusDisplay(effectiveStatus, severity)}
+        <StatusIndicator status={effectiveStatus}>
+          {getStatusDisplay(effectiveStatus)}
         </StatusIndicator>
         {/* Show "Background" button when bash is executing and can be sent to background.
             Use invisible when executing but not yet confirmed as foreground to avoid layout flash. */}
@@ -334,20 +331,24 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
           {result && (
             <>
+              {note && (
+                <DetailSection>
+                  <DetailLabel>Notice</DetailLabel>
+                  <div className="text-muted text-[11px] break-words whitespace-pre-wrap">
+                    {note}
+                  </div>
+                </DetailSection>
+              )}
+
               {result.success === false && result.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
-                  <ErrorBox severity={severity}>{result.error}</ErrorBox>
+                  <ErrorBox>{result.error}</ErrorBox>
                 </DetailSection>
               )}
 
               {truncatedInfo && (
-                <div
-                  className={cn(
-                    "px-2 text-[10px] italic",
-                    severity === "soft" ? "text-warning" : "text-muted"
-                  )}
-                >
+                <div className="text-muted px-2 text-[10px] italic">
                   Output truncated — reason: {truncatedInfo.reason} • totalLines:{" "}
                   {truncatedInfo.totalLines}
                 </div>

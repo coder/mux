@@ -1,5 +1,5 @@
 /**
- * Bash tool stories - consolidated to 3 stories covering full UI complexity
+ * Bash tool stories - consolidated to a few stories covering full UI complexity
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
@@ -8,6 +8,7 @@ import {
   createUserMessage,
   createAssistantMessage,
   createBashTool,
+  createBashOverflowTool,
   createPendingTool,
   createBackgroundBashTool,
   createMigratedBashTool,
@@ -140,6 +141,61 @@ npm test 2>&1 | head -20`,
                 }),
               ],
             }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await expandAllBashTools(canvasElement);
+  },
+};
+
+/**
+ * Overflow notice: output saved to temp file with informational notice
+ */
+export const OverflowNotice: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-bash-overflow",
+          messages: [
+            createUserMessage("msg-1", "Search the logs for failures", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 140000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Scanning logs (output too large, saved to temp file):",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 135000,
+                toolCalls: [
+                  createBashOverflowTool(
+                    "call-1",
+                    'rg "ERROR" /var/log/app/*.log',
+                    [
+                      "[OUTPUT OVERFLOW - Total output exceeded display limit: 18432 bytes > 16384 bytes (at line 312)]",
+                      "",
+                      "Full output (1250 lines) saved to /home/user/.mux/tmp/bash-1a2b3c4d.txt",
+                      "",
+                      "Use selective filtering tools (e.g. grep) to extract relevant information and continue your task",
+                      "",
+                      "File will be automatically cleaned up when stream ends.",
+                    ].join("\n"),
+                    {
+                      reason:
+                        "Total output exceeded display limit: 18432 bytes > 16384 bytes (at line 312)",
+                      totalLines: 1250,
+                    },
+                    5,
+                    4200,
+                    "Log Scan"
+                  ),
+                ],
+              }
+            ),
           ],
         })
       }

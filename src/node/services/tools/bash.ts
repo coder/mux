@@ -783,7 +783,7 @@ ${scriptWithEnv}`;
           await writerInstance.write(encoder.encode(fullOutput));
           await writerInstance.close();
 
-          const output = `[OUTPUT OVERFLOW - ${overflowReason ?? "unknown reason"}]
+          const notice = `[OUTPUT OVERFLOW - ${overflowReason ?? "unknown reason"}]
 
 Full output (${lines.length} lines) saved to ${overflowPath}
 
@@ -793,13 +793,11 @@ File will be automatically cleaned up when stream ends.`;
 
           return {
             success: true,
-            output,
+            output: "",
+            note: notice,
             exitCode: 0,
             wall_duration_ms,
             truncated: truncationInfo,
-            ui_only: {
-              severity: "soft",
-            },
           };
         } catch (err) {
           // If temp file creation fails, fall back to original error
