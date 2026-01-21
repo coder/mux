@@ -123,6 +123,56 @@ function getPrimaryFontFamily(value: string): string | undefined {
   return stripped || undefined;
 }
 
+async function canLoadFontFamily(primary: string, fontSize: number): Promise<boolean> {
+  if (typeof document === "undefined") {
+    return true;
+  }
+
+  const family = stripOuterQuotes(primary).trim();
+  if (!family) {
+    return false;
+  }
+
+  if (GENERIC_FONT_FAMILIES.has(family.toLowerCase())) {
+    return true;
+  }
+
+  const spec = `${fontSize}px ${quoteCssFontFamily(family)}`;
+
+  if (!document.fonts?.load) {
+    return document.fonts?.check ? document.fonts.check(spec) : true;
+  }
+
+  try {
+    const faces = await document.fonts.load(spec);
+    if (faces.length === 0) {
+      return false;
+    }
+  } catch {
+    // Ignore font load errors; fall back to check() when available.
+  }
+
+  return document.fonts?.check ? document.fonts.check(spec) : true;
+}
+
+async function filterFontFamiliesForBrowser(fonts: string[], fontSize: number): Promise<string[]> {
+  const available: string[] = [];
+
+  for (const family of fonts) {
+    const trimmed = stripOuterQuotes(family).trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const ok = await canLoadFontFamily(trimmed, fontSize);
+    if (ok) {
+      available.push(trimmed);
+    }
+  }
+
+  return Array.from(new Set(available));
+}
+
 function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string | undefined {
   if (typeof document === "undefined") {
     return undefined;
@@ -241,17 +291,31 @@ export function GeneralSection() {
 
     api.server
       .listInstalledFonts({ filter: "nerd" })
-      .then((result) => {
-        setDiscoveredNerdFonts(result.fonts);
+      .then(async (result) => {
         setSelectedDiscoveredNerdFont("");
+
+        const serverFonts = result.fonts;
+        const browserFonts = await filterFontFamiliesForBrowser(
+          serverFonts,
+          terminalFontConfig.fontSize
+        );
+
+        setDiscoveredNerdFonts(browserFonts);
 
         if (result.error) {
           setNerdFontDiscoveryError(result.error);
           return;
         }
 
-        if (result.fonts.length === 0) {
-          setNerdFontDiscoveryError("No Nerd Fonts were detected.");
+        if (serverFonts.length === 0) {
+          setNerdFontDiscoveryError("No Nerd Fonts were detected on the server.");
+          return;
+        }
+
+        if (browserFonts.length === 0) {
+          setNerdFontDiscoveryError(
+            `Found ${serverFonts.length} Nerd Font families on the mux server, but none are available in this browser.`
+          );
         }
       })
       .catch((err) => {
@@ -260,7 +324,7 @@ export function GeneralSection() {
       .finally(() => {
         setDiscoveringNerdFonts(false);
       });
-  }, [api]);
+  }, [api, terminalFontConfig.fontSize]);
 
   const handleDiscoveredNerdFontSelect = (value: string) => {
     setSelectedDiscoveredNerdFont(value);
@@ -350,6 +414,12 @@ export function GeneralSection() {
                 To render Nerd Font icons in TUIs, set this to a Nerd Font (e.g. JetBrainsMono Nerd
                 Font)
               </div>
+              {isBrowserMode ? (
+                <div className="text-muted text-xs">
+                  Browser mode uses fonts installed on this device. Discovered fonts come from the
+                  mux server.
+                </div>
+              ) : null}
               <div className="text-muted text-xs">
                 Preview:{" "}
                 <span className="text-foreground" style={{ fontFamily: terminalFontPreviewFamily }}>
