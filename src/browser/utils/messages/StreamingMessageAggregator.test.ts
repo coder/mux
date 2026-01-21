@@ -1186,5 +1186,20 @@ describe("StreamingMessageAggregator", () => {
 
       expect(aggregator.getLastAbortReason()).toBeNull();
     });
+
+    test("clears last abort reason on clear", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleStreamAbort({
+        type: "stream-abort",
+        workspaceId: "test-workspace",
+        messageId: "msg-1",
+        abortReason: "user",
+      });
+
+      aggregator.clear();
+
+      expect(aggregator.getLastAbortReason()).toBeNull();
+    });
   });
 });

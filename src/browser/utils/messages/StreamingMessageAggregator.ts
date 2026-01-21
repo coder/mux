@@ -1029,6 +1029,7 @@ export class StreamingMessageAggregator {
     this.displayedMessageCache.clear();
     this.messageVersions.clear();
     this.interruptingMessageId = null;
+    this.lastAbortReason = null;
     this.invalidateCache();
   }
 
