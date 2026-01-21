@@ -281,7 +281,7 @@ describe("file_edit_insert plan mode enforcement", () => {
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error).toContain("In plan mode, only the plan file can be edited");
-      expect(result.error).toContain("Use path:");
+      expect(result.error).toContain("exact plan file path");
       expect(result.error).toContain(realPlanPath);
       expect(result.error).toContain(".mux/plan.md");
     }

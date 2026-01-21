@@ -7,17 +7,20 @@
  * <additional-instructions> in the system prompt.
  */
 export function getPlanModeInstruction(planFilePath: string, planExists: boolean): string {
+  const exactPlanPathRule = planFilePath.startsWith("~/")
+    ? "You must use the plan file path exactly as shown (including the leading `~/`); do not expand `~` or use alternate paths that resolve to the same file."
+    : "You must use the plan file path exactly as shown; do not rewrite it or use alternate paths that resolve to the same file.";
   const fileStatus = planExists
     ? `A plan file already exists at ${planFilePath}. First, read it to determine if it's relevant to the current request. If the current request is unrelated to the existing plan, delete the file and start fresh. If relevant, make incremental edits using the file_edit_* tools.`
     : `No plan file exists yet. You should create your plan at ${planFilePath} using the file_edit_* tools.`;
 
-  return `Plan file path: ${planFilePath} (MUST use this exact relative path string for tool calls; do NOT expand it to an absolute path like /Users/...)
+  return `Plan file path: ${planFilePath} (MUST use this exact path string for tool calls; do NOT rewrite it into another form, even if it resolves to the same file)
 
 ${fileStatus}
 
 Build your plan incrementally by writing to or editing this file.
 NOTE: The plan file is the only file you are allowed to edit. Other than that you may only take READ-ONLY actions.
-You must use the plan file path exactly as shown (including the leading \`~/\`); do not use absolute paths or alternate relative paths that resolve to the same file.
+${exactPlanPathRule}
 
 Keep the plan crisp and focused on actionable recommendations:
 - Put historical context, alternatives considered, or lengthy rationale into collapsible \`<details>/<summary>\` blocks so the core plan stays scannable.

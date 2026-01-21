@@ -414,7 +414,7 @@ describe("file_read tool", () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error).toContain("restricted to the workspace directory");
-        expect(result.error).toContain("use the plan file path exactly as provided");
+        expect(result.error).toContain("use the exact plan file path string as provided");
         expect(result.error).toContain(planPath);
       }
     } finally {
