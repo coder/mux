@@ -6,6 +6,7 @@ import {
   waitFor,
   waitForInitComplete,
   resolveOrpcClient,
+  configureTestRetries,
 } from "./helpers";
 import type { WorkspaceMetadata } from "../../src/common/types/workspace";
 
@@ -21,15 +22,37 @@ async function executeBashUntilReady(
   script: string,
   timeoutMs = 5000
 ): Promise<ExecuteBashResult> {
-  let lastResult = await client.workspace.executeBash({ workspaceId, script });
-  if (lastResult.success && lastResult.data.success) {
-    return lastResult;
-  }
+  let lastResult: ExecuteBashResult | null = null;
+  let lastFailure: string | null = null;
 
-  await waitFor(async () => {
-    lastResult = await client.workspace.executeBash({ workspaceId, script });
-    return lastResult.success && lastResult.data.success;
+  const ready = await waitFor(async () => {
+    try {
+      lastResult = await client.workspace.executeBash({ workspaceId, script });
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : String(error);
+      return false;
+    }
+
+    if (!lastResult.success) {
+      lastFailure = lastResult.error;
+      return false;
+    }
+
+    if (!lastResult.data.success) {
+      const outputSnippet = lastResult.data.output?.slice(0, 200) ?? "";
+      const outputDetail = outputSnippet.length > 0 ? ` Output: ${outputSnippet}` : "";
+      lastFailure =
+        lastResult.data.error ?? `exit code ${lastResult.data.exitCode}.${outputDetail}`;
+      return false;
+    }
+
+    return true;
   }, timeoutMs);
+
+  if (!ready || !lastResult) {
+    const detail = lastFailure ? ` Last failure: ${lastFailure}` : "";
+    throw new Error(`executeBash did not succeed within ${timeoutMs}ms.${detail}`);
+  }
 
   return lastResult;
 }
@@ -45,6 +68,9 @@ function expectWorkspaceCreationSuccess(result: WorkspaceCreationResult): Worksp
 const TEST_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 15_000;
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
+
+// Retry flaky integration tests in CI (Windows shell startup / IO jitter)
+configureTestRetries(2);
 
 describeIntegration("executeBash", () => {
   test.concurrent(
