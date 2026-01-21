@@ -39,6 +39,8 @@ export type FrontendWorkspaceMetadataSchemaType = z.infer<
 
 // Server types (single source of truth - derived from schemas)
 export type ApiServerStatus = z.infer<typeof schemas.ApiServerStatusSchema>;
+export type InstalledFontFilter = z.infer<typeof schemas.InstalledFontFilterSchema>;
+export type InstalledFontListResponse = z.infer<typeof schemas.InstalledFontListResponseSchema>;
 
 // Experiment types (single source of truth - derived from schemas)
 export type ExperimentValue = z.infer<typeof schemas.ExperimentValueSchema>;

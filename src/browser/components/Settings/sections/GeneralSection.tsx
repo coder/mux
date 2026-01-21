@@ -7,6 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
+import { Button } from "@/browser/components/ui/button";
 import { Input } from "@/browser/components/ui/input";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
@@ -223,6 +224,48 @@ export function GeneralSection() {
   );
   const terminalFontConfig = normalizeTerminalFontConfig(rawTerminalFontConfig);
   const terminalFontWarning = getTerminalFontAvailabilityWarning(terminalFontConfig);
+
+  const [discoveredNerdFonts, setDiscoveredNerdFonts] = useState<string[]>([]);
+  const [selectedDiscoveredNerdFont, setSelectedDiscoveredNerdFont] = useState<string>("");
+  const [nerdFontDiscoveryError, setNerdFontDiscoveryError] = useState<string | null>(null);
+  const [discoveringNerdFonts, setDiscoveringNerdFonts] = useState(false);
+
+  const handleDiscoverNerdFonts = useCallback(() => {
+    if (!api) {
+      setNerdFontDiscoveryError("Font discovery is unavailable in this environment.");
+      return;
+    }
+
+    setDiscoveringNerdFonts(true);
+    setNerdFontDiscoveryError(null);
+
+    api.server
+      .listInstalledFonts({ filter: "nerd" })
+      .then((result) => {
+        setDiscoveredNerdFonts(result.fonts);
+        setSelectedDiscoveredNerdFont("");
+
+        if (result.error) {
+          setNerdFontDiscoveryError(result.error);
+          return;
+        }
+
+        if (result.fonts.length === 0) {
+          setNerdFontDiscoveryError("No Nerd Fonts were detected.");
+        }
+      })
+      .catch((err) => {
+        setNerdFontDiscoveryError(String(err));
+      })
+      .finally(() => {
+        setDiscoveringNerdFonts(false);
+      });
+  }, [api]);
+
+  const handleDiscoveredNerdFontSelect = (value: string) => {
+    setSelectedDiscoveredNerdFont(value);
+    handleTerminalFontFamilyChange(value);
+  };
   const terminalFontPreviewFamily = formatCssFontFamilyList(terminalFontConfig.fontFamily);
   const terminalFontPreviewText = `${String.fromCodePoint(0xf024b)} ${String.fromCodePoint(0xf15b)}`;
 
@@ -314,14 +357,53 @@ export function GeneralSection() {
                 </span>
               </div>
             </div>
-            <Input
-              value={terminalFontConfig.fontFamily}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                handleTerminalFontFamilyChange(e.target.value)
-              }
-              placeholder={DEFAULT_TERMINAL_FONT_CONFIG.fontFamily}
-              className="border-border-medium bg-background-secondary h-9 w-80"
-            />
+            <div className="flex flex-col items-end gap-2">
+              <Input
+                value={terminalFontConfig.fontFamily}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  handleTerminalFontFamilyChange(e.target.value)
+                }
+                placeholder={DEFAULT_TERMINAL_FONT_CONFIG.fontFamily}
+                className="border-border-medium bg-background-secondary h-9 w-80"
+              />
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!api || discoveringNerdFonts}
+                  onClick={handleDiscoverNerdFonts}
+                >
+                  {discoveringNerdFonts ? "Discovering…" : "Discover Nerd Fonts"}
+                </Button>
+
+                {discoveredNerdFonts.length > 0 ? (
+                  <Select
+                    value={selectedDiscoveredNerdFont || undefined}
+                    onValueChange={handleDiscoveredNerdFontSelect}
+                  >
+                    <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-8 w-48 cursor-pointer rounded-md border px-3 text-xs transition-colors">
+                      <SelectValue placeholder="Select Nerd Font" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {discoveredNerdFonts.map((font) => (
+                        <SelectItem key={font} value={font}>
+                          {font}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+              </div>
+
+              {nerdFontDiscoveryError ? (
+                <div className="text-warning w-80 text-right text-xs">{nerdFontDiscoveryError}</div>
+              ) : discoveredNerdFonts.length > 0 ? (
+                <div className="text-muted w-80 text-right text-xs">
+                  Found {discoveredNerdFonts.length} Nerd Font families
+                </div>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex items-center justify-between gap-4">
