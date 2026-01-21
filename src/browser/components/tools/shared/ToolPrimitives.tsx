@@ -1,7 +1,17 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { LucideIcon } from "lucide-react";
-import { Bell, BookOpen, Globe, List, Pencil, Sparkles, Square, Wrench } from "lucide-react";
+import {
+  Bell,
+  BookOpen,
+  FileText,
+  Globe,
+  List,
+  Pencil,
+  Sparkles,
+  Square,
+  Wrench,
+} from "lucide-react";
 import { EmojiIcon } from "../../icons/EmojiIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
 
@@ -186,6 +196,7 @@ const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   bash_output: Wrench,
   bash_background_terminate: Square,
   bash_background_list: List,
+  agent_report: FileText,
   file_read: BookOpen,
   file_edit_insert: Pencil,
   file_edit_replace_string: Pencil,
