@@ -88,6 +88,63 @@ describe("LocalRuntime", () => {
     });
   });
 
+  describe("initWorkspace", () => {
+    it("runs init hook by default, but skips when skipInitHook=true", async () => {
+      const runtime = new LocalRuntime(testDir);
+
+      const muxDir = path.join(testDir, ".mux");
+      await fs.mkdir(muxDir, { recursive: true });
+
+      const markerPath = path.join(testDir, ".init-marker");
+      await fs.rm(markerPath, { force: true });
+
+      const hookPath = path.join(muxDir, "init");
+      await fs.writeFile(hookPath, "#!/usr/bin/env bash\n\necho ran > .init-marker\n");
+      await fs.chmod(hookPath, 0o755);
+
+      {
+        const logger = createMockLogger();
+        const result = await runtime.initWorkspace({
+          projectPath: testDir,
+          branchName: "main",
+          trunkBranch: "main",
+          workspacePath: testDir,
+          initLogger: logger,
+        });
+        expect(result.success).toBe(true);
+      }
+
+      const ranMarkerExists = await fs.access(markerPath).then(
+        () => true,
+        () => false
+      );
+      expect(ranMarkerExists).toBe(true);
+
+      // Remove marker and re-run init with skip flag.
+      await fs.rm(markerPath, { force: true });
+
+      {
+        const logger = createMockLogger();
+        const result = await runtime.initWorkspace({
+          projectPath: testDir,
+          branchName: "main",
+          trunkBranch: "main",
+          workspacePath: testDir,
+          initLogger: logger,
+          skipInitHook: true,
+        });
+        expect(result.success).toBe(true);
+        expect(logger.steps).toContain("Skipping .mux/init hook (disabled for this task)");
+      }
+
+      const skippedMarkerExists = await fs.access(markerPath).then(
+        () => true,
+        () => false
+      );
+      expect(skippedMarkerExists).toBe(false);
+    });
+  });
+
   describe("deleteWorkspace", () => {
     it("returns success without deleting anything", async () => {
       const runtime = new LocalRuntime(testDir);

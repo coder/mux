@@ -205,6 +205,13 @@ export interface WorkspaceInitParams {
   abortSignal?: AbortSignal;
   /** Environment variables to inject (MUX_ vars + secrets) */
   env?: Record<string, string>;
+
+  /**
+   * When true, skip running the project's .mux/init hook.
+   *
+   * NOTE: This skips only hook execution, not runtime provisioning.
+   */
+  skipInitHook?: boolean;
 }
 
 /**

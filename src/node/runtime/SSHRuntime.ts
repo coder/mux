@@ -455,8 +455,16 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
-      params;
+    const {
+      projectPath,
+      branchName,
+      trunkBranch,
+      workspacePath,
+      initLogger,
+      abortSignal,
+      env,
+      skipInitHook,
+    } = params;
 
     try {
       // If the workspace directory already exists and contains a git repo (e.g. forked from
@@ -594,15 +602,27 @@ export class SSHRuntime extends RemoteRuntime {
 
       // 5. Run .mux/init hook if it exists
       // Note: runInitHookOnRuntime calls logComplete() internally
-      const hookExists = await checkInitHookExists(projectPath);
-      if (hookExists) {
-        const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
-        // Expand tilde in hook path (quoted paths don't auto-expand on remote)
-        const hookPath = expandHookPath(`${workspacePath}/.mux/init`);
-        await runInitHookOnRuntime(this, hookPath, workspacePath, muxEnv, initLogger, abortSignal);
-      } else {
-        // No hook - signal completion immediately
+      if (skipInitHook) {
+        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
         initLogger.logComplete(0);
+      } else {
+        const hookExists = await checkInitHookExists(projectPath);
+        if (hookExists) {
+          const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
+          // Expand tilde in hook path (quoted paths don't auto-expand on remote)
+          const hookPath = expandHookPath(`${workspacePath}/.mux/init`);
+          await runInitHookOnRuntime(
+            this,
+            hookPath,
+            workspacePath,
+            muxEnv,
+            initLogger,
+            abortSignal
+          );
+        } else {
+          // No hook - signal completion immediately
+          initLogger.logComplete(0);
+        }
       }
 
       return { success: true };

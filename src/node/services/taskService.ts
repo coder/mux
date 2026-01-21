@@ -455,12 +455,14 @@ export class TaskService {
       }
     };
 
+    let skipInitHook = false;
     try {
       const definition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
       if (definition.frontmatter.subagent?.runnable !== true) {
         const hint = await getRunnableHint();
         return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId}). ${hint}`);
       }
+      skipInitHook = definition.frontmatter.subagent?.skip_init_hook === true;
     } catch {
       const hint = await getRunnableHint();
       return Err(`Task.create: unknown agentId (${agentId}). ${hint}`);
@@ -662,6 +664,7 @@ export class TaskService {
         workspacePath,
         initLogger,
         env: secrets,
+        skipInitHook,
       },
       taskId
     );
@@ -1581,6 +1584,35 @@ export class TaskService {
           trunkBranch,
         });
         const secrets = secretsToRecord(this.config.getProjectSecrets(taskEntry.projectPath));
+        let skipInitHook = false;
+        const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
+        if (agentIdRaw) {
+          const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw.trim().toLowerCase());
+          if (parsedAgentId.success) {
+            const isInPlace = taskEntry.projectPath === parentWorkspaceName;
+            const parentWorkspacePath =
+              coerceNonEmptyString(parentEntry.workspace.path) ??
+              (isInPlace
+                ? taskEntry.projectPath
+                : runtime.getWorkspacePath(taskEntry.projectPath, parentWorkspaceName));
+
+            try {
+              const definition = await readAgentDefinition(
+                runtime,
+                parentWorkspacePath,
+                parsedAgentId.data
+              );
+              skipInitHook = definition.frontmatter.subagent?.skip_init_hook === true;
+            } catch (error: unknown) {
+              log.debug("Queued task: failed to read agent definition for skip_init_hook", {
+                taskId,
+                agentId: parsedAgentId.data,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+
         runBackgroundInit(
           runtimeForTaskWorkspace,
           {
@@ -1590,6 +1622,7 @@ export class TaskService {
             workspacePath,
             initLogger,
             env: secrets,
+            skipInitHook,
           },
           taskId
         );

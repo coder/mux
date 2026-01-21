@@ -91,6 +91,7 @@ prompt:
 # Subagent configuration
 subagent:
   runnable: false # Allow spawning via task({ agentId: ... })
+  skip_init_hook: false # When true, skip the project's .mux/init hook for this sub-agent
 
 # AI defaults (override user settings)
 ai:
@@ -363,6 +364,7 @@ ui:
   hidden: true
 subagent:
   runnable: true
+  skip_init_hook: true
   append_prompt: |
     You are an Explore sub-agent running inside a child workspace.
 

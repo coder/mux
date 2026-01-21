@@ -447,8 +447,16 @@ export class DockerRuntime extends RemoteRuntime {
    * After this completes, the container is ready for initWorkspace() to run the hook.
    */
   async postCreateSetup(params: WorkspaceInitParams): Promise<void> {
-    const { projectPath, branchName, trunkBranch, workspacePath, initLogger, abortSignal, env } =
-      params;
+    const {
+      projectPath,
+      branchName,
+      trunkBranch,
+      workspacePath,
+      initLogger,
+      abortSignal,
+      env,
+      skipInitHook,
+    } = params;
 
     if (!this.containerName) {
       throw new Error("Container not initialized. Call createWorkspace first.");
@@ -464,7 +472,11 @@ export class DockerRuntime extends RemoteRuntime {
     switch (containerCheck.action) {
       case "skip":
         // Fork path: container already valid, just log and setup credentials
-        initLogger.logStep("Container already running (from fork), running init hook...");
+        initLogger.logStep(
+          skipInitHook
+            ? "Container already running (from fork), skipping init hook..."
+            : "Container already running (from fork), running init hook..."
+        );
         await this.setupCredentials(containerName, env);
         return;
       case "cleanup":
@@ -496,7 +508,8 @@ export class DockerRuntime extends RemoteRuntime {
    * is handled by postCreateSetup().
    */
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env } = params;
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env, skipInitHook } =
+      params;
 
     try {
       if (!this.containerName) {
@@ -504,6 +517,12 @@ export class DockerRuntime extends RemoteRuntime {
           success: false,
           error: "Container not initialized. Call createWorkspace first.",
         };
+      }
+
+      if (skipInitHook) {
+        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+        initLogger.logComplete(0);
+        return { success: true };
       }
 
       // Run .mux/init hook if it exists

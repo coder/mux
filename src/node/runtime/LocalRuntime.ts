@@ -70,9 +70,15 @@ export class LocalRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, env } = params;
+    const { projectPath, branchName, workspacePath, initLogger, env, skipInitHook } = params;
 
     try {
+      if (skipInitHook) {
+        initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+        initLogger.logComplete(0);
+        return { success: true };
+      }
+
       // Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
