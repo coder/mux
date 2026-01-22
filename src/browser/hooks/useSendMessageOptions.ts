@@ -70,10 +70,15 @@ function constructSendMessageOptions(
   // Transform to gateway format if gateway is enabled for this model (reactive)
   const model = applyGatewayTransform(baseModel, gateway);
 
+  const system1ModelForBackend =
+    system1Model !== undefined
+      ? applyGatewayTransform(migrateGatewayModel(system1Model), gateway)
+      : undefined;
+
   return {
     thinkingLevel: uiThinking,
     model,
-    ...(system1Model ? { system1Model } : {}),
+    ...(system1ModelForBackend ? { system1Model: system1ModelForBackend } : {}),
     agentId,
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)

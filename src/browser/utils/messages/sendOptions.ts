@@ -82,10 +82,12 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Read disableWorkspaceAgents toggle (workspace-scoped)
 
   const system1ModelTrimmed = readPersistedString(PREFERRED_SYSTEM_1_MODEL_KEY)?.trim();
-  const system1Model =
+  const baseSystem1Model =
     system1ModelTrimmed !== undefined && system1ModelTrimmed.length > 0
-      ? system1ModelTrimmed
+      ? migrateGatewayModel(system1ModelTrimmed)
       : undefined;
+  const system1Model =
+    baseSystem1Model !== undefined ? toGatewayModel(baseSystem1Model) : undefined;
   const disableWorkspaceAgents = readPersistedState<boolean>(
     getDisableWorkspaceAgentsKey(workspaceId),
     false
