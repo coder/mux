@@ -32,9 +32,8 @@ export function LeftSidebar(props: LeftSidebarProps) {
       {/* Sidebar */}
       <div
         className={cn(
-          "h-screen bg-sidebar border-r border-border flex flex-col shrink-0",
+          "h-full w-full bg-sidebar border-r border-border flex min-h-0 min-w-0 flex-col",
           "transition-all duration-200 overflow-hidden relative z-20",
-          collapsed ? "w-5" : "w-72",
           "mobile-sidebar",
           collapsed && "mobile-sidebar-collapsed",
           // In desktop mode when collapsed, start border below titlebar height (32px)

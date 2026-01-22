@@ -1,5 +1,5 @@
 import { Menu } from "lucide-react";
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
@@ -7,6 +7,7 @@ import { useProjectContext } from "./contexts/ProjectContext";
 import type { WorkspaceSelection } from "./components/ProjectSidebar";
 import { LeftSidebar } from "./components/LeftSidebar";
 import { ProjectCreateModal } from "./components/ProjectCreateModal";
+import { DockLayout } from "./components/DockLayout";
 import { AIView } from "./components/AIView";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import {
@@ -14,6 +15,23 @@ import {
   updatePersistedState,
   readPersistedState,
 } from "./hooks/usePersistedState";
+import {
+  collectAllTabsWithTabset,
+  isDockLayoutState,
+  parseDockLayoutState,
+  selectTabInTabset,
+  setFocusedTabset,
+  updateSplitSizes,
+  type DockLayoutState,
+} from "@/browser/utils/dockLayout";
+import {
+  ensureWindowDockLayoutState,
+  findFirstNonNavTabsetId,
+  findSplitSeparatingNav,
+  getDefaultWindowDockLayoutState,
+  isWindowPaneId,
+  type WindowPaneId,
+} from "@/browser/utils/windowDockLayout";
 import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
 import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
@@ -34,6 +52,7 @@ import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
+  WINDOW_DOCK_LAYOUT_KEY,
   getAgentIdKey,
   getAgentsInitNudgeKey,
   getModelKey,
@@ -115,6 +134,121 @@ function AppInner() {
     ? (pendingNewWorkspaceProject ?? defaultProjectPath)
     : null;
 
+  const shouldUseWindowDockLayout = !isMobile;
+
+  const windowMainPane: Exclude<WindowPaneId, "nav"> = selectedWorkspace
+    ? `workspace:${selectedWorkspace.workspaceId}`
+    : creationProjectPath
+      ? `project:${creationProjectPath}`
+      : "welcome";
+
+  const getDefaultWindowDockLayout = useCallback(() => {
+    return getDefaultWindowDockLayoutState(windowMainPane);
+  }, [windowMainPane]);
+
+  const initialWindowDockLayout = useMemo(() => {
+    return getDefaultWindowDockLayout();
+  }, [getDefaultWindowDockLayout]);
+
+  const [windowDockLayoutRaw, setWindowDockLayoutRaw] = usePersistedState<
+    DockLayoutState<WindowPaneId>
+  >(WINDOW_DOCK_LAYOUT_KEY, initialWindowDockLayout, {
+    listener: true,
+  });
+
+  // While dragging tabs (hover-based reorder), keep layout changes in-memory and
+  // commit once on drop to avoid localStorage writes on every mousemove.
+  const [windowDockLayoutDraft, setWindowDockLayoutDraft] =
+    useState<DockLayoutState<WindowPaneId> | null>(null);
+  const windowDockLayoutDraftRef = useRef<DockLayoutState<WindowPaneId> | null>(null);
+
+  const windowDockLayoutRawRef = useRef(windowDockLayoutRaw);
+  windowDockLayoutRawRef.current = windowDockLayoutRaw;
+
+  const isWindowTabDragInProgressRef = useRef(false);
+
+  const parseWindowDockLayout = useCallback(
+    (raw: unknown): DockLayoutState<WindowPaneId> => {
+      const defaultState = getDefaultWindowDockLayout();
+
+      return parseDockLayoutState(raw, {
+        isPaneId: isWindowPaneId,
+        defaultState,
+        ensureRequiredPanes: (state) =>
+          ensureWindowDockLayoutState(state, {
+            isWorkspaceIdValid: (workspaceId) => workspaceMetadata.has(workspaceId),
+            getDefaultState: getDefaultWindowDockLayout,
+          }),
+      });
+    },
+    [getDefaultWindowDockLayout, workspaceMetadata]
+  );
+
+  const windowDockLayout = useMemo(() => {
+    return parseWindowDockLayout(windowDockLayoutDraft ?? windowDockLayoutRaw);
+  }, [parseWindowDockLayout, windowDockLayoutDraft, windowDockLayoutRaw]);
+
+  // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
+  useEffect(() => {
+    if (!isDockLayoutState(windowDockLayoutRaw, isWindowPaneId)) {
+      setWindowDockLayoutRaw(windowDockLayout);
+    }
+  }, [setWindowDockLayoutRaw, windowDockLayout, windowDockLayoutRaw]);
+
+  const handleWindowTabDragStart = useCallback(() => {
+    isWindowTabDragInProgressRef.current = true;
+    windowDockLayoutDraftRef.current = null;
+  }, []);
+
+  const handleWindowTabDragEnd = useCallback(() => {
+    isWindowTabDragInProgressRef.current = false;
+
+    const draft = windowDockLayoutDraftRef.current;
+    if (draft) {
+      setWindowDockLayoutRaw(draft);
+    }
+
+    windowDockLayoutDraftRef.current = null;
+    setWindowDockLayoutDraft(null);
+  }, [setWindowDockLayoutRaw]);
+
+  const setWindowDockLayout = useCallback(
+    (updater: (prev: DockLayoutState<WindowPaneId>) => DockLayoutState<WindowPaneId>) => {
+      if (isWindowTabDragInProgressRef.current) {
+        const base =
+          windowDockLayoutDraftRef.current ?? parseWindowDockLayout(windowDockLayoutRawRef.current);
+        const next = updater(base);
+        windowDockLayoutDraftRef.current = next;
+        setWindowDockLayoutDraft(next);
+        return;
+      }
+
+      setWindowDockLayoutRaw((prevRaw) => updater(parseWindowDockLayout(prevRaw)));
+    },
+    [parseWindowDockLayout, setWindowDockLayoutRaw]
+  );
+
+  // Ensure the current "main" pane exists somewhere in the window dock layout and is focused.
+  useEffect(() => {
+    if (!shouldUseWindowDockLayout) {
+      return;
+    }
+
+    setWindowDockLayoutRaw((prevRaw) => {
+      const prev = parseWindowDockLayout(prevRaw);
+      const existing = collectAllTabsWithTabset(prev.root).find((t) => t.tab === windowMainPane);
+
+      if (existing) {
+        const withFocus = setFocusedTabset(prev, existing.tabsetId);
+        return selectTabInTabset(withFocus, existing.tabsetId, existing.tab);
+      }
+
+      const targetTabsetId = findFirstNonNavTabsetId(prev.root) ?? prev.focusedTabsetId;
+      const withFocus = setFocusedTabset(prev, targetTabsetId);
+      return selectTabInTabset(withFocus, targetTabsetId, windowMainPane);
+    });
+  }, [parseWindowDockLayout, setWindowDockLayoutRaw, shouldUseWindowDockLayout, windowMainPane]);
+
   // History navigation (back/forward)
   const navigate = useNavigate();
 
@@ -126,8 +260,57 @@ function AppInner() {
   // ProjectPage handles its own focus when mounted
 
   const handleToggleSidebar = useCallback(() => {
-    setSidebarCollapsed((prev) => !prev);
-  }, [setSidebarCollapsed]);
+    setSidebarCollapsed((prev) => {
+      const nextCollapsed = !prev;
+
+      if (shouldUseWindowDockLayout) {
+        setWindowDockLayoutRaw((prevRaw) => {
+          const prevLayout = parseWindowDockLayout(prevRaw);
+          const navSplit = findSplitSeparatingNav(prevLayout.root);
+          if (!navSplit) {
+            return prevLayout;
+          }
+
+          const navSize = nextCollapsed ? 3 : 22;
+          const otherSize = 100 - navSize;
+          const sizes: [number, number] =
+            navSplit.navChildIndex === 0 ? [navSize, otherSize] : [otherSize, navSize];
+
+          return updateSplitSizes(prevLayout, navSplit.splitId, sizes);
+        });
+      }
+
+      return nextCollapsed;
+    });
+  }, [
+    parseWindowDockLayout,
+    setSidebarCollapsed,
+    setWindowDockLayoutRaw,
+    shouldUseWindowDockLayout,
+  ]);
+
+  // Keep the nav split roughly in sync with the collapsed toggle.
+  useEffect(() => {
+    if (!shouldUseWindowDockLayout) {
+      return;
+    }
+
+    const navSize = sidebarCollapsed ? 3 : 22;
+    const otherSize = 100 - navSize;
+
+    setWindowDockLayoutRaw((prevRaw) => {
+      const prev = parseWindowDockLayout(prevRaw);
+      const navSplit = findSplitSeparatingNav(prev.root);
+      if (!navSplit) {
+        return prev;
+      }
+
+      const sizes: [number, number] =
+        navSplit.navChildIndex === 0 ? [navSize, otherSize] : [otherSize, navSize];
+
+      return updateSplitSizes(prev, navSplit.splitId, sizes);
+    });
+  }, [parseWindowDockLayout, setWindowDockLayoutRaw, shouldUseWindowDockLayout, sidebarCollapsed]);
 
   // Telemetry tracking
   const telemetry = useTelemetry();
@@ -433,8 +616,8 @@ function AppInner() {
   );
 
   const toggleSidebarFromPalette = useCallback(() => {
-    setSidebarCollapsed((prev) => !prev);
-  }, [setSidebarCollapsed]);
+    handleToggleSidebar();
+  }, [handleToggleSidebar]);
 
   const navigateWorkspaceFromPalette = useCallback(
     (dir: "next" | "prev") => {
@@ -534,7 +717,7 @@ function AppInner() {
         }
       } else if (matchesKeybind(e, KEYBINDS.TOGGLE_SIDEBAR)) {
         e.preventDefault();
-        setSidebarCollapsed((prev) => !prev);
+        handleToggleSidebar();
       } else if (matchesKeybind(e, KEYBINDS.OPEN_SETTINGS)) {
         e.preventDefault();
         openSettings();
@@ -551,7 +734,7 @@ function AppInner() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     handleNavigateWorkspace,
-    setSidebarCollapsed,
+    handleToggleSidebar,
     isCommandPaletteOpen,
     closeCommandPalette,
     openCommandPalette,
@@ -694,6 +877,189 @@ function AppInner() {
     [api]
   );
 
+  function renderWelcomePane() {
+    return (
+      <div className="bg-dark flex flex-1 flex-col overflow-hidden">
+        <div
+          className={cn(
+            "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
+            isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
+          )}
+        >
+          {sidebarCollapsed && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleToggleSidebar}
+              title="Open sidebar"
+              aria-label="Open sidebar menu"
+              className={cn(
+                "mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0",
+                isDesktopMode() && "titlebar-no-drag"
+              )}
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+        <div
+          className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl flex-1 text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
+          style={{
+            padding: "clamp(40px, 10vh, 100px) 20px",
+            fontSize: "clamp(14px, 2vw, 16px)",
+          }}
+        >
+          <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+            Welcome to Mux
+          </h2>
+          <p>Add a project from the sidebar to get started.</p>
+        </div>
+      </div>
+    );
+  }
+
+  function renderProjectPane(projectPath: string) {
+    const projectName = projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
+
+    return (
+      <ProjectPage
+        projectPath={projectPath}
+        projectName={projectName}
+        leftSidebarCollapsed={sidebarCollapsed}
+        onToggleLeftSidebarCollapsed={handleToggleSidebar}
+        pendingSectionId={pendingNewWorkspaceSectionId}
+        onProviderConfig={handleProviderConfig}
+        onWorkspaceCreated={(metadata) => {
+          // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+          // the store knows about it before React processes the state updates.
+          // This prevents race conditions where the UI tries to access the
+          // workspace before the store has created its aggregator.
+          workspaceStore.addWorkspace(metadata);
+
+          // Add to workspace metadata map (triggers React state update)
+          setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
+
+          // Only switch to new workspace if user hasn't selected another one
+          // during the creation process (selectedWorkspace was null when creation started)
+          setSelectedWorkspace((current) => {
+            if (current !== null) {
+              // User has already selected another workspace - don't override
+              return current;
+            }
+            return toWorkspaceSelection(metadata);
+          });
+
+          // Track telemetry
+          telemetry.workspaceCreated(
+            metadata.id,
+            getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+          );
+
+          // Note: No need to call clearPendingWorkspaceCreation() here.
+          // Navigating to the workspace URL automatically clears the pending
+          // state since pendingNewWorkspaceProject is derived from the URL.
+        }}
+      />
+    );
+  }
+
+  function getWindowPaneDescriptor(paneId: WindowPaneId) {
+    if (paneId === "nav") {
+      return {
+        title: "Navigation",
+        draggable: false,
+        render: () => (
+          <LeftSidebar
+            lastReadTimestamps={lastReadTimestamps}
+            onToggleUnread={onToggleUnread}
+            collapsed={sidebarCollapsed}
+            onToggleCollapsed={handleToggleSidebar}
+            sortedWorkspacesByProject={sortedWorkspacesByProject}
+            workspaceRecency={workspaceRecency}
+          />
+        ),
+      };
+    }
+
+    if (paneId === "welcome") {
+      return {
+        title: "Welcome",
+        render: () => renderWelcomePane(),
+      };
+    }
+
+    if (paneId.startsWith("project:")) {
+      const projectPath = paneId.slice("project:".length);
+      const projectName =
+        projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
+
+      return {
+        title: projectName,
+        render: () => renderProjectPane(projectPath),
+      };
+    }
+
+    if (paneId.startsWith("workspace:")) {
+      const workspaceId = paneId.slice("workspace:".length);
+      const metadata = workspaceMetadata.get(workspaceId);
+
+      if (!metadata) {
+        return {
+          title: workspaceId,
+          render: () => (
+            <div className="text-placeholder flex h-full w-full items-center justify-center">
+              Workspace not found
+            </div>
+          ),
+        };
+      }
+
+      const workspaceName =
+        metadata.name ?? metadata.namedWorkspacePath?.split("/").pop() ?? metadata.id;
+      const workspacePath = metadata.namedWorkspacePath ?? "";
+      const workspaceTitle = metadata.title ?? workspaceName;
+
+      return {
+        title: workspaceTitle,
+        tooltip: workspacePath,
+        render: () => (
+          <div
+            className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
+            onMouseDownCapture={() => {
+              setSelectedWorkspace((current) => {
+                if (current?.workspaceId === metadata.id) {
+                  return current;
+                }
+                return toWorkspaceSelection(metadata);
+              });
+            }}
+          >
+            <ErrorBoundary workspaceInfo={`${metadata.projectName}/${workspaceName}`}>
+              <AIView
+                className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
+                workspaceId={metadata.id}
+                projectPath={metadata.projectPath}
+                projectName={metadata.projectName}
+                leftSidebarCollapsed={sidebarCollapsed}
+                onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                workspaceName={workspaceName}
+                namedWorkspacePath={workspacePath}
+                runtimeConfig={metadata.runtimeConfig}
+                incompatibleRuntime={metadata.incompatibleRuntime}
+                status={metadata.status}
+              />
+            </ErrorBoundary>
+          </div>
+        ),
+      };
+    }
+
+    return {
+      title: paneId,
+      render: () => null,
+    };
+  }
+
   // Show auth modal if authentication is required
   if (status === "auth_required") {
     return <AuthTokenModal isOpen={true} onSubmit={authenticate} error={error} />;
@@ -705,142 +1071,163 @@ function AppInner() {
         className="bg-bg-dark mobile-layout flex h-screen overflow-hidden"
         onMouseUp={handleMouseNavigation}
       >
-        <LeftSidebar
-          lastReadTimestamps={lastReadTimestamps}
-          onToggleUnread={onToggleUnread}
-          collapsed={sidebarCollapsed}
-          onToggleCollapsed={handleToggleSidebar}
-          sortedWorkspacesByProject={sortedWorkspacesByProject}
-          workspaceRecency={workspaceRecency}
-        />
-        <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
-          <WindowsToolchainBanner />
-          <RosettaBanner />
-          <div className="mobile-layout flex flex-1 overflow-hidden">
-            {selectedWorkspace ? (
-              (() => {
-                const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
-                // Guard: Don't render AIView if workspace metadata not found.
-                // This can happen when selectedWorkspace (from localStorage) refers to a
-                // deleted workspace, or during a race condition on reload before the
-                // validation effect clears the stale selection.
-                if (!currentMetadata) {
-                  return null;
-                }
-                // Use metadata.name for workspace name (works for both worktree and local runtimes)
-                // Fallback to path-based derivation for legacy compatibility
-                const workspaceName =
-                  currentMetadata.name ??
-                  selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
-                  selectedWorkspace.workspaceId;
-                // Use live metadata path (updates on rename) with fallback to initial path
-                const workspacePath =
-                  currentMetadata.namedWorkspacePath ?? selectedWorkspace.namedWorkspacePath ?? "";
-                return (
-                  <ErrorBoundary
-                    workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
-                  >
-                    <AIView
-                      workspaceId={selectedWorkspace.workspaceId}
-                      projectPath={selectedWorkspace.projectPath}
-                      projectName={selectedWorkspace.projectName}
-                      leftSidebarCollapsed={sidebarCollapsed}
-                      onToggleLeftSidebarCollapsed={handleToggleSidebar}
-                      workspaceName={workspaceName}
-                      namedWorkspacePath={workspacePath}
-                      runtimeConfig={currentMetadata.runtimeConfig}
-                      incompatibleRuntime={currentMetadata.incompatibleRuntime}
-                      status={currentMetadata.status}
-                    />
-                  </ErrorBoundary>
-                );
-              })()
-            ) : creationProjectPath ? (
-              (() => {
-                const projectPath = creationProjectPath;
-                const projectName =
-                  projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
-                return (
-                  <ProjectPage
-                    projectPath={projectPath}
-                    projectName={projectName}
-                    leftSidebarCollapsed={sidebarCollapsed}
-                    onToggleLeftSidebarCollapsed={handleToggleSidebar}
-                    pendingSectionId={pendingNewWorkspaceSectionId}
-                    onProviderConfig={handleProviderConfig}
-                    onWorkspaceCreated={(metadata) => {
-                      // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
-                      // the store knows about it before React processes the state updates.
-                      // This prevents race conditions where the UI tries to access the
-                      // workspace before the store has created its aggregator.
-                      workspaceStore.addWorkspace(metadata);
+        {shouldUseWindowDockLayout ? (
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <WindowsToolchainBanner />
+            <RosettaBanner />
+            <DockLayout
+              baseId="window-dock"
+              layout={windowDockLayout}
+              setLayout={setWindowDockLayout}
+              getPaneDescriptor={getWindowPaneDescriptor}
+              getFallbackTabForEmptyTabset={() => "welcome"}
+              panelMinSize={2}
+              onTabDragStart={handleWindowTabDragStart}
+              onTabDragEnd={handleWindowTabDragEnd}
+            />
+          </div>
+        ) : (
+          <>
+            <LeftSidebar
+              lastReadTimestamps={lastReadTimestamps}
+              onToggleUnread={onToggleUnread}
+              collapsed={sidebarCollapsed}
+              onToggleCollapsed={handleToggleSidebar}
+              sortedWorkspacesByProject={sortedWorkspacesByProject}
+              workspaceRecency={workspaceRecency}
+            />
+            <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
+              <WindowsToolchainBanner />
+              <RosettaBanner />
+              <div className="mobile-layout flex flex-1 overflow-hidden">
+                {selectedWorkspace ? (
+                  (() => {
+                    const currentMetadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
+                    // Guard: Don't render AIView if workspace metadata not found.
+                    // This can happen when selectedWorkspace (from localStorage) refers to a
+                    // deleted workspace, or during a race condition on reload before the
+                    // validation effect clears the stale selection.
+                    if (!currentMetadata) {
+                      return null;
+                    }
+                    // Use metadata.name for workspace name (works for both worktree and local runtimes)
+                    // Fallback to path-based derivation for legacy compatibility
+                    const workspaceName =
+                      currentMetadata.name ??
+                      selectedWorkspace.namedWorkspacePath?.split("/").pop() ??
+                      selectedWorkspace.workspaceId;
+                    // Use live metadata path (updates on rename) with fallback to initial path
+                    const workspacePath =
+                      currentMetadata.namedWorkspacePath ??
+                      selectedWorkspace.namedWorkspacePath ??
+                      "";
+                    return (
+                      <ErrorBoundary
+                        workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
+                      >
+                        <AIView
+                          workspaceId={selectedWorkspace.workspaceId}
+                          projectPath={selectedWorkspace.projectPath}
+                          projectName={selectedWorkspace.projectName}
+                          leftSidebarCollapsed={sidebarCollapsed}
+                          onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                          workspaceName={workspaceName}
+                          namedWorkspacePath={workspacePath}
+                          runtimeConfig={currentMetadata.runtimeConfig}
+                          incompatibleRuntime={currentMetadata.incompatibleRuntime}
+                          status={currentMetadata.status}
+                        />
+                      </ErrorBoundary>
+                    );
+                  })()
+                ) : creationProjectPath ? (
+                  (() => {
+                    const projectPath = creationProjectPath;
+                    const projectName =
+                      projectPath.split("/").pop() ?? projectPath.split("\\").pop() ?? "Project";
+                    return (
+                      <ProjectPage
+                        projectPath={projectPath}
+                        projectName={projectName}
+                        leftSidebarCollapsed={sidebarCollapsed}
+                        onToggleLeftSidebarCollapsed={handleToggleSidebar}
+                        pendingSectionId={pendingNewWorkspaceSectionId}
+                        onProviderConfig={handleProviderConfig}
+                        onWorkspaceCreated={(metadata) => {
+                          // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
+                          // the store knows about it before React processes the state updates.
+                          // This prevents race conditions where the UI tries to access the
+                          // workspace before the store has created its aggregator.
+                          workspaceStore.addWorkspace(metadata);
 
-                      // Add to workspace metadata map (triggers React state update)
-                      setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
+                          // Add to workspace metadata map (triggers React state update)
+                          setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
-                      // Only switch to new workspace if user hasn't selected another one
-                      // during the creation process (selectedWorkspace was null when creation started)
-                      setSelectedWorkspace((current) => {
-                        if (current !== null) {
-                          // User has already selected another workspace - don't override
-                          return current;
-                        }
-                        return toWorkspaceSelection(metadata);
-                      });
+                          // Only switch to new workspace if user hasn't selected another one
+                          // during the creation process (selectedWorkspace was null when creation started)
+                          setSelectedWorkspace((current) => {
+                            if (current !== null) {
+                              // User has already selected another workspace - don't override
+                              return current;
+                            }
+                            return toWorkspaceSelection(metadata);
+                          });
 
-                      // Track telemetry
-                      telemetry.workspaceCreated(
-                        metadata.id,
-                        getRuntimeTypeForTelemetry(metadata.runtimeConfig)
-                      );
+                          // Track telemetry
+                          telemetry.workspaceCreated(
+                            metadata.id,
+                            getRuntimeTypeForTelemetry(metadata.runtimeConfig)
+                          );
 
-                      // Note: No need to call clearPendingWorkspaceCreation() here.
-                      // Navigating to the workspace URL automatically clears the pending
-                      // state since pendingNewWorkspaceProject is derived from the URL.
-                    }}
-                  />
-                );
-              })()
-            ) : (
-              <div className="bg-dark flex flex-1 flex-col overflow-hidden">
-                <div
-                  className={cn(
-                    "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
-                    isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
-                  )}
-                >
-                  {sidebarCollapsed && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={handleToggleSidebar}
-                      title="Open sidebar"
-                      aria-label="Open sidebar menu"
+                          // Note: No need to call clearPendingWorkspaceCreation() here.
+                          // Navigating to the workspace URL automatically clears the pending
+                          // state since pendingNewWorkspaceProject is derived from the URL.
+                        }}
+                      />
+                    );
+                  })()
+                ) : (
+                  <div className="bg-dark flex flex-1 flex-col overflow-hidden">
+                    <div
                       className={cn(
-                        "mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0",
-                        isDesktopMode() && "titlebar-no-drag"
+                        "bg-sidebar border-border-light flex shrink-0 items-center border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:py-2",
+                        isDesktopMode() ? "h-10 titlebar-drag" : "h-8"
                       )}
                     >
-                      <Menu className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-                <div
-                  className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl flex-1 text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
-                  style={{
-                    padding: "clamp(40px, 10vh, 100px) 20px",
-                    fontSize: "clamp(14px, 2vw, 16px)",
-                  }}
-                >
-                  <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                    Welcome to Mux
-                  </h2>
-                  <p>Add a project from the sidebar to get started.</p>
-                </div>
+                      {sidebarCollapsed && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleToggleSidebar}
+                          title="Open sidebar"
+                          aria-label="Open sidebar menu"
+                          className={cn(
+                            "mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0",
+                            isDesktopMode() && "titlebar-no-drag"
+                          )}
+                        >
+                          <Menu className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                    <div
+                      className="[&_p]:text-muted [&_h2]:text-foreground mx-auto w-full max-w-3xl flex-1 text-center [&_h2]:mb-4 [&_h2]:font-bold [&_h2]:tracking-tight [&_p]:leading-[1.6]"
+                      style={{
+                        padding: "clamp(40px, 10vh, 100px) 20px",
+                        fontSize: "clamp(14px, 2vw, 16px)",
+                      }}
+                    >
+                      <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
+                        Welcome to Mux
+                      </h2>
+                      <p>Add a project from the sidebar to get started.</p>
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+          </>
+        )}
         <CommandPalette
           getSlashContext={() => ({
             providerNames: [],

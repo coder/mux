@@ -374,6 +374,23 @@ export const RIGHT_SIDEBAR_COLLAPSED_KEY = "right-sidebar:collapsed";
 export const RIGHT_SIDEBAR_WIDTH_KEY = "right-sidebar:width";
 
 /**
+ * Window-level dock layout (global).
+ * Stores a split+tabset layout tree for arranging nav + multiple workspace panes.
+ *
+ * Format: "dock-layout:window"
+ */
+export const WINDOW_DOCK_LAYOUT_KEY = "dock-layout:window";
+
+/**
+ * Per-workspace dock layout (workspace internal panes).
+ *
+ * Format: "dock-layout:workspace:{workspaceId}"
+ */
+export function getWorkspaceDockLayoutKey(workspaceId: string): string {
+  return `dock-layout:workspace:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for right sidebar dock-lite layout per workspace.
  * Each workspace can have its own split/tab configuration (e.g., different
  * numbers of terminals). Width and collapsed state remain global.
