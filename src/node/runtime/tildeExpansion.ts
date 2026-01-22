@@ -46,7 +46,8 @@ export function expandTilde(filePath: string): string {
 
     const muxHome = getMuxHome();
     const suffix = filePath.slice(prefix.length).replace(/^[/\\]+/, "");
-    return suffix ? path.join(muxHome, suffix) : muxHome;
+    const normalizedSuffix = suffix.replace(/[/\\]+/g, path.sep);
+    return normalizedSuffix ? path.join(muxHome, normalizedSuffix) : muxHome;
   }
 
   return PlatformPaths.expandHome(filePath);

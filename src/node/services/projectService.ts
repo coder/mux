@@ -21,7 +21,6 @@ import { log } from "@/node/services/log";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
-import * as os from "os";
 import { getMuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 
@@ -34,8 +33,8 @@ import { expandTilde } from "@/node/runtime/tildeExpansion";
 async function listDirectory(requestedPath: string): Promise<FileTreeNode> {
   // Expand ~ to home directory (path.resolve doesn't handle tilde)
   const expanded =
-    requestedPath === "~" || requestedPath.startsWith("~/")
-      ? requestedPath.replace("~", os.homedir())
+    requestedPath === "~" || requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+      ? expandTilde(requestedPath)
       : requestedPath;
   const normalizedRoot = path.resolve(expanded || ".");
   const entries = await fsPromises.readdir(normalizedRoot, { withFileTypes: true });
@@ -106,7 +105,11 @@ export class ProjectService {
       if (isBareProjectName) {
         // Bare project name - put in default projects directory
         normalizedPath = path.join(getMuxProjectsDir(), projectPath);
-      } else if (projectPath === "~" || projectPath.startsWith("~/")) {
+      } else if (
+        projectPath === "~" ||
+        projectPath.startsWith("~/") ||
+        projectPath.startsWith("~\\")
+      ) {
         // Tilde expansion - uses expandTilde to respect MUX_ROOT for ~/.mux paths
         normalizedPath = path.resolve(expandTilde(projectPath));
       } else {
@@ -351,8 +354,8 @@ export class ProjectService {
     try {
       // Expand ~ to home directory
       const expanded =
-        requestedPath === "~" || requestedPath.startsWith("~/")
-          ? requestedPath.replace("~", os.homedir())
+        requestedPath === "~" || requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+          ? expandTilde(requestedPath)
           : requestedPath;
       const normalizedPath = path.resolve(expanded);
 

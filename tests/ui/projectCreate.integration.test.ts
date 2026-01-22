@@ -104,6 +104,23 @@ describeIntegration("Project Creation", () => {
     expect(fs.existsSync(result.data.normalizedPath)).toBe(true);
   }, 30_000);
 
+  test("windows-style tilde paths expand correctly", async () => {
+    const tildeSubpath = `test-tilde-windows-${Date.now()}`;
+    const tildePath = `~\\.mux\\test-projects\\${tildeSubpath}`;
+
+    const result = await env.orpc.projects.create({ projectPath: tildePath });
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+
+    const expectedPath = path.join(getMuxHome(), "test-projects", tildeSubpath);
+    expect(result.data.normalizedPath).toBe(expectedPath);
+
+    createdProjectPaths.push(result.data.normalizedPath);
+
+    expect(fs.existsSync(result.data.normalizedPath)).toBe(true);
+  }, 30_000);
+
   test("duplicate project path returns error", async () => {
     const bareName = `test-dup-${Date.now()}`;
 
