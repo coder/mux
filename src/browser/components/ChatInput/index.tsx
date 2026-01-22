@@ -1440,6 +1440,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 muxMetadata: {
                   type: "agent-skill",
                   rawCommand: messageText,
+                  commandPrefix: `/${skill.name}`,
                   skillName: skill.name,
                   scope: skill.scope,
                 },
@@ -1866,6 +1867,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 ? {
                     type: "agent-skill",
                     rawCommand: messageText,
+                    commandPrefix: `/${skillInvocation.descriptor.name}`,
                     skillName: skillInvocation.descriptor.name,
                     scope: skillInvocation.descriptor.scope,
                   }
@@ -1931,6 +1933,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ? {
               type: "agent-skill",
               rawCommand: messageText,
+              commandPrefix: `/${skillInvocation.descriptor.name}`,
               skillName: skillInvocation.descriptor.name,
               scope: skillInvocation.descriptor.scope,
             }

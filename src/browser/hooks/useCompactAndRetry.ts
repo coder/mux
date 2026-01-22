@@ -4,7 +4,6 @@ import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
-  buildCompactionEditText,
   formatCompactionCommandLine,
   getCompactionContinueText,
 } from "@/browser/utils/compaction/format";
@@ -17,7 +16,11 @@ import { executeCompaction } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import type { ImagePart, ProvidersConfigMap } from "@/common/orpc/types";
-import { buildContinueMessage, type DisplayedMessage } from "@/common/types/message";
+import {
+  buildContinueMessage,
+  type DisplayedMessage,
+  type MuxFrontendMetadata,
+} from "@/common/types/message";
 
 interface CompactAndRetryState {
   showCompactionUI: boolean;
@@ -198,21 +201,14 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         if (!result.success) {
           console.error("Failed to retry compaction:", result.error);
 
-          const rawCommand = formatCompactionCommandLine({
+          const slashCommand = formatCompactionCommandLine({
             model: compactionSuggestion.modelArg,
             maxOutputTokens,
           });
 
-          const fallbackText = buildCompactionEditText({
-            rawCommand,
-            parsed: {
-              model: compactionSuggestion.modelArg,
-              maxOutputTokens,
-              continueMessage,
-            },
-          });
-
-          const shouldAppendNewline = !getCompactionContinueText(continueMessage);
+          const continueText = getCompactionContinueText(continueMessage);
+          const fallbackText = continueText ? `${slashCommand}\n${continueText}` : slashCommand;
+          const shouldAppendNewline = !continueText;
 
           insertIntoChatInput(
             fallbackText + (shouldAppendNewline ? "\n" : ""),
@@ -223,10 +219,21 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         return;
       }
 
+      // Preserve skill invocation metadata through compaction so retry re-invokes the skill
+      const muxMetadata: MuxFrontendMetadata | undefined = source.agentSkill
+        ? {
+            type: "agent-skill",
+            rawCommand: source.content,
+            skillName: source.agentSkill.skillName,
+            scope: source.agentSkill.scope,
+          }
+        : undefined;
+
       const continueMessage = buildContinueMessage({
         text: source.content,
         imageParts: source.imageParts,
         reviews: source.reviews,
+        muxMetadata,
         model: sendMessageOptions.model,
         agentId: sendMessageOptions.agentId ?? "exec",
       });

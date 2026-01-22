@@ -24,7 +24,10 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
-import { formatCompactionCommandLine } from "@/browser/utils/compaction/format";
+import {
+  formatCompactionCommandLine,
+  getCompactionContinueText,
+} from "@/browser/utils/compaction/format";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import {
   resolveCompactionModel,
@@ -658,6 +661,10 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   const effectiveModel = resolveCompactionModel(options.model);
 
   // continueMessage is already built by caller via buildContinueMessage() - just pass it through
+  const commandLine = formatCompactionCommandLine(options);
+  const continueText = getCompactionContinueText(cm);
+  const fullRawCommand = continueText ? `${commandLine}\n${continueText}` : commandLine;
+
   const compactData: CompactionRequestData = {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
@@ -666,7 +673,8 @@ export function prepareCompactionMessage(options: CompactionOptions): {
 
   const metadata: MuxFrontendMetadata = {
     type: "compaction-request",
-    rawCommand: formatCompactionCommandLine(options),
+    rawCommand: fullRawCommand,
+    commandPrefix: commandLine,
     parsed: compactData,
     ...(options.source === "idle-compaction" && {
       source: options.source,

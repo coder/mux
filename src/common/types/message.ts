@@ -184,6 +184,8 @@ export function prepareUserMessageForSend(
 interface MuxFrontendMetadataBase {
   /** Structured review data for rich UI display (orthogonal to message type) */
   reviews?: ReviewNoteDataForDisplay[];
+  /** Command prefix to highlight in UI (e.g., "/compact -m sonnet" or "/react-effects") */
+  commandPrefix?: string;
 }
 
 /** Status to display in sidebar during background operations */
@@ -322,13 +324,22 @@ export type DisplayedMessage =
       id: string; // Display ID for UI/React keys
       historyId: string; // Original MuxMessage ID for history operations
       content: string;
+      /**
+       * Command prefix to highlight in the UI (e.g. "/compact -m sonnet" or "/react-effects").
+       * Only set when a slash command was processed.
+       */
+      commandPrefix?: string;
       imageParts?: ImagePart[]; // Optional image attachments
       historySequence: number; // Global ordering across all messages
       isSynthetic?: boolean;
       timestamp?: number;
+      /** Present when this message invoked an agent skill via /{skill-name} */
+      agentSkill?: {
+        skillName: string;
+        scope: AgentSkillScope;
+      };
+      /** Present when this message is a /compact command */
       compactionRequest?: {
-        // Present if this is a /compact command
-        rawCommand: string;
         parsed: CompactionRequestData;
       };
       /** Structured review data for rich UI display (from muxMetadata) */

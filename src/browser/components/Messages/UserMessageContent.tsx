@@ -1,4 +1,5 @@
 import React from "react";
+import escapeHtml from "escape-html";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { ImagePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
@@ -6,6 +7,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface UserMessageContentProps {
   content: string;
+  commandPrefix?: string;
   reviews?: ReviewNoteDataForDisplay[];
   imageParts?: ImagePart[];
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
@@ -47,6 +49,7 @@ const imageStyles = {
  */
 export const UserMessageContent: React.FC<UserMessageContentProps> = ({
   content,
+  commandPrefix,
   reviews,
   imageParts,
   variant,
@@ -58,6 +61,15 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
     ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
     : content;
 
+  const shouldHighlightPrefix =
+    commandPrefix && textContent.startsWith(commandPrefix) ? commandPrefix : undefined;
+
+  const renderedContent = shouldHighlightPrefix
+    ? `<code class="command-prefix">${escapeHtml(shouldHighlightPrefix)}</code>${textContent.slice(
+        shouldHighlightPrefix.length
+      )}`
+    : textContent;
+
   return (
     <>
       {hasReviews ? (
@@ -65,18 +77,18 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
           {reviews.map((review, idx) => (
             <ReviewBlockFromData key={idx} data={review} />
           ))}
-          {textContent && (
+          {renderedContent && (
             <MarkdownRenderer
-              content={textContent}
+              content={renderedContent}
               className={markdownClassName}
               style={markdownStyles[variant]}
             />
           )}
         </div>
       ) : (
-        content && (
+        renderedContent && (
           <MarkdownRenderer
-            content={content}
+            content={renderedContent}
             className={markdownClassName}
             style={markdownStyles[variant]}
           />

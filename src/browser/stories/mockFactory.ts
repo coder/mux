@@ -11,6 +11,7 @@ import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { WorkspaceChatMessage, ChatMuxMessage } from "@/common/orpc/types";
 import type {
+  MuxFrontendMetadata,
   MuxTextPart,
   MuxReasoningPart,
   MuxImagePart,
@@ -167,7 +168,12 @@ export function groupWorkspacesByProject(
 export function createUserMessage(
   id: string,
   text: string,
-  opts: { historySequence: number; timestamp?: number; images?: string[] }
+  opts: {
+    historySequence: number;
+    timestamp?: number;
+    images?: string[];
+    muxMetadata?: MuxFrontendMetadata;
+  }
 ): ChatMuxMessage {
   const parts: MuxPart[] = [{ type: "text", text }];
   if (opts.images) {
@@ -183,6 +189,7 @@ export function createUserMessage(
     metadata: {
       historySequence: opts.historySequence,
       timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
+      muxMetadata: opts.muxMetadata,
     },
   };
 }
