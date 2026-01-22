@@ -80,12 +80,17 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
   const renderTextContent = () => {
     if (!remainingContent && !shouldHighlightPrefix) return null;
 
+    // When highlighting prefix, check if there was a space after it
+    const hasSpaceAfterPrefix =
+      shouldHighlightPrefix && textContent.charAt(shouldHighlightPrefix.length) === " ";
+
     return (
       <div className="flex flex-wrap items-baseline">
         {shouldHighlightPrefix && <CommandPrefixBadge prefix={shouldHighlightPrefix} />}
-        {remainingContent && (
+        {shouldHighlightPrefix && hasSpaceAfterPrefix && <span>&nbsp;</span>}
+        {remainingContent.trim() && (
           <MarkdownRenderer
-            content={remainingContent}
+            content={remainingContent.trim()}
             className={markdownClassName}
             style={markdownStyles[variant]}
           />
