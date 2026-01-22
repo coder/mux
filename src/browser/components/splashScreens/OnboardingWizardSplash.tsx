@@ -18,7 +18,10 @@ import {
   SSHIcon,
   WorktreeIcon,
 } from "@/browser/components/icons/RuntimeIcons";
-import { ProjectCreateForm } from "@/browser/components/ProjectCreateModal";
+import {
+  ProjectCreateForm,
+  type ProjectCreateFormHandle,
+} from "@/browser/components/ProjectCreateModal";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { Button } from "@/browser/components/ui/button";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -182,6 +185,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const { open: openSettings } = useSettings();
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const { addProject, projects } = useProjectContext();
+
+  const projectCreateFormRef = useRef<ProjectCreateFormHandle | null>(null);
+  const [isProjectCreating, setIsProjectCreating] = useState(false);
 
   const [direction, setDirection] = useState<Direction>("forward");
 
@@ -656,8 +662,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       body: (
         <>
           <p>
-            Projects are the folders you want Mux to work in. Add one now to start creating
-            workspaces.
+            Projects are the folders you want Mux to work in. Choose one now, then click Next to add
+            it.
           </p>
 
           {projects.size > 0 ? (
@@ -672,7 +678,10 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
           <div className="mt-3">
             <ProjectCreateForm
+              ref={projectCreateFormRef}
               autoFocus={projects.size === 0}
+              hideFooter
+              onIsCreatingChange={setIsProjectCreating}
               onSuccess={(normalizedPath, projectConfig) => {
                 addProject(normalizedPath, projectConfig);
                 updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
@@ -681,6 +690,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               }}
             />
           </div>
+
+          <p className="mt-2 text-xs">
+            {projects.size > 0
+              ? "Pick another folder to add, or leave this blank and click Next to continue."
+              : "Click Next to add the project."}
+          </p>
         </>
       ),
     });
@@ -869,7 +884,11 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     setStepIndex((i) => Math.min(totalSteps - 1, i + 1));
   };
 
+  const isProjectStep = currentStep.key === "projects";
+
   const primaryLabel = isLoading ? "Next" : canGoForward ? "Next" : "Done";
+  const primaryButtonLabel = isProjectStep && isProjectCreating ? "Adding..." : primaryLabel;
+  const primaryDisabled = isLoading || (isProjectStep && isProjectCreating);
 
   return (
     <SplashScreen
@@ -895,7 +914,24 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
             <Button
               className="min-w-24"
               onClick={() => {
-                if (isLoading) {
+                if (primaryDisabled) {
+                  return;
+                }
+
+                if (isProjectStep) {
+                  const form = projectCreateFormRef.current;
+                  if (!form) {
+                    goForward();
+                    return;
+                  }
+
+                  const trimmedPath = form.getTrimmedPath();
+                  if (!trimmedPath && projects.size > 0) {
+                    goForward();
+                    return;
+                  }
+
+                  void form.submit();
                   return;
                 }
 
@@ -906,9 +942,9 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
 
                 props.onDismiss();
               }}
-              disabled={isLoading}
+              disabled={primaryDisabled}
             >
-              {primaryLabel}
+              {primaryButtonLabel}
             </Button>
 
             <Button variant="secondary" onClick={props.onDismiss} className="min-w-24">
