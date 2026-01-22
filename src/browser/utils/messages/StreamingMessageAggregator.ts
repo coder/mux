@@ -40,6 +40,7 @@ import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalcu
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
+import { getCompactionContinueText } from "@/browser/utils/compaction/format";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -1774,7 +1775,10 @@ export class StreamingMessageAggregator {
       // The continue payload was stored separately in parsed.continueMessage.
       // Reconstruct the full content to preserve backward compatibility.
       if (rawCommand && compactionRequest?.parsed.continueMessage && !rawCommand.includes("\n")) {
-        rawCommand = `${rawCommand}\n${compactionRequest.parsed.continueMessage}`;
+        const continueText = getCompactionContinueText(compactionRequest.parsed.continueMessage);
+        if (continueText) {
+          rawCommand = `${rawCommand}\n${continueText}`;
+        }
       }
 
       // Content is rawCommand (what user typed) or parts (normal message)
