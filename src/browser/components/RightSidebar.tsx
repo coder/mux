@@ -756,6 +756,10 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             if (sessionId) {
               setAutoFocusTerminalSession(sessionId);
             }
+          } else if (target?.tab === "review") {
+            // Review panel keyboard navigation (j/k) is gated on focus. If the user explicitly
+            // opened the tab via shortcut, focus the panel so it works immediately.
+            _setFocusTrigger((prev) => prev + 1);
           }
 
           setLayout((prev) => selectTabByIndex(prev, i));
@@ -767,7 +771,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout]);
+  }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout, _setFocusTrigger]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
