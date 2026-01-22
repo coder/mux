@@ -23,6 +23,7 @@ import {
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getModelKey } from "@/common/constants/storage";
+import { waitForChatMessagesLoaded } from "./storyPlayHelpers.js";
 import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { warmHashCache, setShareData } from "@/browser/utils/sharedUrlCache";
@@ -1534,14 +1535,28 @@ export const TodoWriteWithLongTodos: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    const messageWindow = canvasElement.querySelector<HTMLElement>(
-      '[data-testid="message-window"]'
-    );
-    if (!messageWindow) throw new Error("Message window not found");
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatMessagesLoaded(storyRoot);
+
+    const messageWindow = storyRoot.querySelector('[data-testid="message-window"]');
+    if (!(messageWindow instanceof HTMLElement)) {
+      throw new Error("Message window not found");
+    }
 
     // Expand the tool call (TodoToolCall is collapsed by default).
     const canvas = within(messageWindow);
-    await userEvent.click(canvas.getAllByText("▶")[0]);
+
+    if (!canvas.queryByText(/Create British-themed layout \(HTML\)/)) {
+      // Wait for the tool header expand icon to appear.
+      await waitFor(
+        () => {
+          canvas.getAllByText("▶");
+        },
+        { timeout: 8000 }
+      );
+
+      await userEvent.click(canvas.getAllByText("▶")[0]);
+    }
 
     // Verify that todo content rows are using truncation.
     await waitFor(
