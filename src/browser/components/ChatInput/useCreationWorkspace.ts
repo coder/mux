@@ -6,7 +6,7 @@ import type {
   ParsedRuntime,
   RuntimeAvailabilityStatus,
 } from "@/common/types/runtime";
-import { buildRuntimeConfig, RUNTIME_MODE, getDevcontainerConfigs } from "@/common/types/runtime";
+import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -29,8 +29,7 @@ import {
   type WorkspaceNameState,
   type WorkspaceIdentity,
 } from "@/browser/hooks/useWorkspaceName";
-
-export const DEFAULT_DEVCONTAINER_CONFIG_PATH = ".devcontainer/devcontainer.json";
+import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -125,37 +124,6 @@ export type RuntimeAvailabilityState =
   | { status: "loading" }
   | { status: "failed" }
   | { status: "loaded"; data: RuntimeAvailabilityMap };
-
-function resolveDevcontainerConfigPath(
-  selectedRuntime: ParsedRuntime,
-  availabilityState: RuntimeAvailabilityState
-): string | null {
-  if (selectedRuntime.mode !== RUNTIME_MODE.DEVCONTAINER) {
-    return null;
-  }
-
-  const selectedPath = selectedRuntime.configPath.trim();
-  const availability = availabilityState.status === "loaded" ? availabilityState.data : null;
-  const configs = availability?.devcontainer
-    ? getDevcontainerConfigs(availability.devcontainer)
-    : [];
-
-  if (configs.length === 0) {
-    if (selectedPath.length > 0) {
-      return selectedPath;
-    }
-    if (availabilityState.status !== "loaded") {
-      return DEFAULT_DEVCONTAINER_CONFIG_PATH;
-    }
-    return selectedPath;
-  }
-
-  if (selectedPath.length > 0 && configs.some((config) => config.path === selectedPath)) {
-    return selectedPath;
-  }
-
-  return configs[0].path;
-}
 
 /**
  * Hook for managing workspace creation state and logic
@@ -266,11 +234,12 @@ export function useCreationWorkspace({
       let runtimeSelection = settings.selectedRuntime;
 
       if (runtimeSelection.mode === RUNTIME_MODE.DEVCONTAINER) {
-        const resolvedPath = (
-          resolveDevcontainerConfigPath(runtimeSelection, runtimeAvailabilityState) ?? ""
-        ).trim();
+        const devcontainerSelection = resolveDevcontainerSelection({
+          selectedRuntime: runtimeSelection,
+          availabilityState: runtimeAvailabilityState,
+        });
 
-        if (!resolvedPath) {
+        if (!devcontainerSelection.isCreatable) {
           setToast({
             id: Date.now().toString(),
             type: "error",
@@ -280,10 +249,10 @@ export function useCreationWorkspace({
         }
 
         // Update selection with resolved config if different (persist the resolved value)
-        if (resolvedPath !== runtimeSelection.configPath) {
+        if (devcontainerSelection.configPath !== runtimeSelection.configPath) {
           runtimeSelection = {
             ...runtimeSelection,
-            configPath: resolvedPath,
+            configPath: devcontainerSelection.configPath,
           };
           setSelectedRuntime(runtimeSelection);
         }

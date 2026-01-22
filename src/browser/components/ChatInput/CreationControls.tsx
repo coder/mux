@@ -1,14 +1,10 @@
 import React, { useCallback, useEffect } from "react";
+import { RUNTIME_MODE, type RuntimeMode, type ParsedRuntime } from "@/common/types/runtime";
+import { type RuntimeAvailabilityState } from "./useCreationWorkspace";
 import {
-  RUNTIME_MODE,
-  type RuntimeMode,
-  type ParsedRuntime,
-  getDevcontainerConfigs,
-} from "@/common/types/runtime";
-import {
+  resolveDevcontainerSelection,
   DEFAULT_DEVCONTAINER_CONFIG_PATH,
-  type RuntimeAvailabilityState,
-} from "./useCreationWorkspace";
+} from "@/browser/utils/devcontainerSelection";
 import { Select } from "../Select";
 import {
   Select as RadixSelect,
@@ -251,30 +247,22 @@ export function CreationControls(props: CreationControlsProps) {
 
   // Extract mode from discriminated union for convenience
   const runtimeMode = props.selectedRuntime.mode;
+  const { selectedRuntime, onSelectedRuntimeChange } = props;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
-
   const availabilityMap =
     runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
   const showTrunkBranchSelector = props.branches.length > 0 && runtimeMode !== RUNTIME_MODE.LOCAL;
 
+  // Centralized devcontainer selection logic
+  const devcontainerSelection = resolveDevcontainerSelection({
+    selectedRuntime,
+    availabilityState: runtimeAvailabilityState,
+  });
+
   const isDevcontainerMissing =
     availabilityMap?.devcontainer?.available === false &&
     availabilityMap.devcontainer.reason === "No devcontainer.json found";
-
-  const devcontainerConfigs = availabilityMap?.devcontainer
-    ? getDevcontainerConfigs(availabilityMap.devcontainer)
-    : [];
-  const { selectedRuntime, onSelectedRuntimeChange } = props;
-
-  const showDevcontainerConfigFallback =
-    selectedRuntime.mode === "devcontainer" &&
-    devcontainerConfigs.length === 0 &&
-    runtimeAvailabilityState.status !== "loaded";
-
-  const showDevcontainerControls =
-    selectedRuntime.mode === "devcontainer" &&
-    (devcontainerConfigs.length > 0 || showDevcontainerConfigFallback);
 
   // Check if git is required (worktree unavailable due to git or no branches)
   const isNonGitRepo =
@@ -456,19 +444,25 @@ export function CreationControls(props: CreationControlsProps) {
                     image: selectedRuntime.mode === "docker" ? selectedRuntime.image : "",
                   });
                   break;
-                case RUNTIME_MODE.DEVCONTAINER:
+                case RUNTIME_MODE.DEVCONTAINER: {
+                  // Use resolver to get initial config path (prefers first available config)
+                  const initialSelection = resolveDevcontainerSelection({
+                    selectedRuntime: { mode: "devcontainer", configPath: "" },
+                    availabilityState: runtimeAvailabilityState,
+                  });
                   onSelectedRuntimeChange({
                     mode: "devcontainer",
                     configPath:
                       selectedRuntime.mode === "devcontainer"
                         ? selectedRuntime.configPath
-                        : (devcontainerConfigs[0]?.path ?? ""),
+                        : initialSelection.configPath,
                     shareCredentials:
                       selectedRuntime.mode === "devcontainer"
                         ? selectedRuntime.shareCredentials
                         : false,
                   });
                   break;
+                }
                 case RUNTIME_MODE.LOCAL:
                   onSelectedRuntimeChange({ mode: "local" });
                   break;
@@ -553,14 +547,14 @@ export function CreationControls(props: CreationControlsProps) {
           )}
         </div>
 
-        {/* Dev container controls - config dropdown + credential sharing in bordered box */}
-        {showDevcontainerControls && (
+        {/* Dev container controls - config dropdown/input + credential sharing */}
+        {selectedRuntime.mode === "devcontainer" && devcontainerSelection.uiMode !== "hidden" && (
           <div className="border-border-medium flex w-fit flex-col gap-1.5 rounded-md border p-2">
             <div className="flex flex-col gap-1">
               <label className="text-muted-foreground text-xs">Config</label>
-              {devcontainerConfigs.length > 0 ? (
+              {devcontainerSelection.uiMode === "dropdown" ? (
                 <RadixSelect
-                  value={selectedRuntime.configPath}
+                  value={devcontainerSelection.configPath}
                   onValueChange={(value) =>
                     onSelectedRuntimeChange({
                       mode: "devcontainer",
@@ -577,7 +571,7 @@ export function CreationControls(props: CreationControlsProps) {
                     <SelectValue placeholder="Select config" />
                   </SelectTrigger>
                   <SelectContent>
-                    {devcontainerConfigs.map((config) => (
+                    {devcontainerSelection.configs.map((config) => (
                       <SelectItem key={config.path} value={config.path}>
                         {config.label}
                       </SelectItem>
@@ -587,7 +581,7 @@ export function CreationControls(props: CreationControlsProps) {
               ) : (
                 <input
                   type="text"
-                  value={selectedRuntime.configPath}
+                  value={devcontainerSelection.configPath}
                   onChange={(e) =>
                     onSelectedRuntimeChange({
                       mode: "devcontainer",
@@ -604,10 +598,8 @@ export function CreationControls(props: CreationControlsProps) {
                 />
               )}
             </div>
-            {showDevcontainerConfigFallback && runtimeAvailabilityState.status === "failed" && (
-              <p className="text-muted-foreground text-xs">
-                Configs couldn't be loaded. Enter a path to continue.
-              </p>
+            {devcontainerSelection.helperText && (
+              <p className="text-muted-foreground text-xs">{devcontainerSelection.helperText}</p>
             )}
             <label className="flex items-center gap-1.5 text-xs">
               <input
@@ -616,7 +608,7 @@ export function CreationControls(props: CreationControlsProps) {
                 onChange={(e) =>
                   onSelectedRuntimeChange({
                     mode: "devcontainer",
-                    configPath: selectedRuntime.configPath,
+                    configPath: devcontainerSelection.configPath,
                     shareCredentials: e.target.checked,
                   })
                 }

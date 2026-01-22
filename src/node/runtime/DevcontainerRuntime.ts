@@ -641,8 +641,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     if (this.hasUnexpandedTilde(expanded)) {
       await this.fetchRemoteHome();
       if (this.remoteHomeDir) {
-        expanded =
-          filePath === "~" ? this.remoteHomeDir : this.remoteHomeDir + filePath.slice(1);
+        expanded = filePath === "~" ? this.remoteHomeDir : this.remoteHomeDir + filePath.slice(1);
       } else {
         throw new RuntimeError(
           `Failed to resolve path ${filePath}: container home directory unavailable`,

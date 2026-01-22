@@ -29,9 +29,7 @@ describe("DevcontainerRuntime.resolvePath", () => {
 
   it("throws when home is unknown", async () => {
     const runtime = createRuntime({});
-    await expect(runtime.resolvePath("~")).rejects.toThrow(
-      "container home directory unavailable"
-    );
+    await expect(runtime.resolvePath("~")).rejects.toThrow("container home directory unavailable");
   });
 
   it("resolves ~/path to cached remoteHomeDir", async () => {
