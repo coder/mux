@@ -183,7 +183,102 @@ The PR will be automatically validated by the leaderboard bot. Once merged, resu
 - `mux_payload.py`: Helper to package mux app for containerized execution
 - `mux_setup.sh.j2`: Jinja2 template for agent installation script
 - `prepare_leaderboard_submission.py`: Script to prepare results for leaderboard submission
-- `analyze_failure_rates.py`: Analyze failure rates to find optimization opportunities (see below)
+- `analyze_failure_rates.py`: Analyze failure rates to find optimization opportunities
+- `download_run_logs.py`: Download and inspect raw agent logs from nightly runs
+
+## Comparative Failure Analysis Workflow
+
+When investigating why Mux fails on a task more than other agents, follow this workflow:
+
+### 1. Identify High-Priority Failures
+
+```bash
+# Find tasks where Mux underperforms (high M/O ratio = Mux fails more than others)
+python benchmarks/terminal_bench/analyze_failure_rates.py --top 20
+```
+
+Focus on tasks with **M/O ratio > 2.0** — these fail for Mux at least twice as often as competitors.
+
+### 2. Check BigQuery for Failure Patterns
+
+```bash
+# Authenticate and set project
+gcloud auth login && gcloud config set project mux-benchmarks
+
+# Query pass/fail by model for specific task (strip __hash suffix mentally)
+bq query --use_legacy_sql=false '
+SELECT model_name, passed, COUNT(*) as runs
+FROM `mux-benchmarks.benchmarks.tbench_results`
+WHERE REGEXP_REPLACE(task_id, r"__[a-zA-Z0-9]+$", "") = "TASK_NAME_HERE"
+  AND github_workflow = "Nightly Terminal-Bench"
+  AND passed IS NOT NULL
+GROUP BY model_name, passed
+ORDER BY model_name, passed
+'
+```
+
+Look for patterns: Does one model fail consistently while others pass? Is it all models?
+
+### 3. Download and Inspect Agent Logs
+
+```bash
+# List recent nightly runs
+python benchmarks/terminal_bench/download_run_logs.py --list-runs
+
+# Download latest run and filter to failing task
+python benchmarks/terminal_bench/download_run_logs.py --task TASK_NAME --failures-only
+
+# Download specific run, filter to specific model
+python benchmarks/terminal_bench/download_run_logs.py --run-id 21230456195 --model opus --task TASK_NAME
+
+# Verbose mode shows stderr from agent execution
+python benchmarks/terminal_bench/download_run_logs.py --task TASK_NAME -v
+```
+
+Logs are cached in `.run_logs/<run-id>/`. Inspect:
+- `agent/command-0/stdout.txt` — Full agent output (JSONL stream)
+- `agent/command-0/stderr.txt` — Errors during execution
+- `result.json` — Trial result with `verifier_result` and `exception_info`
+
+### 4. Compare with Leaderboard Submissions
+
+```bash
+# Clone leaderboard repo (cached in .leaderboard_cache/)
+cd benchmarks/terminal_bench
+git clone https://github.com/alexgshaw/terminal-bench-2-leaderboard .leaderboard_cache/terminal-bench-2-leaderboard 2>/dev/null
+
+# Find passing submissions for the task
+find .leaderboard_cache -path "*TASK_NAME*" -name "result.json" -exec sh -c '
+  agent=$(echo "$1" | cut -d/ -f5)
+  reward=$(cat "$1" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"verifier_result\",{}).get(\"rewards\",{}).get(\"reward\",0))")
+  echo "$agent: reward=$reward"
+' _ {} \;
+```
+
+### 5. Root Cause Categories
+
+Common failure patterns to check:
+
+| Pattern | Symptoms | Fix Location |
+|---------|----------|--------------|
+| **Harness issue** | Task passes for others, fails 100% for all Mux models | `mux-run.sh` or `mux_agent.py` |
+| **Model-specific** | One model fails, others pass | Prompt/tool usage in agent |
+| **Timeout** | `exception_info` mentions timeout | Increase `TB_TIMEOUT` or optimize agent |
+| **Environment** | Missing deps, wrong Python version | Task's `setup.sh` or Docker image |
+| **Verifier mismatch** | Agent produces output but verifier rejects | Compare output format with passing agents |
+
+### 6. Document Findings
+
+After investigation, add a comment to the relevant issue or create one:
+
+```
+Task: TASK_NAME
+M/O Ratio: X.XX
+Models affected: [list]
+Root cause: [category from above]
+Evidence: [BQ query results, log snippets]
+Fix: [proposed change]
+```
 
 ## Analyzing Failure Rates
 
