@@ -102,6 +102,12 @@ export const ProviderConfigInfoSchema = z.object({
   /** Whether this provider is configured and ready to use */
   isConfigured: z.boolean(),
   baseUrl: z.string().optional(),
+  /** Azure Foundry resource name */
+  resource: z.string().optional(),
+  /** Azure OpenAI deployment name */
+  deployment: z.string().optional(),
+  /** Azure OpenAI API version */
+  apiVersion: z.string().optional(),
   models: z.array(z.string()).optional(),
   /** OpenAI-specific fields */
   serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),

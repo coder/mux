@@ -55,6 +55,9 @@ export class ProviderService {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
         baseUrl?: string;
+        resource?: string;
+        deployment?: string;
+        apiVersion?: string;
         models?: string[];
         serviceTier?: unknown;
         region?: string;
@@ -67,8 +70,15 @@ export class ProviderService {
         apiKeySet: !!config.apiKey,
         isConfigured: false, // computed below
         baseUrl: config.baseUrl,
+        resource: config.resource,
         models: config.models,
       };
+
+      // Azure OpenAI-specific fields
+      if (provider === "azure-openai") {
+        providerInfo.deployment = config.deployment;
+        providerInfo.apiVersion = config.apiVersion;
+      }
 
       // OpenAI-specific fields
       const serviceTier = config.serviceTier;

@@ -38,6 +38,18 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createAnthropic",
     requiresApiKey: true,
   },
+  "azure-foundry": {
+    displayName: "Azure Foundry",
+    import: () => import("@ai-sdk/anthropic"), // Uses Anthropic SDK with Azure baseURL
+    factoryName: "createAnthropic",
+    requiresApiKey: true,
+  },
+  "azure-openai": {
+    displayName: "Azure OpenAI",
+    import: () => import("@ai-sdk/azure"), // Uses Azure OpenAI SDK
+    factoryName: "createAzure",
+    requiresApiKey: true,
+  },
   openai: {
     displayName: "OpenAI",
     import: () => import("@ai-sdk/openai"),

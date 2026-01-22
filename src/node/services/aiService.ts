@@ -648,6 +648,94 @@ export class AIService extends EventEmitter {
         return Ok(provider(modelId));
       }
 
+      // Handle Azure Foundry provider (uses @ai-sdk/anthropic with Azure baseURL)
+      if (providerName === "azure-foundry") {
+        // Resolve credentials from config + env
+        const creds = resolveProviderCredentials("azure-foundry", providerConfig);
+        if (!creds.isConfigured || !creds.apiKey || !creds.resource) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+
+        // Build Azure Foundry baseURL from resource name
+        const baseURL = `https://${creds.resource}.services.ai.azure.com/anthropic/v1/`;
+        log.debug(`Azure Foundry baseURL: ${baseURL}`);
+
+        // Use @ai-sdk/anthropic with Azure baseURL - no special adapter needed
+        const { createAnthropic } = await import("@ai-sdk/anthropic");
+
+        // Wrap fetch to inject cache_control on tools and messages
+        // (SDK doesn't translate providerOptions to cache_control for these)
+        // Use getProviderFetch to preserve any user-configured custom fetch (e.g., proxies)
+        const baseFetch = getProviderFetch(providerConfig);
+        const fetchWithCacheControl = wrapFetchWithAnthropicCacheControl(baseFetch);
+        const provider = createAnthropic({
+          apiKey: creds.apiKey,
+          baseURL,
+          headers: providerConfig.headers,
+          fetch: fetchWithCacheControl,
+        });
+
+        return Ok(provider(modelId));
+      }
+
+      // Handle Azure OpenAI provider (uses @ai-sdk/azure)
+      if (providerName === "azure-openai") {
+        // Resolve credentials from config + env
+        const creds = resolveProviderCredentials("azure-openai", providerConfig);
+        if (!creds.isConfigured || !creds.apiKey || !creds.baseUrl) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+
+        let baseURL = creds.baseUrl;
+        // Remove trailing /openai or other path suffixes if present
+        baseURL = baseURL.replace(/\/openai.*$/, "");
+        // Ensure no trailing slash
+        baseURL = baseURL.replace(/\/$/, "");
+
+        log.debug(`Azure OpenAI baseURL: ${baseURL}`);
+
+        const { createAzure } = await import("@ai-sdk/azure");
+        const baseFetch = getProviderFetch(providerConfig);
+
+        // Use deployment name if provided, otherwise use the model ID directly
+        const deploymentOrModel = creds.deployment ?? modelId;
+
+        // Codex models use the Responses API (/openai/responses) with 2025-04-01-preview
+        // Other models (gpt-5.2) use deployment-based Chat Completions API
+        const isCodexModel = modelId.includes("codex");
+
+        if (isCodexModel) {
+          // Codex uses Responses API: /openai/responses?api-version=2025-04-01-preview
+          // Responses API requires api-version 2025-03-01-preview or later - force this version
+          // The SDK adds /v1/ to the path, but Azure expects no /v1/ prefix
+          // Use custom fetch to strip the /v1/ from the URL
+          const codexFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = typeof input === "string" ? input : input.toString();
+            const fixedUrl = url.replace("/v1/responses", "/responses");
+            return baseFetch(fixedUrl, init);
+          }) as typeof fetch;
+          const provider = createAzure({
+            apiKey: creds.apiKey,
+            baseURL: `${baseURL}/openai`,
+            // Force 2025-04-01-preview for Responses API - older versions not supported
+            apiVersion: "2025-04-01-preview",
+            fetch: codexFetch,
+          });
+          return Ok(provider.responses(deploymentOrModel));
+        } else {
+          // GPT models use deployment-based Chat Completions API
+          // Format: /openai/deployments/{deployment}/chat/completions?api-version={version}
+          const provider = createAzure({
+            apiKey: creds.apiKey,
+            baseURL: `${baseURL}/openai`,
+            apiVersion: creds.apiVersion ?? "2024-12-01-preview",
+            useDeploymentBasedUrls: true,
+            fetch: baseFetch,
+          });
+          return Ok(provider(deploymentOrModel));
+        }
+      }
+
       // Handle OpenAI provider (using Responses API)
       if (providerName === "openai") {
         // Resolve credentials from config + env (single source of truth)

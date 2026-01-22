@@ -16,16 +16,18 @@ Most providers only need an API key. The UI handles validation and shows which p
 
 ## Supported Providers
 
-| Provider       | Models                     | Get API Key                                             |
-| -------------- | -------------------------- | ------------------------------------------------------- |
-| **Anthropic**  | Claude Opus, Sonnet, Haiku | [console.anthropic.com](https://console.anthropic.com/) |
-| **OpenAI**     | GPT-5, Codex               | [platform.openai.com](https://platform.openai.com/)     |
-| **Google**     | Gemini Pro, Flash          | [aistudio.google.com](https://aistudio.google.com/)     |
-| **xAI**        | Grok                       | [console.x.ai](https://console.x.ai/)                   |
-| **DeepSeek**   | DeepSeek Chat, Reasoner    | [platform.deepseek.com](https://platform.deepseek.com/) |
-| **OpenRouter** | 300+ models                | [openrouter.ai](https://openrouter.ai/)                 |
-| **Ollama**     | Local models               | [ollama.com](https://ollama.com/) (no key needed)       |
-| **Bedrock**    | Claude via AWS             | AWS Console                                             |
+| Provider          | Models                     | Get API Key                                             |
+| ----------------- | -------------------------- | ------------------------------------------------------- |
+| **Anthropic**     | Claude Opus, Sonnet, Haiku | [console.anthropic.com](https://console.anthropic.com/) |
+| **Azure Foundry** | Claude via Azure Foundry   | [ai.azure.com](https://ai.azure.com/)                   |
+| **Azure OpenAI**  | GPT via Azure              | [portal.azure.com](https://portal.azure.com/)           |
+| **OpenAI**        | GPT-5, Codex               | [platform.openai.com](https://platform.openai.com/)     |
+| **Google**        | Gemini Pro, Flash          | [aistudio.google.com](https://aistudio.google.com/)     |
+| **xAI**           | Grok                       | [console.x.ai](https://console.x.ai/)                   |
+| **DeepSeek**      | DeepSeek Chat, Reasoner    | [platform.deepseek.com](https://platform.deepseek.com/) |
+| **OpenRouter**    | 300+ models                | [openrouter.ai](https://openrouter.ai/)                 |
+| **Ollama**        | Local models               | [ollama.com](https://ollama.com/) (no key needed)       |
+| **Bedrock**       | Claude via AWS             | AWS Console                                             |
 
 ## Environment Variables
 
@@ -33,15 +35,17 @@ Providers also read from environment variables as fallback:
 
 {/* BEGIN PROVIDER_ENV_VARS */}
 
-| Provider   | Environment Variable                               |
-| ---------- | -------------------------------------------------- |
-| Anthropic  | `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`      |
-| OpenAI     | `OPENAI_API_KEY`                                   |
-| Google     | `GOOGLE_GENERATIVE_AI_API_KEY` or `GOOGLE_API_KEY` |
-| xAI        | `XAI_API_KEY`                                      |
-| OpenRouter | `OPENROUTER_API_KEY`                               |
-| DeepSeek   | `DEEPSEEK_API_KEY`                                 |
-| Bedrock    | `AWS_REGION` (credentials via AWS SDK chain)       |
+| Provider      | Environment Variable                                  |
+| ------------- | ----------------------------------------------------- |
+| Anthropic     | `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`         |
+| Azure Foundry | `AZURE_FOUNDRY_API_KEY` and `AZURE_FOUNDRY_RESOURCE` |
+| Azure OpenAI  | `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT`   |
+| OpenAI        | `OPENAI_API_KEY`                                      |
+| Google        | `GOOGLE_GENERATIVE_AI_API_KEY` or `GOOGLE_API_KEY`   |
+| xAI           | `XAI_API_KEY`                                         |
+| OpenRouter    | `OPENROUTER_API_KEY`                                  |
+| DeepSeek      | `DEEPSEEK_API_KEY`                                    |
+| Bedrock       | `AWS_REGION` (credentials via AWS SDK chain)          |
 
 <details>
 <summary>Additional environment variables</summary>
@@ -53,12 +57,8 @@ Providers also read from environment variables as fallback:
 | OpenAI       | `OPENAI_ORG_ID`            | Organization ID     |
 | Google       | `GOOGLE_BASE_URL`          | Custom API endpoint |
 | xAI          | `XAI_BASE_URL`             | Custom API endpoint |
-| Azure OpenAI | `AZURE_OPENAI_API_KEY`     | API key             |
-| Azure OpenAI | `AZURE_OPENAI_ENDPOINT`    | Endpoint URL        |
-| Azure OpenAI | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name     |
-| Azure OpenAI | `AZURE_OPENAI_API_VERSION` | API version         |
-
-Azure OpenAI env vars configure the OpenAI provider with Azure backend.
+| Azure OpenAI | `AZURE_OPENAI_DEPLOYMENT`  | Deployment name (optional) |
+| Azure OpenAI | `AZURE_OPENAI_API_VERSION` | API version (optional)     |
 
 </details>
 
@@ -93,6 +93,62 @@ For advanced options not exposed in the UI, edit `~/.mux/providers.jsonc` direct
     "baseUrl": "http://your-server:11434/api", // Custom Ollama server
   },
 }
+```
+
+### Azure Foundry
+
+Azure Foundry provides access to Claude models through Microsoft's AI marketplace. It uses Anthropic's native API format.
+
+```jsonc
+{
+  "azure-foundry": {
+    "apiKey": "your-azure-api-key",
+    "resource": "your-resource-name"  // Just the resource name, not full URL
+  }
+}
+```
+
+**Getting your credentials:**
+1. Go to [Azure AI Foundry](https://ai.azure.com/)
+2. Create a project and deploy a Claude model
+3. Find your resource name (e.g., `my-resource` from `https://my-resource.services.ai.azure.com/`)
+4. Copy your API key from the Keys section
+
+**Environment variables:**
+```bash
+export AZURE_FOUNDRY_RESOURCE=your-resource-name  # Just the name, not full URL
+export AZURE_FOUNDRY_API_KEY=your-azure-api-key
+```
+
+**Note:** Azure Foundry is separate from Azure OpenAI. All Claude features work identically: streaming, tool calling, thinking, and prompt caching.
+
+### Azure OpenAI
+
+Azure OpenAI provides access to OpenAI models (GPT-5, Codex) through Microsoft Azure.
+
+```jsonc
+{
+  "azure-openai": {
+    "apiKey": "your-azure-api-key",
+    "baseUrl": "https://your-resource.cognitiveservices.azure.com",
+    "deployment": "your-deployment-name",  // Optional: defaults to model ID
+    "apiVersion": "2024-12-01-preview"     // Optional
+  }
+}
+```
+
+**Getting your credentials:**
+1. Go to [Azure Portal](https://portal.azure.com/)
+2. Create an Azure OpenAI resource
+3. Deploy a model (e.g., gpt-5.2)
+4. Copy your endpoint URL (e.g., `https://your-resource.cognitiveservices.azure.com`) and API key
+
+**Environment variables:**
+```bash
+export AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com
+export AZURE_OPENAI_API_KEY=your-azure-api-key
+export AZURE_OPENAI_DEPLOYMENT=your-deployment-name  # Optional
+export AZURE_OPENAI_API_VERSION=2024-12-01-preview   # Optional
 ```
 
 ### Bedrock Authentication
