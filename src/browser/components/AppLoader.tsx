@@ -127,8 +127,8 @@ function AppLoaderInner() {
     if (apiState.status === "error") {
       apiState.retry();
     }
-    void workspaceContext.retryLoadWorkspaces();
-    void projectContext.retryLoadProjects();
+    workspaceContext.retryLoadWorkspaces();
+    projectContext.retryLoadProjects();
   };
 
   if (loadErrors.length > 0) {

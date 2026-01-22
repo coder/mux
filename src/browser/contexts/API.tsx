@@ -35,7 +35,7 @@ interface APIStateMethods {
 }
 
 // Union distributes over intersection, preserving discriminated union behavior
-export type UseAPIResult = APIState & APIStateMethods;
+export type UseAPIResult = APIState & APIStateMethods & { connectionEpoch: number };
 
 // Internal state for the provider (includes cleanup)
 type ConnectionState =
@@ -130,6 +130,9 @@ export const APIProvider = (props: APIProviderProps) => {
     return getStoredAuthToken();
   });
 
+  // Increments on each successful reconnect - contexts can use this to re-run initial loads
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
+
   const cleanupRef = useRef<(() => void) | null>(null);
   const hasConnectedRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
@@ -167,6 +170,10 @@ export const APIProvider = (props: APIProviderProps) => {
         client.general
           .ping("auth-check")
           .then(() => {
+            // Increment epoch on reconnect so contexts re-run initial loads
+            if (hasConnectedRef.current) {
+              setConnectionEpoch((e) => e + 1);
+            }
             hasConnectedRef.current = true;
             reconnectAttemptRef.current = 0;
             window.__ORPC_CLIENT__ = client;
@@ -318,7 +325,7 @@ export const APIProvider = (props: APIProviderProps) => {
 
   // Convert internal state to the discriminated union API
   const value = useMemo((): UseAPIResult => {
-    const base = { authenticate, retry };
+    const base = { authenticate, retry, connectionEpoch };
     switch (state.status) {
       case "connecting":
         return { status: "connecting", api: null, error: null, ...base };
@@ -333,7 +340,7 @@ export const APIProvider = (props: APIProviderProps) => {
       case "error":
         return { status: "error", api: null, error: state.error, ...base };
     }
-  }, [state, authenticate, retry]);
+  }, [state, authenticate, retry, connectionEpoch]);
 
   // Always render children - consumers handle their own loading/error states
   return <APIContext.Provider value={value}>{props.children}</APIContext.Provider>;

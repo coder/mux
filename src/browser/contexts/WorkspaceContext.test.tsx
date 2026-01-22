@@ -23,6 +23,7 @@ void mock.module("@/browser/contexts/API", () => ({
     api: currentClientMock as APIClient,
     status: "connected" as const,
     error: null,
+    connectionEpoch: 0,
   }),
   APIProvider: ({ children }: { children: React.ReactNode }) => children,
 }));

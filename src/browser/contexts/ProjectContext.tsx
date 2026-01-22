@@ -9,17 +9,13 @@ import {
   type ReactNode,
 } from "react";
 import { useAPI } from "@/browser/contexts/API";
-import { useInitialLoadState, type InitialLoadHelpers } from "@/browser/hooks/useInitialLoadState";
 import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { Secret } from "@/common/types/secrets";
 import type { Result } from "@/common/types/result";
 import { getErrorMessage } from "@/common/utils/errors";
-import { withTimeout } from "@/common/utils/withTimeout";
-import { INITIAL_LOAD_TIMEOUT_MS } from "@/constants/initialLoad";
 
-const PROJECT_LOAD_TIMEOUT_SECONDS = Math.round(INITIAL_LOAD_TIMEOUT_MS / 1000);
-const PROJECT_LOAD_TIMEOUT_MESSAGE = `Timed out after ${PROJECT_LOAD_TIMEOUT_SECONDS}s while loading projects.`;
+const LOAD_TIMEOUT_MS = 15_000;
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -37,11 +33,8 @@ export interface ProjectContext {
   loading: boolean;
   /** Error encountered during initial project load (if any) */
   loadError: string | null;
-  refreshProjects: (options?: {
-    reportLoadError?: boolean;
-    isCurrent?: () => boolean;
-  }) => Promise<Result<void, string | null>>;
-  retryLoadProjects: () => Promise<void>;
+  refreshProjects: () => Promise<void>;
+  retryLoadProjects: () => void;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
   removeProject: (path: string) => Promise<{ success: boolean; error?: string }>;
 
@@ -91,8 +84,10 @@ function deriveProjectName(projectPath: string): string {
 }
 
 export function ProjectProvider(props: { children: ReactNode }) {
-  const { api } = useAPI();
+  const { api, connectionEpoch } = useAPI();
   const [projects, setProjects] = useState<Map<string, ProjectConfig>>(new Map());
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
     isOpen: false,
@@ -105,71 +100,39 @@ export function ProjectProvider(props: { children: ReactNode }) {
   });
   const workspaceModalProjectRef = useRef<string | null>(null);
 
-  const loadProjects = useCallback(
-    async (helpers?: InitialLoadHelpers): Promise<Result<void, string | null>> => {
-      if (!api) {
-        return { success: false, error: null };
-      }
-      const isCurrent = helpers?.isCurrent;
-      try {
-        const projectsList = await withTimeout(
-          api.projects.list(),
-          INITIAL_LOAD_TIMEOUT_MS,
-          PROJECT_LOAD_TIMEOUT_MESSAGE
-        );
-        if (isCurrent && !isCurrent()) {
-          return { success: false, error: null };
-        }
-        setProjects(new Map(projectsList));
-        return { success: true, data: undefined };
-      } catch (error) {
-        console.error("Failed to load projects:", error);
-        if (isCurrent && !isCurrent()) {
-          return { success: false, error: null };
-        }
-        const errorMessage = getErrorMessage(error);
-        setProjects(new Map());
-        return { success: false, error: errorMessage };
-      }
-    },
-    [api]
-  );
-
-  const initialLoadState = useInitialLoadState({
-    load: loadProjects,
-  });
-
-  const {
-    loading,
-    loadError,
-    run: runInitialLoad,
-    retry: retryLoadProjects,
-    setLoadError,
-  } = initialLoadState;
-
-  const refreshProjects = useCallback(
-    async (options?: {
-      reportLoadError?: boolean;
-      isCurrent?: () => boolean;
-    }): Promise<Result<void, string | null>> => {
-      const result = await loadProjects();
-      if (options?.reportLoadError && (options.isCurrent?.() ?? true)) {
-        if (result.success) {
-          setLoadError(null);
-        } else if (result.error) {
-          setLoadError(result.error);
-        }
-      }
-      return result;
-    },
-    [loadProjects, setLoadError]
-  );
-
-  useEffect(() => {
-    runInitialLoad().catch((error) => {
+  const refreshProjects = useCallback(async () => {
+    if (!api) return;
+    try {
+      const projectsList = await Promise.race([
+        api.projects.list(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Timed out loading projects")), LOAD_TIMEOUT_MS)
+        ),
+      ]);
+      setProjects(new Map(projectsList));
+      setLoadError(null);
+    } catch (error) {
       console.error("Failed to load projects:", error);
-    });
+      setLoadError(getErrorMessage(error));
+    }
+  }, [api]);
+
+  const runInitialLoad = useCallback(async () => {
+    if (!api) return;
+    setLoading(true);
+    setLoadError(null);
+    await refreshProjects();
+    setLoading(false);
+  }, [api, refreshProjects]);
+
+  const retryLoadProjects = useCallback(() => {
+    void runInitialLoad();
   }, [runInitialLoad]);
+
+  // Load on mount and on reconnect
+  useEffect(() => {
+    void runInitialLoad();
+  }, [runInitialLoad, connectionEpoch]);
 
   const addProject = useCallback((normalizedPath: string, projectConfig: ProjectConfig) => {
     setProjects((prev) => {
