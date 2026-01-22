@@ -167,7 +167,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
       : null;
   const hideDevcontainer =
     availabilityMap?.devcontainer?.available === false &&
-    availabilityMap.devcontainer.reason === "No devcontainer.json found";
+    availabilityMap.devcontainer.reason !== "No devcontainer.json found";
 
   const runtimeOptions = hideDevcontainer
     ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
