@@ -160,22 +160,91 @@ export class TerminalSessionRouter {
   }
 
   private formatXtermColor(color: string): string {
+    // OSC 10/11 responses are typically expected in xterm's `rgb:RRRR/GGGG/BBBB` form.
+    //
+    // Note: our theme vars often use HSL (see globals.css), so we must resolve to an RGB
+    // value before responding.
     if (color.startsWith("#")) {
       const hex = color.slice(1);
       if (hex.length === 3) {
-        const r = hex[0] + hex[0];
-        const g = hex[1] + hex[1];
-        const b = hex[2] + hex[2];
-        return `rgb:${r}${r}/${g}${g}/${b}${b}`;
+        const r16 = hex[0].repeat(4);
+        const g16 = hex[1].repeat(4);
+        const b16 = hex[2].repeat(4);
+        return `rgb:${r16}/${g16}/${b16}`;
       }
       if (hex.length === 6) {
-        const r = hex.slice(0, 2);
-        const g = hex.slice(2, 4);
-        const b = hex.slice(4, 6);
-        return `rgb:${r}${r}/${g}${g}/${b}${b}`;
+        const r8 = hex.slice(0, 2);
+        const g8 = hex.slice(2, 4);
+        const b8 = hex.slice(4, 6);
+        return `rgb:${r8}${r8}/${g8}${g8}/${b8}${b8}`;
       }
     }
-    return color;
+
+    const computedRgb = this.computeCssColorToRgb(color);
+    if (!computedRgb) {
+      return color;
+    }
+
+    const toHex2 = (value: number) => {
+      const clamped = Math.max(0, Math.min(255, Math.round(value)));
+      return clamped.toString(16).padStart(2, "0");
+    };
+
+    const r8 = toHex2(computedRgb.r);
+    const g8 = toHex2(computedRgb.g);
+    const b8 = toHex2(computedRgb.b);
+    return `rgb:${r8}${r8}/${g8}${g8}/${b8}${b8}`;
+  }
+
+  private computeCssColorToRgb(color: string): { r: number; g: number; b: number } | null {
+    // This is a rare path (only when a TUI queries OSC 10/11), but the terminal output
+    // stream is performance sensitive. Be defensive: never throw.
+    try {
+      const el = document.createElement("div");
+      el.style.color = color;
+
+      // Some browsers won't fully resolve computed styles unless the element is in the DOM.
+      // Use a hidden element and clean it up immediately.
+      el.style.position = "absolute";
+      el.style.left = "-9999px";
+      el.style.top = "-9999px";
+
+      const parent = document.body ?? document.documentElement;
+      parent.appendChild(el);
+
+      try {
+        const computed = getComputedStyle(el).color;
+        const match = /^rgba?\((.*)\)$/.exec(computed);
+        if (!match) {
+          return null;
+        }
+
+        const beforeSlash = match[1].split("/")[0] ?? "";
+        const parts = beforeSlash
+          .replace(/,/g, " ")
+          .trim()
+          .split(/\s+/)
+          .filter((p) => p.length > 0);
+
+        if (parts.length < 3) {
+          return null;
+        }
+
+        const r = Number.parseFloat(parts[0] ?? "");
+        const g = Number.parseFloat(parts[1] ?? "");
+        const b = Number.parseFloat(parts[2] ?? "");
+
+        if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+          return null;
+        }
+
+        return { r, g, b };
+      } finally {
+        el.remove();
+      }
+    } catch {
+      return null;
+    }
   }
 
   /**
