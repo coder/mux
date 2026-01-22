@@ -38,6 +38,10 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, KeyRound } from "lucide-react";
+import {
+  useWorkspaceSidebarStateMap,
+  type WorkspaceSidebarState,
+} from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
@@ -72,6 +76,123 @@ function getProjectItemClassName(opts: {
     "hover:[&_button]:opacity-100 hover:[&_[data-drag-handle]]:opacity-100"
   );
 }
+
+// Workspace list bucket grouping (Action Needed / Running / Done)
+
+type WorkspaceBucket = "actionNeeded" | "running" | "done";
+
+const WORKSPACE_BUCKET_PRIORITY: Record<WorkspaceBucket, number> = {
+  actionNeeded: 2,
+  running: 1,
+  done: 0,
+};
+
+interface WorkspaceThread {
+  rootId: string;
+  items: FrontendWorkspaceMetadata[];
+}
+
+function maxWorkspaceBucket(a: WorkspaceBucket, b: WorkspaceBucket): WorkspaceBucket {
+  return WORKSPACE_BUCKET_PRIORITY[a] >= WORKSPACE_BUCKET_PRIORITY[b] ? a : b;
+}
+
+function getWorkspaceBucket(
+  metadata: FrontendWorkspaceMetadata,
+  sidebar: WorkspaceSidebarState
+): WorkspaceBucket {
+  if (metadata.incompatibleRuntime) return "actionNeeded";
+  if (sidebar.awaitingUserQuestion) return "actionNeeded";
+  if (metadata.status === "creating" || sidebar.canInterrupt) return "running";
+  return "done";
+}
+
+function getWorkspaceThreadBucket(
+  thread: WorkspaceThread,
+  sidebarById: Map<string, WorkspaceSidebarState>
+): WorkspaceBucket {
+  let bucket: WorkspaceBucket = "done";
+
+  for (const ws of thread.items) {
+    const state = sidebarById.get(ws.id);
+    if (state) {
+      bucket = maxWorkspaceBucket(bucket, getWorkspaceBucket(ws, state));
+    }
+  }
+
+  return bucket;
+}
+
+function buildWorkspaceThreads(
+  workspaces: FrontendWorkspaceMetadata[],
+  workspaceById: Map<string, FrontendWorkspaceMetadata>
+): WorkspaceThread[] {
+  if (workspaces.length === 0) return [];
+
+  const idsInList = new Set(workspaces.map((ws) => ws.id));
+
+  const getRootId = (workspace: FrontendWorkspaceMetadata): string => {
+    let rootId = workspace.id;
+    let current: FrontendWorkspaceMetadata | undefined = workspace;
+    let depth = 0;
+
+    while (current?.parentWorkspaceId && depth < 32) {
+      const parent = workspaceById.get(current.parentWorkspaceId);
+      if (!parent) break;
+      if (idsInList.has(parent.id)) {
+        rootId = parent.id;
+      }
+      current = parent;
+      depth++;
+    }
+
+    return rootId;
+  };
+
+  const threads: WorkspaceThread[] = [];
+  let currentThread: WorkspaceThread | undefined;
+
+  for (const ws of workspaces) {
+    const rootId = getRootId(ws);
+    if (currentThread?.rootId !== rootId) {
+      currentThread = { rootId, items: [ws] };
+      threads.push(currentThread);
+    } else {
+      currentThread.items.push(ws);
+    }
+  }
+
+  return threads;
+}
+
+function countWorkspaceThreadItems(threads: WorkspaceThread[]): number {
+  return threads.reduce((sum, thread) => sum + thread.items.length, 0);
+}
+
+function getWorkspaceThreadRecencyTimestamp(
+  thread: WorkspaceThread,
+  workspaceRecency: Record<string, number>
+): number {
+  let max = 0;
+  for (const ws of thread.items) {
+    max = Math.max(max, workspaceRecency[ws.id] ?? 0);
+  }
+  return max;
+}
+
+const WORKSPACE_BUCKET_HEADER_CLASS =
+  "text-muted flex items-center justify-between px-3 pt-2 pb-1 text-[11px] font-medium";
+
+const WorkspaceBucketHeader: React.FC<{ label: string; count: number; className?: string }> = (
+  props
+) => {
+  return (
+    <div className={cn(WORKSPACE_BUCKET_HEADER_CLASS, props.className)}>
+      <span>{props.label}</span>
+      <span className="text-dim font-normal">({props.count})</span>
+    </div>
+  );
+};
+
 type DraggableProjectItemProps = React.PropsWithChildren<{
   projectPath: string;
   onReorder: (draggedPath: string, targetPath: string) => void;
@@ -473,6 +594,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedWorkspace, handleAddWorkspace]);
 
+  // Bulk subscription to workspace sidebar state (for bucketing/grouping in the list)
+  const workspaceIdsForSidebarState: string[] = [];
+  for (const workspaces of sortedWorkspacesByProject.values()) {
+    for (const ws of workspaces) {
+      workspaceIdsForSidebarState.push(ws.id);
+    }
+  }
+  const workspaceSidebarStateById = useWorkspaceSidebarStateMap(workspaceIdsForSidebarState);
+
   return (
     <RenameProvider onRenameWorkspace={onRenameWorkspace}>
       <DndProvider backend={HTML5Backend}>
@@ -650,6 +780,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const sections = sortSectionsByLinkedList(config.sections ?? []);
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
 
+                              const workspaceById = new Map(allWorkspaces.map((ws) => [ws.id, ws]));
+
                               const renderWorkspace = (
                                 metadata: FrontendWorkspaceMetadata,
                                 sectionId?: string
@@ -670,22 +802,56 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 />
                               );
 
-                              // Render age tiers for a list of workspaces
-                              const renderAgeTiers = (
-                                workspaces: FrontendWorkspaceMetadata[],
+                              const renderThread = (
+                                thread: WorkspaceThread,
+                                sectionId?: string
+                              ): React.ReactNode =>
+                                thread.items.map((ws) => renderWorkspace(ws, sectionId));
+
+                              const renderThreads = (
+                                threads: WorkspaceThread[],
+                                sectionId?: string
+                              ): React.ReactNode =>
+                                threads.flatMap((t) => renderThread(t, sectionId));
+
+                              const renderDoneAgeTiers = (
+                                threads: WorkspaceThread[],
                                 tierKeyPrefix: string,
                                 sectionId?: string
                               ): React.ReactNode => {
+                                const roots: FrontendWorkspaceMetadata[] = [];
+                                const threadsByRootId = new Map<string, WorkspaceThread>();
+                                const threadRecencyByRootId: Record<string, number> = {};
+
+                                for (const thread of threads) {
+                                  const root = thread.items[0];
+                                  if (!root) continue;
+                                  roots.push(root);
+                                  threadsByRootId.set(root.id, thread);
+                                  threadRecencyByRootId[root.id] =
+                                    getWorkspaceThreadRecencyTimestamp(thread, workspaceRecency);
+                                }
+
                                 const { recent, buckets } = partitionWorkspacesByAge(
-                                  workspaces,
-                                  workspaceRecency
+                                  roots,
+                                  threadRecencyByRootId
                                 );
 
+                                const countByRoots = (
+                                  rootWorkspaces: FrontendWorkspaceMetadata[]
+                                ): number => {
+                                  let count = 0;
+                                  for (const root of rootWorkspaces) {
+                                    count += threadsByRootId.get(root.id)?.items.length ?? 0;
+                                  }
+                                  return count;
+                                };
+
                                 const renderTier = (tierIndex: number): React.ReactNode => {
-                                  const bucket = buckets[tierIndex];
+                                  const rootBucket = buckets[tierIndex];
                                   const remainingCount = buckets
                                     .slice(tierIndex)
-                                    .reduce((sum, b) => sum + b.length, 0);
+                                    .reduce((sum, bucket) => sum + countByRoots(bucket), 0);
 
                                   if (remainingCount === 0) return null;
 
@@ -693,8 +859,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   const isTierExpanded = expandedOldWorkspaces[tierKey] ?? false;
                                   const thresholdDays = AGE_THRESHOLDS_DAYS[tierIndex];
                                   const thresholdLabel = formatDaysThreshold(thresholdDays);
+                                  const bucketCount = countByRoots(rootBucket);
                                   const displayCount = isTierExpanded
-                                    ? bucket.length
+                                    ? bucketCount
                                     : remainingCount;
 
                                   return (
@@ -733,7 +900,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       </button>
                                       {isTierExpanded && (
                                         <>
-                                          {bucket.map((ws) => renderWorkspace(ws, sectionId))}
+                                          {rootBucket.flatMap((root) => {
+                                            const thread = threadsByRootId.get(root.id);
+                                            return thread ? renderThread(thread, sectionId) : [];
+                                          })}
                                           {(() => {
                                             const nextTier = findNextNonEmptyTier(
                                               buckets,
@@ -751,8 +921,65 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                                 return (
                                   <>
-                                    {recent.map((ws) => renderWorkspace(ws, sectionId))}
+                                    {recent.flatMap((root) => {
+                                      const thread = threadsByRootId.get(root.id);
+                                      return thread ? renderThread(thread, sectionId) : [];
+                                    })}
                                     {firstTier !== -1 && renderTier(firstTier)}
+                                  </>
+                                );
+                              };
+
+                              const renderWorkspaceBuckets = (
+                                workspaces: FrontendWorkspaceMetadata[],
+                                tierKeyPrefix: string,
+                                sectionId?: string
+                              ): React.ReactNode => {
+                                const threads = buildWorkspaceThreads(workspaces, workspaceById);
+
+                                const actionNeeded: WorkspaceThread[] = [];
+                                const running: WorkspaceThread[] = [];
+                                const done: WorkspaceThread[] = [];
+
+                                for (const thread of threads) {
+                                  const bucket = getWorkspaceThreadBucket(
+                                    thread,
+                                    workspaceSidebarStateById
+                                  );
+                                  if (bucket === "actionNeeded") actionNeeded.push(thread);
+                                  else if (bucket === "running") running.push(thread);
+                                  else done.push(thread);
+                                }
+
+                                const renderBucket = (
+                                  label: string,
+                                  bucketThreads: WorkspaceThread[]
+                                ): React.ReactNode => {
+                                  if (bucketThreads.length === 0) return null;
+                                  return (
+                                    <div className="mt-1 border-t border-white/5 first:mt-0 first:border-t-0">
+                                      <WorkspaceBucketHeader
+                                        label={label}
+                                        count={countWorkspaceThreadItems(bucketThreads)}
+                                      />
+                                      {renderThreads(bucketThreads, sectionId)}
+                                    </div>
+                                  );
+                                };
+
+                                return (
+                                  <>
+                                    {renderBucket("Action Needed", actionNeeded)}
+                                    {renderBucket("Running", running)}
+                                    {done.length > 0 && (
+                                      <div className="mt-1 border-t border-white/5 first:mt-0 first:border-t-0">
+                                        <WorkspaceBucketHeader
+                                          label="Done"
+                                          count={countWorkspaceThreadItems(done)}
+                                        />
+                                        {renderDoneAgeTiers(done, tierKeyPrefix, sectionId)}
+                                      </div>
+                                    )}
                                   </>
                                 );
                               };
@@ -855,7 +1082,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       {isSectionExpanded && (
                                         <div className="pb-1">
                                           {sectionWorkspaces.length > 0 ? (
-                                            renderAgeTiers(
+                                            renderWorkspaceBuckets(
                                               sectionWorkspaces,
                                               getSectionTierKey(projectPath, section.id, 0).replace(
                                                 ":tier:0",
@@ -886,7 +1113,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       testId="unsectioned-drop-zone"
                                     >
                                       {unsectioned.length > 0 ? (
-                                        renderAgeTiers(
+                                        renderWorkspaceBuckets(
                                           unsectioned,
                                           getTierKey(projectPath, 0).replace(":0", "")
                                         )
@@ -898,7 +1125,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     </WorkspaceSectionDropZone>
                                   ) : (
                                     unsectioned.length > 0 &&
-                                    renderAgeTiers(
+                                    renderWorkspaceBuckets(
                                       unsectioned,
                                       getTierKey(projectPath, 0).replace(":0", "")
                                     )

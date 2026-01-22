@@ -11,7 +11,7 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey } from "@/common/constants/storage";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, useRef } from "react";
 import {
   isCaughtUpMessage,
   isStreamError,
@@ -1897,6 +1897,44 @@ export function useWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarS
     (listener) => store.subscribeKey(workspaceId, listener),
     () => store.getWorkspaceSidebarState(workspaceId)
   );
+}
+
+/**
+ * Hook to get sidebar-specific state for a set of workspaces.
+ *
+ * Useful when the parent needs to group/sort based on live state (e.g. ProjectSidebar
+ * workspace buckets) without subscribing to the full per-workspace WorkspaceState.
+ *
+ * Returns a stable Map reference when the per-workspace sidebar state references
+ * haven't changed.
+ */
+export function useWorkspaceSidebarStateMap(
+  workspaceIds: readonly string[]
+): Map<string, WorkspaceSidebarState> {
+  const store = getStoreInstance();
+  const cacheRef = useRef<Map<string, WorkspaceSidebarState> | null>(null);
+
+  return useSyncExternalStore(store.subscribe, () => {
+    const next = new Map<string, WorkspaceSidebarState>();
+    for (const workspaceId of workspaceIds) {
+      next.set(workspaceId, store.getWorkspaceSidebarState(workspaceId));
+    }
+
+    const prev = cacheRef.current;
+    if (prev && prev.size === next.size) {
+      let same = true;
+      for (const [workspaceId, state] of next) {
+        if (prev.get(workspaceId) !== state) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return prev;
+    }
+
+    cacheRef.current = next;
+    return next;
+  });
 }
 
 /**

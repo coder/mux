@@ -13,6 +13,7 @@ export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string 
     meta.name,
     meta.title ?? "", // Display title (falls back to name in UI)
     meta.status ?? "", // Working/idle status indicator
+    meta.incompatibleRuntime ?? "", // Incompatible runtime overlay / needs-attention bucket
     meta.parentWorkspaceId ?? "", // Nested sidebar indentation/order
     meta.agentType ?? "", // Agent preset badge/label (future)
     meta.sectionId ?? "", // Section grouping for sidebar organization
