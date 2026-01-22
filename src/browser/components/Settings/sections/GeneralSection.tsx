@@ -20,6 +20,7 @@ import {
   type TerminalFontConfig,
 } from "@/common/constants/storage";
 
+// Guard against corrupted/old persisted settings (e.g. from a downgraded build).
 const ALLOWED_EDITOR_TYPES: ReadonlySet<EditorType> = new Set([
   "vscode",
   "cursor",
@@ -269,7 +270,14 @@ export function GeneralSection() {
   const terminalFontWarning = getTerminalFontAvailabilityWarning(terminalFontConfig);
 
   const terminalFontPreviewFamily = appendTerminalIconFallback(terminalFontConfig.fontFamily);
-  const terminalFontPreviewText = `${String.fromCodePoint(0xf024b)} ${String.fromCodePoint(0xf15b)}`;
+  const terminalFontPreviewText = [
+    String.fromCodePoint(0xf024b), // md-folder
+    String.fromCodePoint(0xf0214), // md-file
+    String.fromCodePoint(0xf02a2), // md-git
+    String.fromCodePoint(0xea85), // cod-terminal
+    String.fromCodePoint(0xe725), // dev-git_branch
+    String.fromCodePoint(0xf135), // fa-rocket
+  ].join(" ");
 
   const [rawEditorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
     EDITOR_CONFIG_KEY,
@@ -354,8 +362,8 @@ export function GeneralSection() {
               </div>
               {isBrowserMode ? (
                 <div className="text-muted text-xs">
-                  Browser mode uses fonts installed on this device (plus the bundled symbols
-                  fallback).
+                  Browser mode uses fonts installed on the client device (plus the bundled symbols
+                  fallback). Fonts installed on the mux server are not used.
                 </div>
               ) : null}
               <div className="text-muted text-xs">
