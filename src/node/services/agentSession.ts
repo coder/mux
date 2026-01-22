@@ -806,6 +806,7 @@ export class AgentSession {
       postCompactionAttachments,
       options?.experiments,
       options?.system1Model,
+      options?.system1ThinkingLevel,
       options?.disableWorkspaceAgents,
       () => !this.messageQueue.isEmpty(),
       openaiTruncationModeOverride

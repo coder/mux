@@ -4,6 +4,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TaskAwaitToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { fromBashTaskId, toBashTaskId } from "./taskId";
+import { formatBashOutputReport } from "./bashTaskReport";
 import {
   dedupeStrings,
   parseToolResult,
@@ -16,32 +17,6 @@ function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (timeoutSecs < 0) return undefined;
   const timeoutMs = Math.floor(timeoutSecs * 1000);
   return timeoutMs;
-}
-
-function formatBashOutputReport(args: {
-  processId: string;
-  status: string;
-  exitCode?: number;
-  output: string;
-}): string {
-  const lines: string[] = [];
-
-  lines.push(`### Bash task: ${args.processId}`);
-  lines.push("");
-
-  lines.push(`status: ${args.status}`);
-  if (args.exitCode !== undefined) {
-    lines.push(`exitCode: ${args.exitCode}`);
-  }
-
-  if (args.output.trim().length > 0) {
-    lines.push("");
-    lines.push("```text");
-    lines.push(args.output.trimEnd());
-    lines.push("```");
-  }
-
-  return lines.join("\n");
 }
 
 export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {

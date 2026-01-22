@@ -223,6 +223,12 @@ export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 export const PREFERRED_SYSTEM_1_MODEL_KEY = "preferredSystem1Model";
 
 /**
+ * Get the localStorage key for the preferred System 1 thinking level (global)
+ * Format: "preferredSystem1ThinkingLevel"
+ */
+export const PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY = "preferredSystem1ThinkingLevel";
+
+/**
  * Get the localStorage key for cached mode AI defaults (global).
  * Format: "modeAiDefaults"
  */

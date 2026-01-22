@@ -406,6 +406,7 @@ export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
   thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
   model: z.string("No model specified"),
+  system1ThinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
   system1Model: z.string().optional(),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),

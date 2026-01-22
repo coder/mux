@@ -2,11 +2,13 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { Plus, Loader2, Check, ChevronDown } from "lucide-react";
 import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { THINKING_LEVELS, coerceThinkingLevel } from "@/common/types/thinking";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
   PREFERRED_SYSTEM_1_MODEL_KEY,
+  PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
 import { useModelsFromSettings, getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
@@ -251,6 +253,19 @@ export function ModelsSection() {
     { listener: true }
   );
 
+  // System 1 thinking preference (experiment-gated)
+  const [system1ThinkingLevelRaw, setSystem1ThinkingLevelRaw] = usePersistedState<unknown>(
+    PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
+    "off",
+    { listener: true }
+  );
+
+  const system1ThinkingLevel = coerceThinkingLevel(system1ThinkingLevelRaw) ?? "off";
+
+  const setSystem1ThinkingLevel = (value: string) => {
+    setSystem1ThinkingLevelRaw(coerceThinkingLevel(value) ?? "off");
+  };
+
   // All models (including hidden) for the settings dropdowns
   const allModels = getSuggestedModels(config);
 
@@ -424,20 +439,43 @@ export function ModelsSection() {
             </div>
           </div>
           {system1Enabled && (
-            <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-              <div className="w-28 shrink-0 md:w-32">
-                <div className="text-muted text-xs">System 1</div>
-                <div className="text-muted-light text-[10px]">Context optimization</div>
+            <>
+              <div className="flex items-center gap-4 px-2 py-2 md:px-3">
+                <div className="w-28 shrink-0 md:w-32">
+                  <div className="text-muted text-xs">System 1 Model</div>
+                  <div className="text-muted-light text-[10px]">Context optimization</div>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <SearchableModelSelect
+                    value={system1Model}
+                    onChange={setSystem1Model}
+                    models={allModels}
+                    emptyOption={{ value: "", label: "Use workspace model" }}
+                  />
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <SearchableModelSelect
-                  value={system1Model}
-                  onChange={setSystem1Model}
-                  models={allModels}
-                  emptyOption={{ value: "", label: "Use workspace model" }}
-                />
+
+              <div className="flex items-center gap-4 px-2 py-2 md:px-3">
+                <div className="w-28 shrink-0 md:w-32">
+                  <div className="text-muted text-xs">System 1 Reasoning</div>
+                  <div className="text-muted-light text-[10px]">Log filtering</div>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <Select value={system1ThinkingLevel} onValueChange={setSystem1ThinkingLevel}>
+                    <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {THINKING_LEVELS.map((level) => (
+                        <SelectItem key={level} value={level}>
+                          {level}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </div>
+            </>
           )}
         </div>
       </div>
