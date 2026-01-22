@@ -65,7 +65,7 @@ function AppLoaderInner() {
   // Track whether stores have been synced
   const [storesSynced, setStoresSynced] = useState(false);
 
-  // Sync stores when metadata finishes loading
+  // Sync stores when metadata finishes loading or on reconnect
   useEffect(() => {
     if (api) {
       workspaceStoreInstance.setClient(api);
@@ -94,6 +94,7 @@ function AppLoaderInner() {
     gitStatusStore,
     backgroundBashStore,
     api,
+    apiState.connectionEpoch, // Re-sync stores on reconnect
   ]);
 
   // If we're in browser mode and auth is required, show the token prompt before any data loads.

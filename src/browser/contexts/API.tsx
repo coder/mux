@@ -48,8 +48,13 @@ type ConnectionState =
 
 // Reconnection constants
 const MAX_RECONNECT_ATTEMPTS = 10;
-const BASE_DELAY_MS = 100;
 const MAX_DELAY_MS = 10000;
+
+/** Instant first retry, then exponential backoff: 0ms, 100ms, 200ms, 400ms... up to MAX_DELAY_MS */
+function getReconnectDelay(attempt: number): number {
+  if (attempt === 0) return 0; // Instant first retry
+  return Math.min(100 * Math.pow(2, attempt - 1), MAX_DELAY_MS);
+}
 
 // Liveness check constants
 const LIVENESS_INTERVAL_MS = 5000; // Check every 5 seconds
@@ -235,7 +240,7 @@ export const APIProvider = (props: APIProviderProps) => {
     [props.client, props.createWebSocket, wsFactory]
   );
 
-  // Schedule reconnection with exponential backoff
+  // Schedule reconnection with exponential backoff (instant first retry)
   const scheduleReconnect = useCallback(() => {
     const attempt = reconnectAttemptRef.current;
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
@@ -243,7 +248,7 @@ export const APIProvider = (props: APIProviderProps) => {
       return;
     }
 
-    const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
+    const delay = getReconnectDelay(attempt);
     reconnectAttemptRef.current = attempt + 1;
     setState({ status: "reconnecting", attempt: attempt + 1 });
 
