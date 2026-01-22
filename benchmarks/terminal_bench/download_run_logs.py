@@ -64,7 +64,9 @@ def list_nightly_runs(limit: int = 10) -> list[dict]:
     """List recent nightly Terminal-Bench runs."""
     result = run_command(
         [
-            "gh", "run", "list",
+            "gh",
+            "run",
+            "list",
             f"--repo={GITHUB_REPO}",
             "--workflow=nightly-terminal-bench.yml",
             f"--limit={limit}",
@@ -82,11 +84,12 @@ def list_artifacts_for_run(run_id: int) -> list[dict]:
     """List all terminal-bench artifacts for a given run."""
     result = run_command(
         [
-            "gh", "api",
+            "gh",
+            "api",
             f"repos/{GITHUB_REPO}/actions/runs/{run_id}/artifacts",
             "--jq",
             '.artifacts[] | select(.name | startswith("terminal-bench-results")) '
-            '| {name, id, size_in_bytes}',
+            "| {name, id, size_in_bytes}",
         ],
         check=False,
     )
@@ -112,7 +115,10 @@ def download_artifacts(run_id: int, output_dir: Path) -> bool:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "gh", "run", "download", str(run_id),
+        "gh",
+        "run",
+        "download",
+        str(run_id),
         f"--repo={GITHUB_REPO}",
         f"--dir={output_dir}",
     ]
@@ -144,13 +150,15 @@ def find_trial_results(run_dir: Path) -> list[dict]:
             if "trial_name" not in data:
                 continue
 
-            results.append({
-                "path": result_file,
-                "task_name": data.get("task_name", "unknown"),
-                "trial_name": data.get("trial_name", "unknown"),
-                "passed": _get_passed(data),
-                "data": data,
-            })
+            results.append(
+                {
+                    "path": result_file,
+                    "task_name": data.get("task_name", "unknown"),
+                    "trial_name": data.get("trial_name", "unknown"),
+                    "passed": _get_passed(data),
+                    "data": data,
+                }
+            )
         except (json.JSONDecodeError, OSError):
             continue
 
@@ -170,7 +178,13 @@ def _get_passed(data: dict) -> bool | None:
 
 def print_trial_summary(trial: dict, verbose: bool = False) -> None:
     """Print a summary of a trial result."""
-    status = "✓ PASS" if trial["passed"] else "✗ FAIL" if trial["passed"] is False else "? UNKNOWN"
+    status = (
+        "✓ PASS"
+        if trial["passed"]
+        else "✗ FAIL"
+        if trial["passed"] is False
+        else "? UNKNOWN"
+    )
     print(f"  {status}  {trial['task_name']}")
 
     if verbose or not trial["passed"]:
@@ -209,32 +223,33 @@ def main():
         description="Download and inspect Terminal-Bench run logs"
     )
     parser.add_argument(
-        "--run-id", type=int,
-        help="Specific run ID to download (default: latest)"
+        "--run-id", type=int, help="Specific run ID to download (default: latest)"
     )
     parser.add_argument(
-        "--list-runs", action="store_true",
-        help="List recent runs without downloading"
+        "--list-runs", action="store_true", help="List recent runs without downloading"
     )
     parser.add_argument(
-        "--task", type=str,
-        help="Filter to specific task name (substring match)"
+        "--task", type=str, help="Filter to specific task name (substring match)"
     )
     parser.add_argument(
-        "--model", type=str,
-        help="Filter to specific model (substring match on artifact name)"
+        "--model",
+        type=str,
+        help="Filter to specific model (substring match on artifact name)",
     )
     parser.add_argument(
-        "--failures-only", action="store_true",
-        help="Show only failed trials"
+        "--failures-only", action="store_true", help="Show only failed trials"
     )
     parser.add_argument(
-        "--verbose", "-v", action="store_true",
-        help="Show detailed output for all trials"
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show detailed output for all trials",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=CACHE_DIR,
-        help=f"Output directory (default: {CACHE_DIR})"
+        "--output-dir",
+        type=Path,
+        default=CACHE_DIR,
+        help=f"Output directory (default: {CACHE_DIR})",
     )
     args = parser.parse_args()
 
@@ -247,7 +262,9 @@ def main():
         print("Recent nightly runs:")
         for run in runs:
             status = "✓" if run["conclusion"] == "success" else "✗"
-            print(f"  {status} {run['databaseId']}  {run['createdAt'][:10]}  {run['displayTitle']}")
+            print(
+                f"  {status} {run['databaseId']}  {run['createdAt'][:10]}  {run['displayTitle']}"
+            )
         return 0
 
     # Determine run ID
@@ -280,6 +297,7 @@ def main():
         def matches_model(r):
             path_str = str(r["path"]).lower()
             return args.model.lower().replace("/", "-") in path_str
+
         results = [r for r in results if matches_model(r)]
 
     if args.failures_only:
