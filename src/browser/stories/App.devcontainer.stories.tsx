@@ -30,6 +30,14 @@ const baseRuntimeAvailability: Pick<RuntimeAvailability, "local" | "worktree" | 
     docker: { available: true },
   };
 
+const missingConfigAvailability: RuntimeAvailability = {
+  ...baseRuntimeAvailability,
+  devcontainer: {
+    available: false,
+    reason: "No devcontainer.json found",
+  },
+};
+
 const unavailableDevcontainer: RuntimeAvailability = {
   ...baseRuntimeAvailability,
   devcontainer: {
@@ -71,6 +79,63 @@ const multiConfigAvailability: RuntimeAvailability = {
         label: "Frontend (.devcontainer/frontend/devcontainer.json)",
       },
     ],
+  },
+};
+
+/**
+ * Dev container runtime missing configs - manual path input stays available.
+ */
+export const DevcontainerMissingConfig: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/devcontainer-missing-config"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/devcontainer-missing-config")]),
+          workspaces: [],
+          runtimeAvailability: missingConfigAvailability,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    // Wait for the runtime button group to appear
+    const runtimeGroup = await canvas.findByRole(
+      "group",
+      { name: "Runtime type" },
+      { timeout: 10000 }
+    );
+
+    const groupCanvas = within(runtimeGroup);
+    const devcontainerButton = groupCanvas.getByText("Dev container").closest("button");
+    if (!devcontainerButton) throw new Error("Dev container button not found");
+    await waitFor(
+      async () => {
+        await expect(devcontainerButton).toBeEnabled();
+      },
+      { timeout: 5000 }
+    );
+
+    await userEvent.click(devcontainerButton);
+
+    await waitFor(
+      () => {
+        const configInput = canvas.queryByRole("textbox", {
+          name: "Dev container config path",
+        });
+        if (!configInput) throw new Error("Dev container config input not found");
+      },
+      { timeout: 5000 }
+    );
+
+    const configInput = canvas.getByRole("textbox", { name: "Dev container config path" });
+    await expect(configInput).toBeEnabled();
+    await expect(
+      canvas.findByText("No configs found. Enter a path to continue.")
+    ).resolves.toBeInTheDocument();
   },
 };
 
