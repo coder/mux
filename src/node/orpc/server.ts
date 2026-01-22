@@ -503,11 +503,17 @@ export async function createOrpcServer({
       }
 
       // Close WebSocket server first
-      wsServer.close();
-      // Then close HTTP server
-      await new Promise<void>((resolve, reject) => {
-        httpServer.close((err) => (err ? reject(err) : resolve()));
+      await new Promise<void>((resolve) => {
+        wsServer.close(() => resolve());
       });
+      // Then close HTTP server
+      httpServer.closeIdleConnections?.();
+      httpServer.closeAllConnections?.();
+      if (httpServer.listening) {
+        await new Promise<void>((resolve, reject) => {
+          httpServer.close((err) => (err ? reject(err) : resolve()));
+        });
+      }
     },
   };
 }
