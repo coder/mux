@@ -215,6 +215,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
             <RuntimeBadge
               runtimeConfig={metadata.runtimeConfig}
               isWorking={isWorking}
+              tooltipSide="bottom"
               workspaceName={metadata.name}
               workspacePath={namedWorkspacePath}
             />
@@ -243,7 +244,6 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                       e.stopPropagation();
                       startEditing();
                     }}
-                    title={isDisabled ? undefined : "Double-click to edit title"}
                   >
                     {isWorking || isCreating ? (
                       <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
@@ -254,7 +254,14 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                     )}
                   </span>
                 </TooltipTrigger>
-                <TooltipContent align="start">Double-click to edit title</TooltipContent>
+                <TooltipContent align="start" className="max-w-[420px]">
+                  <div className="flex flex-col gap-1">
+                    <div className="text-foreground font-medium break-words whitespace-normal">
+                      {displayTitle}
+                    </div>
+                    {!isDisabled && <div className="text-muted">Double-click to edit title</div>}
+                  </div>
+                </TooltipContent>
               </Tooltip>
             )}
 
