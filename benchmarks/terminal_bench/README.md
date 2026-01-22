@@ -113,102 +113,11 @@ Results are saved to `runs/YYYY-MM-DD__HH-MM-SS/`:
 
 ## Querying Results from BigQuery
 
-Mux Terminal-Bench results are automatically uploaded to BigQuery after each CI run. You can query this data to analyze performance trends, compare models, or investigate specific task failures.
+Mux Terminal-Bench results are uploaded to BigQuery after CI runs. Query via `bq` CLI after authenticating with `gcloud auth login` and setting project to `mux-benchmarks`.
 
-### Setup
+**Table:** `mux-benchmarks.benchmarks.tbench_results`
 
-1. **Install the `bq` CLI** (part of Google Cloud SDK):
-
-   ```bash
-   brew install google-cloud-sdk  # macOS
-   # or: https://cloud.google.com/sdk/docs/install
-   ```
-
-2. **Authenticate**:
-   ```bash
-   gcloud auth login
-   gcloud config set project mux-benchmarks
-   ```
-
-### Example Queries
-
-**Latest results per model:**
-
-```sql
-SELECT
-  model_name,
-  thinking_level,
-  COUNT(*) as n_tasks,
-  COUNTIF(passed) as n_passed,
-  ROUND(COUNTIF(passed) / COUNT(*) * 100, 1) as pass_rate,
-  MAX(ingested_at) as latest_run
-FROM `mux-benchmarks.benchmarks.tbench_results`
-WHERE dataset = 'terminal-bench@2.0'
-GROUP BY model_name, thinking_level
-ORDER BY pass_rate DESC
-```
-
-**Task-level failure analysis:**
-
-```sql
-SELECT
-  task_id,
-  COUNT(*) as attempts,
-  COUNTIF(passed) as passes,
-  ROUND(COUNTIF(NOT passed) / COUNT(*) * 100, 1) as fail_rate
-FROM `mux-benchmarks.benchmarks.tbench_results`
-WHERE dataset = 'terminal-bench@2.0'
-  AND model_name = 'anthropic/claude-sonnet-4-5'
-GROUP BY task_id
-HAVING fail_rate > 50
-ORDER BY fail_rate DESC
-```
-
-**Compare model performance on specific tasks:**
-
-```sql
-SELECT
-  task_id,
-  model_name,
-  COUNTIF(passed) as passes,
-  COUNT(*) as attempts
-FROM `mux-benchmarks.benchmarks.tbench_results`
-WHERE dataset = 'terminal-bench@2.0'
-  AND task_id IN ('chess-best-move', 'stockfish-elo')
-GROUP BY task_id, model_name
-ORDER BY task_id, passes DESC
-```
-
-**Run via CLI:**
-
-```bash
-bq query --use_legacy_sql=false '
-  SELECT model_name, ROUND(COUNTIF(passed)/COUNT(*)*100, 1) as pass_rate
-  FROM `mux-benchmarks.benchmarks.tbench_results`
-  WHERE dataset = "terminal-bench@2.0"
-  GROUP BY model_name
-  ORDER BY pass_rate DESC
-'
-```
-
-### Schema Reference
-
-| Column            | Type      | Description                                            |
-| ----------------- | --------- | ------------------------------------------------------ |
-| `run_id`          | STRING    | Unique identifier for the benchmark run                |
-| `task_id`         | STRING    | Task name (e.g., `chess-best-move`)                    |
-| `model_name`      | STRING    | Model identifier (e.g., `anthropic/claude-sonnet-4-5`) |
-| `thinking_level`  | STRING    | Thinking level (`off`, `low`, `medium`, `high`)        |
-| `mode`            | STRING    | Agent mode (`plan`, `exec`)                            |
-| `dataset`         | STRING    | Dataset version (e.g., `terminal-bench@2.0`)           |
-| `experiments`     | STRING    | Comma-separated experiment flags                       |
-| `passed`          | BOOL      | Whether the task passed                                |
-| `score`           | FLOAT     | Numeric score (typically 0.0 or 1.0)                   |
-| `n_input_tokens`  | INT       | Input tokens used                                      |
-| `n_output_tokens` | INT       | Output tokens generated                                |
-| `github_run_id`   | INT       | GitHub Actions run ID                                  |
-| `github_sha`      | STRING    | Git commit SHA                                         |
-| `ingested_at`     | TIMESTAMP | When the result was uploaded                           |
+**Schema:** `run_id` (STRING), `task_id` (STRING), `model_name` (STRING), `thinking_level` (STRING: off/low/medium/high), `mode` (STRING: plan/exec), `dataset` (STRING), `experiments` (STRING), `passed` (BOOL), `score` (FLOAT), `n_input_tokens` (INT), `n_output_tokens` (INT), `github_run_id` (INT), `github_sha` (STRING), `ingested_at` (TIMESTAMP).
 
 See `.github/workflows/terminal-bench.yml` and `.github/workflows/nightly-terminal-bench.yml` for GitHub Actions integration.
 
@@ -281,10 +190,7 @@ The PR will be automatically validated by the leaderboard bot. Once merged, resu
 To identify where Mux underperforms relative to other top agents, use the analysis script:
 
 ```bash
-# Install dependencies (one-time)
-pip install huggingface_hub pyyaml
-
-# Run analysis (downloads leaderboard data from HuggingFace)
+# Run analysis (clones leaderboard data from HuggingFace via git)
 python benchmarks/terminal_bench/analyze_failure_rates.py
 
 # Show more results

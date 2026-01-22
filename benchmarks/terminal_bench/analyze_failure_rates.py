@@ -22,7 +22,7 @@ Usage:
     python benchmarks/terminal_bench/analyze_failure_rates.py --refresh
 
 Requirements:
-    pip install huggingface_hub pandas pyyaml
+    git (for cloning from HuggingFace)
 """
 
 import argparse
@@ -68,23 +68,22 @@ class AgentStats:
 
 def download_leaderboard_data(refresh: bool = False) -> Path:
     """
-    Download or update the leaderboard repo from HuggingFace.
+    Download or update the leaderboard repo from HuggingFace using git clone.
 
-    Uses huggingface_hub's snapshot_download for idempotent downloads.
-    Returns the path to the downloaded repo.
+    Uses git directly to avoid HuggingFace API rate limits.
+    Returns the path to the cloned repo.
     """
-    from huggingface_hub import snapshot_download
+    import subprocess
+    import time
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     repo_path = CACHE_DIR / "terminal-bench-2-leaderboard"
+    marker_file = repo_path / ".last_download"
+    repo_url = f"https://huggingface.co/datasets/{LEADERBOARD_REPO}"
 
     # Check if we should skip download
     if repo_path.exists() and not refresh:
-        # Check if data is recent (within 24 hours)
-        marker_file = repo_path / ".last_download"
         if marker_file.exists():
-            import time
-
             mtime = marker_file.stat().st_mtime
             age_hours = (time.time() - mtime) / 3600
             if age_hours < 24:
@@ -93,21 +92,29 @@ def download_leaderboard_data(refresh: bool = False) -> Path:
                 )
                 return repo_path
 
-    print(f"Downloading leaderboard data from {LEADERBOARD_REPO}...")
     try:
-        downloaded_path = snapshot_download(
-            repo_id=LEADERBOARD_REPO,
-            repo_type="dataset",
-            local_dir=str(repo_path),
-            local_dir_use_symlinks=False,
-        )
-        # Update marker
-        marker_file = repo_path / ".last_download"
+        if repo_path.exists():
+            # Pull latest changes
+            print(f"Updating leaderboard data from {repo_url}...")
+            subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+            )
+        else:
+            # Fresh clone
+            print(f"Cloning leaderboard data from {repo_url}...")
+            subprocess.run(
+                ["git", "clone", "--depth=1", repo_url, str(repo_path)],
+                check=True,
+                capture_output=True,
+            )
         marker_file.touch()
-        print(f"Downloaded to: {downloaded_path}")
-        return Path(downloaded_path)
-    except Exception as e:
-        print(f"Error downloading: {e}", file=sys.stderr)
+        print(f"Data ready at: {repo_path}")
+        return repo_path
+    except subprocess.CalledProcessError as e:
+        print(f"Git error: {e.stderr.decode() if e.stderr else e}", file=sys.stderr)
         if repo_path.exists():
             print("Using existing cached data.")
             return repo_path
@@ -169,10 +176,11 @@ def parse_leaderboard_results(repo_path: Path) -> list[TaskResult]:
                     passed = float(data.get("score", 0)) > 0
                 elif "verifier_result" in data:
                     vr = data["verifier_result"]
-                    if "passed" in vr:
-                        passed = bool(vr["passed"])
-                    elif "rewards" in vr:
-                        passed = float(vr["rewards"].get("reward", 0)) > 0
+                    if vr is not None:
+                        if "passed" in vr:
+                            passed = bool(vr["passed"])
+                        elif "rewards" in vr:
+                            passed = float(vr["rewards"].get("reward", 0)) > 0
 
                 results.append(
                     TaskResult(
