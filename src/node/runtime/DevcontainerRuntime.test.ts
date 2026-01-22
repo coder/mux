@@ -118,6 +118,21 @@ describe("DevcontainerRuntime.resolveContainerCwd", () => {
   });
 });
 
+describe("DevcontainerRuntime.resolveHostPathForMounted", () => {
+  function resolveHostPathForMounted(
+    runtime: DevcontainerRuntime,
+    filePath: string
+  ): string | null {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return
+    return (runtime as any).resolveHostPathForMounted(filePath);
+  }
+
+  it("accepts Windows host paths under the workspace root", () => {
+    const runtime = createRuntime({ currentWorkspacePath: "C:\\ws\\proj" });
+    const filePath = "C:\\ws\\proj\\.mux\\mcp.local.jsonc";
+    expect(resolveHostPathForMounted(runtime, filePath)).toBe(filePath);
+  });
+});
 describe("DevcontainerRuntime.mapHostPathToContainer", () => {
   // Access the private method for testing
   function mapHostPathToContainer(runtime: DevcontainerRuntime, hostPath: string): string | null {

@@ -33,6 +33,7 @@ import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCod
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
 export interface DevcontainerRuntimeOptions {
   srcBaseDir: string;
@@ -118,8 +119,14 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
 
   private resolveHostPathForMounted(filePath: string): string | null {
     if (this.currentWorkspacePath) {
-      const hostRoot = this.currentWorkspacePath.replace(/\/+$/, "");
-      if (filePath === hostRoot || filePath.startsWith(`${hostRoot}/`)) {
+      const normalizedFilePath = filePath.replaceAll("\\", "/");
+      const normalizedHostRoot = stripTrailingSlashes(
+        this.currentWorkspacePath.replaceAll("\\", "/")
+      );
+      if (
+        normalizedFilePath === normalizedHostRoot ||
+        normalizedFilePath.startsWith(`${normalizedHostRoot}/`)
+      ) {
         return filePath;
       }
     }
