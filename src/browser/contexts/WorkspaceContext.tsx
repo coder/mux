@@ -227,7 +227,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           const shouldMigrateModels = cfg.muxGatewayModels === undefined && localModels.length > 0;
 
           if (shouldMigrateEnabled || shouldMigrateModels) {
-            void api.config
+            api.config
               .updateMuxGatewayPrefs({
                 muxGatewayEnabled: cfg.muxGatewayEnabled ?? localEnabled,
                 muxGatewayModels: cfg.muxGatewayModels ?? localModels,

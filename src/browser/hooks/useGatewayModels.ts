@@ -187,7 +187,7 @@ export function useGateway(): GatewayState {
         return;
       }
 
-      void api.config
+      api.config
         .updateMuxGatewayPrefs({
           muxGatewayEnabled: nextEnabled,
           muxGatewayModels: nextModels,
