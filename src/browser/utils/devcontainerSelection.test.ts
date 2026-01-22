@@ -4,7 +4,6 @@ import {
   DEFAULT_DEVCONTAINER_CONFIG_PATH,
 } from "./devcontainerSelection";
 import type { RuntimeAvailabilityState } from "@/browser/components/ChatInput/useCreationWorkspace";
-import type { ParsedRuntime } from "@/common/types/runtime";
 
 describe("resolveDevcontainerSelection", () => {
   describe("non-devcontainer mode", () => {
@@ -22,7 +21,7 @@ describe("resolveDevcontainerSelection", () => {
     it("returns hidden when mode is local", () => {
       const result = resolveDevcontainerSelection({
         selectedRuntime: { mode: "local" },
-        availabilityState: { status: "loaded", data: {} as never },
+        availabilityState: { status: "loaded", data: {} as unknown as never },
       });
 
       expect(result.uiMode).toBe("hidden");

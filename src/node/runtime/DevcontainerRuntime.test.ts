@@ -29,6 +29,7 @@ describe("DevcontainerRuntime.resolvePath", () => {
 
   it("throws when home is unknown", async () => {
     const runtime = createRuntime({});
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun:test expect().rejects requires await
     await expect(runtime.resolvePath("~")).rejects.toThrow("container home directory unavailable");
   });
 
