@@ -42,7 +42,7 @@ export const ToolHeader: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
 }) => (
   <div
     className={cn(
-      "flex items-center gap-2 cursor-pointer select-none text-secondary hover:text-foreground",
+      "flex min-w-0 items-center gap-2 cursor-pointer select-none text-secondary hover:text-foreground",
       className
     )}
     {...props}
@@ -67,7 +67,7 @@ export const ExpandIcon: React.FC<ExpandIconProps> = ({ expanded, className, ...
 export const ToolName: React.FC<React.HTMLAttributes<HTMLSpanElement>> = ({
   className,
   ...props
-}) => <span className={cn("font-medium", className)} {...props} />;
+}) => <span className={cn("min-w-0 flex-1 truncate font-medium", className)} {...props} />;
 
 interface StatusIndicatorProps extends React.HTMLAttributes<HTMLSpanElement> {
   status: string;

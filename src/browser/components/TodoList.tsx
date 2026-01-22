@@ -121,8 +121,9 @@ export const TodoList: React.FC<TodoListProps> = ({ todos }) => {
             <div className="mt-px shrink-0 text-xs opacity-80">{getStatusIcon(todo.status)}</div>
             <div className="min-w-0 flex-1">
               <div
+                title={todo.content}
                 className={cn(
-                  "whitespace-nowrap",
+                  "truncate",
                   todo.status === "completed" && "line-through",
                   todo.status === "in_progress" &&
                     "font-medium after:content-['...'] after:inline after:overflow-hidden after:animate-[ellipsis_1.5s_steps(4,end)_infinite]"

@@ -236,9 +236,9 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
         )}
         {isBackground && (
           // Background mode: show icon and display name
-          <span className="text-muted ml-2 flex items-center gap-1 text-[10px] whitespace-nowrap">
-            <Layers size={10} />
-            {args.display_name}
+          <span className="text-muted ml-2 flex min-w-0 items-center gap-1 text-[10px]">
+            <Layers size={10} className="shrink-0" />
+            <span className="min-w-0 truncate">{args.display_name}</span>
           </span>
         )}
         {!isBackground && (
