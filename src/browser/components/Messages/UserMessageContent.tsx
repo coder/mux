@@ -42,9 +42,11 @@ const imageStyles = {
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
 } as const;
 
-/** Styled command prefix badge (e.g., "/compact" or "/skill-name") */
+/** Styled command prefix (e.g., "/compact" or "/skill-name") */
 const CommandPrefixBadge: React.FC<{ prefix: string }> = ({ prefix }) => (
-  <span className="command-prefix-badge">{prefix}</span>
+  <span className="font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]">
+    {prefix}
+  </span>
 );
 
 /**
@@ -79,7 +81,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
     if (!remainingContent && !shouldHighlightPrefix) return null;
 
     return (
-      <div className="user-message-text">
+      <div className="flex flex-wrap items-baseline">
         {shouldHighlightPrefix && <CommandPrefixBadge prefix={shouldHighlightPrefix} />}
         {remainingContent && (
           <MarkdownRenderer

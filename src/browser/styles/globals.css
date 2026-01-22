@@ -1452,25 +1452,6 @@ code {
 }
 
 
-/* Command prefix badge for slash commands (e.g., /compact, /skill-name) */
-.command-prefix-badge {
-  color: var(--color-plan-mode-light);
-  font-family: var(--font-monospace);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-/* Container for user message text with command prefix */
-.user-message-text {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-}
-
-.user-message-text .user-message-markdown {
-  flex: 1;
-  min-width: 0;
-}
 .markdown-content code {
   background: rgba(0, 0, 0, 0);
   padding: 2px 4px;
