@@ -152,7 +152,10 @@ export class StreamCollector {
               this.subscriptionReadyResolve = null;
             }
           }
-          // Don't store caught-up in events - it's just a signal
+
+          // Don't store caught-up in events - it's just a signal.
+          // But still satisfy any waiters so tests can await waitForEvent("caught-up").
+          this.checkWaiters(message);
           continue;
         }
 
