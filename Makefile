@@ -183,6 +183,9 @@ endif
 
 
 
+
+dev-desktop-sandbox: ## Start an isolated Electron dev instance (fresh MUX_ROOT + free ports)
+	@bun scripts/dev-desktop-sandbox.ts
 dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + free ports)
 	@bun scripts/dev-server-sandbox.ts
 

@@ -22,118 +22,18 @@
  *   - MAKE=gmake                       # override make binary
  */
 
+import { spawn } from "child_process";
 import * as fs from "fs";
-import * as net from "net";
 import * as os from "os";
 import * as path from "path";
-import { spawn } from "child_process";
 
-function expandTilde(input: string): string {
-  if (input === "~") return os.homedir();
-  if (input.startsWith("~/")) return path.join(os.homedir(), input.slice(2));
-  return input;
-}
-
-function dirExists(dirPath: string): boolean {
-  try {
-    return fs.statSync(dirPath).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function fileExists(filePath: string): boolean {
-  try {
-    fs.accessSync(filePath, fs.constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function chooseSeedMuxRoot(): string | null {
-  if (process.env.SEED_MUX_ROOT) {
-    const explicit = expandTilde(process.env.SEED_MUX_ROOT);
-    if (!dirExists(explicit)) {
-      throw new Error(`SEED_MUX_ROOT does not exist or is not a directory: ${explicit}`);
-    }
-    return explicit;
-  }
-
-  const candidates = [
-    process.env.MUX_ROOT ? expandTilde(process.env.MUX_ROOT) : null,
-    path.join(os.homedir(), ".mux-dev"),
-    path.join(os.homedir(), ".mux"),
-  ].filter(Boolean) as string[];
-
-  for (const candidate of candidates) {
-    if (!dirExists(candidate)) continue;
-
-    const hasProviders = fileExists(path.join(candidate, "providers.jsonc"));
-    const hasConfig = fileExists(path.join(candidate, "config.json"));
-
-    if (hasProviders || hasConfig) return candidate;
-  }
-
-  for (const candidate of candidates) {
-    if (dirExists(candidate)) return candidate;
-  }
-
-  return null;
-}
-
-function copyFileIfExists(
-  sourcePath: string,
-  destPath: string,
-  options?: { mode?: number }
-): boolean {
-  if (!fileExists(sourcePath)) return false;
-
-  fs.copyFileSync(sourcePath, destPath);
-
-  if (options?.mode !== undefined) {
-    try {
-      fs.chmodSync(destPath, options.mode);
-    } catch {
-      // Best-effort on platforms that support POSIX permissions.
-    }
-  }
-
-  return true;
-}
-
-async function getFreePort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = net.createServer();
-
-    server.on("error", reject);
-
-    // Bind to loopback since dev-server defaults to 127.0.0.1.
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close(() => reject(new Error("Failed to resolve free port")));
-        return;
-      }
-
-      const { port } = address;
-      server.close((err) => {
-        if (err) reject(err);
-        else resolve(port);
-      });
-    });
-
-    // If the script gets interrupted, don't keep the process alive because of this server.
-    server.unref();
-  });
-}
-
-function parseOptionalPort(value: string | undefined): number | null {
-  if (!value) return null;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed;
-}
+import {
+  chooseSeedMuxRoot,
+  copyFileIfExists,
+  forwardSignalsToChildProcesses,
+  getFreePort,
+  parseOptionalPort,
+} from "./sandboxUtils";
 
 async function main(): Promise<number> {
   const keepSandbox = process.env.KEEP_SANDBOX === "1";
@@ -227,15 +127,8 @@ async function main(): Promise<number> {
       throw err;
     }
 
-    const forwardSignal = (signal: NodeJS.Signals): void => {
-      if (!child.killed) {
-        child.kill(signal);
-      }
-    };
-
     // Forward signals so Ctrl+C stops all subprocesses.
-    process.on("SIGINT", () => forwardSignal("SIGINT"));
-    process.on("SIGTERM", () => forwardSignal("SIGTERM"));
+    forwardSignalsToChildProcesses(() => [child]);
 
     const exitCode = await new Promise<number>((resolve) => {
       let resolved = false;
