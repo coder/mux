@@ -28,6 +28,8 @@ export const CommandIds = {
   workspaceRenameAny: () => "ws:rename-any" as const,
   workspaceOpenTerminal: () => "ws:open-terminal" as const,
   workspaceOpenTerminalCurrent: () => "ws:open-terminal-current" as const,
+  workspaceNewChatPane: () => "ws:new-chat-pane" as const,
+  workspaceResetLayout: () => "ws:reset-layout" as const,
 
   // Navigation commands
   navNext: () => "nav:next" as const,

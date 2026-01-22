@@ -18,7 +18,9 @@ import {
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import {
   addTabToFocusedTabset,
+  collectAllTabsWithTabset,
   parseDockLayoutState,
+  selectTabInFocusedTabset,
   selectTabInTabset,
   setFocusedTabset,
   splitFocusedTabset,
@@ -26,6 +28,7 @@ import {
   type DockLayoutState,
 } from "@/browser/utils/dockLayout";
 import {
+  allocWorkspaceChatPaneId,
   DEFAULT_CHAT_PANE_ID,
   ensureWorkspaceDockLayoutState,
   getDefaultWorkspaceDockLayoutState,
@@ -522,6 +525,40 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
 
               updateWorkspaceDockLayout(wsId, (s) => addTabToFocusedTabset(s, tool));
             },
+          },
+        },
+        {
+          id: CommandIds.workspaceNewChatPane(),
+          title: "Workspace: New Chat Pane",
+          section: section.navigation,
+          run: () =>
+            updateWorkspaceDockLayout(wsId, (s) => {
+              const newChatPane = allocWorkspaceChatPaneId(s);
+              const chatTabsetId =
+                collectAllTabsWithTabset(s.root).find((t) => t.tab.startsWith("chat:"))?.tabsetId ??
+                s.focusedTabsetId;
+
+              let next = setFocusedTabset(s, chatTabsetId);
+              next = selectTabInFocusedTabset(next, newChatPane);
+              return splitFocusedTabset(next, "vertical", getWorkspaceDockFallbackTab);
+            }),
+        },
+        {
+          id: CommandIds.workspaceResetLayout(),
+          title: "Workspace: Reset Layout",
+          section: section.layouts,
+          run: () => {
+            const fallback = getRightSidebarTabFallback();
+            const defaultLayout = getDefaultWorkspaceDockLayoutState({
+              initialToolTab: fallback,
+              statsTabEnabled: false,
+            });
+
+            updatePersistedState(
+              getWorkspaceDockLayoutKey(wsId),
+              () => defaultLayout,
+              defaultLayout
+            );
           },
         }
       );

@@ -1,5 +1,7 @@
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import React, { useCallback, useMemo, useRef, useState } from "react";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
 import {
   RIGHT_SIDEBAR_TAB_KEY,
@@ -31,6 +33,7 @@ import {
   isDockLayoutState,
   parseDockLayoutState,
   removeTabEverywhere,
+  selectTabByIndex,
   selectTabInTabset,
   setFocusedTabset,
   type DockLayoutState,
@@ -109,6 +112,9 @@ const WorkspacePlaceholder: React.FC<{
 );
 
 export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
+  const { selectedWorkspace } = useWorkspaceContext();
+  const isSelectedWorkspace = selectedWorkspace?.workspaceId === props.workspaceId;
+
   const findPreferredToolsTabsetId = useCallback(
     (state: DockLayoutState<WorkspacePaneId>): string => {
       const tabsByTabset = new Map<string, WorkspacePaneId[]>();
@@ -138,6 +144,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   const { statsTabState } = useFeatureFlags();
   const statsTabEnabled = Boolean(statsTabState?.enabled);
 
+  const [reviewFocusTrigger, setReviewFocusTrigger] = useState(0);
   const [reviewStats, setReviewStats] = useState<ReviewStats | null>(null);
   const [autoFocusTerminalSession, setAutoFocusTerminalSession] = useState<string | null>(null);
 
@@ -247,6 +254,60 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     },
     [parseWorkspaceDockLayout, setDockLayoutRaw]
   );
+
+  // Keyboard shortcuts for tab switching by position (Cmd/Ctrl+1-9)
+  React.useEffect(() => {
+    if (!isSelectedWorkspace) {
+      return;
+    }
+
+    const tabKeybinds = [
+      KEYBINDS.SIDEBAR_TAB_1,
+      KEYBINDS.SIDEBAR_TAB_2,
+      KEYBINDS.SIDEBAR_TAB_3,
+      KEYBINDS.SIDEBAR_TAB_4,
+      KEYBINDS.SIDEBAR_TAB_5,
+      KEYBINDS.SIDEBAR_TAB_6,
+      KEYBINDS.SIDEBAR_TAB_7,
+      KEYBINDS.SIDEBAR_TAB_8,
+      KEYBINDS.SIDEBAR_TAB_9,
+    ];
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      for (let i = 0; i < tabKeybinds.length; i++) {
+        if (!matchesKeybind(e, tabKeybinds[i])) {
+          continue;
+        }
+
+        e.preventDefault();
+
+        const currentLayout = parseWorkspaceDockLayout(dockLayoutRawRef.current);
+        const allTabs = collectAllTabsWithTabset(currentLayout.root);
+        const target = allTabs[i];
+
+        if (target) {
+          const tab = target.tab;
+
+          if (isTerminalTab(tab as TabType)) {
+            const sessionId = getTerminalSessionId(tab as TabType);
+            if (sessionId) {
+              setAutoFocusTerminalSession(sessionId);
+            }
+          } else if (tab === "review") {
+            // Review panel keyboard navigation (j/k) is gated on focus. If the user explicitly
+            // opened the tab via shortcut, focus the panel so it works immediately.
+            setReviewFocusTrigger((prev) => prev + 1);
+          }
+        }
+
+        setDockLayout((prev) => selectTabByIndex(prev, i));
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isSelectedWorkspace, parseWorkspaceDockLayout, setDockLayout]);
 
   const getFallbackTabForEmptyTabset = useCallback((movedTab: WorkspacePaneId): WorkspacePaneId => {
     return typeof movedTab === "string" && movedTab.startsWith("chat:")
@@ -366,6 +427,42 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     },
     [closeTab]
   );
+
+  // Keyboard shortcut for closing active tab (Ctrl/Cmd+W)
+  // Works for terminal tabs and file tabs.
+  React.useEffect(() => {
+    if (!isSelectedWorkspace) {
+      return;
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!matchesKeybind(e, KEYBINDS.CLOSE_TAB)) {
+        return;
+      }
+
+      const currentLayout = parseWorkspaceDockLayout(dockLayoutRawRef.current);
+      const focusedTabset = findTabset(currentLayout.root, currentLayout.focusedTabsetId);
+      if (focusedTabset?.type !== "tabset") {
+        return;
+      }
+
+      const activeTab = focusedTabset.activeTab;
+
+      if (isTerminalTab(activeTab as TabType)) {
+        e.preventDefault();
+        closeTerminal(activeTab as TabType);
+        return;
+      }
+
+      if (isFileTab(activeTab as TabType)) {
+        e.preventDefault();
+        closeFile(activeTab as TabType);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
+  }, [closeFile, closeTerminal, isSelectedWorkspace, parseWorkspaceDockLayout]);
 
   const handleOpenTerminal = useCallback(
     (options?: TerminalSessionCreateOptions) => {
@@ -490,7 +587,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
               workspacePath={props.namedWorkspacePath}
               projectPath={props.projectPath}
               onReviewNote={handleReviewNote}
-              focusTrigger={0}
+              focusTrigger={reviewFocusTrigger}
               isCreating={props.status === "creating"}
               onStatsChange={(stats) => {
                 setReviewStats({ total: stats.total, read: stats.read });
@@ -599,6 +696,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
       props.workspaceId,
       props.workspaceName,
       reviewStats,
+      reviewFocusTrigger,
       sessionCost,
       sessionDuration,
       terminalTitles,

@@ -20,6 +20,34 @@ export function isWorkspacePaneId(value: unknown): value is WorkspacePaneId {
   return isTabType(value);
 }
 
+export function allocWorkspaceChatPaneId(state: DockLayoutState<WorkspacePaneId>): WorkspacePaneId {
+  const used = new Set<number>();
+
+  for (const tab of collectAllTabs(state.root)) {
+    if (typeof tab !== "string" || !tab.startsWith("chat:")) {
+      continue;
+    }
+
+    const suffix = tab.slice("chat:".length);
+    if (suffix === "main") {
+      continue;
+    }
+
+    const parsed = Number.parseInt(suffix, 10);
+    if (!Number.isFinite(parsed) || String(parsed) !== suffix) {
+      continue;
+    }
+
+    used.add(parsed);
+  }
+
+  let next = 1;
+  while (used.has(next)) {
+    next += 1;
+  }
+
+  return `chat:${next}` as WorkspacePaneId;
+}
 export const DEFAULT_CHAT_PANE_ID: WorkspacePaneId = "chat:main";
 
 export function getDefaultWorkspaceDockLayoutState(options: {
