@@ -21,6 +21,10 @@ const IPHONE_16E = {
   height: 844,
 } as const;
 
+// NOTE: Mux's mobile UI tweaks are gated on `@media (max-width: 768px) and (pointer: coarse)`.
+// Chromatic can emulate touch via `hasTouch: true` in modes, which ensures the
+// right sidebar is hidden and the mobile header/sidebar affordances are visible.
+
 const IPHONE_17_PRO_MAX = {
   // Source: https://ios-resolution.info/ (logical resolution)
   width: 440,
@@ -99,8 +103,8 @@ export const IPhone16e: AppStory = {
       ...(appMeta.parameters?.chromatic ?? {}),
       cropToViewport: true,
       modes: {
-        dark: { theme: "dark", viewport: IPHONE_16E },
-        light: { theme: "light", viewport: IPHONE_16E },
+        dark: { theme: "dark", viewport: IPHONE_16E, hasTouch: true },
+        light: { theme: "light", viewport: IPHONE_16E, hasTouch: true },
       },
     },
   },
@@ -129,8 +133,8 @@ export const IPhone17ProMax: AppStory = {
       ...(appMeta.parameters?.chromatic ?? {}),
       cropToViewport: true,
       modes: {
-        dark: { theme: "dark", viewport: IPHONE_17_PRO_MAX },
-        light: { theme: "light", viewport: IPHONE_17_PRO_MAX },
+        dark: { theme: "dark", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
+        light: { theme: "light", viewport: IPHONE_17_PRO_MAX, hasTouch: true },
       },
     },
   },
