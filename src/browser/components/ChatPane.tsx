@@ -37,7 +37,6 @@ import {
   useWorkspaceStoreRaw,
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
-import { WorkspaceHeader } from "./WorkspaceHeader";
 import type { ImagePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -72,8 +71,6 @@ interface ChatPaneProps {
   projectName: string;
   workspaceName: string;
   namedWorkspacePath: string;
-  leftSidebarCollapsed: boolean;
-  onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   status?: "creating";
   onOpenTerminal: (options?: TerminalSessionCreateOptions) => void;
@@ -90,8 +87,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     projectName,
     workspaceName,
     namedWorkspacePath,
-    leftSidebarCollapsed,
-    onToggleLeftSidebarCollapsed,
     runtimeConfig,
     onOpenTerminal,
     workspaceState,
@@ -523,20 +518,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   return (
     <div
       ref={chatAreaRef}
-      className="flex min-w-96 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:min-w-0"
+      className="flex min-h-0 min-w-0 flex-1 flex-col [@media(max-width:768px)]:max-h-full [@media(max-width:768px)]:w-full"
     >
-      <WorkspaceHeader
-        workspaceId={workspaceId}
-        projectName={projectName}
-        projectPath={projectPath}
-        workspaceName={workspaceName}
-        leftSidebarCollapsed={leftSidebarCollapsed}
-        onToggleLeftSidebarCollapsed={onToggleLeftSidebarCollapsed}
-        namedWorkspacePath={namedWorkspacePath}
-        runtimeConfig={runtimeConfig}
-        onOpenTerminal={onOpenTerminal}
-      />
-
       <div className="relative flex-1 overflow-hidden">
         <div
           ref={contentRef}

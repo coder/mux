@@ -5,7 +5,7 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import { getWorkspaceDockLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
@@ -17,13 +17,21 @@ import {
 } from "@/browser/utils/uiLayouts";
 import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLayouts";
 import {
-  addToolToFocusedTabset,
-  getDefaultRightSidebarLayoutState,
-  parseRightSidebarLayoutState,
+  addTabToFocusedTabset,
+  parseDockLayoutState,
   selectTabInTabset,
   setFocusedTabset,
   splitFocusedTabset,
-} from "@/browser/utils/rightSidebarLayout";
+  type DockLayoutNode,
+  type DockLayoutState,
+} from "@/browser/utils/dockLayout";
+import {
+  DEFAULT_CHAT_PANE_ID,
+  ensureWorkspaceDockLayoutState,
+  getDefaultWorkspaceDockLayoutState,
+  isWorkspacePaneId,
+  type WorkspacePaneId,
+} from "@/browser/utils/workspaceDockLayout";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -115,27 +123,49 @@ const getRightSidebarTabFallback = (): TabType => {
   return isTabType(raw) ? raw : "costs";
 };
 
-const updateRightSidebarLayout = (
+function getWorkspaceDockFallbackTab(movedTab: WorkspacePaneId): WorkspacePaneId {
+  return typeof movedTab === "string" && movedTab.startsWith("chat:")
+    ? "explorer"
+    : DEFAULT_CHAT_PANE_ID;
+}
+
+const updateWorkspaceDockLayout = (
   workspaceId: string,
-  updater: (
-    state: ReturnType<typeof parseRightSidebarLayoutState>
-  ) => ReturnType<typeof parseRightSidebarLayoutState>
+  updater: (state: DockLayoutState<WorkspacePaneId>) => DockLayoutState<WorkspacePaneId>
 ) => {
   const fallback = getRightSidebarTabFallback();
-  const defaultLayout = getDefaultRightSidebarLayoutState(fallback);
+  const defaultLayout = getDefaultWorkspaceDockLayoutState({
+    initialToolTab: fallback,
+    statsTabEnabled: false,
+  });
 
-  updatePersistedState<ReturnType<typeof parseRightSidebarLayoutState>>(
-    getRightSidebarLayoutKey(workspaceId),
-    (prev) => updater(parseRightSidebarLayoutState(prev, fallback)),
+  updatePersistedState<DockLayoutState<WorkspacePaneId>>(
+    getWorkspaceDockLayoutKey(workspaceId),
+    (prev) => {
+      const parsed = parseDockLayoutState(prev, {
+        isPaneId: isWorkspacePaneId,
+        defaultState: defaultLayout,
+        ensureRequiredPanes: (state) =>
+          ensureWorkspaceDockLayoutState(state, {
+            statsTabEnabled: false,
+            getDefaultState: () => defaultLayout,
+          }),
+      });
+
+      return updater(parsed);
+    },
     defaultLayout
   );
 };
 
 const findFirstTerminalSessionTab = (
-  node: ReturnType<typeof parseRightSidebarLayoutState>["root"]
-): { tabsetId: string; tab: TabType } | null => {
+  node: DockLayoutNode<WorkspacePaneId>
+): { tabsetId: string; tab: WorkspacePaneId } | null => {
   if (node.type === "tabset") {
-    const tab = node.tabs.find((t) => t.startsWith("terminal:") && t !== "terminal");
+    const tab = node.tabs.find(
+      (t) => typeof t === "string" && t.startsWith("terminal:") && t !== "terminal"
+    );
+
     return tab ? { tabsetId: node.id, tab } : null;
   }
 
@@ -422,7 +452,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           title: "Right Sidebar: Focus Terminal",
           section: section.navigation,
           run: () =>
-            updateRightSidebarLayout(wsId, (s) => {
+            updateWorkspaceDockLayout(wsId, (s) => {
               const found = findFirstTerminalSessionTab(s.root);
               if (!found) return s;
               return selectTabInTabset(
@@ -436,13 +466,19 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           id: CommandIds.navRightSidebarSplitHorizontal(),
           title: "Right Sidebar: Split Horizontally",
           section: section.navigation,
-          run: () => updateRightSidebarLayout(wsId, (s) => splitFocusedTabset(s, "horizontal")),
+          run: () =>
+            updateWorkspaceDockLayout(wsId, (s) =>
+              splitFocusedTabset(s, "horizontal", getWorkspaceDockFallbackTab)
+            ),
         },
         {
           id: CommandIds.navRightSidebarSplitVertical(),
           title: "Right Sidebar: Split Vertically",
           section: section.navigation,
-          run: () => updateRightSidebarLayout(wsId, (s) => splitFocusedTabset(s, "vertical")),
+          run: () =>
+            updateWorkspaceDockLayout(wsId, (s) =>
+              splitFocusedTabset(s, "vertical", getWorkspaceDockFallbackTab)
+            ),
         },
         {
           id: CommandIds.navRightSidebarAddTool(),
@@ -472,7 +508,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               // "terminal" is now an alias for "focus an existing terminal session tab".
               // Creating new terminal sessions is handled in the main UI ("+" button).
               if (tool === "terminal") {
-                updateRightSidebarLayout(wsId, (s) => {
+                updateWorkspaceDockLayout(wsId, (s) => {
                   const found = findFirstTerminalSessionTab(s.root);
                   if (!found) return s;
                   return selectTabInTabset(
@@ -484,7 +520,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 return;
               }
 
-              updateRightSidebarLayout(wsId, (s) => addToolToFocusedTabset(s, tool));
+              updateWorkspaceDockLayout(wsId, (s) => addTabToFocusedTabset(s, tool));
             },
           },
         }
