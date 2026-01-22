@@ -90,14 +90,15 @@ def download_leaderboard_data(refresh: bool = False) -> Path:
             age_hours = (time.time() - mtime) / 3600
             if age_hours < 24:
                 print(
-                    f"Using cached data (age: {age_hours:.1f}h). Use --refresh to update."
+                    f"Using cached data (age: {age_hours:.1f}h). Use --refresh to update.",
+                    file=sys.stderr,
                 )
                 return repo_path
 
     try:
         if repo_path.exists():
             # Pull latest changes
-            print(f"Updating leaderboard data from {repo_url}...")
+            print(f"Updating leaderboard data from {repo_url}...", file=sys.stderr)
             subprocess.run(
                 ["git", "pull", "--ff-only"],
                 cwd=repo_path,
@@ -106,19 +107,19 @@ def download_leaderboard_data(refresh: bool = False) -> Path:
             )
         else:
             # Fresh clone (full clone needed - submissions are in different commits)
-            print(f"Cloning leaderboard data from {repo_url}...")
+            print(f"Cloning leaderboard data from {repo_url}...", file=sys.stderr)
             subprocess.run(
                 ["git", "clone", repo_url, str(repo_path)],
                 check=True,
                 capture_output=True,
             )
         marker_file.touch()
-        print(f"Data ready at: {repo_path}")
+        print(f"Data ready at: {repo_path}", file=sys.stderr)
         return repo_path
     except subprocess.CalledProcessError as e:
         print(f"Git error: {e.stderr.decode() if e.stderr else e}", file=sys.stderr)
         if repo_path.exists():
-            print("Using existing cached data.")
+            print("Using existing cached data.", file=sys.stderr)
             return repo_path
         raise
 
@@ -143,7 +144,7 @@ def query_mux_results_from_bq() -> list[TaskResult]:
     WHERE dataset = 'terminal-bench@2.0'
     """
 
-    print("Querying Mux results from BigQuery...")
+    print("Querying Mux results from BigQuery...", file=sys.stderr)
     try:
         result = subprocess.run(
             [
@@ -176,7 +177,14 @@ def query_mux_results_from_bq() -> list[TaskResult]:
         return results
 
     reader = csv.DictReader(lines)
+    skipped = 0
     for row in reader:
+        # Skip incomplete runs (NULL passed)
+        passed_str = row.get("passed", "").lower()
+        if passed_str not in ("true", "false"):
+            skipped += 1
+            continue
+
         # Create agent name from model + thinking level for grouping
         model = row.get("model_name", "unknown")
         thinking = row.get("thinking_level", "off")
@@ -188,13 +196,15 @@ def query_mux_results_from_bq() -> list[TaskResult]:
         results.append(
             TaskResult(
                 task_id=task_id,
-                passed=row["passed"].lower() == "true",
+                passed=passed_str == "true",
                 agent_name="Mux",
                 model_name=f"{model}@{thinking}",
             )
         )
 
-    print(f"Found {len(results)} Mux results from BigQuery")
+    print(f"Found {len(results)} Mux results from BigQuery", file=sys.stderr)
+    if skipped:
+        print(f"  (skipped {skipped} incomplete runs)", file=sys.stderr)
     return results
 
 
@@ -383,13 +393,16 @@ def find_optimization_opportunities(
         print("Warning: No non-Mux agents found", file=sys.stderr)
         return []
 
-    print(f"\nAnalyzing Mux agents: {', '.join(mux_agents)}")
-    print(f"Comparing against top {len(top_agents)} agents:")
+    print(f"\nAnalyzing Mux agents: {', '.join(mux_agents)}", file=sys.stderr)
+    print(f"Comparing against top {len(top_agents)} agents:", file=sys.stderr)
     for agent in top_agents[:5]:
         s = stats[agent]
-        print(f"  - {agent}: {s.pass_rate * 100:.1f}% ({s.n_passed}/{s.n_tasks})")
+        print(
+            f"  - {agent}: {s.pass_rate * 100:.1f}% ({s.n_passed}/{s.n_tasks})",
+            file=sys.stderr,
+        )
     if len(top_agents) > 5:
-        print(f"  ... and {len(top_agents) - 5} more")
+        print(f"  ... and {len(top_agents) - 5} more", file=sys.stderr)
 
     # Compute task-level failure rates
     all_relevant_agents = set(mux_agents) | set(top_agents)
@@ -517,9 +530,9 @@ def main() -> None:
 
     # Download/load other agents from HuggingFace leaderboard
     repo_path = download_leaderboard_data(refresh=args.refresh)
-    print("Parsing leaderboard results (excluding Mux)...")
+    print("Parsing leaderboard results (excluding Mux)...", file=sys.stderr)
     other_results = parse_leaderboard_results(repo_path, exclude_mux=True)
-    print(f"Found {len(other_results)} results from other agents")
+    print(f"Found {len(other_results)} results from other agents", file=sys.stderr)
 
     # Merge results
     results = mux_results + other_results
