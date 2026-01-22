@@ -20,7 +20,7 @@ export function CreationCenterContent(props: CreationCenterContentProps) {
   }
 
   return (
-    <div className="bg-bg-dark/80 absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm">
+    <div className="bg-bg-dark/80 fixed inset-0 z-10 flex items-center justify-center backdrop-blur-sm">
       <div className="max-w-xl px-8 text-center">
         <div className="bg-accent mb-4 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent"></div>
         <h2 className="text-foreground mb-2 text-lg font-medium">Creating workspace</h2>

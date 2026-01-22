@@ -1073,6 +1073,33 @@ body,
   .mobile-main-content {
     width: 100% !important;
   }
+
+  /* Keep workspace header visible when keyboard opens - fixed positioning
+     because iOS Safari scrolls the visual viewport, not a scroll container.
+     Left/right safe-area insets ensure header content avoids notch in landscape.
+     min-height 44px for touch targets, but allow growth for wrapped controls. */
+  .mobile-sticky-header {
+    position: fixed !important;
+    top: env(safe-area-inset-top, 0px) !important;
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    z-index: 50 !important;
+    min-height: 44px !important;
+    height: auto !important;
+    flex-wrap: wrap !important;
+  }
+
+  /* Add padding to content below fixed header so it's not hidden underneath.
+     Use generous padding (88px = 2x touch targets) to accommodate header wrapping.
+     A true dynamic solution would require JS to measure header height. */
+  .mobile-header-spacer {
+    padding-top: 88px !important;
+  }
+
+  /* Hide right sidebar on mobile - too narrow for useful interaction */
+  .mobile-hide-right-sidebar {
+    display: none !important;
+  }
 }
 
 /* Tailwind utility extensions for dark theme surfaces */
@@ -1094,24 +1121,24 @@ html,
 body,
 #root,
 #storybook-root {
-  /* Use dvh (dynamic viewport height) on supported browsers - this accounts for
-     mobile browser chrome and keyboard accessory bars */
-  min-height: 100dvh;
-  /* Fallback for older browsers */
+  /* Fallback for older browsers that don't support dvh */
   min-height: 100vh;
+  height: 100vh;
 }
 
-/* Handle safe areas for notched devices and keyboard accessory bars */
-@supports (padding: env(safe-area-inset-top)) {
-  /* Apply padding to account for iOS safe areas (notch at top, home indicator at bottom) */
+/* Use dvh (dynamic viewport height) on supported browsers - this accounts for
+   mobile browser chrome and keyboard accessory bars. Using @supports ensures
+   dvh takes precedence over the vh fallback above. */
+@supports (height: 100dvh) {
   #root,
   #storybook-root {
-    padding-top: env(safe-area-inset-top, 0);
-    padding-bottom: env(safe-area-inset-bottom, 0);
-    padding-left: env(safe-area-inset-left, 0);
-    padding-right: env(safe-area-inset-right, 0);
+    min-height: 100dvh;
+    height: 100dvh;
   }
 }
+
+/* Safe areas for notched devices handled via Tailwind arbitrary values:
+   pt-[env(safe-area-inset-top)] and pb-[env(safe-area-inset-bottom)] */
 
 /* For PWA mode, ensure the viewport meta tag handles the keyboard properly
    Note: This is a CSS-only solution; the actual fix requires the viewport

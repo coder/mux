@@ -66,10 +66,12 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   });
 
   const handleOpenTerminal = useCallback(() => {
-    if (onOpenTerminal) {
+    // On mobile touch devices, always use popout since the right sidebar is hidden
+    const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    if (onOpenTerminal && !isMobileTouch) {
       onOpenTerminal();
     } else {
-      // Fallback to popout if no integrated terminal callback provided
+      // Fallback to popout if no integrated terminal callback provided or on mobile
       void openTerminalPopout(workspaceId, runtimeConfig);
     }
   }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
@@ -113,10 +115,12 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       style={headerRightPadding > 0 ? { paddingRight: headerRightPadding } : undefined}
       data-testid="workspace-header"
       className={cn(
-        "bg-sidebar border-border-light flex items-center justify-between border-b px-[15px] [@media(max-width:768px)]:h-auto [@media(max-width:768px)]:flex-wrap [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:py-2",
+        "bg-sidebar border-border-light flex items-center justify-between border-b px-2",
         isDesktop ? DESKTOP_TITLEBAR_HEIGHT_CLASS : "h-8",
         // In desktop mode, make header draggable for window movement
-        isDesktop && "titlebar-drag"
+        isDesktop && "titlebar-drag",
+        // Keep header visible when iOS keyboard opens and causes scroll
+        "mobile-sticky-header"
       )}
     >
       <div

@@ -537,7 +537,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         onOpenTerminal={onOpenTerminal}
       />
 
-      <div className="relative flex-1 overflow-hidden">
+      {/* Spacer for fixed mobile header - mobile-header-spacer adds padding-top on touch devices */}
+      <div className="mobile-header-spacer relative flex-1 overflow-hidden">
         <div
           ref={contentRef}
           onWheel={markUserInteraction}

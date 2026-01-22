@@ -2,7 +2,11 @@ import { useCallback } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime } from "@/common/types/runtime";
-import { createTerminalSession, openTerminalPopout } from "@/browser/utils/terminal";
+import {
+  createTerminalSession,
+  openTerminalPopout,
+  type TerminalSessionCreateOptions,
+} from "@/browser/utils/terminal";
 
 /**
  * Hook to open a terminal window for a workspace.
@@ -20,7 +24,11 @@ export function useOpenTerminal() {
   const { api } = useAPI();
 
   return useCallback(
-    async (workspaceId: string, runtimeConfig?: RuntimeConfig) => {
+    async (
+      workspaceId: string,
+      runtimeConfig?: RuntimeConfig,
+      options?: TerminalSessionCreateOptions
+    ) => {
       if (!api) return;
 
       // Check if running in browser mode
@@ -33,7 +41,7 @@ export function useOpenTerminal() {
       // because the PTY service handles the SSH connection to the remote host
       if (isBrowser || isSSH) {
         // Create terminal session first - window needs sessionId to connect
-        const session = await createTerminalSession(api, workspaceId);
+        const session = await createTerminalSession(api, workspaceId, options);
         openTerminalPopout(api, workspaceId, session.sessionId);
       } else {
         // In Electron (desktop) mode with local workspace, open the native system terminal

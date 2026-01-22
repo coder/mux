@@ -702,7 +702,7 @@ function AppInner() {
   return (
     <>
       <div
-        className="bg-bg-dark mobile-layout flex h-screen overflow-hidden"
+        className="bg-bg-dark mobile-layout flex h-full overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
         onMouseUp={handleMouseNavigation}
       >
         <LeftSidebar
