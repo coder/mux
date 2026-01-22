@@ -233,6 +233,10 @@ async function main(): Promise<number> {
         MUX_DEVSERVER_HOST: "127.0.0.1",
         MUX_DEVSERVER_PORT: String(vitePort),
 
+        // If the user's config.json specifies apiServerPort, we can easily hit EADDRINUSE
+        // while running multiple sandboxes. Default to port 0 (random) unless overridden.
+        MUX_SERVER_PORT: process.env.MUX_SERVER_PORT ?? "0",
+
         // Allow multiple dev Electron instances concurrently.
         CMUX_ALLOW_MULTIPLE_INSTANCES: "1",
       },
