@@ -103,10 +103,10 @@ def download_leaderboard_data(refresh: bool = False) -> Path:
                 capture_output=True,
             )
         else:
-            # Fresh clone
+            # Fresh clone (full clone needed - submissions are in different commits)
             print(f"Cloning leaderboard data from {repo_url}...")
             subprocess.run(
-                ["git", "clone", "--depth=1", repo_url, str(repo_path)],
+                ["git", "clone", repo_url, str(repo_path)],
                 check=True,
                 capture_output=True,
             )
