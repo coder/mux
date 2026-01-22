@@ -189,13 +189,22 @@ export function usePersistedState<T>(
 
   // Match the previous `usePersistedState` behavior: `initialValue` is only used
   // as the default when no value is stored; changes to `initialValue` should not
-  // reinitialize state.
+  // reinitialize state for the same key.
   const initialValueRef = useRef(initialValue);
+  const initialKeyRef = useRef(key);
 
   // useSyncExternalStore requires getSnapshot() to be referentially stable when
   // the underlying store value is unchanged. Since localStorage values are JSON,
   // we cache the parsed value by raw string.
   const snapshotRef = useRef<{ key: string; raw: string | null; value: T } | null>(null);
+
+  // If a component changes `key` across renders, treat it as a distinct persisted
+  // value and adopt the new `initialValue` as the default for that key.
+  if (initialKeyRef.current !== key) {
+    initialKeyRef.current = key;
+    initialValueRef.current = initialValue;
+    snapshotRef.current = null;
+  }
 
   const getSnapshot = useCallback((): T => {
     if (typeof window === "undefined" || !window.localStorage) {

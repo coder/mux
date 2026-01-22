@@ -1128,6 +1128,7 @@ function AppInner() {
                         workspaceInfo={`${selectedWorkspace.projectName}/${workspaceName}`}
                       >
                         <AIView
+                          className="flex min-h-0 min-w-0 flex-1 overflow-hidden"
                           workspaceId={selectedWorkspace.workspaceId}
                           projectPath={selectedWorkspace.projectPath}
                           projectName={selectedWorkspace.projectName}

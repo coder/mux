@@ -176,6 +176,19 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   }, [getDefaultWorkspaceDockLayout, initialToolTab, props.workspaceId, statsTabEnabled]);
 
   const dockLayoutKey = getWorkspaceDockLayoutKey(props.workspaceId);
+
+  // Persist the initial (or migrated-from-right-sidebar) layout so that other
+  // codepaths (e.g. command palette actions) see the same starting point.
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return;
+    }
+
+    const existing = window.localStorage.getItem(dockLayoutKey);
+    if (existing === null || existing === "undefined") {
+      updatePersistedState(dockLayoutKey, initialWorkspaceDockLayout, initialWorkspaceDockLayout);
+    }
+  }, [dockLayoutKey, initialWorkspaceDockLayout]);
   const [dockLayoutRaw, setDockLayoutRaw] = usePersistedState<DockLayoutState<WorkspacePaneId>>(
     dockLayoutKey,
     initialWorkspaceDockLayout,
