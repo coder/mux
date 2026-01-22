@@ -134,7 +134,11 @@ def download_artifacts(run_id: int, output_dir: Path) -> bool:
 
 
 def find_trial_results(run_dir: Path) -> list[dict]:
-    """Find all trial results in a downloaded run directory."""
+    """Find all trial results in a downloaded run directory.
+
+    Derives task/trial identifiers from folder structure (like analyze_failure_rates.py)
+    rather than requiring them in the JSON, since some results omit these fields.
+    """
     results = []
     for result_file in run_dir.rglob("result.json"):
         # Skip job-level result.json files (in jobs/<timestamp>/ directly)
@@ -146,15 +150,18 @@ def find_trial_results(run_dir: Path) -> list[dict]:
 
         try:
             data = json.loads(result_file.read_text())
-            # Must have trial_name to be a trial result
-            if "trial_name" not in data:
-                continue
+
+            # Derive task_name from folder structure (format: task-name__HASH)
+            # Fall back to JSON field if present
+            trial_folder = result_file.parent.name
+            task_name = data.get("task_name") or trial_folder.rsplit("__", 1)[0]
+            trial_name = data.get("trial_name") or trial_folder
 
             results.append(
                 {
                     "path": result_file,
-                    "task_name": data.get("task_name", "unknown"),
-                    "trial_name": data.get("trial_name", "unknown"),
+                    "task_name": task_name,
+                    "trial_name": trial_name,
                     "passed": _get_passed(data),
                     "data": data,
                 }
