@@ -40,12 +40,13 @@ export const WithSkillCommand: AppStory = {
         setupSimpleChatStory({
           workspaceId: "ws-skill",
           messages: [
-            createUserMessage("msg-1", "Audit this effect for stale closures", {
+            createUserMessage("msg-1", "/react-effects Audit this effect for stale closures", {
               historySequence: 1,
               timestamp: STABLE_TIMESTAMP - 120000,
               muxMetadata: {
                 type: "agent-skill",
                 rawCommand: "/react-effects Audit this effect for stale closures",
+                commandPrefix: "/react-effects",
                 skillName: "react-effects",
                 scope: "project",
               },

@@ -1771,9 +1771,10 @@ export class StreamingMessageAggregator {
             }
           : undefined;
 
-      // For legacy compaction messages, rawCommand may only contain the command line.
-      // The continue payload was stored separately in parsed.continueMessage.
-      // Reconstruct the full content to preserve backward compatibility.
+      // LEGACY COMPAT: For compaction messages created before commandPrefix was stored,
+      // rawCommand only contained the command line while the continue payload lived in
+      // parsed.continueMessage. Reconstruct the full content here for display/edit.
+      // This code path can be removed once all users have upgraded past this change.
       if (rawCommand && compactionRequest?.parsed.continueMessage && !rawCommand.includes("\n")) {
         const continueText = getCompactionContinueText(compactionRequest.parsed.continueMessage);
         if (continueText) {

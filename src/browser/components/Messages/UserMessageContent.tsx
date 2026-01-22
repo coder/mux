@@ -80,17 +80,28 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
   const renderTextContent = () => {
     if (!remainingContent && !shouldHighlightPrefix) return null;
 
+    // No prefix highlighting - render markdown directly without wrapper
+    if (!shouldHighlightPrefix) {
+      return (
+        <MarkdownRenderer
+          content={textContent}
+          className={markdownClassName}
+          style={markdownStyles[variant]}
+        />
+      );
+    }
+
     // Check what whitespace follows the prefix to preserve visual layout
-    const charAfterPrefix = shouldHighlightPrefix
-      ? textContent.charAt(shouldHighlightPrefix.length)
-      : "";
+    const charAfterPrefix = textContent.charAt(shouldHighlightPrefix.length);
     const hasSpaceAfterPrefix = charAfterPrefix === " ";
     const hasNewlineAfterPrefix = charAfterPrefix === "\n";
 
+    // Newline after prefix: block layout (badge on own line)
+    // Space after prefix: inline layout (badge + content on same line)
     return (
       <div className={hasNewlineAfterPrefix ? "" : "flex flex-wrap items-baseline"}>
-        {shouldHighlightPrefix && <CommandPrefixBadge prefix={shouldHighlightPrefix} />}
-        {shouldHighlightPrefix && hasSpaceAfterPrefix && <span>&nbsp;</span>}
+        <CommandPrefixBadge prefix={shouldHighlightPrefix} />
+        {hasSpaceAfterPrefix && <span>&nbsp;</span>}
         {remainingContent.trim() && (
           <MarkdownRenderer
             content={remainingContent.trim()}
