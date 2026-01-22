@@ -134,7 +134,9 @@ function AppInner() {
     ? (pendingNewWorkspaceProject ?? defaultProjectPath)
     : null;
 
-  const shouldUseWindowDockLayout = !isMobile;
+  // Window-level DockLayout (nav + multiple workspaces) is intentionally disabled.
+  // UX: navigation stays pinned left and only one workspace is active at a time.
+  const shouldUseWindowDockLayout = false;
 
   const windowMainPane: Exclude<WindowPaneId, "nav"> = selectedWorkspace
     ? `workspace:${selectedWorkspace.workspaceId}`
