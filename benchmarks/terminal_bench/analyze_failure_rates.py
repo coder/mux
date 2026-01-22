@@ -2,7 +2,8 @@
 """
 Analyze Terminal-Bench failure rates to identify optimization opportunities.
 
-Downloads the leaderboard data from HuggingFace and computes:
+Pulls Mux results from BigQuery and other agents from HuggingFace leaderboard.
+Computes:
   M/O ratio = Mux failure rate / Average failure rate of top 10 agents
 
 Tasks with high M/O ratio are where Mux underperforms relative to competitors,
@@ -16,13 +17,14 @@ Usage:
     python benchmarks/terminal_bench/analyze_failure_rates.py --top 50
 
     # Filter to specific Mux model
-    python benchmarks/terminal_bench/analyze_failure_rates.py --mux-model "anthropic/claude-sonnet-4-5"
+    python benchmarks/terminal_bench/analyze_failure_rates.py --mux-model "claude-sonnet"
 
     # Force re-download of data
     python benchmarks/terminal_bench/analyze_failure_rates.py --refresh
 
 Requirements:
     git (for cloning from HuggingFace)
+    bq CLI (for querying Mux results from BigQuery)
 """
 
 import argparse
@@ -121,7 +123,84 @@ def download_leaderboard_data(refresh: bool = False) -> Path:
         raise
 
 
-def parse_leaderboard_results(repo_path: Path) -> list[TaskResult]:
+def query_mux_results_from_bq() -> list[TaskResult]:
+    """
+    Query Mux results from BigQuery.
+
+    Uses the bq CLI to query mux-benchmarks.benchmarks.tbench_results.
+    Returns TaskResult objects for all Mux benchmark runs.
+    """
+    import csv
+    import subprocess
+
+    query = """
+    SELECT
+        task_id,
+        model_name,
+        thinking_level,
+        passed
+    FROM `mux-benchmarks.benchmarks.tbench_results`
+    WHERE dataset = 'terminal-bench@2.0'
+    """
+
+    print("Querying Mux results from BigQuery...")
+    try:
+        result = subprocess.run(
+            [
+                "bq",
+                "query",
+                "--use_legacy_sql=false",
+                "--format=csv",
+                "--max_rows=100000",
+                query,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        print(
+            "Error: bq CLI not found. Install Google Cloud SDK and run 'gcloud auth login'",
+            file=sys.stderr,
+        )
+        return []
+    except subprocess.CalledProcessError as e:
+        print(f"BigQuery error: {e.stderr}", file=sys.stderr)
+        return []
+
+    # Parse CSV output
+    results: list[TaskResult] = []
+    lines = result.stdout.strip().split("\n")
+    if len(lines) < 2:
+        print("No Mux results found in BigQuery", file=sys.stderr)
+        return results
+
+    reader = csv.DictReader(lines)
+    for row in reader:
+        # Create agent name from model + thinking level for grouping
+        model = row.get("model_name", "unknown")
+        thinking = row.get("thinking_level", "off")
+
+        # Strip trial hash from task_id (format: task-name__HASH -> task-name)
+        raw_task_id = row["task_id"]
+        task_id = raw_task_id.rsplit("__", 1)[0] if "__" in raw_task_id else raw_task_id
+
+        results.append(
+            TaskResult(
+                task_id=task_id,
+                passed=row["passed"].lower() == "true",
+                agent_name="Mux",
+                model_name=f"{model}@{thinking}",
+            )
+        )
+
+    print(f"Found {len(results)} Mux results from BigQuery")
+    return results
+
+
+def parse_leaderboard_results(
+    repo_path: Path, exclude_mux: bool = True
+) -> list[TaskResult]:
     """
     Parse all agent results from the leaderboard repo structure.
 
@@ -131,6 +210,9 @@ def parse_leaderboard_results(repo_path: Path) -> list[TaskResult]:
             <job-folder>/
                 <trial-folder>/
                     result.json  # contains "passed" or "score"
+
+    Args:
+        exclude_mux: If True, skip Mux agents (we get those from BigQuery)
     """
     results: list[TaskResult] = []
     submissions_dir = repo_path / "submissions" / "terminal-bench" / DATASET_VERSION
@@ -147,6 +229,10 @@ def parse_leaderboard_results(repo_path: Path) -> list[TaskResult]:
         parts = agent_dir.name.split("__", 1)
         agent_name = parts[0]
         model_name = parts[1] if len(parts) > 1 else "unknown"
+
+        # Skip Mux agents if requested (we get those from BigQuery)
+        if exclude_mux and agent_name.lower() == "mux":
+            continue
 
         # Find all result.json files in trial folders
         for result_file in agent_dir.rglob("*/result.json"):
@@ -421,14 +507,22 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Download/load data
+    # Get Mux results from BigQuery
+    mux_results = query_mux_results_from_bq()
+    if not mux_results:
+        print(
+            "Warning: No Mux results from BigQuery. Ensure bq CLI is configured.",
+            file=sys.stderr,
+        )
+
+    # Download/load other agents from HuggingFace leaderboard
     repo_path = download_leaderboard_data(refresh=args.refresh)
+    print("Parsing leaderboard results (excluding Mux)...")
+    other_results = parse_leaderboard_results(repo_path, exclude_mux=True)
+    print(f"Found {len(other_results)} results from other agents")
 
-    # Parse results
-    print("Parsing leaderboard results...")
-    results = parse_leaderboard_results(repo_path)
-    print(f"Found {len(results)} task results")
-
+    # Merge results
+    results = mux_results + other_results
     if not results:
         print("No results to analyze.", file=sys.stderr)
         sys.exit(1)

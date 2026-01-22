@@ -190,7 +190,7 @@ The PR will be automatically validated by the leaderboard bot. Once merged, resu
 To identify where Mux underperforms relative to other top agents, use the analysis script:
 
 ```bash
-# Run analysis (clones leaderboard data from HuggingFace via git)
+# Run analysis (requires bq CLI for Mux results, git for leaderboard data)
 python benchmarks/terminal_bench/analyze_failure_rates.py
 
 # Show more results
