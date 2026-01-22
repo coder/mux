@@ -111,25 +111,40 @@ export function parseOptionalPort(value: string | undefined): number | null {
   return parsed;
 }
 
-export async function waitForHttpReady(url: string, timeoutMs = 20_000): Promise<void> {
-  if (!url) {
-    throw new Error("Expected url");
+export async function waitForHttpReady(
+  urlOrUrls: string | string[],
+  timeoutMs = 20_000
+): Promise<void> {
+  const urls = Array.isArray(urlOrUrls) ? urlOrUrls : [urlOrUrls];
+
+  if (!urls.length) {
+    throw new Error("Expected at least one url");
+  }
+
+  for (const url of urls) {
+    if (!url) {
+      throw new Error("Expected url");
+    }
   }
 
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    try {
-      const response = await fetch(url, { method: "GET" });
-      if (response.ok || response.status === 404) {
-        return;
+    for (const url of urls) {
+      try {
+        const response = await fetch(url, { method: "GET" });
+        if (response.ok || response.status === 404) {
+          return;
+        }
+      } catch {
+        // Server not ready yet
       }
-    } catch {
-      // Server not ready yet
     }
+
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
-  throw new Error(`Timed out waiting for server at ${url}`);
+  const renderedUrls = urls.length === 1 ? urls[0] : urls.join(", ");
+  throw new Error(`Timed out waiting for server at ${renderedUrls}`);
 }
 
 /**

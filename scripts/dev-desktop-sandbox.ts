@@ -20,6 +20,7 @@
  *   - SEED_MUX_ROOT=/path/to/mux/home   # where to copy providers.jsonc/config.json from
  *   - KEEP_SANDBOX=1                   # don't delete temp MUX_ROOT on exit
  *   - VITE_PORT=5174                   # override picked Vite port
+ *   - VITE_READY_TIMEOUT_MS=60000      # override Vite readiness timeout
  *   - ELECTRON_DEBUG_PORT=9223         # override picked Electron remote debugging port
  *   - ELECTRON_DEBUG_PORT=0            # disable Electron remote debugging port entirely
  *   - MAKE=gmake                       # override make binary
@@ -179,11 +180,21 @@ async function main(): Promise<number> {
     forwardSignalsToChildProcesses(() => [devProc, electronProc]);
 
     // Wait for Vite to be ready before starting Electron.
-    const viteHostForReadiness = "127.0.0.1";
-    const viteReadyUrl = `http://${formatHostForUrl(viteHostForReadiness)}:${vitePort}`;
+    const viteReadyTimeoutMs = (() => {
+      const raw = process.env.VITE_READY_TIMEOUT_MS;
+      if (!raw) return 60_000;
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) return 60_000;
+      return parsed;
+    })();
+
+    const viteReadyUrls = [
+      `http://${formatHostForUrl("127.0.0.1")}:${vitePort}`,
+      `http://${formatHostForUrl("localhost")}:${vitePort}`,
+    ];
 
     const readyOrExit = await Promise.race([
-      waitForHttpReady(viteReadyUrl).then(() => ({ type: "ready" as const })),
+      waitForHttpReady(viteReadyUrls, viteReadyTimeoutMs).then(() => ({ type: "ready" as const })),
       devExitPromise.then((code) => ({ type: "exit" as const, code })),
     ]);
 
