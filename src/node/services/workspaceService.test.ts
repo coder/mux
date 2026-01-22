@@ -1,11 +1,13 @@
 import { describe, expect, test, mock, beforeEach } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
+import { EventEmitter } from "events";
 import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
+import type { SessionTimingService } from "./sessionTimingService";
 import type { AIService } from "./aiService";
 import type { InitStateManager } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
@@ -399,5 +401,113 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     );
 
     expect(persistSpy).toHaveBeenCalledTimes(1);
+  });
+});
+describe("WorkspaceService remove timing rollup", () => {
+  test("waits for stream-abort before rolling up session timing", async () => {
+    const workspaceId = "child-ws";
+    const parentWorkspaceId = "parent-ws";
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-remove-"));
+    try {
+      const sessionRoot = path.join(tempRoot, "sessions");
+      await fsPromises.mkdir(path.join(sessionRoot, workspaceId), { recursive: true });
+
+      let abortEmitted = false;
+      let rollUpSawAbort = false;
+
+      class FakeAIService extends EventEmitter {
+        isStreaming = mock(() => true);
+
+        stopStream = mock(() => {
+          setTimeout(() => {
+            abortEmitted = true;
+            this.emit("stream-abort", {
+              type: "stream-abort",
+              workspaceId,
+              messageId: "msg",
+              abortReason: "system",
+              metadata: { duration: 123 },
+              abandonPartial: true,
+            });
+          }, 0);
+
+          return Promise.resolve({ success: true as const, data: undefined });
+        });
+
+        getWorkspaceMetadata = mock(() =>
+          Promise.resolve({
+            success: true as const,
+            data: {
+              id: workspaceId,
+              name: "child",
+              projectPath: "/tmp/proj",
+              runtimeConfig: { type: "local" },
+              parentWorkspaceId,
+            },
+          })
+        );
+      }
+
+      const aiService = new FakeAIService() as unknown as AIService;
+
+      const mockHistoryService: Partial<HistoryService> = {};
+      const mockPartialService: Partial<PartialService> = {};
+      const mockInitStateManager: Partial<InitStateManager> = {};
+      const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
+        setStreaming: mock((_workspaceId: string, streaming: boolean) =>
+          Promise.resolve({
+            recency: Date.now(),
+            streaming,
+            lastModel: null,
+            lastThinkingLevel: null,
+          })
+        ),
+        updateRecency: mock((_workspaceId: string, timestamp?: number) =>
+          Promise.resolve({
+            recency: timestamp ?? Date.now(),
+            streaming: false,
+            lastModel: null,
+            lastThinkingLevel: null,
+          })
+        ),
+      };
+      const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+        cleanup: mock(() => Promise.resolve()),
+      };
+
+      const mockConfig: Partial<Config> = {
+        srcDir: "/tmp/src",
+        getSessionDir: mock((id: string) => path.join(sessionRoot, id)),
+        removeWorkspace: mock(() => Promise.resolve()),
+        findWorkspace: mock(() => null),
+      };
+
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        mockHistoryService as HistoryService,
+        mockPartialService as PartialService,
+        aiService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+
+      const timingService: Partial<SessionTimingService> = {
+        waitForIdle: mock(() => Promise.resolve()),
+        rollUpTimingIntoParent: mock(() => {
+          rollUpSawAbort = abortEmitted;
+          return Promise.resolve({ didRollUp: true });
+        }),
+      };
+
+      workspaceService.setSessionTimingService(timingService as SessionTimingService);
+
+      const removeResult = await workspaceService.remove(workspaceId, true);
+      expect(removeResult.success).toBe(true);
+      expect(rollUpSawAbort).toBe(true);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
   });
 });

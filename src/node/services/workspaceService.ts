@@ -760,6 +760,49 @@ export class WorkspaceService extends EventEmitter {
     // Try to remove from runtime (filesystem)
     try {
       // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
+      //
+      // IMPORTANT: AIService forwards "stream-abort" asynchronously after partial cleanup. If we roll up
+      // session timing (or delete session files) immediately after stopStream(), we can race the final
+      // abort timing write.
+      const wasStreaming = this.aiService.isStreaming(workspaceId);
+      const streamStoppedEvent: Promise<"abort" | "end" | undefined> | undefined = wasStreaming
+        ? new Promise((resolve) => {
+            const aiService = this.aiService;
+            const targetWorkspaceId = workspaceId;
+            const timeoutMs = 5000;
+
+            let settled = false;
+            let timer: ReturnType<typeof setTimeout> | undefined;
+
+            const cleanup = (result: "abort" | "end" | undefined) => {
+              if (settled) return;
+              settled = true;
+              if (timer) {
+                clearTimeout(timer);
+                timer = undefined;
+              }
+              aiService.off("stream-abort", onAbort);
+              aiService.off("stream-end", onEnd);
+              resolve(result);
+            };
+
+            function onAbort(data: StreamAbortEvent): void {
+              if (data.workspaceId !== targetWorkspaceId) return;
+              cleanup("abort");
+            }
+
+            function onEnd(data: StreamEndEvent): void {
+              if (data.workspaceId !== targetWorkspaceId) return;
+              cleanup("end");
+            }
+
+            aiService.on("stream-abort", onAbort);
+            aiService.on("stream-end", onEnd);
+
+            timer = setTimeout(() => cleanup(undefined), timeoutMs);
+          })
+        : undefined;
+
       try {
         const stopResult = await this.aiService.stopStream(workspaceId, { abandonPartial: true });
         if (!stopResult.success) {
@@ -770,6 +813,21 @@ export class WorkspaceService extends EventEmitter {
         }
       } catch (error: unknown) {
         log.debug("Failed to stop stream during workspace removal (threw)", { workspaceId, error });
+      }
+
+      if (streamStoppedEvent) {
+        const stopEvent = await streamStoppedEvent;
+        if (!stopEvent) {
+          log.debug("Timed out waiting for stream to stop during workspace removal", {
+            workspaceId,
+          });
+        }
+
+        // If session timing is enabled, make sure no pending writes can recreate session files after
+        // we delete the session directory.
+        if (this.sessionTimingService) {
+          await this.sessionTimingService.waitForIdle(workspaceId);
+        }
       }
 
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
