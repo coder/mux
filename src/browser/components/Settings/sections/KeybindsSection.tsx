@@ -39,6 +39,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   SIDEBAR_TAB_9: "Tab 9",
   REFRESH_REVIEW: "Refresh diff",
   FOCUS_REVIEW_SEARCH: "Search in review",
+  FOCUS_REVIEW_SEARCH_QUICK: "Search in review (quick)",
   TOGGLE_HUNK_READ: "Toggle hunk read",
   MARK_HUNK_READ: "Mark hunk read",
   MARK_HUNK_UNREAD: "Mark hunk unread",
@@ -113,6 +114,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     keys: [
       "REFRESH_REVIEW",
       "FOCUS_REVIEW_SEARCH",
+      "FOCUS_REVIEW_SEARCH_QUICK",
       "TOGGLE_HUNK_READ",
       "MARK_HUNK_READ",
       "MARK_HUNK_UNREAD",

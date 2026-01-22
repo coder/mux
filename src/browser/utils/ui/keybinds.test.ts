@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { matchesKeybind } from "./keybinds";
+import { matchesKeybind, KEYBINDS } from "./keybinds";
 import type { Keybind } from "@/common/types/keybind";
 
 // Helper to create a minimal keyboard event
@@ -49,6 +49,23 @@ describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
 });
 
 describe("matchesKeybind", () => {
+  describe("FOCUS_REVIEW_SEARCH_QUICK keybind (/)", () => {
+    it("matches plain /", () => {
+      const event = createEvent({ key: "/" });
+      expect(matchesKeybind(event, KEYBINDS.FOCUS_REVIEW_SEARCH_QUICK)).toBe(true);
+    });
+
+    it("does not match Ctrl+/", () => {
+      const event = createEvent({ key: "/", ctrlKey: true });
+      expect(matchesKeybind(event, KEYBINDS.FOCUS_REVIEW_SEARCH_QUICK)).toBe(false);
+    });
+
+    it("does not match Cmd+/", () => {
+      const event = createEvent({ key: "/", metaKey: true });
+      expect(matchesKeybind(event, KEYBINDS.FOCUS_REVIEW_SEARCH_QUICK)).toBe(false);
+    });
+  });
+
   it("should return false when event.key is undefined", () => {
     // This can happen with dead keys, modifier-only events, etc.
     const event = createEvent({ key: undefined as unknown as string });

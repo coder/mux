@@ -132,6 +132,76 @@ describeIntegration("ReviewPanel manual refresh (UI + ORPC)", () => {
     });
   }, 120_000);
 
+  test("/ focuses review search", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanelForRefreshTests({
+        apiClient: env.orpc,
+        metadata,
+        workspaceId,
+      });
+
+      try {
+        const refreshButton = await setupReviewPanel(view, metadata, workspaceId);
+
+        const searchInput = view.getByPlaceholderText(/^Search\.\.\./) as HTMLInputElement;
+
+        refreshButton.focus();
+        expect(document.activeElement).toBe(refreshButton);
+
+        const slashEvent = new window.KeyboardEvent("keydown", {
+          key: "/",
+          bubbles: true,
+          cancelable: true,
+        });
+        refreshButton.dispatchEvent(slashEvent);
+
+        expect(slashEvent.defaultPrevented).toBe(true);
+        expect(document.activeElement).toBe(searchInput);
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 120_000);
+
+  test("/ does not steal focus from editable elements", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      const view = renderReviewPanelForRefreshTests({
+        apiClient: env.orpc,
+        metadata,
+        workspaceId,
+      });
+
+      const externalInput = document.createElement("input");
+      document.body.appendChild(externalInput);
+
+      try {
+        await setupReviewPanel(view, metadata, workspaceId);
+
+        const searchInput = view.getByPlaceholderText(/^Search\.\.\./) as HTMLInputElement;
+
+        externalInput.focus();
+        expect(document.activeElement).toBe(externalInput);
+
+        const slashEvent = new window.KeyboardEvent("keydown", {
+          key: "/",
+          bubbles: true,
+          cancelable: true,
+        });
+        externalInput.dispatchEvent(slashEvent);
+
+        expect(slashEvent.defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(externalInput);
+        expect(document.activeElement).not.toBe(searchInput);
+      } finally {
+        externalInput.remove();
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 120_000);
   test("Ctrl+R triggers manual refresh", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();

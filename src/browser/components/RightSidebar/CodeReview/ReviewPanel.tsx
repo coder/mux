@@ -49,7 +49,12 @@ import type {
   ReviewSortOrder,
 } from "@/common/types/review";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
-import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  matchesKeybind,
+  KEYBINDS,
+  formatKeybind,
+  isEditableElement,
+} from "@/browser/utils/ui/keybinds";
 import { applyFrontendFilters } from "@/browser/utils/review/filterHunks";
 import { findNextHunkId, findNextHunkIdAfterFileRemoval } from "@/browser/utils/review/navigation";
 import { cn } from "@/common/lib/utils";
@@ -1119,6 +1124,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       } else if (matchesKeybind(e, KEYBINDS.FOCUS_REVIEW_SEARCH)) {
         e.preventDefault();
         searchInputRef.current?.focus();
+      } else if (matchesKeybind(e, KEYBINDS.FOCUS_REVIEW_SEARCH_QUICK)) {
+        if (isEditableElement(e.target)) return;
+        e.preventDefault();
+        searchInputRef.current?.focus();
       }
     };
 
@@ -1193,7 +1202,7 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
             <input
               ref={searchInputRef}
               type="text"
-              placeholder={`Search... (${formatKeybind(KEYBINDS.FOCUS_REVIEW_SEARCH)})`}
+              placeholder={`Search... (${formatKeybind(KEYBINDS.FOCUS_REVIEW_SEARCH)}, ${formatKeybind(KEYBINDS.FOCUS_REVIEW_SEARCH_QUICK)})`}
               value={searchState.input}
               onChange={(e) => setSearchState({ ...searchState, input: e.target.value })}
               className="bg-dark text-foreground border-border-medium placeholder:text-dim hover:border-accent focus:border-accent min-w-0 flex-1 rounded border px-1.5 py-0.5 font-mono text-[11px] transition-[border-color] duration-150 focus:outline-none"

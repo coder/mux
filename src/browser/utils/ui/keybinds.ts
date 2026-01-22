@@ -300,6 +300,10 @@ export const KEYBINDS = {
   // macOS: Cmd+F, Win/Linux: Ctrl+F
   FOCUS_REVIEW_SEARCH: { key: "f", ctrl: true },
 
+  /** Focus search input in Code Review panel (quick) */
+  // GitHub-style: / to focus search
+  FOCUS_REVIEW_SEARCH_QUICK: { key: "/" },
+
   /** Mark selected hunk as read/unread in Code Review panel */
   TOGGLE_HUNK_READ: { key: "m" },
 
