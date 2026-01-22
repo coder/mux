@@ -1752,7 +1752,7 @@ export class StreamingMessageAggregator {
         }));
 
       // Extract slash command from muxMetadata (present for /compact, /skill, etc.)
-      const rawCommand = muxMeta && "rawCommand" in muxMeta ? muxMeta.rawCommand : undefined;
+      let rawCommand = muxMeta && "rawCommand" in muxMeta ? muxMeta.rawCommand : undefined;
 
       const agentSkill =
         muxMeta?.type === "agent-skill"
@@ -1769,6 +1769,13 @@ export class StreamingMessageAggregator {
               } satisfies CompactionRequestData,
             }
           : undefined;
+
+      // For legacy compaction messages, rawCommand may only contain the command line.
+      // The continue payload was stored separately in parsed.continueMessage.
+      // Reconstruct the full content to preserve backward compatibility.
+      if (rawCommand && compactionRequest?.parsed.continueMessage && !rawCommand.includes("\n")) {
+        rawCommand = `${rawCommand}\n${compactionRequest.parsed.continueMessage}`;
+      }
 
       // Content is rawCommand (what user typed) or parts (normal message)
       const content = rawCommand ?? partsContent;
