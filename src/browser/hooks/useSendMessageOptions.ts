@@ -132,10 +132,15 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   );
   const system1 = useExperimentOverrideValue(EXPERIMENT_IDS.SYSTEM_1);
 
-  const [preferredSystem1Model] = usePersistedState<string>(PREFERRED_SYSTEM_1_MODEL_KEY, "", {
+  const [preferredSystem1Model] = usePersistedState<unknown>(PREFERRED_SYSTEM_1_MODEL_KEY, "", {
     listener: true,
   });
-  const system1Model = preferredSystem1Model.trim() || undefined;
+  const system1ModelTrimmed =
+    typeof preferredSystem1Model === "string" ? preferredSystem1Model.trim() : undefined;
+  const system1Model =
+    system1ModelTrimmed !== undefined && system1ModelTrimmed.length > 0
+      ? system1ModelTrimmed
+      : undefined;
 
   const programmaticToolCallingExclusive = useExperimentOverrideValue(
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE

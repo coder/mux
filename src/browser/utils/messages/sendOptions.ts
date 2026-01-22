@@ -6,7 +6,11 @@ import {
   getDisableWorkspaceAgentsKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
 } from "@/common/constants/storage";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  readPersistedString,
+  updatePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -77,8 +81,11 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   // Read disableWorkspaceAgents toggle (workspace-scoped)
 
+  const system1ModelTrimmed = readPersistedString(PREFERRED_SYSTEM_1_MODEL_KEY)?.trim();
   const system1Model =
-    readPersistedState<string>(PREFERRED_SYSTEM_1_MODEL_KEY, "").trim() || undefined;
+    system1ModelTrimmed !== undefined && system1ModelTrimmed.length > 0
+      ? system1ModelTrimmed
+      : undefined;
   const disableWorkspaceAgents = readPersistedState<boolean>(
     getDisableWorkspaceAgentsKey(workspaceId),
     false
