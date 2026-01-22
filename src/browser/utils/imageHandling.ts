@@ -1,4 +1,5 @@
 import type { ImagePart } from "@/common/orpc/types";
+import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import type { ImageAttachment } from "@/browser/components/ImageAttachments";
 
 /**
@@ -20,7 +21,7 @@ function getMimeTypeFromExtension(filename: string): string {
     gif: "image/gif",
     webp: "image/webp",
     bmp: "image/bmp",
-    svg: "image/svg+xml",
+    svg: SVG_MEDIA_TYPE,
   };
   return mimeTypes[ext ?? ""] ?? "image/png";
 }
@@ -66,9 +67,29 @@ export function imageAttachmentsToImageParts(
 }
 
 /**
- * Converts a File to an ImageAttachment with a base64 data URL
+ * Converts a File to an ImageAttachment (data URL).
  */
 export async function fileToImageAttachment(file: File): Promise<ImageAttachment> {
+  // Use file.type if available, otherwise infer from extension
+  const mediaType = file.type !== "" ? file.type : getMimeTypeFromExtension(file.name);
+
+  // For SVGs we inline as text in provider requests. Large SVGs can error during send,
+  // so fail fast here with a clear message.
+  if (mediaType.toLowerCase().trim().split(";")[0] === SVG_MEDIA_TYPE) {
+    const svgText = await file.text();
+    if (svgText.length > MAX_SVG_TEXT_CHARS) {
+      throw new Error(
+        `SVG attachments must be ${MAX_SVG_TEXT_CHARS.toLocaleString()} characters or less (this one is ${svgText.length.toLocaleString()}).`
+      );
+    }
+
+    return {
+      id: generateImageId(),
+      url: `data:${SVG_MEDIA_TYPE},${encodeURIComponent(svgText)}`,
+      mediaType,
+    };
+  }
+
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -82,9 +103,6 @@ export async function fileToImageAttachment(file: File): Promise<ImageAttachment
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
-
-  // Use file.type if available, otherwise infer from extension
-  const mediaType = file.type !== "" ? file.type : getMimeTypeFromExtension(file.name);
 
   return {
     id: generateImageId(),

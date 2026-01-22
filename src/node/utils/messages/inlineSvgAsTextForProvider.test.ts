@@ -51,7 +51,7 @@ describe("inlineSvgAsTextForProvider", () => {
     expect(inlined.text).toContain(svg);
   });
 
-  it("throws when decoded SVG exceeds max bytes", () => {
+  it("omits SVG when decoded SVG exceeds max bytes", () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg">' + "a".repeat(100) + "</svg>";
     const b64 = Buffer.from(svg, "utf8").toString("base64");
 
@@ -67,9 +67,34 @@ describe("inlineSvgAsTextForProvider", () => {
       },
     ];
 
-    expect(() => inlineSvgAsTextForProvider(messages, { maxSvgTextBytes: 10 })).toThrow(
-      "too large"
-    );
+    const result = inlineSvgAsTextForProvider(messages, { maxSvgTextBytes: 10 });
+    const inlined = result[0].parts.filter((p) => p.type === "text")[1];
+
+    expect(inlined.text).toContain("omitted");
+    expect(inlined.text).toContain("too large");
+  });
+
+  it("omits SVG when decoded SVG exceeds max chars", () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg">' + "a".repeat(100) + "</svg>";
+    const b64 = Buffer.from(svg, "utf8").toString("base64");
+
+    const messages: MuxMessage[] = [
+      {
+        id: "user-3b",
+        role: "user",
+        metadata: { timestamp: 1, historySequence: 1 },
+        parts: [
+          { type: "text", text: "hi" },
+          { type: "file", mediaType: "image/svg+xml", url: `data:image/svg+xml;base64,${b64}` },
+        ],
+      },
+    ];
+
+    const result = inlineSvgAsTextForProvider(messages, { maxSvgTextChars: 10 });
+    const inlined = result[0].parts.filter((p) => p.type === "text")[1];
+
+    expect(inlined.text).toContain("omitted");
+    expect(inlined.text).toContain("too long");
   });
 
   it("returns the same array when there are no SVG parts", () => {

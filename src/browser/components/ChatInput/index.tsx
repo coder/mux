@@ -1249,7 +1249,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         })
         .catch((error) => {
           console.error("Failed to process pasted image:", error);
-          pushToast({ type: "error", message: "Failed to process image" });
+          pushToast({
+            type: "error",
+            message: error instanceof Error ? error.message : "Failed to process image",
+          });
         });
     },
     [editingMessage, pushToast, setImageAttachments]
@@ -1334,7 +1337,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         })
         .catch((error) => {
           console.error("Failed to process dropped image:", error);
-          pushToast({ type: "error", message: "Failed to process image" });
+          pushToast({
+            type: "error",
+            message: error instanceof Error ? error.message : "Failed to process image",
+          });
         });
     },
     [editingMessage, pushToast, setImageAttachments]

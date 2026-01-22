@@ -1,3 +1,4 @@
+import { MAX_SVG_TEXT_CHARS } from "@/common/constants/imageAttachments";
 import { describe, expect, test } from "@jest/globals";
 import {
   generateImageId,
@@ -53,6 +54,12 @@ describe("imageHandling", () => {
       });
     });
 
+    test("rejects SVGs larger than MAX_SVG_TEXT_CHARS", async () => {
+      const svg = `<svg>${"a".repeat(MAX_SVG_TEXT_CHARS + 1)}</svg>`;
+      const file = new File([svg], "test.svg", { type: "image/svg+xml" });
+
+      await expect(fileToImageAttachment(file)).rejects.toThrow("SVG attachments must be");
+    });
     test("handles JPEG images", async () => {
       const blob = new Blob(["fake jpeg data"], { type: "image/jpeg" });
       const file = new File([blob], "test.jpg", { type: "image/jpeg" });

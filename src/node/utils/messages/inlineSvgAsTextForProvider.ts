@@ -1,6 +1,5 @@
+import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
-
-const SVG_MEDIA_TYPE = "image/svg+xml";
 
 // Guardrail: prevent accidentally injecting a multi‑MB SVG into the prompt.
 const DEFAULT_MAX_SVG_TEXT_BYTES = 200 * 1024; // 200 KiB
@@ -18,7 +17,7 @@ function estimateBase64Bytes(base64: string): number {
   return Math.floor((trimmed.length * 3) / 4) - padding;
 }
 
-function decodeSvgDataUrlToUtf8(svgDataUrl: string, maxBytes: number): string {
+function decodeSvgDataUrlToUtf8(svgDataUrl: string, maxBytes: number, maxChars: number): string {
   if (!svgDataUrl.startsWith("data:")) {
     throw new Error("SVG attachment must be a data URL to inline as text.");
   }
@@ -47,7 +46,14 @@ function decodeSvgDataUrlToUtf8(svgDataUrl: string, maxBytes: number): string {
       );
     }
 
-    return buf.toString("utf8");
+    const svgText = buf.toString("utf8");
+    if (svgText.length > maxChars) {
+      throw new Error(
+        `SVG attachment is too long to inline as text (${svgText.length} chars > ${maxChars} chars).`
+      );
+    }
+
+    return svgText;
   }
 
   let decoded: string;
@@ -55,6 +61,12 @@ function decodeSvgDataUrlToUtf8(svgDataUrl: string, maxBytes: number): string {
     decoded = decodeURIComponent(payload);
   } catch {
     throw new Error("SVG attachment data URL is malformed (invalid URL encoding).");
+  }
+
+  if (decoded.length > maxChars) {
+    throw new Error(
+      `SVG attachment is too long to inline as text (${decoded.length} chars > ${maxChars} chars).`
+    );
   }
 
   const byteLength = Buffer.byteLength(decoded, "utf8");
@@ -79,8 +91,9 @@ function decodeSvgDataUrlToUtf8(svgDataUrl: string, maxBytes: number): string {
  */
 export function inlineSvgAsTextForProvider(
   messages: MuxMessage[],
-  options?: { maxSvgTextBytes?: number }
+  options?: { maxSvgTextBytes?: number; maxSvgTextChars?: number }
 ): MuxMessage[] {
+  const maxSvgTextChars = options?.maxSvgTextChars ?? MAX_SVG_TEXT_CHARS;
   const maxSvgTextBytes = options?.maxSvgTextBytes ?? DEFAULT_MAX_SVG_TEXT_BYTES;
 
   let didChange = false;
@@ -103,14 +116,24 @@ export function inlineSvgAsTextForProvider(
 
     for (const part of msg.parts) {
       if (part.type === "file" && normalizeMediaType(part.mediaType) === SVG_MEDIA_TYPE) {
-        const svgText = decodeSvgDataUrlToUtf8(part.url, maxSvgTextBytes);
-        const textPart: MuxTextPart = {
-          type: "text",
-          text:
-            `[SVG attachment converted to text (providers generally don't accept ${SVG_MEDIA_TYPE} as an image input).]\n\n` +
-            `\`\`\`svg\n${svgText}\n\`\`\``,
-        };
-        newParts.push(textPart);
+        try {
+          const svgText = decodeSvgDataUrlToUtf8(part.url, maxSvgTextBytes, maxSvgTextChars);
+          const textPart: MuxTextPart = {
+            type: "text",
+            text:
+              `[SVG attachment converted to text (providers generally don't accept ${SVG_MEDIA_TYPE} as an image input).]\n\n` +
+              `\`\`\`svg\n${svgText}\n\`\`\``,
+          };
+          newParts.push(textPart);
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Failed to decode SVG attachment.";
+          const textPart: MuxTextPart = {
+            type: "text",
+            text: `[SVG attachment omitted from provider request: ${errorMessage}]`,
+          };
+          newParts.push(textPart);
+        }
         continue;
       }
 
