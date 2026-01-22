@@ -15,7 +15,6 @@ import { Button } from "@/browser/components/ui/button";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
-import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
@@ -35,8 +34,8 @@ interface WorkspaceHeaderProps {
   runtimeConfig?: RuntimeConfig;
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
-  /** Callback to open integrated terminal in sidebar (optional, falls back to popout) */
-  onOpenTerminal?: (
+  /** Callback to open integrated terminal in sidebar */
+  onOpenTerminal: (
     options?: TerminalSessionCreateOptions
   ) => Promise<{ success: boolean; error?: string }>;
 }
@@ -52,7 +51,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   onToggleLeftSidebarCollapsed,
   onOpenTerminal,
 }) => {
-  const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt, isStarting, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
@@ -70,20 +68,12 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
   const handleOpenTerminal = useCallback(async () => {
     setTerminalError(null);
-    // On mobile touch devices, always use popout since the right sidebar is hidden
-    const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
-    let result: { success: boolean; error?: string };
-    if (onOpenTerminal && !isMobileTouch) {
-      result = await onOpenTerminal();
-    } else {
-      // Fallback to popout if no integrated terminal callback provided or on mobile
-      result = await openTerminalPopout(workspaceId, runtimeConfig);
-    }
+    const result = await onOpenTerminal();
     if (!result.success && result.error) {
       setTerminalError(result.error);
       setTimeout(() => setTerminalError(null), 3000);
     }
-  }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
+  }, [onOpenTerminal]);
 
   const handleOpenInEditor = useCallback(async () => {
     setEditorError(null);

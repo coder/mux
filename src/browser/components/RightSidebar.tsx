@@ -63,11 +63,7 @@ import {
   getTabName,
   type TabDragData,
 } from "./RightSidebar/RightSidebarTabStrip";
-import {
-  createTerminalSession,
-  openTerminalPopout,
-  type TerminalSessionCreateOptions,
-} from "@/browser/utils/terminal";
+import { createTerminalSession, type TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import {
   CostsTabLabel,
   ExplorerTabLabel,
@@ -211,8 +207,6 @@ interface RightSidebarTabsetNodeProps {
   /** Data about the currently dragged tab (if any) */
   activeDragData: TabDragData | null;
   setLayout: (updater: (prev: RightSidebarLayoutState) => RightSidebarLayoutState) => void;
-  /** Handler to pop out a terminal tab to a separate window */
-  onPopOutTerminal: (tab: TabType) => void;
   /** Handler to add a new terminal tab */
   onAddTerminal: () => void | Promise<unknown>;
   /** Handler to close a terminal tab */
@@ -354,7 +348,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         <TerminalTabLabel
           dynamicTitle={props.terminalTitles.get(tab)}
           terminalIndex={terminalIndex}
-          onPopOut={() => props.onPopOutTerminal(tab)}
           onClose={() => props.onCloseTerminal(tab)}
         />
       );
@@ -1017,33 +1010,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     [api, focusActiveTerminal, getBaseLayout, setLayout, terminalTitlesKey]
   );
 
-  // Handler to pop out a terminal to a separate window, then remove the tab
-  const handlePopOutTerminal = React.useCallback(
-    (tab: TabType) => {
-      if (!api) return;
-
-      // Session ID is embedded in the tab type
-      const sessionId = getTerminalSessionId(tab);
-      if (!sessionId) return; // Can't pop out without a session
-
-      // Open the pop-out window (handles browser vs Electron modes)
-      openTerminalPopout(api, workspaceId, sessionId);
-
-      // Remove the tab from the sidebar (terminal now lives in its own window)
-      // Don't close the session - the pop-out window takes over
-      setLayout((prev) => removeTabEverywhere(prev, tab));
-
-      // Clean up title (and persist)
-      setTerminalTitles((prev) => {
-        const next = new Map(prev);
-        next.delete(tab);
-        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
-        return next;
-      });
-    },
-    [workspaceId, api, setLayout, terminalTitlesKey]
-  );
-
   // Configure sensors with distance threshold for click vs drag disambiguation
 
   // Handler to open a file in a new tab
@@ -1227,7 +1193,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         activeDragData={activeDragData}
         sessionCost={sessionCost}
         setLayout={setLayout}
-        onPopOutTerminal={handlePopOutTerminal}
         onAddTerminal={handleAddTerminal}
         onCloseTerminal={handleCloseTerminal}
         terminalTitles={terminalTitles}

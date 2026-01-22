@@ -1907,29 +1907,11 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
-      openWindow: t
-        .input(schemas.terminal.openWindow.input)
-        .output(schemas.terminal.openWindow.output)
-        .handler(async ({ context, input }) => {
-          return context.terminalService.openWindow(input.workspaceId, input.sessionId);
-        }),
-      closeWindow: t
-        .input(schemas.terminal.closeWindow.input)
-        .output(schemas.terminal.closeWindow.output)
-        .handler(({ context, input }) => {
-          return context.terminalService.closeWindow(input.workspaceId);
-        }),
       listSessions: t
         .input(schemas.terminal.listSessions.input)
         .output(schemas.terminal.listSessions.output)
         .handler(({ context, input }) => {
           return context.terminalService.getWorkspaceSessionIds(input.workspaceId);
-        }),
-      openNative: t
-        .input(schemas.terminal.openNative.input)
-        .output(schemas.terminal.openNative.output)
-        .handler(async ({ context, input }) => {
-          return context.terminalService.openNative(input.workspaceId);
         }),
     },
     update: {

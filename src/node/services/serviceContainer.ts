@@ -6,7 +6,7 @@ import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { PTYService } from "@/node/services/ptyService";
-import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
+
 import { ProjectService } from "@/node/services/projectService";
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
@@ -233,10 +233,6 @@ export class ServiceContainer {
 
   setProjectDirectoryPicker(picker: () => Promise<string | null>): void {
     this.projectService.setDirectoryPicker(picker);
-  }
-
-  setTerminalWindowManager(manager: TerminalWindowManager): void {
-    this.terminalService.setTerminalWindowManager(manager);
   }
 
   /**

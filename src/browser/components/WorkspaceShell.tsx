@@ -3,7 +3,6 @@ import React, { useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
-import { useOpenTerminal, type OpenTerminalResult } from "@/browser/hooks/useOpenTerminal";
 import { RightSidebar } from "./RightSidebar";
 import { PopoverError } from "./PopoverError";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -57,22 +56,19 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
 
   const { width: sidebarWidth, isResizing, startResize } = sidebar;
   const addTerminalRef = useRef<
-    ((options?: TerminalSessionCreateOptions) => Promise<OpenTerminalResult>) | null
+    | ((options?: TerminalSessionCreateOptions) => Promise<{ success: boolean; error?: string }>)
+    | null
   >(null);
-  const openTerminalPopout = useOpenTerminal();
   const handleOpenTerminal = useCallback(
-    async (options?: TerminalSessionCreateOptions): Promise<OpenTerminalResult> => {
-      // On mobile touch devices, always use popout since the right sidebar is hidden
-      const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
-      if (isMobileTouch) {
-        return openTerminalPopout(props.workspaceId, props.runtimeConfig, options);
-      }
+    async (
+      options?: TerminalSessionCreateOptions
+    ): Promise<{ success: boolean; error?: string }> => {
       if (!addTerminalRef.current) {
         return { success: false, error: "Terminal not available" };
       }
       return addTerminalRef.current(options);
     },
-    [openTerminalPopout, props.workspaceId, props.runtimeConfig]
+    []
   );
 
   const reviews = useReviews(props.workspaceId);

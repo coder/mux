@@ -1059,16 +1059,11 @@ function createMockAPI(options: MockAPIOptions = {}) {
     getLaunchProject: mock(options.server?.getLaunchProject ?? (() => Promise.resolve(null))),
   };
 
-  const terminal = {
-    openWindow: mock(() => Promise.resolve()),
-  };
-
   // Update the global mock
   currentClientMock = {
     workspace,
     projects,
     server,
-    terminal,
   };
 
   return { workspace, projects, window: happyWindow };

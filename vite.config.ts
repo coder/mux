@@ -126,7 +126,6 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           main: path.resolve(__dirname, "index.html"),
-          terminal: path.resolve(__dirname, "terminal.html"),
         },
         output: {
           format: "es",
@@ -225,7 +224,7 @@ export default defineConfig(({ mode }) => {
       // Limit dependency pre-bundling scans to the renderer entrypoints.
       // Scanning all of src/ includes backend-only code (src/node, src/cli), which can
       // pull in Node-only deps and break Vite's dep-scan (notably on Windows).
-      entries: ["index.html", "terminal.html"],
+      entries: ["index.html"],
 
       // Force re-optimize dependencies
       force: false,

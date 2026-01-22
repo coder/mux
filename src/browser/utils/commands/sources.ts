@@ -29,7 +29,6 @@ import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { WorkspaceState } from "@/browser/stores/WorkspaceStore";
-import type { RuntimeConfig } from "@/common/types/runtime";
 
 export interface BuildSourcesParams {
   api: APIClient | null;
@@ -66,7 +65,6 @@ export interface BuildSourcesParams {
   onRemoveProject: (path: string) => void;
   onToggleSidebar: () => void;
   onNavigateWorkspace: (dir: "next" | "prev") => void;
-  onOpenWorkspaceInTerminal: (workspaceId: string, runtimeConfig?: RuntimeConfig) => void;
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemeMode) => void;
   onOpenSettings?: (section?: string) => void;
@@ -199,16 +197,6 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       const workspaceDisplayName = `${selected.projectName}/${selected.namedWorkspacePath.split("/").pop() ?? selected.namedWorkspacePath}`;
       const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
       list.push({
-        id: CommandIds.workspaceOpenTerminalCurrent(),
-        title: "New Terminal Window",
-        subtitle: workspaceDisplayName,
-        section: section.workspaces,
-        // Note: Cmd/Ctrl+T opens integrated terminal in sidebar (not shown here since this opens a popout)
-        run: () => {
-          p.onOpenWorkspaceInTerminal(selected.workspaceId, selectedMeta?.runtimeConfig);
-        },
-      });
-      list.push({
         id: CommandIds.workspaceRemove(),
         title: "Remove Current Workspace…",
         subtitle: workspaceDisplayName,
@@ -252,43 +240,6 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     }
 
     if (p.workspaceMetadata.size > 0) {
-      list.push({
-        id: CommandIds.workspaceOpenTerminal(),
-        title: "Open Terminal Window for Workspace…",
-        section: section.workspaces,
-        run: () => undefined,
-        prompt: {
-          title: "Open Terminal Window",
-          fields: [
-            {
-              type: "select",
-              name: "workspaceId",
-              label: "Workspace",
-              placeholder: "Search workspaces…",
-              getOptions: () =>
-                Array.from(p.workspaceMetadata.values()).map((meta) => {
-                  // Use workspace name instead of extracting from path
-                  const label = `${meta.projectName} / ${meta.name}`;
-                  return {
-                    id: meta.id,
-                    label,
-                    keywords: [
-                      meta.name,
-                      meta.projectName,
-                      meta.namedWorkspacePath,
-                      meta.id,
-                      meta.title,
-                    ].filter((k): k is string => !!k),
-                  };
-                }),
-            },
-          ],
-          onSubmit: (vals) => {
-            const meta = p.workspaceMetadata.get(vals.workspaceId);
-            p.onOpenWorkspaceInTerminal(vals.workspaceId, meta?.runtimeConfig);
-          },
-        },
-      });
       list.push({
         id: CommandIds.workspaceRenameAny(),
         title: "Rename Workspace…",
