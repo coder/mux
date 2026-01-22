@@ -4,6 +4,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
+import { computeTimingPercentages } from "@/browser/utils/timingPercentages";
 import { calculateAverageTPS } from "@/browser/utils/messages/StreamingTPSCalculator";
 
 // Colors for timing components (matching TOKEN_COMPONENT_COLORS style)
@@ -126,9 +127,16 @@ export function StatsTab(props: { workspaceId: string }) {
 
   const waitingForTtft = viewMode === "last-request" && isActive && active?.ttftMs === null;
 
-  const toolPercentage = totalDuration > 0 ? (toolExecutionMs / totalDuration) * 100 : 0;
-  const modelPercentage = totalDuration > 0 ? (modelDisplayMs / totalDuration) * 100 : 0;
-  const ttftPercentage = totalDuration > 0 ? (ttftMsForBar / totalDuration) * 100 : 0;
+  const timingPercentages = computeTimingPercentages({
+    totalDurationMs: totalDuration,
+    ttftMs: ttftMsForBar,
+    modelMs: modelDisplayMs,
+    toolsMs: toolExecutionMs,
+  });
+
+  const ttftPercentage = timingPercentages.ttft;
+  const modelPercentage = timingPercentages.model;
+  const toolPercentage = timingPercentages.tools;
 
   const totalTokensForView = (() => {
     if (viewMode === "session") {
@@ -156,6 +164,7 @@ export function StatsTab(props: { workspaceId: string }) {
       color: TIMING_COLORS.ttft,
       show: ttftMs !== null || waitingForTtft,
       waiting: waitingForTtft,
+      percentage: ttftPercentage,
     },
     {
       name: "Model Time",
