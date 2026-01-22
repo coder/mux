@@ -3,8 +3,8 @@
  *
  * Tests:
  * - Tilde expansion in project paths
- * - Path validation (existence, directory check)
- * - Prevention of adding non-existent projects
+ * - Path validation (directory check)
+ * - Creating new projects for non-existent paths
  */
 
 import * as fs from "fs/promises";
@@ -55,34 +55,43 @@ describeIntegration("PROJECT_CREATE IPC Handler", () => {
     }
   });
 
-  test.concurrent("should reject non-existent project path", async () => {
+  test.concurrent("should create non-existent project path", async () => {
     const env = await createTestEnvironment();
     const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));
-    const nonExistentPath = "/this/path/definitely/does/not/exist/mux-test-12345";
+    const newProjectPath = path.join(tempProjectDir, `mux-created-${Date.now()}`);
     const client = resolveOrpcClient(env);
-    const result = await client.projects.create({ projectPath: nonExistentPath });
+    const result = await client.projects.create({ projectPath: newProjectPath });
 
-    if (result.success) {
-      throw new Error("Expected failure but got success");
+    if (!result.success) {
+      throw new Error(`Expected success but got: ${result.error}`);
     }
-    expect(result.error).toContain("does not exist");
+    expect(result.data.normalizedPath).toBe(newProjectPath);
+
+    const stats = await fs.stat(newProjectPath);
+    expect(stats.isDirectory()).toBe(true);
 
     await cleanupTestEnvironment(env);
     await fs.rm(tempProjectDir, { recursive: true, force: true });
   });
 
-  test.concurrent("should reject non-existent tilde path", async () => {
+  test.concurrent("should create non-existent tilde path", async () => {
     const env = await createTestEnvironment();
     const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));
-    const nonExistentTildePath = "~/this-directory-should-not-exist-mux-test-12345";
+    const testDirName = `mux-tilde-create-${Date.now()}`;
+    const tildeProjectPath = `~/${testDirName}`;
+    const expectedPath = path.join(os.homedir(), testDirName);
     const client = resolveOrpcClient(env);
-    const result = await client.projects.create({ projectPath: nonExistentTildePath });
+    const result = await client.projects.create({ projectPath: tildeProjectPath });
 
-    if (result.success) {
-      throw new Error("Expected failure but got success");
+    if (!result.success) {
+      throw new Error(`Expected success but got: ${result.error}`);
     }
-    expect(result.error).toContain("does not exist");
+    expect(result.data.normalizedPath).toBe(expectedPath);
 
+    const stats = await fs.stat(expectedPath);
+    expect(stats.isDirectory()).toBe(true);
+
+    await fs.rm(expectedPath, { recursive: true, force: true });
     await cleanupTestEnvironment(env);
     await fs.rm(tempProjectDir, { recursive: true, force: true });
   });

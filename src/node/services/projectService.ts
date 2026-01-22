@@ -9,6 +9,7 @@ import { listLocalBranches, detectDefaultTrunkBranch } from "@/node/git";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { Secret } from "@/common/types/secrets";
+import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
 import { execAsync } from "@/node/utils/disposableExec";
 import {
@@ -114,6 +115,20 @@ export class ProjectService {
         normalizedPath = path.resolve(expandTilde(projectPath));
       } else {
         normalizedPath = path.resolve(projectPath);
+      }
+
+      let existingStat: Stats | null = null;
+      try {
+        existingStat = await fsPromises.stat(normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code !== "ENOENT") {
+          throw error;
+        }
+      }
+
+      if (existingStat && !existingStat.isDirectory()) {
+        return Err("Project path is not a directory");
       }
 
       const config = this.config.loadConfigOrDefault();
