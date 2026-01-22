@@ -22,7 +22,6 @@ class MuxAgent(BaseInstalledAgent):
 
     _ARCHIVE_NAME = "mux-app.tar.gz"
     _RUNNER_NAME = "mux-run.sh"
-    _DEFAULT_TRUNK = "main"
     _DEFAULT_MODEL = "anthropic:claude-sonnet-4-5"
     _DEFAULT_PROJECT_CANDIDATES = "/workspace:/app:/workspaces:/root/project"
     _INCLUDE_PATHS: Sequence[str] = (
@@ -53,7 +52,6 @@ class MuxAgent(BaseInstalledAgent):
         "MUX_BUN_INSTALL_URL",
         "MUX_PROJECT_PATH",
         "MUX_PROJECT_CANDIDATES",
-        "MUX_TRUNK",
         "MUX_MODEL",
         "MUX_TIMEOUT_MS",
         "MUX_THINKING_LEVEL",
@@ -114,7 +112,6 @@ class MuxAgent(BaseInstalledAgent):
             if value:
                 env[key] = value
 
-        env.setdefault("MUX_TRUNK", self._DEFAULT_TRUNK)
         env.setdefault("MUX_MODEL", self._DEFAULT_MODEL)
         env.setdefault("MUX_CONFIG_ROOT", "/root/.mux")
         env.setdefault("MUX_APP_ROOT", "/opt/mux-app")
