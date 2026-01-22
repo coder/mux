@@ -13,6 +13,9 @@ import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { Secret } from "@/common/types/secrets";
 import type { Result } from "@/common/types/result";
+import { getErrorMessage } from "@/common/utils/errors";
+
+const LOAD_TIMEOUT_MS = 15_000;
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -28,7 +31,10 @@ export interface ProjectContext {
   projects: Map<string, ProjectConfig>;
   /** True while initial project list is loading */
   loading: boolean;
+  /** Error encountered during initial project load (if any) */
+  loadError: string | null;
   refreshProjects: () => Promise<void>;
+  retryLoadProjects: () => void;
   addProject: (normalizedPath: string, projectConfig: ProjectConfig) => void;
   removeProject: (path: string) => Promise<{ success: boolean; error?: string }>;
 
@@ -78,9 +84,10 @@ function deriveProjectName(projectPath: string): string {
 }
 
 export function ProjectProvider(props: { children: ReactNode }) {
-  const { api } = useAPI();
+  const { api, connectionEpoch } = useAPI();
   const [projects, setProjects] = useState<Map<string, ProjectConfig>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isProjectCreateModalOpen, setProjectCreateModalOpen] = useState(false);
   const [workspaceModalState, setWorkspaceModalState] = useState<WorkspaceModalState>({
     isOpen: false,
@@ -96,20 +103,36 @@ export function ProjectProvider(props: { children: ReactNode }) {
   const refreshProjects = useCallback(async () => {
     if (!api) return;
     try {
-      const projectsList = await api.projects.list();
+      const projectsList = await Promise.race([
+        api.projects.list(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Timed out loading projects")), LOAD_TIMEOUT_MS)
+        ),
+      ]);
       setProjects(new Map(projectsList));
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to load projects:", error);
-      setProjects(new Map());
+      setLoadError(getErrorMessage(error));
     }
   }, [api]);
 
+  const runInitialLoad = useCallback(async () => {
+    if (!api) return;
+    setLoading(true);
+    setLoadError(null);
+    await refreshProjects();
+    setLoading(false);
+  }, [api, refreshProjects]);
+
+  const retryLoadProjects = useCallback(() => {
+    void runInitialLoad();
+  }, [runInitialLoad]);
+
+  // Load on mount and on reconnect
   useEffect(() => {
-    void (async () => {
-      await refreshProjects();
-      setLoading(false);
-    })();
-  }, [refreshProjects]);
+    void runInitialLoad();
+  }, [runInitialLoad, connectionEpoch]);
 
   const addProject = useCallback((normalizedPath: string, projectConfig: ProjectConfig) => {
     setProjects((prev) => {
@@ -324,7 +347,9 @@ export function ProjectProvider(props: { children: ReactNode }) {
     () => ({
       projects,
       loading,
+      loadError,
       refreshProjects,
+      retryLoadProjects,
       addProject,
       removeProject,
       isProjectCreateModalOpen,
@@ -345,7 +370,9 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [
       projects,
       loading,
+      loadError,
       refreshProjects,
+      retryLoadProjects,
       addProject,
       removeProject,
       isProjectCreateModalOpen,

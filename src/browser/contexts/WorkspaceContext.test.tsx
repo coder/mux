@@ -23,6 +23,7 @@ void mock.module("@/browser/contexts/API", () => ({
     api: currentClientMock as APIClient,
     status: "connected" as const,
     error: null,
+    connectionEpoch: 0,
   }),
   APIProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
@@ -469,6 +470,7 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().loading).toBe(false));
     expect(ctx().workspaceMetadata.size).toBe(0);
+    expect(ctx().loadError).toContain("API Error");
   });
 
   test("refreshWorkspaceMetadata reloads workspace data", async () => {

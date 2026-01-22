@@ -12,6 +12,7 @@ import {
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
+import { getErrorMessage } from "@/common/utils/errors";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import {
   deleteWorkspaceStorage,
@@ -32,6 +33,8 @@ import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { useRouter } from "@/browser/contexts/RouterContext";
+
+const LOAD_TIMEOUT_MS = 15_000;
 
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
@@ -138,6 +141,7 @@ export interface WorkspaceContext {
   // Workspace data
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   loading: boolean;
+  loadError: string | null;
 
   // Workspace operations
   createWorkspace: (
@@ -162,6 +166,7 @@ export interface WorkspaceContext {
   archiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   unarchiveWorkspace: (workspaceId: string) => Promise<{ success: boolean; error?: string }>;
   refreshWorkspaceMetadata: () => Promise<void>;
+  retryLoadWorkspaces: () => void;
   setWorkspaceMetadata: React.Dispatch<
     React.SetStateAction<Map<string, FrontendWorkspaceMetadata>>
   >;
@@ -187,7 +192,7 @@ interface WorkspaceProviderProps {
 }
 
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
-  const { api } = useAPI();
+  const { api, connectionEpoch } = useAPI();
 
   // Cache global mode defaults so non-react code paths (compaction, etc.) can read them.
   useEffect(() => {
@@ -242,8 +247,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     },
     [workspaceStore]
   );
-  const [loading, setLoading] = useState(true);
-
   const currentProjectPath = useMemo(() => {
     if (currentProjectPathFromState) return currentProjectPathFromState;
     if (!currentProjectId) return null;
@@ -314,10 +317,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadataRef.current = workspaceMetadata;
   }, [workspaceMetadata]);
 
-  const loadWorkspaceMetadata = useCallback(async () => {
-    if (!api) return false; // Return false to indicate metadata wasn't loaded
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const refreshWorkspaceMetadata = useCallback(async () => {
+    if (!api) return;
     try {
-      const metadataList = await api.workspace.list();
+      const metadataList = await Promise.race([
+        api.workspace.list(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Timed out loading workspaces")), LOAD_TIMEOUT_MS)
+        ),
+      ]);
       console.log(
         "[WorkspaceContext] Loaded metadata list:",
         metadataList.map((m) => ({ id: m.id, name: m.name, title: m.title }))
@@ -332,28 +343,32 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         metadataMap.set(metadata.id, metadata);
       }
       setWorkspaceMetadata(metadataMap);
-      return true; // Return true to indicate metadata was loaded
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to load workspace metadata:", error);
-      setWorkspaceMetadata(new Map());
-      return true; // Still return true - we tried to load, just got empty result
+      setLoadError(getErrorMessage(error));
     }
-  }, [setWorkspaceMetadata, api]);
+  }, [api, setWorkspaceMetadata]);
 
-  // Load metadata once on mount (and again when api becomes available)
+  const runInitialLoad = useCallback(async () => {
+    if (!api) return;
+    setLoading(true);
+    setLoadError(null);
+    await refreshWorkspaceMetadata();
+    // After loading metadata (which may trigger migration), reload projects
+    // to ensure frontend has the updated config with workspace IDs
+    await refreshProjects();
+    setLoading(false);
+  }, [api, refreshWorkspaceMetadata, refreshProjects]);
+
+  const retryLoadWorkspaces = useCallback(() => {
+    void runInitialLoad();
+  }, [runInitialLoad]);
+
+  // Load on mount and on reconnect
   useEffect(() => {
-    void (async () => {
-      const loaded = await loadWorkspaceMetadata();
-      if (!loaded) {
-        // api not available yet - effect will run again when api connects
-        return;
-      }
-      // After loading metadata (which may trigger migration), reload projects
-      // to ensure frontend has the updated config with workspace IDs
-      await refreshProjects();
-      setLoading(false);
-    })();
-  }, [loadWorkspaceMetadata, refreshProjects]);
+    void runInitialLoad();
+  }, [runInitialLoad, connectionEpoch]);
 
   // URL restoration is now handled by RouterContext which parses the URL on load
   // and provides currentWorkspaceId/currentProjectId that we derive state from.
@@ -710,10 +725,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [api]
   );
 
-  const refreshWorkspaceMetadata = useCallback(async () => {
-    await loadWorkspaceMetadata();
-  }, [loadWorkspaceMetadata]);
-
   const getWorkspaceInfo = useCallback(
     async (workspaceId: string) => {
       if (!api) return null;
@@ -738,6 +749,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     () => ({
       workspaceMetadata,
       loading,
+      loadError,
+      retryLoadWorkspaces,
       createWorkspace,
       removeWorkspace,
       renameWorkspace,
@@ -755,6 +768,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [
       workspaceMetadata,
       loading,
+      loadError,
+      retryLoadWorkspaces,
       createWorkspace,
       removeWorkspace,
       renameWorkspace,

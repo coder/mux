@@ -65,7 +65,7 @@ function AppLoaderInner() {
   // Track whether stores have been synced
   const [storesSynced, setStoresSynced] = useState(false);
 
-  // Sync stores when metadata finishes loading
+  // Sync stores when metadata finishes loading or on reconnect
   useEffect(() => {
     if (api) {
       workspaceStoreInstance.setClient(api);
@@ -94,6 +94,7 @@ function AppLoaderInner() {
     gitStatusStore,
     backgroundBashStore,
     api,
+    apiState.connectionEpoch, // Re-sync stores on reconnect
   ]);
 
   // If we're in browser mode and auth is required, show the token prompt before any data loads.
@@ -101,9 +102,50 @@ function AppLoaderInner() {
     return <AuthTokenModal isOpen={true} onSubmit={apiState.authenticate} error={apiState.error} />;
   }
 
+  const isInitialLoading = projectContext.loading || workspaceContext.loading || !storesSynced;
+
+  const loadErrors: Array<{ title: string; message: string }> = [];
+  if (workspaceContext.loadError) {
+    loadErrors.push({ title: "Workspaces", message: workspaceContext.loadError });
+  }
+  if (projectContext.loadError) {
+    loadErrors.push({ title: "Projects", message: projectContext.loadError });
+  }
+  if (isInitialLoading && apiState.status === "error") {
+    loadErrors.push({ title: "Connection", message: apiState.error });
+  }
+
+  const statusMessage =
+    apiState.status === "connecting"
+      ? "Connecting to server…"
+      : apiState.status === "reconnecting"
+        ? `Reconnecting to server${apiState.attempt > 1 ? ` (attempt ${apiState.attempt})` : ""}…`
+        : apiState.status === "degraded"
+          ? "Connection unstable — messages may be delayed"
+          : null;
+
+  const handleRetry = () => {
+    if (apiState.status === "error") {
+      apiState.retry();
+    }
+    workspaceContext.retryLoadWorkspaces();
+    projectContext.retryLoadProjects();
+  };
+
+  if (loadErrors.length > 0) {
+    return (
+      <LoadingScreen
+        message="We ran into a problem while loading Mux data."
+        errors={loadErrors}
+        onRetry={handleRetry}
+        retryLabel="Retry loading"
+      />
+    );
+  }
+
   // Show loading screen until both projects and workspaces are loaded and stores synced
-  if (projectContext.loading || workspaceContext.loading || !storesSynced) {
-    return <LoadingScreen />;
+  if (isInitialLoading) {
+    return <LoadingScreen statusMessage={statusMessage ?? undefined} />;
   }
 
   // Render App - all state available via contexts

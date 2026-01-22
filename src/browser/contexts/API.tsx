@@ -35,7 +35,7 @@ interface APIStateMethods {
 }
 
 // Union distributes over intersection, preserving discriminated union behavior
-export type UseAPIResult = APIState & APIStateMethods;
+export type UseAPIResult = APIState & APIStateMethods & { connectionEpoch: number };
 
 // Internal state for the provider (includes cleanup)
 type ConnectionState =
@@ -48,8 +48,13 @@ type ConnectionState =
 
 // Reconnection constants
 const MAX_RECONNECT_ATTEMPTS = 10;
-const BASE_DELAY_MS = 100;
 const MAX_DELAY_MS = 10000;
+
+/** Instant first retry, then exponential backoff: 0ms, 100ms, 200ms, 400ms... up to MAX_DELAY_MS */
+function getReconnectDelay(attempt: number): number {
+  if (attempt === 0) return 0; // Instant first retry
+  return Math.min(100 * Math.pow(2, attempt - 1), MAX_DELAY_MS);
+}
 
 // Liveness check constants
 const LIVENESS_INTERVAL_MS = 5000; // Check every 5 seconds
@@ -130,6 +135,9 @@ export const APIProvider = (props: APIProviderProps) => {
     return getStoredAuthToken();
   });
 
+  // Increments on each successful reconnect - contexts can use this to re-run initial loads
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
+
   const cleanupRef = useRef<(() => void) | null>(null);
   const hasConnectedRef = useRef(false);
   const reconnectAttemptRef = useRef(0);
@@ -167,6 +175,10 @@ export const APIProvider = (props: APIProviderProps) => {
         client.general
           .ping("auth-check")
           .then(() => {
+            // Increment epoch on reconnect so contexts re-run initial loads
+            if (hasConnectedRef.current) {
+              setConnectionEpoch((e) => e + 1);
+            }
             hasConnectedRef.current = true;
             reconnectAttemptRef.current = 0;
             window.__ORPC_CLIENT__ = client;
@@ -228,7 +240,7 @@ export const APIProvider = (props: APIProviderProps) => {
     [props.client, props.createWebSocket, wsFactory]
   );
 
-  // Schedule reconnection with exponential backoff
+  // Schedule reconnection with exponential backoff (instant first retry)
   const scheduleReconnect = useCallback(() => {
     const attempt = reconnectAttemptRef.current;
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
@@ -236,7 +248,7 @@ export const APIProvider = (props: APIProviderProps) => {
       return;
     }
 
-    const delay = Math.min(BASE_DELAY_MS * Math.pow(2, attempt), MAX_DELAY_MS);
+    const delay = getReconnectDelay(attempt);
     reconnectAttemptRef.current = attempt + 1;
     setState({ status: "reconnecting", attempt: attempt + 1 });
 
@@ -318,7 +330,7 @@ export const APIProvider = (props: APIProviderProps) => {
 
   // Convert internal state to the discriminated union API
   const value = useMemo((): UseAPIResult => {
-    const base = { authenticate, retry };
+    const base = { authenticate, retry, connectionEpoch };
     switch (state.status) {
       case "connecting":
         return { status: "connecting", api: null, error: null, ...base };
@@ -333,7 +345,7 @@ export const APIProvider = (props: APIProviderProps) => {
       case "error":
         return { status: "error", api: null, error: state.error, ...base };
     }
-  }, [state, authenticate, retry]);
+  }, [state, authenticate, retry, connectionEpoch]);
 
   // Always render children - consumers handle their own loading/error states
   return <APIContext.Provider value={value}>{props.children}</APIContext.Provider>;
