@@ -475,7 +475,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     showRetryBarrier,
     chatInputAPI,
     jumpToBottom,
-    handleOpenTerminal: () => void onOpenTerminal(),
+    handleOpenTerminal: onOpenTerminal,
     handleOpenInEditor,
     aggregator,
     setEditingMessage,
