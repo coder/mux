@@ -14,13 +14,8 @@ import {
   updatePersistedState,
   readPersistedState,
 } from "./hooks/usePersistedState";
-import { getEffectiveSlotKeybind, getPresetForSlot } from "@/browser/utils/uiLayouts";
-import {
-  matchesKeybind,
-  KEYBINDS,
-  isEditableElement,
-  isTerminalFocused,
-} from "./utils/ui/keybinds";
+import { matchesKeybind, KEYBINDS } from "./utils/ui/keybinds";
+import { handleLayoutSlotHotkeys } from "./utils/ui/layoutSlotHotkeys";
 import { buildSortedWorkspacesByProject } from "./utils/ui/workspaceFiltering";
 import { useResumeManager } from "./hooks/useResumeManager";
 import { useUnreadTracking } from "./hooks/useUnreadTracking";
@@ -581,60 +576,13 @@ function AppInner() {
   // Layout slot hotkeys (Ctrl/Cmd+Alt+1..9 by default)
   useEffect(() => {
     const handleKeyDownCapture = (e: KeyboardEvent) => {
-      if (isCommandPaletteOpen || isSettingsOpen) {
-        return;
-      }
-
-      if (!selectedWorkspace) {
-        return;
-      }
-
-      // Don't let global slot hotkeys fire while the user is typing.
-      if (isEditableElement(e.target) || isTerminalFocused(e.target)) {
-        return;
-      }
-
-      // AltGr is commonly implemented as Ctrl+Alt; avoid treating it as our shortcut.
-      if (typeof e.getModifierState === "function" && e.getModifierState("AltGraph")) {
-        return;
-      }
-
-      for (const slot of [1, 2, 3, 4, 5, 6, 7, 8, 9] as const) {
-        const preset = getPresetForSlot(layoutPresets, slot);
-        if (!preset) {
-          continue;
-        }
-
-        const keybind = getEffectiveSlotKeybind(layoutPresets, slot);
-        if (!keybind || !matchesKeybind(e, keybind)) {
-          continue;
-        }
-
-        e.preventDefault();
-        void applySlotToWorkspace(selectedWorkspace.workspaceId, slot).catch(() => {
-          // Best-effort only.
-        });
-        return;
-      }
-
-      // Custom overrides for additional slots (10+).
-      for (const slotConfig of layoutPresets.slots) {
-        if (slotConfig.slot <= 9) {
-          continue;
-        }
-        if (!slotConfig.preset || !slotConfig.keybindOverride) {
-          continue;
-        }
-        if (!matchesKeybind(e, slotConfig.keybindOverride)) {
-          continue;
-        }
-
-        e.preventDefault();
-        void applySlotToWorkspace(selectedWorkspace.workspaceId, slotConfig.slot).catch(() => {
-          // Best-effort only.
-        });
-        return;
-      }
+      handleLayoutSlotHotkeys(e, {
+        isCommandPaletteOpen,
+        isSettingsOpen,
+        selectedWorkspaceId: selectedWorkspace?.workspaceId ?? null,
+        layoutPresets,
+        applySlotToWorkspace,
+      });
     };
 
     window.addEventListener("keydown", handleKeyDownCapture, { capture: true });
