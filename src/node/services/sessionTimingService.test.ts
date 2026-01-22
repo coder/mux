@@ -33,6 +33,361 @@ describe("SessionTimingService", () => {
     }
   });
 
+  it("persists aborted stream stats to session-timing.json", async () => {
+    const telemetry = createMockTelemetryService();
+    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+    service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+    const workspaceId = "test-workspace";
+    const messageId = "m1";
+    const model = "openai:gpt-4o";
+    const startTime = 1_000_000;
+
+    service.handleStreamStart({
+      type: "stream-start",
+      workspaceId,
+      messageId,
+      model,
+      historySequence: 1,
+      startTime,
+      mode: "exec",
+    });
+
+    service.handleStreamDelta({
+      type: "stream-delta",
+      workspaceId,
+      messageId,
+      delta: "hi",
+      tokens: 5,
+      timestamp: startTime + 1000,
+    });
+
+    service.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId,
+      messageId,
+      toolCallId: "t1",
+      toolName: "bash",
+      args: { cmd: "echo hi" },
+      tokens: 3,
+      timestamp: startTime + 2000,
+    });
+
+    service.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId,
+      messageId,
+      toolCallId: "t1",
+      toolName: "bash",
+      result: { ok: true },
+      timestamp: startTime + 3000,
+    });
+
+    service.handleStreamAbort({
+      type: "stream-abort",
+      workspaceId,
+      messageId,
+      metadata: {
+        duration: 5000,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 10,
+          totalTokens: 11,
+          reasoningTokens: 2,
+        },
+      },
+      abortReason: "system",
+      abandonPartial: true,
+    });
+
+    await service.waitForIdle(workspaceId);
+
+    const snapshot = await service.getSnapshot(workspaceId);
+    expect(snapshot.lastRequest?.messageId).toBe(messageId);
+    expect(snapshot.lastRequest?.totalDurationMs).toBe(5000);
+    expect(snapshot.lastRequest?.toolExecutionMs).toBe(1000);
+    expect(snapshot.lastRequest?.ttftMs).toBe(1000);
+    expect(snapshot.lastRequest?.streamingMs).toBe(3000);
+    expect(snapshot.lastRequest?.invalid).toBe(false);
+
+    expect(snapshot.session?.responseCount).toBe(1);
+  });
+
+  it("ignores empty aborted streams", async () => {
+    const telemetry = createMockTelemetryService();
+    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+    service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+    const workspaceId = "test-workspace";
+    const messageId = "m1";
+    const model = "openai:gpt-4o";
+    const startTime = 1_000_000;
+
+    service.handleStreamStart({
+      type: "stream-start",
+      workspaceId,
+      messageId,
+      model,
+      historySequence: 1,
+      startTime,
+      mode: "exec",
+    });
+
+    service.handleStreamAbort({
+      type: "stream-abort",
+      workspaceId,
+      messageId,
+      metadata: { duration: 1000 },
+      abortReason: "user",
+      abandonPartial: true,
+    });
+
+    await service.waitForIdle(workspaceId);
+
+    const snapshot = await service.getSnapshot(workspaceId);
+    expect(snapshot.lastRequest).toBeUndefined();
+    expect(snapshot.session?.responseCount).toBe(0);
+  });
+
+  describe("rollUpTimingIntoParent", () => {
+    it("should roll up child timing into parent without changing parent's lastRequest", async () => {
+      const telemetry = createMockTelemetryService();
+      const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+      service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+      const projectPath = "/tmp/mux-session-timing-rollup-test-project";
+      const model = "openai:gpt-4o";
+
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      await config.addWorkspace(projectPath, {
+        id: childWorkspaceId,
+        name: "child-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: parentWorkspaceId,
+      });
+
+      // Parent stream.
+      const parentMessageId = "p1";
+      const startTimeParent = 1_000_000;
+
+      service.handleStreamStart({
+        type: "stream-start",
+        workspaceId: parentWorkspaceId,
+        messageId: parentMessageId,
+        model,
+        historySequence: 1,
+        startTime: startTimeParent,
+        mode: "exec",
+      });
+
+      service.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: parentWorkspaceId,
+        messageId: parentMessageId,
+        delta: "hi",
+        tokens: 5,
+        timestamp: startTimeParent + 1000,
+      });
+
+      service.handleToolCallStart({
+        type: "tool-call-start",
+        workspaceId: parentWorkspaceId,
+        messageId: parentMessageId,
+        toolCallId: "t1",
+        toolName: "bash",
+        args: { cmd: "echo hi" },
+        tokens: 3,
+        timestamp: startTimeParent + 2000,
+      });
+
+      service.handleToolCallEnd({
+        type: "tool-call-end",
+        workspaceId: parentWorkspaceId,
+        messageId: parentMessageId,
+        toolCallId: "t1",
+        toolName: "bash",
+        result: { ok: true },
+        timestamp: startTimeParent + 3000,
+      });
+
+      service.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: parentWorkspaceId,
+        messageId: parentMessageId,
+        metadata: {
+          model,
+          duration: 5000,
+          usage: {
+            inputTokens: 1,
+            outputTokens: 10,
+            totalTokens: 11,
+            reasoningTokens: 2,
+          },
+        },
+        parts: [],
+      });
+
+      // Child stream.
+      const childMessageId = "c1";
+      const startTimeChild = 2_000_000;
+
+      service.handleStreamStart({
+        type: "stream-start",
+        workspaceId: childWorkspaceId,
+        messageId: childMessageId,
+        model,
+        historySequence: 1,
+        startTime: startTimeChild,
+        mode: "exec",
+      });
+
+      service.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: childWorkspaceId,
+        messageId: childMessageId,
+        delta: "hi",
+        tokens: 5,
+        timestamp: startTimeChild + 200,
+      });
+
+      service.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: childWorkspaceId,
+        messageId: childMessageId,
+        metadata: {
+          model,
+          duration: 1500,
+          usage: {
+            inputTokens: 1,
+            outputTokens: 5,
+            totalTokens: 6,
+          },
+        },
+        parts: [],
+      });
+
+      await service.waitForIdle(parentWorkspaceId);
+      await service.waitForIdle(childWorkspaceId);
+
+      const before = await service.getSnapshot(parentWorkspaceId);
+      expect(before.lastRequest?.messageId).toBe(parentMessageId);
+
+      const beforeLastRequest = before.lastRequest!;
+
+      const rollupResult = await service.rollUpTimingIntoParent(
+        parentWorkspaceId,
+        childWorkspaceId
+      );
+      expect(rollupResult.didRollUp).toBe(true);
+
+      const after = await service.getSnapshot(parentWorkspaceId);
+
+      // lastRequest is preserved
+      expect(after.lastRequest).toEqual(beforeLastRequest);
+
+      expect(after.session?.responseCount).toBe(2);
+      expect(after.session?.totalDurationMs).toBe(6500);
+      expect(after.session?.totalToolExecutionMs).toBe(1000);
+      expect(after.session?.totalStreamingMs).toBe(4300);
+      expect(after.session?.totalTtftMs).toBe(1200);
+      expect(after.session?.ttftCount).toBe(2);
+      expect(after.session?.totalOutputTokens).toBe(15);
+      expect(after.session?.totalReasoningTokens).toBe(2);
+
+      const normalizedModel = normalizeGatewayModel(model);
+      const key = `${normalizedModel}:exec`;
+      expect(after.session?.byModel[key]?.responseCount).toBe(2);
+    });
+
+    it("should be idempotent for the same child workspace", async () => {
+      const telemetry = createMockTelemetryService();
+      const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+      service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+      const projectPath = "/tmp/mux-session-timing-rollup-test-project";
+      const model = "openai:gpt-4o";
+
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+
+      // Child stream.
+      const childMessageId = "c1";
+      const startTimeChild = 2_000_000;
+
+      service.handleStreamStart({
+        type: "stream-start",
+        workspaceId: childWorkspaceId,
+        messageId: childMessageId,
+        model,
+        historySequence: 1,
+        startTime: startTimeChild,
+        mode: "exec",
+      });
+
+      service.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId: childWorkspaceId,
+        messageId: childMessageId,
+        delta: "hi",
+        tokens: 5,
+        timestamp: startTimeChild + 200,
+      });
+
+      service.handleStreamEnd({
+        type: "stream-end",
+        workspaceId: childWorkspaceId,
+        messageId: childMessageId,
+        metadata: {
+          model,
+          duration: 1500,
+          usage: {
+            inputTokens: 1,
+            outputTokens: 5,
+            totalTokens: 6,
+          },
+        },
+        parts: [],
+      });
+
+      await service.waitForIdle(childWorkspaceId);
+
+      const first = await service.rollUpTimingIntoParent(parentWorkspaceId, childWorkspaceId);
+      expect(first.didRollUp).toBe(true);
+
+      const second = await service.rollUpTimingIntoParent(parentWorkspaceId, childWorkspaceId);
+      expect(second.didRollUp).toBe(false);
+
+      const result = await service.getSnapshot(parentWorkspaceId);
+      expect(result.session?.responseCount).toBe(1);
+
+      const timingFilePath = path.join(
+        config.getSessionDir(parentWorkspaceId),
+        "session-timing.json"
+      );
+      const raw = await fs.readFile(timingFilePath, "utf-8");
+      const parsed = JSON.parse(raw) as { rolledUpFrom?: Record<string, true> };
+      expect(parsed.rolledUpFrom?.[childWorkspaceId]).toBe(true);
+    });
+  });
   it("persists completed stream stats to session-timing.json", async () => {
     const telemetry = createMockTelemetryService();
     const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);

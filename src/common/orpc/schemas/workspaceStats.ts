@@ -98,6 +98,15 @@ export const SessionTimingFileSchema = z.object({
   version: z.literal(2),
   lastRequest: CompletedStreamStatsSchema.optional(),
   session: SessionTimingStatsSchema,
+
+  /**
+   * Idempotency ledger for rolled-up sub-agent timing.
+   *
+   * When a child workspace is deleted, we merge its session timing into the parent.
+   * This tracks which children have already been merged to prevent double-counting
+   * if removal is retried.
+   */
+  rolledUpFrom: z.record(z.string(), z.literal(true)).optional(),
 });
 
 // Convenient TypeScript type exports

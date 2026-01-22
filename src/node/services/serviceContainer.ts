@@ -165,6 +165,7 @@ export class ServiceContainer {
     });
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+    this.workspaceService.setSessionTimingService(this.sessionTimingService);
     this.signingService = getSigningService();
     this.coderService = coderService;
     // Register globally so all createRuntime calls can create CoderSSHRuntime

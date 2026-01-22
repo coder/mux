@@ -63,6 +63,7 @@ import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/commo
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
+import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
@@ -167,6 +168,7 @@ export class WorkspaceService extends EventEmitter {
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
+  private sessionTimingService?: SessionTimingService;
 
   /**
    * Set the MCP server manager for tool access.
@@ -189,6 +191,14 @@ export class WorkspaceService extends EventEmitter {
    */
   setTerminalService(terminalService: TerminalService): void {
     this.terminalService = terminalService;
+  }
+
+  /**
+   * Set session timing service for roll-up during workspace removal.
+   * Called after construction due to initialization ordering.
+   */
+  setSessionTimingService(sessionTimingService: SessionTimingService): void {
+    this.sessionTimingService = sessionTimingService;
   }
 
   /**
@@ -792,9 +802,26 @@ export class WorkspaceService extends EventEmitter {
 
         // Note: Coder workspace deletion is handled by CoderSSHRuntime.deleteWorkspace()
 
+        const parentWorkspaceId = metadata.parentWorkspaceId;
+
+        // If this workspace is a sub-agent/task, roll its accumulated timing into the parent BEFORE
+        // deleting ~/.mux/sessions/<workspaceId>/session-timing.json.
+        if (parentWorkspaceId && this.sessionTimingService) {
+          try {
+            // Flush any last timing write (e.g. from stream-abort) before reading.
+            await this.sessionTimingService.waitForIdle(workspaceId);
+            await this.sessionTimingService.rollUpTimingIntoParent(parentWorkspaceId, workspaceId);
+          } catch (error: unknown) {
+            log.error("Failed to roll up child session timing into parent", {
+              workspaceId,
+              parentWorkspaceId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+
         // If this workspace is a sub-agent/task, roll its accumulated usage into the parent BEFORE
         // deleting ~/.mux/sessions/<workspaceId>/session-usage.json.
-        const parentWorkspaceId = metadata.parentWorkspaceId;
         if (parentWorkspaceId && this.sessionUsageService) {
           try {
             const childUsage = await this.sessionUsageService.getSessionUsage(workspaceId);

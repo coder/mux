@@ -429,6 +429,109 @@ export class SessionTimingService {
     this.emitChange(workspaceId);
   }
 
+  /**
+   * Merge child timing into the parent workspace.
+   *
+   * Used to preserve sub-agent timing when the child workspace is deleted.
+   *
+   * IMPORTANT:
+   * - Does not update parent's lastRequest
+   * - Uses an on-disk idempotency ledger (rolledUpFrom) to prevent double-counting
+   */
+  async rollUpTimingIntoParent(
+    parentWorkspaceId: string,
+    childWorkspaceId: string
+  ): Promise<{ didRollUp: boolean }> {
+    assert(parentWorkspaceId.trim().length > 0, "rollUpTimingIntoParent: parentWorkspaceId empty");
+    assert(childWorkspaceId.trim().length > 0, "rollUpTimingIntoParent: childWorkspaceId empty");
+    assert(
+      parentWorkspaceId !== childWorkspaceId,
+      "rollUpTimingIntoParent: parentWorkspaceId must differ from childWorkspaceId"
+    );
+
+    // Defensive: don't create new session dirs for already-deleted parents.
+    if (!this.config.findWorkspace(parentWorkspaceId)) {
+      return { didRollUp: false };
+    }
+
+    // Read child timing before acquiring parent lock to avoid multi-workspace lock ordering issues.
+    const childTiming = await this.readTimingFile(childWorkspaceId);
+    if (childTiming.session.responseCount <= 0) {
+      return { didRollUp: false };
+    }
+
+    return this.fileLocks.withLock(parentWorkspaceId, async () => {
+      const parentTiming = await this.readTimingFile(parentWorkspaceId);
+
+      if (parentTiming.rolledUpFrom?.[childWorkspaceId]) {
+        return { didRollUp: false };
+      }
+
+      parentTiming.session.totalDurationMs += childTiming.session.totalDurationMs;
+      parentTiming.session.totalToolExecutionMs += childTiming.session.totalToolExecutionMs;
+      parentTiming.session.totalStreamingMs += childTiming.session.totalStreamingMs;
+      parentTiming.session.totalTtftMs += childTiming.session.totalTtftMs;
+      parentTiming.session.ttftCount += childTiming.session.ttftCount;
+      parentTiming.session.responseCount += childTiming.session.responseCount;
+      parentTiming.session.totalOutputTokens += childTiming.session.totalOutputTokens;
+      parentTiming.session.totalReasoningTokens += childTiming.session.totalReasoningTokens;
+
+      for (const childEntry of Object.values(childTiming.session.byModel)) {
+        const key = getModelKey(childEntry.model, childEntry.mode);
+        const existing = parentTiming.session.byModel[key];
+        const base = existing ?? {
+          model: childEntry.model,
+          mode: childEntry.mode,
+          totalDurationMs: 0,
+          totalToolExecutionMs: 0,
+          totalStreamingMs: 0,
+          totalTtftMs: 0,
+          ttftCount: 0,
+          responseCount: 0,
+          totalOutputTokens: 0,
+          totalReasoningTokens: 0,
+        };
+
+        // Defensive: key mismatches should not crash; prefer child data as source of truth.
+        if (
+          existing &&
+          (existing.model !== childEntry.model || existing.mode !== childEntry.mode)
+        ) {
+          log.warn("Session timing byModel entry mismatch during roll-up", {
+            parentWorkspaceId,
+            childWorkspaceId,
+            key,
+            existing: { model: existing.model, mode: existing.mode },
+            incoming: { model: childEntry.model, mode: childEntry.mode },
+          });
+        }
+
+        base.totalDurationMs += childEntry.totalDurationMs;
+        base.totalToolExecutionMs += childEntry.totalToolExecutionMs;
+        base.totalStreamingMs += childEntry.totalStreamingMs;
+        base.totalTtftMs += childEntry.totalTtftMs;
+        base.ttftCount += childEntry.ttftCount;
+        base.responseCount += childEntry.responseCount;
+        base.totalOutputTokens += childEntry.totalOutputTokens;
+        base.totalReasoningTokens += childEntry.totalReasoningTokens;
+
+        parentTiming.session.byModel[key] = base;
+      }
+
+      parentTiming.rolledUpFrom = {
+        ...(parentTiming.rolledUpFrom ?? {}),
+        [childWorkspaceId]: true,
+      };
+
+      await this.writeTimingFile(parentWorkspaceId, parentTiming);
+      this.timingFileCache.set(parentWorkspaceId, parentTiming);
+
+      this.emitChange(parentWorkspaceId);
+
+      return { didRollUp: true };
+    });
+  }
+
   getActiveStreamStats(workspaceId: string): ActiveStreamStats | undefined {
     const state = this.activeStreams.get(workspaceId);
     if (!state) return undefined;
@@ -641,27 +744,39 @@ export class SessionTimingService {
     this.emitChange(data.workspaceId);
   }
 
-  handleStreamAbort(data: StreamAbortEvent): void {
-    // We currently ignore aborted streams for session timing.
-    this.activeStreams.delete(data.workspaceId);
-    this.emitChange(data.workspaceId);
+  private isEmptyAbortForTiming(state: ActiveStreamState, usage: unknown): boolean {
+    const usageObj = usage as { outputTokens?: unknown; reasoningTokens?: unknown } | undefined;
+    const outputTokens = typeof usageObj?.outputTokens === "number" ? usageObj.outputTokens : 0;
+    const reasoningTokens =
+      typeof usageObj?.reasoningTokens === "number" ? usageObj.reasoningTokens : 0;
+
+    const hasUsageTokens = outputTokens > 0 || reasoningTokens > 0;
+
+    const hasAnyToolActivity =
+      state.toolWallMs > 0 || state.toolWallStartMs !== null || state.pendingToolStarts.size > 0;
+
+    const hasAnyTokenActivity = state.deltaStorage.getTokenCount() > 0;
+
+    return (
+      state.firstTokenTimeMs === null &&
+      !hasAnyToolActivity &&
+      !hasAnyTokenActivity &&
+      !hasUsageTokens
+    );
   }
 
-  handleStreamEnd(data: StreamEndEvent): void {
-    const state = this.activeStreams.get(data.workspaceId);
-    if (!state) {
-      return;
-    }
+  private computeCompletedStreamStats(params: {
+    state: ActiveStreamState;
+    messageId: string;
+    durationMs: number;
+    usage: unknown;
+  }): CompletedStreamStats {
+    const state = params.state;
 
-    // Stop tracking active stream state immediately.
-    this.activeStreams.delete(data.workspaceId);
-
-    const durationMs =
-      typeof data.metadata.duration === "number" && Number.isFinite(data.metadata.duration)
-        ? data.metadata.duration
-        : Math.max(0, Date.now() - state.startTimeMs);
-
-    const endTimestamp = Math.max(state.lastEventTimestampMs, state.startTimeMs + durationMs);
+    const endTimestamp = Math.max(
+      state.lastEventTimestampMs,
+      state.startTimeMs + params.durationMs
+    );
 
     let toolExecutionMs = state.toolWallMs;
 
@@ -679,10 +794,10 @@ export class SessionTimingService {
         ? Math.max(0, state.firstTokenTimeMs - state.startTimeMs)
         : null;
 
-    const modelTimeMs = Math.max(0, durationMs - toolExecutionMs);
-    const streamingMs = Math.max(0, durationMs - toolExecutionMs - (ttftMs ?? 0));
+    const modelTimeMs = Math.max(0, params.durationMs - toolExecutionMs);
+    const streamingMs = Math.max(0, params.durationMs - toolExecutionMs - (ttftMs ?? 0));
 
-    const usage = data.metadata.usage;
+    const usage = params.usage as { outputTokens?: unknown; reasoningTokens?: unknown } | undefined;
     const outputTokens =
       typeof usage?.outputTokens === "number" ? usage.outputTokens : state.outputTokensByDelta;
     const reasoningTokens =
@@ -691,7 +806,7 @@ export class SessionTimingService {
         : state.reasoningTokensByDelta;
 
     const validation = validateTiming({
-      totalDurationMs: durationMs,
+      totalDurationMs: params.durationMs,
       toolExecutionMs,
       ttftMs,
       modelTimeMs,
@@ -699,10 +814,10 @@ export class SessionTimingService {
     });
 
     const completed = {
-      messageId: data.messageId,
+      messageId: params.messageId,
       model: state.model,
       mode: state.mode,
-      totalDurationMs: durationMs,
+      totalDurationMs: params.durationMs,
       ttftMs,
       toolExecutionMs,
       modelTimeMs,
@@ -713,7 +828,73 @@ export class SessionTimingService {
       anomalies: validation.anomalies,
     };
 
-    const completedValidated = CompletedStreamStatsSchema.parse(completed);
+    return CompletedStreamStatsSchema.parse(completed);
+  }
+
+  handleStreamAbort(data: StreamAbortEvent): void {
+    const state = this.activeStreams.get(data.workspaceId);
+    if (!state) {
+      this.activeStreams.delete(data.workspaceId);
+      this.emitChange(data.workspaceId);
+      return;
+    }
+
+    // Stop tracking active stream state immediately.
+    this.activeStreams.delete(data.workspaceId);
+
+    const usage = data.metadata?.usage;
+
+    // Ignore aborted streams with no meaningful output or tool activity.
+    if (this.isEmptyAbortForTiming(state, usage)) {
+      this.emitChange(data.workspaceId);
+      return;
+    }
+
+    const durationFromMetadata = data.metadata?.duration;
+    const durationMs =
+      typeof durationFromMetadata === "number" && Number.isFinite(durationFromMetadata)
+        ? durationFromMetadata
+        : Math.max(0, Date.now() - state.startTimeMs);
+
+    const completedValidated = this.computeCompletedStreamStats({
+      state,
+      messageId: data.messageId,
+      durationMs,
+      usage,
+    });
+
+    // Optimistically update cache so subscribers see the updated session immediately.
+    const cached = this.timingFileCache.get(data.workspaceId);
+    if (cached) {
+      this.applyCompletedStreamToFile(cached, completedValidated);
+    }
+
+    this.queuePersistCompletedStream(data.workspaceId, completedValidated);
+
+    this.emitChange(data.workspaceId);
+  }
+
+  handleStreamEnd(data: StreamEndEvent): void {
+    const state = this.activeStreams.get(data.workspaceId);
+    if (!state) {
+      return;
+    }
+
+    // Stop tracking active stream state immediately.
+    this.activeStreams.delete(data.workspaceId);
+
+    const durationFromMetadata = data.metadata.duration;
+    const durationMs =
+      typeof durationFromMetadata === "number" && Number.isFinite(durationFromMetadata)
+        ? durationFromMetadata
+        : Math.max(0, Date.now() - state.startTimeMs);
+
+    const completedValidated = this.computeCompletedStreamStats({
+      state,
+      messageId: data.messageId,
+      durationMs,
+      usage: data.metadata.usage,
+    });
 
     // Optimistically update cache so subscribers see the updated session immediately.
     const cached = this.timingFileCache.get(data.workspaceId);
