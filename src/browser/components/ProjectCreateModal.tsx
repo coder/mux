@@ -61,8 +61,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     const { api } = useAPI();
     const [path, setPath] = useState("");
     const [error, setError] = useState("");
-    // Track if the error is specifically "path does not exist" so we can offer to create it
-    const [canCreateFolder, setCanCreateFolder] = useState(false);
     // In Electron mode, window.api exists (set by preload) and has native directory picker via ORPC
     // In browser mode, window.api doesn't exist and we use web-based DirectoryPickerModal
     const isDesktop = !!window.api;
@@ -81,7 +79,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     const reset = useCallback(() => {
       setPath("");
       setError("");
-      setCanCreateFolder(false);
     }, []);
 
     const handleCancel = useCallback(() => {
@@ -92,7 +89,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     const handleWebPickerPathSelected = useCallback((selected: string) => {
       setPath(selected);
       setError("");
-      setCanCreateFolder(false);
     }, []);
 
     const handleBrowse = useCallback(async () => {
@@ -101,7 +97,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
         if (selectedPath) {
           setPath(selectedPath);
           setError("");
-          setCanCreateFolder(false);
         }
       } catch (err) {
         console.error("Failed to pick directory:", err);
@@ -111,7 +106,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
     const handleSelect = useCallback(async (): Promise<boolean> => {
       const trimmedPath = path.trim();
       if (!trimmedPath) {
-        setError("Please enter a directory path");
+        setError("Please enter a project name or path");
         return false;
       }
 
@@ -120,7 +115,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
       }
 
       setError("");
-      setCanCreateFolder(false);
       if (!api) {
         setError("Not connected to server");
         return false;
@@ -132,7 +126,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
         const existingProjects = await api.projects.list();
         const existingPaths = new Map(existingProjects);
 
-        // Try to create the project
+        // Backend handles path resolution (bare names → ~/.mux/projects/name)
         const result = await api.projects.create({ projectPath: trimmedPath });
 
         if (result.success) {
@@ -152,13 +146,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
         // Backend validation error - show inline
         const errorMessage =
           typeof result.error === "string" ? result.error : "Failed to add project";
-        // Detect "Path does not exist" error to offer folder creation
-        if (errorMessage.includes("Path does not exist")) {
-          setCanCreateFolder(true);
-          setError("This folder doesn't exist.");
-          return false;
-        }
-
         setError(errorMessage);
         return false;
       } catch (err) {
@@ -170,32 +157,6 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
         setCreating(false);
       }
     }, [api, isCreating, onClose, onSuccess, path, reset, setCreating]);
-
-    const handleCreateFolder = useCallback(async () => {
-      const trimmedPath = path.trim();
-      if (!trimmedPath || !api) return;
-
-      setCreating(true);
-      setError("");
-
-      try {
-        const createResult = await api.general.createDirectory({ path: trimmedPath });
-        if (!createResult.success) {
-          setError(createResult.error ?? "Failed to create folder");
-          setCanCreateFolder(false);
-          setCreating(false);
-          return;
-        }
-        // Folder created - now retry adding the project (handleSelect manages isCreating)
-        setCanCreateFolder(false);
-        await handleSelect();
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
-        setError(`Failed to create folder: ${errorMessage}`);
-        setCanCreateFolder(false);
-        setCreating(false);
-      }
-    }, [api, handleSelect, path, setCreating]);
 
     const handleBrowseClick = useCallback(() => {
       if (isDesktop) {
@@ -233,13 +194,12 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
             onChange={(e) => {
               setPath(e.target.value);
               setError("");
-              setCanCreateFolder(false);
             }}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             autoFocus={autoFocus}
             disabled={isCreating}
-            className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+            className="border-border-medium bg-modal-bg text-foreground placeholder:text-muted focus:border-accent min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
           />
           {(isDesktop || hasWebFsPicker) && (
             <Button
@@ -253,21 +213,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
           )}
         </div>
 
-        {error && (
-          <div className="flex items-center gap-2 text-xs">
-            <span className={canCreateFolder ? "text-muted" : "text-error"}>{error}</span>
-            {canCreateFolder && (
-              <Button
-                size="sm"
-                onClick={() => void handleCreateFolder()}
-                disabled={isCreating}
-                className="h-6 px-2 py-0 text-xs"
-              >
-                Create Folder
-              </Button>
-            )}
-          </div>
-        )}
+        {error && <p className="text-error text-xs">{error}</p>}
 
         {!hideFooter && (
           <DialogFooter>
@@ -276,7 +222,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
                 Cancel
               </Button>
             )}
-            <Button onClick={() => void handleSelect()} disabled={isCreating || canCreateFolder}>
+            <Button onClick={() => void handleSelect()} disabled={isCreating}>
               {isCreating ? "Adding..." : submitLabel}
             </Button>
           </DialogFooter>

@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import sshpk from "sshpk";
+import { getMuxHome } from "@/common/constants/paths";
 import { execAsync } from "@/node/utils/disposableExec";
 import { log } from "@/node/services/log";
 
@@ -57,7 +58,7 @@ const SUPPORTED_KEY_TYPES = ["ed25519", "ecdsa"];
 /** Default paths to check for signing keys, in order of preference */
 export function getDefaultKeyPaths(): string[] {
   return [
-    join(homedir(), ".mux", "message_signing_key"), // Explicit mux key (any supported type, symlink-friendly)
+    join(getMuxHome(), "message_signing_key"), // Explicit mux key (any supported type, symlink-friendly)
     join(homedir(), ".ssh", "id_ed25519"), // SSH Ed25519
     join(homedir(), ".ssh", "id_ecdsa"), // SSH ECDSA
   ];

@@ -119,6 +119,17 @@ export function getMuxSecretsFile(rootDir?: string): string {
 }
 
 /**
+ * Get the default directory for new projects created with bare names.
+ * Example: ~/.mux/projects/my-project
+ *
+ * @param rootDir - Optional root directory (defaults to getMuxHome())
+ */
+export function getMuxProjectsDir(rootDir?: string): string {
+  const root = rootDir ?? getMuxHome();
+  return join(root, "projects");
+}
+
+/**
  * Get the extension metadata file path (shared with VS Code extension).
  *
  * @param rootDir - Optional root directory (defaults to getMuxHome())

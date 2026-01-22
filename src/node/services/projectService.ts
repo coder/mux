@@ -22,6 +22,8 @@ import type { BranchListResult } from "@/common/orpc/types";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
 import * as os from "os";
+import { getMuxProjectsDir } from "@/common/constants/paths";
+import { expandTilde } from "@/node/runtime/tildeExpansion";
 
 /**
  * List directory contents for the DirectoryPickerModal.
@@ -85,17 +87,40 @@ export class ProjectService {
     projectPath: string
   ): Promise<Result<{ projectConfig: ProjectConfig; normalizedPath: string }>> {
     try {
-      const validation = await validateProjectPath(projectPath);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid project path");
+      // Validate input
+      if (!projectPath || projectPath.trim().length === 0) {
+        return Err("Project path cannot be empty");
       }
 
-      const normalizedPath = validation.expandedPath!;
+      // Resolve the path:
+      // - Bare names like "my-project" → ~/.mux/projects/my-project
+      // - Paths with ~ → expand to home directory
+      // - Absolute/relative paths → resolve normally
+      const isBareProjectName =
+        projectPath.length > 0 &&
+        !projectPath.includes("/") &&
+        !projectPath.includes("\\") &&
+        !projectPath.startsWith("~");
+
+      let normalizedPath: string;
+      if (isBareProjectName) {
+        // Bare project name - put in default projects directory
+        normalizedPath = path.join(getMuxProjectsDir(), projectPath);
+      } else if (projectPath === "~" || projectPath.startsWith("~/")) {
+        // Tilde expansion - uses expandTilde to respect MUX_ROOT for ~/.mux paths
+        normalizedPath = path.resolve(expandTilde(projectPath));
+      } else {
+        normalizedPath = path.resolve(projectPath);
+      }
+
       const config = this.config.loadConfigOrDefault();
 
       if (config.projects.has(normalizedPath)) {
         return Err("Project already exists");
       }
+
+      // Create the directory if it doesn't exist (like mkdir -p)
+      await fsPromises.mkdir(normalizedPath, { recursive: true });
 
       const projectConfig: ProjectConfig = { workspaces: [] };
       config.projects.set(normalizedPath, projectConfig);
