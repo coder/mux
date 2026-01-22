@@ -259,12 +259,17 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           {gatewayActive && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <GatewayIcon
-                  className="text-accent h-3 w-3 shrink-0"
-                  active
-                  role="img"
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    gateway.toggleModelGateway(value);
+                  }}
+                  className="cursor-pointer transition-opacity hover:opacity-70"
                   aria-label="Using Mux Gateway"
-                />
+                >
+                  <GatewayIcon className="text-accent h-3 w-3 shrink-0" active />
+                </button>
               </TooltipTrigger>
               <TooltipContent align="center">Using Mux Gateway</TooltipContent>
             </Tooltip>
