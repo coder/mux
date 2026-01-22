@@ -7,7 +7,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
-import { Button } from "@/browser/components/ui/button";
 import { Input } from "@/browser/components/ui/input";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
@@ -113,6 +112,25 @@ function formatCssFontFamilyList(value: string): string {
   return parts.map(quoteCssFontFamily).join(", ");
 }
 
+const TERMINAL_ICON_FALLBACK_FAMILY = "Nerd Font Symbols";
+
+function appendTerminalIconFallback(fontFamily: string): string {
+  const parts = splitFontFamilyList(fontFamily).map(stripOuterQuotes).filter(Boolean);
+  const hasFallback = parts.some(
+    (part) => part.trim().toLowerCase() === TERMINAL_ICON_FALLBACK_FAMILY.toLowerCase()
+  );
+  if (hasFallback) {
+    return formatCssFontFamilyList(fontFamily);
+  }
+
+  const withFallback =
+    parts.length === 0
+      ? TERMINAL_ICON_FALLBACK_FAMILY
+      : `${parts.join(", ")}, ${TERMINAL_ICON_FALLBACK_FAMILY}`;
+
+  return formatCssFontFamilyList(withFallback);
+}
+
 function getPrimaryFontFamily(value: string): string | undefined {
   const first = splitFontFamilyList(value).at(0);
   if (!first) {
@@ -176,37 +194,6 @@ function isFontFamilyAvailableInBrowser(family: string, fontSize: number): boole
   }
 }
 
-function canLoadFontFamily(primary: string, fontSize: number): boolean {
-  const family = stripOuterQuotes(primary).trim();
-  if (!family) {
-    return false;
-  }
-
-  if (GENERIC_FONT_FAMILIES.has(family.toLowerCase())) {
-    return true;
-  }
-
-  return isFontFamilyAvailableInBrowser(family, fontSize);
-}
-
-function filterFontFamiliesForBrowser(fonts: string[], fontSize: number): string[] {
-  const available: string[] = [];
-
-  for (const family of fonts) {
-    const trimmed = stripOuterQuotes(family).trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    const ok = canLoadFontFamily(trimmed, fontSize);
-    if (ok) {
-      available.push(trimmed);
-    }
-  }
-
-  return Array.from(new Set(available));
-}
-
 function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string | undefined {
   if (typeof document === "undefined") {
     return undefined;
@@ -226,8 +213,6 @@ function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string 
     return undefined;
   }
 
-  const wantsNerdFontIcons = config.fontFamily.toLowerCase().includes("nerd font");
-
   const primaryAvailable = isFontFamilyAvailableInBrowser(normalizedPrimary, config.fontSize);
   if (!primaryAvailable) {
     if (normalizedPrimary.endsWith("Nerd Font") && !normalizedPrimary.endsWith("Nerd Font Mono")) {
@@ -238,30 +223,6 @@ function getTerminalFontAvailabilityWarning(config: TerminalFontConfig): string 
     }
 
     return `Font "${normalizedPrimary}" not found in this browser.`;
-  }
-
-  if (!wantsNerdFontIcons) {
-    return undefined;
-  }
-
-  // Nerd Font glyph checks: many TUIs now use Nerd Fonts v3 glyphs in the supplemental PUA.
-  if (!document.fonts?.check) {
-    return undefined;
-  }
-
-  const nerdIconV2 = String.fromCodePoint(0xf15b);
-  const nerdIconV3 = String.fromCodePoint(0xf024b);
-  const formattedList = formatCssFontFamilyList(config.fontFamily);
-  const stackSpec = `${config.fontSize}px ${formattedList}`;
-
-  const hasV2Icon = document.fonts.check(stackSpec, nerdIconV2);
-  if (!hasV2Icon) {
-    return `Font "${normalizedPrimary}" is available, but Nerd Font icons weren't detected.`;
-  }
-
-  const hasV3Icon = document.fonts.check(stackSpec, nerdIconV3);
-  if (!hasV3Icon) {
-    return `Nerd Font icons detected, but Nerd Fonts v3 icons are missing (e.g. ${nerdIconV3}). Update your Nerd Font to a v3+ release.`;
   }
 
   return undefined;
@@ -307,64 +268,7 @@ export function GeneralSection() {
   const terminalFontConfig = normalizeTerminalFontConfig(rawTerminalFontConfig);
   const terminalFontWarning = getTerminalFontAvailabilityWarning(terminalFontConfig);
 
-  const [discoveredNerdFonts, setDiscoveredNerdFonts] = useState<string[]>([]);
-  const [selectedDiscoveredNerdFont, setSelectedDiscoveredNerdFont] = useState<string>("");
-  const [nerdFontDiscoveryError, setNerdFontDiscoveryError] = useState<string | null>(null);
-  const [discoveringNerdFonts, setDiscoveringNerdFonts] = useState(false);
-
-  const handleDiscoverNerdFonts = useCallback(() => {
-    if (!api) {
-      setNerdFontDiscoveryError("Font discovery is unavailable in this environment.");
-      return;
-    }
-
-    setDiscoveringNerdFonts(true);
-    setNerdFontDiscoveryError(null);
-
-    api.server
-      .listInstalledFonts({ filter: "nerd" })
-      .then((result) => {
-        setSelectedDiscoveredNerdFont("");
-
-        const serverFonts = result.fonts;
-        const browserFonts = filterFontFamiliesForBrowser(serverFonts, terminalFontConfig.fontSize);
-
-        // Always display the server fonts list so the user can try the names manually.
-        // In browser mode, the device running the browser must have the font installed
-        // for it to render in the terminal.
-        setDiscoveredNerdFonts(serverFonts);
-
-        if (result.error) {
-          setNerdFontDiscoveryError(result.error);
-          return;
-        }
-
-        if (serverFonts.length === 0) {
-          setDiscoveredNerdFonts([]);
-          setNerdFontDiscoveryError("No Nerd Fonts were detected on the server.");
-          return;
-        }
-
-        if (browserFonts.length === 0) {
-          setNerdFontDiscoveryError(
-            `Found ${serverFonts.length} Nerd Font families on the mux server, but none appear to be available in this browser. ` +
-              "In browser mode you must install the font on this device."
-          );
-        }
-      })
-      .catch((err) => {
-        setNerdFontDiscoveryError(String(err));
-      })
-      .finally(() => {
-        setDiscoveringNerdFonts(false);
-      });
-  }, [api, terminalFontConfig.fontSize]);
-
-  const handleDiscoveredNerdFontSelect = (value: string) => {
-    setSelectedDiscoveredNerdFont(value);
-    handleTerminalFontFamilyChange(value);
-  };
-  const terminalFontPreviewFamily = formatCssFontFamilyList(terminalFontConfig.fontFamily);
+  const terminalFontPreviewFamily = appendTerminalIconFallback(terminalFontConfig.fontFamily);
   const terminalFontPreviewText = `${String.fromCodePoint(0xf024b)} ${String.fromCodePoint(0xf15b)}`;
 
   const [rawEditorConfig, setEditorConfig] = usePersistedState<EditorConfig>(
@@ -445,13 +349,13 @@ export function GeneralSection() {
                 <div className="text-warning text-xs">{terminalFontWarning}</div>
               ) : null}
               <div className="text-muted text-xs">
-                To render Nerd Font icons in TUIs, set this to a Nerd Font (e.g. JetBrainsMono Nerd
-                Font)
+                Mux includes a built-in Nerd Font symbols fallback for terminal icons. Set this to
+                any monospace font you like.
               </div>
               {isBrowserMode ? (
                 <div className="text-muted text-xs">
-                  Browser mode uses fonts installed on this device. Discovered fonts come from the
-                  mux server.
+                  Browser mode uses fonts installed on this device (plus the bundled symbols
+                  fallback).
                 </div>
               ) : null}
               <div className="text-muted text-xs">
@@ -470,43 +374,6 @@ export function GeneralSection() {
                 placeholder={DEFAULT_TERMINAL_FONT_CONFIG.fontFamily}
                 className="border-border-medium bg-background-secondary h-9 w-80"
               />
-
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!api || discoveringNerdFonts}
-                  onClick={handleDiscoverNerdFonts}
-                >
-                  {discoveringNerdFonts ? "Discovering…" : "Discover Nerd Fonts"}
-                </Button>
-
-                {discoveredNerdFonts.length > 0 ? (
-                  <Select
-                    value={selectedDiscoveredNerdFont}
-                    onValueChange={handleDiscoveredNerdFontSelect}
-                  >
-                    <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-8 w-48 cursor-pointer rounded-md border px-3 text-xs transition-colors">
-                      <SelectValue placeholder="Select Nerd Font" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {discoveredNerdFonts.map((font) => (
-                        <SelectItem key={font} value={font}>
-                          {font}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : null}
-              </div>
-
-              {nerdFontDiscoveryError ? (
-                <div className="text-warning w-80 text-right text-xs">{nerdFontDiscoveryError}</div>
-              ) : discoveredNerdFonts.length > 0 ? (
-                <div className="text-muted w-80 text-right text-xs">
-                  Found {discoveredNerdFonts.length} Nerd Font families
-                </div>
-              ) : null}
             </div>
           </div>
 

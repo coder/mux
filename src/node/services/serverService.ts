@@ -7,7 +7,6 @@ import { log } from "./log";
 import * as os from "os";
 import { VERSION } from "@/version";
 import { buildMuxMdnsServiceOptions, MdnsAdvertiserService } from "./mdnsAdvertiserService";
-import { execFile } from "child_process";
 import type { AppRouter } from "@/node/orpc/router";
 
 export interface ServerInfo {
@@ -146,106 +145,6 @@ export function computeNetworkBaseUrls(options: {
   return [buildHttpBaseUrl(bindHost, options.port)];
 }
 
-type InstalledFontFilter = "all" | "nerd";
-
-type InstalledFontDiscoverySource = "fontconfig";
-
-function isNerdFontFamily(value: string): boolean {
-  return value.toLowerCase().includes("nerd font");
-}
-
-function nerdFontSortRank(value: string): number {
-  const lower = value.toLowerCase();
-
-  // Prefer the monospace variants first since they're the best default for terminals.
-  if (lower.includes("nerd font mono")) {
-    return 0;
-  }
-
-  return lower.includes("nerd font") ? 1 : 2;
-}
-
-function parseFontconfigFamilyList(stdout: string): string[] {
-  const rawFamilies: string[] = [];
-
-  for (const line of stdout.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    // fc-list may emit multiple family aliases per line: "Family A,Family B".
-    for (const part of trimmed.split(",")) {
-      const family = part.trim();
-      if (!family) {
-        continue;
-      }
-      rawFamilies.push(family);
-    }
-  }
-
-  return Array.from(new Set(rawFamilies)).sort((a, b) => {
-    const rankDiff = nerdFontSortRank(a) - nerdFontSortRank(b);
-    if (rankDiff !== 0) {
-      return rankDiff;
-    }
-
-    return a.localeCompare(b, undefined, { sensitivity: "base" });
-  });
-}
-
-function filterInstalledFontFamilies(options: {
-  families: string[];
-  filter: InstalledFontFilter;
-}): string[] {
-  if (options.filter === "all") {
-    return options.families;
-  }
-
-  return options.families.filter((family) => isNerdFontFamily(family));
-}
-
-async function listFontFamiliesWithFontconfig(): Promise<{
-  families: string[];
-  error: string | null;
-  source: InstalledFontDiscoverySource | null;
-}> {
-  // Best-effort: fontconfig isn't guaranteed to be present on every OS.
-  return new Promise((resolve) => {
-    execFile(
-      "fc-list",
-      ["-f", "%{family}\\n"],
-      { timeout: 5_000, maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout) => {
-        if (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code === "ENOENT") {
-            resolve({
-              families: [],
-              error: "Font discovery is unavailable because fc-list (fontconfig) is not installed.",
-              source: null,
-            });
-            return;
-          }
-
-          const errMessage =
-            err instanceof Error ? err.message : typeof err === "string" ? err : "Unknown error";
-
-          resolve({
-            families: [],
-            error: `Font discovery failed running fc-list: ${errMessage}`,
-            source: null,
-          });
-          return;
-        }
-
-        const families = parseFontconfigFamilyList(stdout);
-        resolve({ families, error: null, source: "fontconfig" });
-      }
-    );
-  });
-}
-
 export class ServerService {
   private launchProjectPath: string | null = null;
   private server: OrpcServer | null = null;
@@ -281,30 +180,6 @@ export class ServerService {
    */
   getSshHost(): string | undefined {
     return this.sshHost;
-  }
-
-  /**
-   * Best-effort listing of installed font families for UI auto-complete.
-   *
-   * This currently relies on the external `fc-list` binary (fontconfig) when available.
-   */
-  async listInstalledFonts(options?: { filter?: InstalledFontFilter }): Promise<{
-    fonts: string[];
-    error: string | null;
-    source: InstalledFontDiscoverySource | null;
-  }> {
-    const filter = options?.filter ?? "nerd";
-
-    const fontconfigResult = await listFontFamiliesWithFontconfig();
-    if (fontconfigResult.error) {
-      return { fonts: [], error: fontconfigResult.error, source: null };
-    }
-
-    return {
-      fonts: filterInstalledFontFamilies({ families: fontconfigResult.families, filter }),
-      error: null,
-      source: fontconfigResult.source,
-    };
   }
 
   /**

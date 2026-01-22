@@ -166,8 +166,6 @@ export {
   ProviderConfigInfoSchema,
   muxGatewayOauth,
   providers,
-  InstalledFontFilterSchema,
-  InstalledFontListResponseSchema,
   ProvidersConfigMapSchema,
   server,
   splashScreens,

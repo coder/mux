@@ -26,6 +26,17 @@
   font-style: normal;
   font-display: swap;
 }
+/* Used for terminal Nerd Font icons (yazi, etc.). */
+@font-face {
+  font-family: "Nerd Font Symbols";
+  src: url("../../../public/nerd-font-symbols.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+  /* Private Use Areas (Nerd Fonts v2 + v3). */
+  unicode-range: U+E000-F8FF, U+F0000-FFFFD;
+}
+
 @font-face {
   font-family: "Geist Mono";
   src: url("../../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2")

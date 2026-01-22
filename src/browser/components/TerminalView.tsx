@@ -101,6 +101,25 @@ function formatCssFontFamilyList(value: string): string {
   return parts.map(quoteCssFontFamily).join(", ");
 }
 
+const TERMINAL_ICON_FALLBACK_FAMILY = "Nerd Font Symbols";
+
+function appendTerminalIconFallback(fontFamily: string): string {
+  const parts = splitFontFamilyList(fontFamily).map(stripOuterQuotes).filter(Boolean);
+  const hasFallback = parts.some(
+    (part) => part.trim().toLowerCase() === TERMINAL_ICON_FALLBACK_FAMILY.toLowerCase()
+  );
+  if (hasFallback) {
+    return formatCssFontFamilyList(fontFamily);
+  }
+
+  const withFallback =
+    parts.length === 0
+      ? TERMINAL_ICON_FALLBACK_FAMILY
+      : `${parts.join(", ")}, ${TERMINAL_ICON_FALLBACK_FAMILY}`;
+
+  return formatCssFontFamilyList(withFallback);
+}
+
 const FONT_AVAILABILITY_TEST_STRING = "abcdefghijklmnopqrstuvwxyz0123456789";
 const FONT_AVAILABILITY_BASE_FAMILIES = ["monospace", "serif", "sans-serif"] as const;
 
@@ -172,12 +191,12 @@ function resolveTerminalFontFamily(fontFamily: string, fontSize: number): string
   const parts = splitFontFamilyList(fontFamily).map(stripOuterQuotes).filter(Boolean);
   const primary = parts.at(0);
   if (!primary) {
-    return formatted;
+    return appendTerminalIconFallback(formatted);
   }
 
   const primaryOk = canLoadFontFamily(primary, fontSize);
   if (primaryOk) {
-    return formatted;
+    return appendTerminalIconFallback(formatted);
   }
 
   // Common mismatch: "Nerd Font" vs "Nerd Font Mono". Try the Mono variant even if the user
@@ -188,7 +207,7 @@ function resolveTerminalFontFamily(fontFamily: string, fontSize: number): string
     if (monoOk) {
       const remaining = parts.slice(1).join(", ");
       const withMono = remaining ? `${monoCandidate}, ${remaining}` : monoCandidate;
-      return formatCssFontFamilyList(withMono);
+      return appendTerminalIconFallback(withMono);
     }
   }
 
@@ -202,11 +221,11 @@ function resolveTerminalFontFamily(fontFamily: string, fontSize: number): string
     if (candidateOk) {
       const remaining = parts.filter((part) => part !== candidate).join(", ");
       const reordered = remaining ? `${candidate}, ${remaining}` : candidate;
-      return formatCssFontFamilyList(reordered);
+      return appendTerminalIconFallback(reordered);
     }
   }
 
-  return formatted;
+  return appendTerminalIconFallback(formatted);
 }
 
 interface TerminalViewProps {

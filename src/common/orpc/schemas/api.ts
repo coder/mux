@@ -886,16 +886,6 @@ export const ApiServerStatusSchema = z.object({
   configuredServeWebUi: z.boolean(),
 });
 
-export const InstalledFontFilterSchema = z.enum(["all", "nerd"]);
-
-export const InstalledFontListResponseSchema = z.object({
-  fonts: z.array(z.string()),
-  /** Best-effort discovery; if unavailable, fonts will be empty and error will explain why. */
-  error: z.string().nullable(),
-  /** Discovery mechanism used by the server (if any). */
-  source: z.enum(["fontconfig"]).nullable(),
-});
-
 export const server = {
   getLaunchProject: {
     input: z.void(),
@@ -904,10 +894,6 @@ export const server = {
   getSshHost: {
     input: z.void(),
     output: z.string().nullable(),
-  },
-  listInstalledFonts: {
-    input: z.object({ filter: InstalledFontFilterSchema.optional() }),
-    output: InstalledFontListResponseSchema,
   },
   setSshHost: {
     input: z.object({ sshHost: z.string().nullable() }),
