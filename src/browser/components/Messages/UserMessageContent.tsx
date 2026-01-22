@@ -6,6 +6,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface UserMessageContentProps {
   content: string;
+  commandPrefix?: string;
   reviews?: ReviewNoteDataForDisplay[];
   imageParts?: ImagePart[];
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
@@ -41,12 +42,20 @@ const imageStyles = {
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
 } as const;
 
+/** Styled command prefix (e.g., "/compact" or "/skill-name") */
+const CommandPrefixBadge: React.FC<{ prefix: string }> = ({ prefix }) => (
+  <span className="font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]">
+    {prefix}
+  </span>
+);
+
 /**
  * Shared content renderer for user messages (sent and queued).
  * Handles reviews, text content, and image attachments.
  */
 export const UserMessageContent: React.FC<UserMessageContentProps> = ({
   content,
+  commandPrefix,
   reviews,
   imageParts,
   variant,
@@ -58,6 +67,52 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
     ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
     : content;
 
+  // Check if content starts with the command prefix
+  const shouldHighlightPrefix =
+    commandPrefix && textContent.startsWith(commandPrefix) ? commandPrefix : undefined;
+
+  // Content after the prefix (if highlighting)
+  const remainingContent = shouldHighlightPrefix
+    ? textContent.slice(shouldHighlightPrefix.length)
+    : textContent;
+
+  // Render text content with optional command prefix badge
+  const renderTextContent = () => {
+    if (!remainingContent && !shouldHighlightPrefix) return null;
+
+    // No prefix highlighting - render markdown directly without wrapper
+    if (!shouldHighlightPrefix) {
+      return (
+        <MarkdownRenderer
+          content={textContent}
+          className={markdownClassName}
+          style={markdownStyles[variant]}
+        />
+      );
+    }
+
+    // Check what whitespace follows the prefix to preserve visual layout
+    const charAfterPrefix = textContent.charAt(shouldHighlightPrefix.length);
+    const hasSpaceAfterPrefix = charAfterPrefix === " ";
+    const hasNewlineAfterPrefix = charAfterPrefix === "\n";
+
+    // Newline after prefix: block layout (badge on own line)
+    // Space after prefix: inline layout (badge + content on same line)
+    return (
+      <div className={hasNewlineAfterPrefix ? "" : "flex flex-wrap items-baseline"}>
+        <CommandPrefixBadge prefix={shouldHighlightPrefix} />
+        {hasSpaceAfterPrefix && <span>&nbsp;</span>}
+        {remainingContent.trim() && (
+          <MarkdownRenderer
+            content={remainingContent.trim()}
+            className={markdownClassName}
+            style={markdownStyles[variant]}
+          />
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       {hasReviews ? (
@@ -65,22 +120,10 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
           {reviews.map((review, idx) => (
             <ReviewBlockFromData key={idx} data={review} />
           ))}
-          {textContent && (
-            <MarkdownRenderer
-              content={textContent}
-              className={markdownClassName}
-              style={markdownStyles[variant]}
-            />
-          )}
+          {renderTextContent()}
         </div>
       ) : (
-        content && (
-          <MarkdownRenderer
-            content={content}
-            className={markdownClassName}
-            style={markdownStyles[variant]}
-          />
-        )
+        renderTextContent()
       )}
       {imageParts && imageParts.length > 0 && (
         <div className={imageContainerStyles[variant]}>

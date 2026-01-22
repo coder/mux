@@ -32,6 +32,40 @@ export default {
   title: "App/Chat",
 };
 
+/** Chat showing a skill invocation command on user messages */
+export const WithSkillCommand: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skill",
+          messages: [
+            createUserMessage("msg-1", "/react-effects Audit this effect for stale closures", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 120000,
+              muxMetadata: {
+                type: "agent-skill",
+                rawCommand: "/react-effects Audit this effect for stale closures",
+                commandPrefix: "/react-effects",
+                skillName: "react-effects",
+                scope: "project",
+              },
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll review the effect with the react-effects skill and report any stale closure risks.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 110000,
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 /** Basic chat conversation with various message types */
 export const Conversation: AppStory = {
   render: () => (

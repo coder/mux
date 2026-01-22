@@ -7,7 +7,7 @@ import type {
   MuxFrontendMetadata,
 } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
-import { buildCompactionDisplayText } from "@/browser/utils/compaction/format";
+
 import type {
   StreamStartEvent,
   StreamDeltaEvent,
@@ -40,6 +40,7 @@ import { createDeltaStorage, type DeltaRecordStorage } from "./StreamingTPSCalcu
 import { computeRecencyTimestamp } from "./recency";
 import { assert } from "@/common/utils/assert";
 import { getStatusStateKey } from "@/common/constants/storage";
+import { getCompactionContinueText } from "@/browser/utils/compaction/format";
 
 // Maximum number of messages to display in the DOM for performance
 // Full history is still maintained internally for token counting and stats
@@ -1735,7 +1736,7 @@ export class StreamingMessageAggregator {
 
     if (message.role === "user") {
       // User messages: combine all text parts into single block, extract images
-      const content = message.parts
+      const partsContent = message.parts
         .filter((p) => p.type === "text")
         .map((p) => p.text)
         .join("");
@@ -1751,11 +1752,17 @@ export class StreamingMessageAggregator {
           mediaType: p.mediaType,
         }));
 
-      // Check if this is a compaction request message
+      // Extract slash command from muxMetadata (present for /compact, /skill, etc.)
+      let rawCommand = muxMeta && "rawCommand" in muxMeta ? muxMeta.rawCommand : undefined;
+
+      const agentSkill =
+        muxMeta?.type === "agent-skill"
+          ? { skillName: muxMeta.skillName, scope: muxMeta.scope }
+          : undefined;
+
       const compactionRequest =
         muxMeta?.type === "compaction-request"
           ? {
-              rawCommand: muxMeta.rawCommand,
               parsed: {
                 model: muxMeta.parsed.model,
                 maxOutputTokens: muxMeta.parsed.maxOutputTokens,
@@ -1764,6 +1771,23 @@ export class StreamingMessageAggregator {
             }
           : undefined;
 
+      // LEGACY COMPAT: For compaction messages created before commandPrefix was stored,
+      // rawCommand only contained the command line while the continue payload lived in
+      // parsed.continueMessage. Reconstruct the full content here for display/edit.
+      // This code path can be removed once all users have upgraded past this change.
+      if (rawCommand && compactionRequest?.parsed.continueMessage && !rawCommand.includes("\n")) {
+        const continueText = getCompactionContinueText(compactionRequest.parsed.continueMessage);
+        if (continueText) {
+          rawCommand = `${rawCommand}\n${continueText}`;
+        }
+      }
+
+      // Content is rawCommand (what user typed) or parts (normal message)
+      const content = rawCommand ?? partsContent;
+
+      // commandPrefix comes directly from metadata - no reconstruction needed
+      const commandPrefix = muxMeta?.commandPrefix;
+
       // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
       const reviews = muxMeta?.reviews;
 
@@ -1771,11 +1795,13 @@ export class StreamingMessageAggregator {
         type: "user",
         id: message.id,
         historyId: message.id,
-        content: compactionRequest ? buildCompactionDisplayText(compactionRequest) : content,
+        content,
+        commandPrefix,
         imageParts: imageParts.length > 0 ? imageParts : undefined,
         historySequence,
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,
         timestamp: baseTimestamp,
+        agentSkill,
         compactionRequest,
         reviews,
       });

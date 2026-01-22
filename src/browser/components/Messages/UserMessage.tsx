@@ -110,6 +110,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     >
       <UserMessageContent
         content={content}
+        commandPrefix={message.commandPrefix}
         reviews={message.reviews}
         imageParts={message.imageParts}
         variant="sent"
