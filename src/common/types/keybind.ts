@@ -3,6 +3,13 @@ import assert from "@/common/utils/assert";
 export interface Keybind {
   key: string;
   ctrl?: boolean;
+  /**
+   * Allow Shift even when this keybind doesn't require it.
+   *
+   * Useful for keyboard layouts where producing a character (e.g. "/") requires Shift,
+   * but the resulting `KeyboardEvent.key` is still that character.
+   */
+  allowShift?: boolean;
   shift?: boolean;
   alt?: boolean;
   meta?: boolean;
@@ -33,6 +40,7 @@ export function normalizeKeybind(raw: unknown): Keybind | undefined {
     return undefined;
   }
 
+  const allowShift = typeof record.allowShift === "boolean" ? record.allowShift : undefined;
   const ctrl = typeof record.ctrl === "boolean" ? record.ctrl : undefined;
   const shift = typeof record.shift === "boolean" ? record.shift : undefined;
   const alt = typeof record.alt === "boolean" ? record.alt : undefined;
@@ -47,6 +55,7 @@ export function normalizeKeybind(raw: unknown): Keybind | undefined {
 
   const result: Keybind = {
     key,
+    allowShift,
     ctrl,
     shift,
     alt,

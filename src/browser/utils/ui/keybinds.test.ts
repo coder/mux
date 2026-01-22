@@ -50,6 +50,11 @@ describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
 
 describe("matchesKeybind", () => {
   describe("FOCUS_REVIEW_SEARCH_QUICK keybind (/)", () => {
+    it("matches Shift+/ when event.key is /", () => {
+      const event = createEvent({ key: "/", shiftKey: true });
+      expect(matchesKeybind(event, KEYBINDS.FOCUS_REVIEW_SEARCH_QUICK)).toBe(true);
+    });
+
     it("matches plain /", () => {
       const event = createEvent({ key: "/" });
       expect(matchesKeybind(event, KEYBINDS.FOCUS_REVIEW_SEARCH_QUICK)).toBe(true);
