@@ -87,7 +87,7 @@ const MODEL_DEFINITIONS = {
   GEMINI_3_PRO: {
     provider: "google",
     providerModelId: "gemini-3-pro-preview",
-    aliases: ["gemini-3", "gemini-3-pro"],
+    aliases: ["gemini", "gemini-3", "gemini-3-pro"],
     tokenizerOverride: "google/gemini-2.5-pro",
   },
   GEMINI_3_FLASH: {
