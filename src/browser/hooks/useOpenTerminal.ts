@@ -8,6 +8,11 @@ import {
   type TerminalSessionCreateOptions,
 } from "@/browser/utils/terminal";
 
+export interface OpenTerminalResult {
+  success: boolean;
+  error?: string;
+}
+
 /**
  * Hook to open a terminal window for a workspace.
  * Handles the difference between Desktop (Electron) and Browser (Web) environments.
@@ -28,25 +33,35 @@ export function useOpenTerminal() {
       workspaceId: string,
       runtimeConfig?: RuntimeConfig,
       options?: TerminalSessionCreateOptions
-    ) => {
-      if (!api) return;
+    ): Promise<OpenTerminalResult> => {
+      if (!api) {
+        return { success: false, error: "Not connected to server" };
+      }
 
-      // Check if running in browser mode
-      // window.api is only available in Electron (set by preload.ts)
-      // If window.api exists, we're in Electron; if not, we're in browser mode
-      const isBrowser = !window.api;
-      const isSSH = isSSHRuntime(runtimeConfig);
+      try {
+        // Check if running in browser mode
+        // window.api is only available in Electron (set by preload.ts)
+        // If window.api exists, we're in Electron; if not, we're in browser mode
+        const isBrowser = !window.api;
+        const isSSH = isSSHRuntime(runtimeConfig);
 
-      // SSH workspaces always use web terminal (in browser popup or Electron window)
-      // because the PTY service handles the SSH connection to the remote host
-      if (isBrowser || isSSH) {
-        // Create terminal session first - window needs sessionId to connect
-        const session = await createTerminalSession(api, workspaceId, options);
-        openTerminalPopout(api, workspaceId, session.sessionId);
-      } else {
-        // In Electron (desktop) mode with local workspace, open the native system terminal
-        // This spawns the user's preferred terminal emulator (Ghostty, Terminal.app, etc.)
-        void api.terminal.openNative({ workspaceId });
+        // SSH workspaces always use web terminal (in browser popup or Electron window)
+        // because the PTY service handles the SSH connection to the remote host
+        if (isBrowser || isSSH) {
+          // Create terminal session first - window needs sessionId to connect
+          const session = await createTerminalSession(api, workspaceId, options);
+          openTerminalPopout(api, workspaceId, session.sessionId);
+        } else {
+          // In Electron (desktop) mode with local workspace, open the native system terminal
+          // This spawns the user's preferred terminal emulator (Ghostty, Terminal.app, etc.)
+          await api.terminal.openNative({ workspaceId });
+        }
+        return { success: true };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to open terminal",
+        };
       }
     },
     [api]

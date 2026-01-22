@@ -167,7 +167,8 @@ interface RightSidebarProps {
   isCreating?: boolean;
   /** Ref callback to expose addTerminal function to parent */
   addTerminalRef?: React.MutableRefObject<
-    ((options?: TerminalSessionCreateOptions) => void) | null
+    | ((options?: TerminalSessionCreateOptions) => Promise<{ success: boolean; error?: string }>)
+    | null
   >;
 }
 
@@ -213,7 +214,7 @@ interface RightSidebarTabsetNodeProps {
   /** Handler to pop out a terminal tab to a separate window */
   onPopOutTerminal: (tab: TabType) => void;
   /** Handler to add a new terminal tab */
-  onAddTerminal: () => void;
+  onAddTerminal: () => void | Promise<unknown>;
   /** Handler to close a terminal tab */
   onCloseTerminal: (tab: TabType) => void;
   /** Map of terminal tab types to their current titles (from OSC sequences) */
@@ -953,18 +954,29 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // Creates the backend session first, then adds the tab with the real sessionId.
   // This ensures the tabType (and React key) never changes, preventing remounts.
   const handleAddTerminal = React.useCallback(
-    (options?: TerminalSessionCreateOptions) => {
-      if (!api) return;
+    async (
+      options?: TerminalSessionCreateOptions
+    ): Promise<{ success: boolean; error?: string }> => {
+      if (!api) {
+        return { success: false, error: "Not connected to server" };
+      }
 
-      // Also expand sidebar if collapsed
-      setCollapsed(false);
+      try {
+        // Also expand sidebar if collapsed
+        setCollapsed(false);
 
-      void createTerminalSession(api, workspaceId, options).then((session) => {
+        const session = await createTerminalSession(api, workspaceId, options);
         const newTab = makeTerminalTabType(session.sessionId);
         setLayout((prev) => addTabToFocusedTabset(prev, newTab));
         // Schedule focus for this terminal (will be consumed when the tab mounts)
         setAutoFocusTerminalSession(session.sessionId);
-      });
+        return { success: true };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : "Failed to create terminal",
+        };
+      }
     },
     [api, workspaceId, setLayout, setCollapsed]
   );

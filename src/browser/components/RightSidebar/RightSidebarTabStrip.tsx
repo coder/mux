@@ -42,7 +42,7 @@ interface RightSidebarTabStripProps {
   /** Unique ID of this tabset (for drag/drop) */
   tabsetId: string;
   /** Called when user clicks the "+" button to add a new terminal */
-  onAddTerminal?: () => void;
+  onAddTerminal?: () => void | Promise<unknown>;
 }
 
 /**
@@ -193,7 +193,7 @@ export const RightSidebarTabStrip: React.FC<RightSidebarTabStripProps> = ({
                   "text-muted hover:bg-hover hover:text-foreground shrink-0 rounded-md p-1 transition-colors",
                   isDesktop && "titlebar-no-drag"
                 )}
-                onClick={onAddTerminal}
+                onClick={() => void onAddTerminal()}
                 aria-label="New terminal"
               >
                 <Plus className="h-3.5 w-3.5" />

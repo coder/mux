@@ -36,7 +36,9 @@ interface WorkspaceHeaderProps {
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
   /** Callback to open integrated terminal in sidebar (optional, falls back to popout) */
-  onOpenTerminal?: (options?: TerminalSessionCreateOptions) => void;
+  onOpenTerminal?: (
+    options?: TerminalSessionCreateOptions
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
@@ -57,6 +59,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const { startSequence: startTutorial } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
 
@@ -65,14 +68,20 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     listener: true,
   });
 
-  const handleOpenTerminal = useCallback(() => {
+  const handleOpenTerminal = useCallback(async () => {
+    setTerminalError(null);
     // On mobile touch devices, always use popout since the right sidebar is hidden
     const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    let result: { success: boolean; error?: string };
     if (onOpenTerminal && !isMobileTouch) {
-      onOpenTerminal();
+      result = await onOpenTerminal();
     } else {
       // Fallback to popout if no integrated terminal callback provided or on mobile
-      void openTerminalPopout(workspaceId, runtimeConfig);
+      result = await openTerminalPopout(workspaceId, runtimeConfig);
+    }
+    if (!result.success && result.error) {
+      setTerminalError(result.error);
+      setTimeout(() => setTerminalError(null), 3000);
     }
   }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
 
@@ -163,6 +172,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
+        {terminalError && <span className="text-danger-soft text-xs">{terminalError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -199,7 +209,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             <Button
               variant="ghost"
               size="icon"
-              onClick={handleOpenTerminal}
+              onClick={() => void handleOpenTerminal()}
               className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0 [&_svg]:h-4 [&_svg]:w-4"
               data-tutorial="terminal-button"
             >
