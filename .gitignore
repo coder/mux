@@ -128,3 +128,6 @@ docs/theme/pagetoc.css
 docs/theme/pagetoc.js
 mobile/.expo/
 .mux/mcp.jsonc
+# Terminal-Bench leaderboard cache
+benchmarks/terminal_bench/.leaderboard_cache/
+
