@@ -124,13 +124,13 @@ export async function openInEditor(args: {
     }
     // else: localhost access to local workspace → no SSH needed
 
-    // SSH deep links can open files directly (VS Code/Cursor/Zed).
-    const targetPath = args.targetPath;
-
+    // VS Code/Cursor SSH deep links treat the path as a folder unless a line/column is present.
     const deepLink = getEditorDeepLink({
       editor: editorConfig.editor as DeepLinkEditor,
-      path: targetPath,
+      path: args.targetPath,
       sshHost,
+      line: args.isFile && sshHost ? 1 : undefined,
+      column: args.isFile && sshHost ? 1 : undefined,
     });
 
     if (!deepLink) {

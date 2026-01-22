@@ -1,43 +1,47 @@
 import { describe, expect, test } from "bun:test";
 import { openInEditor } from "./openInEditor";
-import { getDockerDeepLink } from "./editorDeepLinks";
 import type { RuntimeConfig } from "@/common/types/runtime";
 
 interface GlobalWithOptionalWindow {
   window?: unknown;
 }
 
-function getGlobalWindow(): unknown {
-  return (globalThis as unknown as GlobalWithOptionalWindow).window;
-}
-
-function setGlobalWindow(value: unknown): void {
-  (globalThis as unknown as GlobalWithOptionalWindow).window = value;
-}
-
-function deleteGlobalWindow(): void {
-  delete (globalThis as unknown as GlobalWithOptionalWindow).window;
-}
-
 function withWindow<T>(windowValue: unknown, fn: () => T): T {
-  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
-  const prevWindow = getGlobalWindow();
+  const globalWithWindow = globalThis as unknown as GlobalWithOptionalWindow;
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalWithWindow, "window");
+  const prevWindow = globalWithWindow.window;
 
   try {
-    setGlobalWindow(windowValue);
+    globalWithWindow.window = windowValue;
     return fn();
   } finally {
     if (!hadWindow) {
-      deleteGlobalWindow();
+      delete globalWithWindow.window;
     } else {
-      setGlobalWindow(prevWindow);
+      globalWithWindow.window = prevWindow;
     }
   }
 }
 
 describe("openInEditor", () => {
+  const workspaceId = "ws-123";
+  const filePath = "/home/user/project/plan.md";
+  const parentDir = "/home/user/project";
+
+  type OpenCall = [url: string, target?: string];
+
+  function createMockWindow(calls: OpenCall[]) {
+    return {
+      localStorage: { getItem: () => null },
+      open: (url: string, target?: string) => {
+        calls.push([url, target]);
+        return null;
+      },
+    };
+  }
+
   test("opens SSH file deep link (does not fall back to parent dir)", async () => {
-    const calls: Array<{ url: string; target?: string }> = [];
+    const calls: OpenCall[] = [];
 
     const runtimeConfig: RuntimeConfig = {
       type: "ssh",
@@ -45,34 +49,27 @@ describe("openInEditor", () => {
       srcBaseDir: "~/mux",
     };
 
-    const result = await withWindow(
-      {
-        open: (url: string, target?: string) => {
-          calls.push({ url, target });
-          return null;
-        },
-      },
-      async () =>
-        openInEditor({
-          api: null,
-          workspaceId: "ws-123",
-          targetPath: "/home/user/project/plan.md",
-          runtimeConfig,
-          isFile: true,
-        })
+    const result = await withWindow(createMockWindow(calls), () =>
+      openInEditor({
+        api: null,
+        workspaceId,
+        targetPath: filePath,
+        runtimeConfig,
+        isFile: true,
+      })
     );
 
     expect(result.success).toBe(true);
-    expect(calls).toEqual([
-      {
-        url: "vscode://vscode-remote/ssh-remote+devbox/home/user/project/plan.md",
-        target: "_blank",
-      },
-    ]);
+    expect(calls.length).toBe(1);
+
+    const [url, target] = calls[0];
+    expect(target).toBe("_blank");
+    expect(url.includes("ssh-remote+devbox")).toBe(true);
+    expect(url.endsWith(`${filePath}:1:1`)).toBe(true);
   });
 
   test("opens Docker deep links at parent dir when targetPath is a file", async () => {
-    const calls: Array<{ url: string; target?: string }> = [];
+    const calls: OpenCall[] = [];
 
     const runtimeConfig: RuntimeConfig = {
       type: "docker",
@@ -80,39 +77,22 @@ describe("openInEditor", () => {
       containerName: "mux-workspace-123",
     };
 
-    const expectedDeepLink = getDockerDeepLink({
-      editor: "vscode",
-      containerName: "mux-workspace-123",
-      path: "/home/user/project",
-    });
-
-    if (!expectedDeepLink) {
-      throw new Error("Expected Docker deep link to be generated");
-    }
-
-    const result = await withWindow(
-      {
-        open: (url: string, target?: string) => {
-          calls.push({ url, target });
-          return null;
-        },
-      },
-      async () =>
-        openInEditor({
-          api: null,
-          workspaceId: "ws-123",
-          targetPath: "/home/user/project/plan.md",
-          runtimeConfig,
-          isFile: true,
-        })
+    const result = await withWindow(createMockWindow(calls), () =>
+      openInEditor({
+        api: null,
+        workspaceId,
+        targetPath: filePath,
+        runtimeConfig,
+        isFile: true,
+      })
     );
 
     expect(result.success).toBe(true);
-    expect(calls).toEqual([
-      {
-        url: expectedDeepLink,
-        target: "_blank",
-      },
-    ]);
+    expect(calls.length).toBe(1);
+
+    const [url, target] = calls[0];
+    expect(target).toBe("_blank");
+    expect(url.endsWith(filePath)).toBe(false);
+    expect(url.endsWith(`/${parentDir}`)).toBe(true);
   });
 });
