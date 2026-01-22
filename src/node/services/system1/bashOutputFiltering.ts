@@ -12,6 +12,39 @@ export interface ApplySystem1KeepRangesResult {
   totalLines: number;
 }
 
+export function formatSystem1BashFilterNotice(params: {
+  keptLines: number;
+  totalLines: number;
+  trigger: string;
+  fullOutputPath?: string | undefined;
+}): string {
+  assert(
+    Number.isInteger(params.keptLines) && params.keptLines >= 0,
+    "keptLines must be a non-negative integer"
+  );
+  assert(
+    Number.isInteger(params.totalLines) && params.totalLines >= 0,
+    "totalLines must be a non-negative integer"
+  );
+  assert(params.keptLines <= params.totalLines, "keptLines must be <= totalLines");
+  assert(
+    typeof params.trigger === "string" && params.trigger.length > 0,
+    "trigger must be a string"
+  );
+
+  const notice = `System 1 filtered ${params.keptLines}/${params.totalLines} lines (trigger: ${params.trigger}).`;
+
+  if (typeof params.fullOutputPath !== "string" || params.fullOutputPath.length === 0) {
+    return notice;
+  }
+
+  return (
+    notice +
+    `\n\nFull output saved to ${params.fullOutputPath}` +
+    "\n\nFile will be automatically cleaned up when stream ends (it may already be gone)."
+  );
+}
+
 export function splitBashOutputLines(output: string): string[] {
   if (output.length === 0) {
     return [];

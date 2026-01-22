@@ -17,6 +17,7 @@ import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import {
   applySystem1KeepRangesToOutput,
   formatNumberedLinesForSystem1,
+  formatSystem1BashFilterNotice,
   parseSystem1KeepRanges,
   splitBashOutputLines,
 } from "@/node/services/system1/bashOutputFiltering";
@@ -2263,9 +2264,12 @@ export class AIService extends EventEmitter {
                     .filter(Boolean)
                     .join("+");
 
-                  const notice =
-                    `System 1 filtered ${applied.keptLines}/${applied.totalLines} lines (trigger: ${trigger}).` +
-                    (fullOutputPath ? `\n\nFull output saved to ${fullOutputPath}` : "");
+                  const notice = formatSystem1BashFilterNotice({
+                    keptLines: applied.keptLines,
+                    totalLines: applied.totalLines,
+                    trigger,
+                    fullOutputPath,
+                  });
 
                   log.debug("[system1] Filtered bash tool output", {
                     workspaceId,

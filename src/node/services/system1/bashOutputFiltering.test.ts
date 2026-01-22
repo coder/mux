@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   applySystem1KeepRangesToOutput,
   formatNumberedLinesForSystem1,
+  formatSystem1BashFilterNotice,
   parseSystem1KeepRanges,
   splitBashOutputLines,
 } from "./bashOutputFiltering";
@@ -20,6 +21,31 @@ describe("bashOutputFiltering", () => {
   describe("formatNumberedLinesForSystem1", () => {
     it("adds 1-based line numbers", () => {
       expect(formatNumberedLinesForSystem1(["a", "b"]).split("\n")).toEqual(["0001| a", "0002| b"]);
+    });
+  });
+
+  describe("formatSystem1BashFilterNotice", () => {
+    it("includes a cleanup warning when fullOutputPath is present", () => {
+      const notice = formatSystem1BashFilterNotice({
+        keptLines: 1,
+        totalLines: 2,
+        trigger: "lines",
+        fullOutputPath: "/tmp/bash-s1.txt",
+      });
+
+      expect(notice).toContain("Full output saved to /tmp/bash-s1.txt");
+      expect(notice).toContain("automatically cleaned up");
+      expect(notice).toContain("may already be gone");
+    });
+
+    it("omits the full output path when fullOutputPath is missing", () => {
+      const notice = formatSystem1BashFilterNotice({
+        keptLines: 1,
+        totalLines: 2,
+        trigger: "bytes",
+      });
+
+      expect(notice).toBe("System 1 filtered 1/2 lines (trigger: bytes).");
     });
   });
 
