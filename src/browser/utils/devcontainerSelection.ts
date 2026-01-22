@@ -90,14 +90,15 @@ export function resolveDevcontainerSelection(
   const availability = availabilityState.data.devcontainer;
   const configs = availability ? getDevcontainerConfigs(availability) : [];
 
-  // Loaded but no configs found - show input
+  // Loaded but no configs found - devcontainer option is hidden in UI,
+  // but if somehow reached, block creation
   if (configs.length === 0) {
     return {
-      configPath: selectedPath,
+      configPath: "",
       configs: [],
-      uiMode: "input",
-      helperText: "No configs found. Enter a path to continue.",
-      isCreatable: selectedPath.length > 0,
+      uiMode: "hidden",
+      helperText: null,
+      isCreatable: false,
     };
   }
 

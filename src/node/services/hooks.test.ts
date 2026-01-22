@@ -884,7 +884,7 @@ read RESULT
 
       expect(hook.success).toBe(true);
       expect(hook.stderr).toContain("ENV_INPUT=__MUX_TOOL_INPUT_FILE__");
-      expect(hook.stderr).toContain(`LEN=${bigInput.length}`);
+      expect(hook.stderr).toMatch(new RegExp(`LEN=\\s*${bigInput.length}`));
     });
   });
 });

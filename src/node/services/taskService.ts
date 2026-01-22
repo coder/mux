@@ -16,6 +16,7 @@ import {
   discoverAgentDefinitions,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { createRuntime, runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
@@ -432,8 +433,10 @@ export class TaskService {
     const parentRuntimeConfig = parentMeta.runtimeConfig;
     const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
 
-    const runtime = createRuntime(taskRuntimeConfig, {
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig: taskRuntimeConfig,
       projectPath: parentMeta.projectPath,
+      name: parentMeta.name,
     });
 
     // Validate the agent definition exists and is runnable as a sub-agent.
@@ -1428,13 +1431,15 @@ export class TaskService {
       }
 
       const parentRuntimeConfig = parentEntry.workspace.runtimeConfig ?? taskRuntimeConfig;
-      const runtime = createRuntime(taskRuntimeConfig, {
+      const workspaceName = task.name.trim();
+      const runtime = createRuntimeForWorkspace({
+        runtimeConfig: taskRuntimeConfig,
         projectPath: taskEntry.projectPath,
+        name: workspaceName,
       });
       let runtimeForTaskWorkspace = runtime;
       let forkedRuntimeConfig = taskRuntimeConfig;
 
-      const workspaceName = task.name.trim();
       let workspacePath =
         coerceNonEmptyString(task.path) ??
         runtime.getWorkspacePath(taskEntry.projectPath, workspaceName);

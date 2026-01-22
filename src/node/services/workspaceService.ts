@@ -2353,7 +2353,11 @@ export class WorkspaceService extends EventEmitter {
       srcBaseDir: this.config.srcDir,
     };
 
-    const runtime = createRuntime(runtimeConfig, { projectPath: metadata.projectPath });
+    const runtime = createRuntimeForWorkspace({
+      runtimeConfig,
+      projectPath: metadata.projectPath,
+      name: metadata.name,
+    });
     const isInPlace = metadata.projectPath === metadata.name;
     const workspacePath = isInPlace
       ? metadata.projectPath

@@ -147,26 +147,27 @@ describe("resolveDevcontainerSelection", () => {
       },
     };
 
-    it("returns input mode when no configs found", () => {
+    it("returns hidden mode when no configs found (blocks creation)", () => {
       const result = resolveDevcontainerSelection({
         selectedRuntime: { mode: "devcontainer", configPath: "" },
         availabilityState: loadedNoConfigs,
       });
 
-      expect(result.uiMode).toBe("input");
+      expect(result.uiMode).toBe("hidden");
       expect(result.configPath).toBe("");
       expect(result.isCreatable).toBe(false);
-      expect(result.helperText).toBe("No configs found. Enter a path to continue.");
+      expect(result.helperText).toBeNull();
     });
 
-    it("is creatable when user provides path", () => {
+    it("blocks creation even if user somehow provides path", () => {
       const result = resolveDevcontainerSelection({
         selectedRuntime: { mode: "devcontainer", configPath: ".devcontainer.json" },
         availabilityState: loadedNoConfigs,
       });
 
-      expect(result.isCreatable).toBe(true);
-      expect(result.configPath).toBe(".devcontainer.json");
+      // UI hides devcontainer when no configs - this is a safeguard
+      expect(result.isCreatable).toBe(false);
+      expect(result.configPath).toBe("");
     });
   });
 });
