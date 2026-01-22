@@ -165,7 +165,13 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     props.runtimeAvailabilityState?.status === "loaded"
       ? props.runtimeAvailabilityState.data
       : null;
-  const runtimeOptions = RUNTIME_OPTIONS;
+  const hideDevcontainer =
+    availabilityMap?.devcontainer?.available === false &&
+    availabilityMap.devcontainer.reason === "No devcontainer.json found";
+
+  const runtimeOptions = hideDevcontainer
+    ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
+    : RUNTIME_OPTIONS;
 
   return (
     <div className="flex gap-1" role="group" aria-label="Runtime type">
@@ -173,15 +179,10 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
         const isActive = props.value === option.value;
         const isDefault = props.defaultMode === option.value;
         const availability = availabilityMap?.[option.value];
-        const isDevcontainerMissingConfigs =
-          option.value === RUNTIME_MODE.DEVCONTAINER &&
-          availability?.available === false &&
-          availability.reason === "No devcontainer.json found";
         // Disable only if availability is explicitly known and unavailable.
         // When availability is undefined (loading or fetch failed), allow selection
         // as fallback - the config picker will validate before creation.
-        const isModeDisabled =
-          availability !== undefined && !availability.available && !isDevcontainerMissingConfigs;
+        const isModeDisabled = availability !== undefined && !availability.available;
         const disabledReason =
           availability && !availability.available ? availability.reason : undefined;
         const Icon = option.Icon;
@@ -259,9 +260,9 @@ export function CreationControls(props: CreationControlsProps) {
     availabilityState: runtimeAvailabilityState,
   });
 
-  const isDevcontainerUnavailable =
+  const isDevcontainerMissing =
     availabilityMap?.devcontainer?.available === false &&
-    availabilityMap.devcontainer.reason !== "No devcontainer.json found";
+    availabilityMap.devcontainer.reason === "No devcontainer.json found";
 
   // Check if git is required (worktree unavailable due to git or no branches)
   const isNonGitRepo =
@@ -278,10 +279,10 @@ export function CreationControls(props: CreationControlsProps) {
       return;
     }
 
-    if (isDevcontainerUnavailable && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
+    if (isDevcontainerMissing && selectedRuntime.mode === RUNTIME_MODE.DEVCONTAINER) {
       onSelectedRuntimeChange({ mode: "worktree" });
     }
-  }, [isDevcontainerUnavailable, isNonGitRepo, selectedRuntime.mode, onSelectedRuntimeChange]);
+  }, [isDevcontainerMissing, isNonGitRepo, selectedRuntime.mode, onSelectedRuntimeChange]);
 
   const handleNameChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
