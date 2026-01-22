@@ -74,10 +74,15 @@ def find_trial_results(run_dir: Path) -> list[dict]:
     Derives task/trial identifiers from folder structure (like analyze_failure_rates.py)
     rather than requiring them in the JSON, since some results omit these fields.
     """
+    import re
+
+    # Job-level folders use timestamp format: YYYY-MM-DD__HH-MM-SS
+    timestamp_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}__\d{2}-\d{2}-\d{2}$")
+
     results = []
     for result_file in run_dir.rglob("result.json"):
         # Skip job-level result.json files (in jobs/<timestamp>/ directly)
-        if result_file.parent.name.startswith("20"):  # Timestamp pattern
+        if timestamp_pattern.match(result_file.parent.name):
             continue
         # Skip if parent is 'logs' or 'output'
         if result_file.parent.name in ("logs", "output", "verifier", "agent"):
