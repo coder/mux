@@ -1,5 +1,4 @@
 import React from "react";
-import escapeHtml from "escape-html";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { ImagePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
@@ -43,6 +42,11 @@ const imageStyles = {
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
 } as const;
 
+/** Styled command prefix badge (e.g., "/compact" or "/skill-name") */
+const CommandPrefixBadge: React.FC<{ prefix: string }> = ({ prefix }) => (
+  <span className="command-prefix-badge">{prefix}</span>
+);
+
 /**
  * Shared content renderer for user messages (sent and queued).
  * Handles reviews, text content, and image attachments.
@@ -61,14 +65,32 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
     ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
     : content;
 
+  // Check if content starts with the command prefix
   const shouldHighlightPrefix =
     commandPrefix && textContent.startsWith(commandPrefix) ? commandPrefix : undefined;
 
-  const renderedContent = shouldHighlightPrefix
-    ? `<code class="command-prefix">${escapeHtml(shouldHighlightPrefix)}</code>${textContent.slice(
-        shouldHighlightPrefix.length
-      )}`
+  // Content after the prefix (if highlighting)
+  const remainingContent = shouldHighlightPrefix
+    ? textContent.slice(shouldHighlightPrefix.length)
     : textContent;
+
+  // Render text content with optional command prefix badge
+  const renderTextContent = () => {
+    if (!remainingContent && !shouldHighlightPrefix) return null;
+
+    return (
+      <div className="user-message-text">
+        {shouldHighlightPrefix && <CommandPrefixBadge prefix={shouldHighlightPrefix} />}
+        {remainingContent && (
+          <MarkdownRenderer
+            content={remainingContent}
+            className={markdownClassName}
+            style={markdownStyles[variant]}
+          />
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -77,22 +99,10 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
           {reviews.map((review, idx) => (
             <ReviewBlockFromData key={idx} data={review} />
           ))}
-          {renderedContent && (
-            <MarkdownRenderer
-              content={renderedContent}
-              className={markdownClassName}
-              style={markdownStyles[variant]}
-            />
-          )}
+          {renderTextContent()}
         </div>
       ) : (
-        renderedContent && (
-          <MarkdownRenderer
-            content={renderedContent}
-            className={markdownClassName}
-            style={markdownStyles[variant]}
-          />
-        )
+        renderTextContent()
       )}
       {imageParts && imageParts.length > 0 && (
         <div className={imageContainerStyles[variant]}>
