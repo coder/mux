@@ -11,6 +11,7 @@ import type {
 } from "../orpc/schemas";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
 import type { ModeAiDefaults } from "./modeAiDefaults";
+import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { AgentAiDefaults } from "./agentAiDefaults";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
@@ -58,6 +59,8 @@ export interface ProjectsConfig {
   featureFlagOverrides?: Record<string, FeatureFlagOverride>;
   /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */
   taskSettings?: TaskSettings;
+  /** UI layout presets + hotkeys (shared via ~/.mux/config.json). */
+  layoutPresets?: LayoutPresetsConfig;
   /**
    * Mux Gateway routing preferences (shared via ~/.mux/config.json).
    * Mirrors browser localStorage so switching server ports doesn't reset the UI.
@@ -71,4 +74,6 @@ export interface ProjectsConfig {
   subagentAiDefaults?: SubagentAiDefaults;
   /** @deprecated Legacy per-mode (plan/exec/compact) default model + thinking overrides. */
   modeAiDefaults?: ModeAiDefaults;
+  /** Use built-in SSH2 library instead of system OpenSSH for remote connections (non-Windows only) */
+  useSSH2Transport?: boolean;
 }
