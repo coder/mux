@@ -5,7 +5,13 @@ import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import { convertToModelMessages, generateText, type LanguageModel, type Tool } from "ai";
+import {
+  convertToModelMessages,
+  generateText,
+  type LanguageModel,
+  type ModelMessage,
+  type Tool,
+} from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import {
@@ -2040,6 +2046,61 @@ export class AIService extends EventEmitter {
                 options: unknown
               ) => Promise<unknown>;
 
+              const SYSTEM1_CONTEXT_MESSAGES_MAX = 8;
+              let cachedSystem1ContextMessages:
+                | { modelString: string; contextMessages: ModelMessage[] }
+                | undefined;
+
+              const getContextMessagesForSystem1 = (
+                effectiveSystem1ModelString: string
+              ): ModelMessage[] => {
+                // If System 1 uses the same model string as the primary request, reuse the already
+                // provider-transformed messages. Otherwise, re-transform for the System 1 provider
+                // to avoid leaking provider-specific formatting (e.g. Anthropic cacheControl) into
+                // a different provider request.
+                if (effectiveSystem1ModelString === modelString) {
+                  return finalMessages.slice(
+                    Math.max(0, finalMessages.length - SYSTEM1_CONTEXT_MESSAGES_MAX)
+                  );
+                }
+
+                if (cachedSystem1ContextMessages?.modelString === effectiveSystem1ModelString) {
+                  return cachedSystem1ContextMessages.contextMessages;
+                }
+
+                const [system1ProviderName, system1ModelId] = parseModelString(
+                  effectiveSystem1ModelString
+                );
+                if (!system1ProviderName || !system1ModelId) {
+                  // Defensive fallback: if the model string is malformed, reuse the main context.
+                  return finalMessages.slice(
+                    Math.max(0, finalMessages.length - SYSTEM1_CONTEXT_MESSAGES_MAX)
+                  );
+                }
+
+                const transformedForSystem1 = transformModelMessages(
+                  modelMessages,
+                  system1ProviderName,
+                  {
+                    anthropicThinkingEnabled:
+                      system1ProviderName === "anthropic" && effectiveThinkingLevel !== "off",
+                  }
+                );
+                const finalForSystem1 = applyCacheControl(
+                  transformedForSystem1,
+                  effectiveSystem1ModelString
+                );
+
+                const contextMessages = finalForSystem1.slice(
+                  Math.max(0, finalForSystem1.length - SYSTEM1_CONTEXT_MESSAGES_MAX)
+                );
+
+                cachedSystem1ContextMessages = {
+                  modelString: effectiveSystem1ModelString,
+                  contextMessages,
+                };
+                return contextMessages;
+              };
               const system1ModelString =
                 typeof system1Model === "string" ? system1Model.trim() : "";
               let cachedSystem1Model: { modelString: string; model: LanguageModel } | undefined;
@@ -2152,9 +2213,8 @@ export class AIService extends EventEmitter {
                     `Bash script:\n${script}\n\n` + `Numbered output:\n${numberedOutput}`;
 
                   // Use a small slice of conversation context to help judge relevance.
-                  const contextMessages = finalMessages.slice(
-                    Math.max(0, finalMessages.length - 8)
-                  );
+                  // Note: Build this context in the System 1 provider's message format.
+                  const contextMessages = getContextMessagesForSystem1(system1.modelString);
 
                   const system1AbortController = new AbortController();
                   const unlink = linkAbortSignal(
