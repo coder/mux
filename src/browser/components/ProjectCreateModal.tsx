@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useImperativeHandle } from "react";
 import {
   Dialog,
   DialogContent,
@@ -35,102 +35,120 @@ interface ProjectCreateFormProps {
   submitLabel?: string;
   /** Optional override for the path placeholder. */
   placeholder?: string;
+  /** Hide the footer actions (submit/cancel buttons). */
+  hideFooter?: boolean;
 }
 
-export const ProjectCreateForm: React.FC<ProjectCreateFormProps> = ({
-  onSuccess,
-  onClose,
-  showCancelButton = false,
-  autoFocus = false,
-  onIsCreatingChange,
-  submitLabel = "Add Project",
-  placeholder = "/home/user/projects/my-project",
-}) => {
-  const { api } = useAPI();
-  const [path, setPath] = useState("");
-  const [error, setError] = useState("");
-  // Track if the error is specifically "path does not exist" so we can offer to create it
-  const [canCreateFolder, setCanCreateFolder] = useState(false);
-  // In Electron mode, window.api exists (set by preload) and has native directory picker via ORPC
-  // In browser mode, window.api doesn't exist and we use web-based DirectoryPickerModal
-  const isDesktop = !!window.api;
-  const hasWebFsPicker = !isDesktop;
-  const [isCreating, setIsCreating] = useState(false);
-  const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
+export interface ProjectCreateFormHandle {
+  submit: () => Promise<boolean>;
+  getTrimmedPath: () => string;
+}
 
-  const setCreating = useCallback(
-    (next: boolean) => {
-      setIsCreating(next);
-      onIsCreatingChange?.(next);
+export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, ProjectCreateFormProps>(
+  function ProjectCreateForm(
+    {
+      onSuccess,
+      onClose,
+      showCancelButton = false,
+      autoFocus = false,
+      onIsCreatingChange,
+      submitLabel = "Add Project",
+      placeholder = "/home/user/projects/my-project",
+      hideFooter = false,
     },
-    [onIsCreatingChange]
-  );
+    ref
+  ) {
+    const { api } = useAPI();
+    const [path, setPath] = useState("");
+    const [error, setError] = useState("");
+    // Track if the error is specifically "path does not exist" so we can offer to create it
+    const [canCreateFolder, setCanCreateFolder] = useState(false);
+    // In Electron mode, window.api exists (set by preload) and has native directory picker via ORPC
+    // In browser mode, window.api doesn't exist and we use web-based DirectoryPickerModal
+    const isDesktop = !!window.api;
+    const hasWebFsPicker = !isDesktop;
+    const [isCreating, setIsCreating] = useState(false);
+    const [isDirPickerOpen, setIsDirPickerOpen] = useState(false);
 
-  const reset = useCallback(() => {
-    setPath("");
-    setError("");
-    setCanCreateFolder(false);
-  }, []);
+    const setCreating = useCallback(
+      (next: boolean) => {
+        setIsCreating(next);
+        onIsCreatingChange?.(next);
+      },
+      [onIsCreatingChange]
+    );
 
-  const handleCancel = useCallback(() => {
-    reset();
-    onClose?.();
-  }, [onClose, reset]);
+    const reset = useCallback(() => {
+      setPath("");
+      setError("");
+      setCanCreateFolder(false);
+    }, []);
 
-  const handleWebPickerPathSelected = useCallback((selected: string) => {
-    setPath(selected);
-    setError("");
-    setCanCreateFolder(false);
-  }, []);
+    const handleCancel = useCallback(() => {
+      reset();
+      onClose?.();
+    }, [onClose, reset]);
 
-  const handleBrowse = useCallback(async () => {
-    try {
-      const selectedPath = await api?.projects.pickDirectory();
-      if (selectedPath) {
-        setPath(selectedPath);
-        setError("");
-        setCanCreateFolder(false);
+    const handleWebPickerPathSelected = useCallback((selected: string) => {
+      setPath(selected);
+      setError("");
+      setCanCreateFolder(false);
+    }, []);
+
+    const handleBrowse = useCallback(async () => {
+      try {
+        const selectedPath = await api?.projects.pickDirectory();
+        if (selectedPath) {
+          setPath(selectedPath);
+          setError("");
+          setCanCreateFolder(false);
+        }
+      } catch (err) {
+        console.error("Failed to pick directory:", err);
       }
-    } catch (err) {
-      console.error("Failed to pick directory:", err);
-    }
-  }, [api]);
+    }, [api]);
 
-  const handleSelect = useCallback(async () => {
-    const trimmedPath = path.trim();
-    if (!trimmedPath) {
-      setError("Please enter a directory path");
-      return;
-    }
+    const handleSelect = useCallback(async (): Promise<boolean> => {
+      const trimmedPath = path.trim();
+      if (!trimmedPath) {
+        setError("Please enter a directory path");
+        return false;
+      }
 
-    setError("");
-    setCanCreateFolder(false);
-    if (!api) {
-      setError("Not connected to server");
-      return;
-    }
-    setCreating(true);
+      if (isCreating) {
+        return false;
+      }
 
-    try {
-      // First check if project already exists
-      const existingProjects = await api.projects.list();
-      const existingPaths = new Map(existingProjects);
+      setError("");
+      setCanCreateFolder(false);
+      if (!api) {
+        setError("Not connected to server");
+        return false;
+      }
+      setCreating(true);
 
-      // Try to create the project
-      const result = await api.projects.create({ projectPath: trimmedPath });
+      try {
+        // First check if project already exists
+        const existingProjects = await api.projects.list();
+        const existingPaths = new Map(existingProjects);
 
-      if (result.success) {
-        // Check if duplicate (backend may normalize the path)
-        const { normalizedPath, projectConfig } = result.data;
-        if (existingPaths.has(normalizedPath)) {
-          setError("This project has already been added.");
-          return;
+        // Try to create the project
+        const result = await api.projects.create({ projectPath: trimmedPath });
+
+        if (result.success) {
+          // Check if duplicate (backend may normalize the path)
+          const { normalizedPath, projectConfig } = result.data;
+          if (existingPaths.has(normalizedPath)) {
+            setError("This project has already been added.");
+            return false;
+          }
+
+          onSuccess(normalizedPath, projectConfig);
+          reset();
+          onClose?.();
+          return true;
         }
 
-        onSuccess(normalizedPath, projectConfig);
-        reset();
-        onClose?.();
-      } else {
         // Backend validation error - show inline
         const errorMessage =
           typeof result.error === "string" ? result.error : "Failed to add project";
@@ -138,128 +156,144 @@ export const ProjectCreateForm: React.FC<ProjectCreateFormProps> = ({
         if (errorMessage.includes("Path does not exist")) {
           setCanCreateFolder(true);
           setError("This folder doesn't exist.");
-        } else {
-          setError(errorMessage);
+          return false;
         }
+
+        setError(errorMessage);
+        return false;
+      } catch (err) {
+        // Unexpected error
+        const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
+        setError(`Failed to add project: ${errorMessage}`);
+        return false;
+      } finally {
+        setCreating(false);
       }
-    } catch (err) {
-      // Unexpected error
-      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
-      setError(`Failed to add project: ${errorMessage}`);
-    } finally {
-      setCreating(false);
-    }
-  }, [api, onClose, onSuccess, path, reset, setCreating]);
+    }, [api, isCreating, onClose, onSuccess, path, reset, setCreating]);
 
-  const handleCreateFolder = useCallback(async () => {
-    const trimmedPath = path.trim();
-    if (!trimmedPath || !api) return;
+    const handleCreateFolder = useCallback(async () => {
+      const trimmedPath = path.trim();
+      if (!trimmedPath || !api) return;
 
-    setCreating(true);
-    setError("");
+      setCreating(true);
+      setError("");
 
-    try {
-      const createResult = await api.general.createDirectory({ path: trimmedPath });
-      if (!createResult.success) {
-        setError(createResult.error ?? "Failed to create folder");
+      try {
+        const createResult = await api.general.createDirectory({ path: trimmedPath });
+        if (!createResult.success) {
+          setError(createResult.error ?? "Failed to create folder");
+          setCanCreateFolder(false);
+          setCreating(false);
+          return;
+        }
+        // Folder created - now retry adding the project (handleSelect manages isCreating)
+        setCanCreateFolder(false);
+        await handleSelect();
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
+        setError(`Failed to create folder: ${errorMessage}`);
         setCanCreateFolder(false);
         setCreating(false);
-        return;
       }
-      // Folder created - now retry adding the project (handleSelect manages isCreating)
-      setCanCreateFolder(false);
-      await handleSelect();
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred";
-      setError(`Failed to create folder: ${errorMessage}`);
-      setCanCreateFolder(false);
-      setCreating(false);
-    }
-  }, [api, handleSelect, path, setCreating]);
+    }, [api, handleSelect, path, setCreating]);
 
-  const handleBrowseClick = useCallback(() => {
-    if (isDesktop) {
-      void handleBrowse();
-    } else if (hasWebFsPicker) {
-      setIsDirPickerOpen(true);
-    }
-  }, [handleBrowse, hasWebFsPicker, isDesktop]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        void handleSelect();
+    const handleBrowseClick = useCallback(() => {
+      if (isDesktop) {
+        void handleBrowse();
+      } else if (hasWebFsPicker) {
+        setIsDirPickerOpen(true);
       }
-    },
-    [handleSelect]
-  );
+    }, [handleBrowse, hasWebFsPicker, isDesktop]);
 
-  return (
-    <>
-      <div className="mb-1 flex gap-2">
-        <input
-          type="text"
-          value={path}
-          onChange={(e) => {
-            setPath(e.target.value);
-            setError("");
-            setCanCreateFolder(false);
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          autoFocus={autoFocus}
-          disabled={isCreating}
-          className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
-        />
-        {(isDesktop || hasWebFsPicker) && (
-          <Button
-            variant="outline"
-            onClick={handleBrowseClick}
+    const handleKeyDown = useCallback(
+      (e: React.KeyboardEvent) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void handleSelect();
+        }
+      },
+      [handleSelect]
+    );
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        submit: handleSelect,
+        getTrimmedPath: () => path.trim(),
+      }),
+      [handleSelect, path]
+    );
+
+    return (
+      <>
+        <div className="mb-1 flex gap-2">
+          <input
+            type="text"
+            value={path}
+            onChange={(e) => {
+              setPath(e.target.value);
+              setError("");
+              setCanCreateFolder(false);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            autoFocus={autoFocus}
             disabled={isCreating}
-            className="shrink-0"
-          >
-            Browse…
-          </Button>
-        )}
-      </div>
-
-      {error && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className={canCreateFolder ? "text-muted" : "text-error"}>{error}</span>
-          {canCreateFolder && (
+            className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-muted text-foreground min-w-0 flex-1 rounded border px-3 py-2 font-mono text-sm focus:outline-none disabled:opacity-50"
+          />
+          {(isDesktop || hasWebFsPicker) && (
             <Button
-              size="sm"
-              onClick={() => void handleCreateFolder()}
+              variant="outline"
+              onClick={handleBrowseClick}
               disabled={isCreating}
-              className="h-6 px-2 py-0 text-xs"
+              className="shrink-0"
             >
-              Create Folder
+              Browse…
             </Button>
           )}
         </div>
-      )}
 
-      <DialogFooter>
-        {showCancelButton && (
-          <Button variant="secondary" onClick={handleCancel} disabled={isCreating}>
-            Cancel
-          </Button>
+        {error && (
+          <div className="flex items-center gap-2 text-xs">
+            <span className={canCreateFolder ? "text-muted" : "text-error"}>{error}</span>
+            {canCreateFolder && (
+              <Button
+                size="sm"
+                onClick={() => void handleCreateFolder()}
+                disabled={isCreating}
+                className="h-6 px-2 py-0 text-xs"
+              >
+                Create Folder
+              </Button>
+            )}
+          </div>
         )}
-        <Button onClick={() => void handleSelect()} disabled={isCreating || canCreateFolder}>
-          {isCreating ? "Adding..." : submitLabel}
-        </Button>
-      </DialogFooter>
 
-      <DirectoryPickerModal
-        isOpen={isDirPickerOpen}
-        initialPath={path || "~"}
-        onClose={() => setIsDirPickerOpen(false)}
-        onSelectPath={handleWebPickerPathSelected}
-      />
-    </>
-  );
-};
+        {!hideFooter && (
+          <DialogFooter>
+            {showCancelButton && (
+              <Button variant="secondary" onClick={handleCancel} disabled={isCreating}>
+                Cancel
+              </Button>
+            )}
+            <Button onClick={() => void handleSelect()} disabled={isCreating || canCreateFolder}>
+              {isCreating ? "Adding..." : submitLabel}
+            </Button>
+          </DialogFooter>
+        )}
+
+        <DirectoryPickerModal
+          isOpen={isDirPickerOpen}
+          initialPath={path || "~"}
+          onClose={() => setIsDirPickerOpen(false)}
+          onSelectPath={handleWebPickerPathSelected}
+        />
+      </>
+    );
+  }
+);
+
+ProjectCreateForm.displayName = "ProjectCreateForm";
 
 /**
  * Project creation modal that handles the full flow from path input to backend validation.
