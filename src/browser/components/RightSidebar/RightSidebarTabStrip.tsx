@@ -72,14 +72,16 @@ const SortableTab: React.FC<{
     transition,
   };
 
+  const sortableOnKeyDown = listeners?.onKeyDown;
+
   return (
     <div className={cn("relative shrink-0", isDesktop && "titlebar-no-drag")} style={style}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
+          <div
             ref={setNodeRef}
             {...attributes}
-            {...listeners}
+            {...(listeners ?? {})}
             className={cn(
               "flex min-w-0 max-w-[240px] items-baseline gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
               "cursor-grab touch-none active:cursor-grabbing",
@@ -90,6 +92,23 @@ const SortableTab: React.FC<{
               isDragging && "cursor-grabbing opacity-50"
             )}
             onClick={item.onSelect}
+            onKeyDown={(e) => {
+              // Ignore bubbled key events from nested elements (e.g. close/pop-out buttons)
+              // so Enter/Space still activates those buttons instead of selecting the tab.
+              if (e.currentTarget !== e.target) {
+                return;
+              }
+
+              sortableOnKeyDown?.(e);
+              if (e.defaultPrevented) {
+                return;
+              }
+
+              if (!item.disabled && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                item.onSelect();
+              }
+            }}
             onAuxClick={(e) => {
               // Middle-click (button 1) closes closeable tabs
               if (e.button === 1 && item.onClose) {
@@ -99,13 +118,13 @@ const SortableTab: React.FC<{
             }}
             id={item.id}
             role="tab"
-            type="button"
             aria-selected={item.selected}
             aria-controls={item.panelId}
-            disabled={item.disabled}
+            aria-disabled={item.disabled ? true : undefined}
+            tabIndex={item.disabled ? -1 : (attributes.tabIndex ?? 0)}
           >
             {item.label}
-          </button>
+          </div>
         </TooltipTrigger>
         <TooltipContent side="bottom" align="center">
           {item.tooltip}
