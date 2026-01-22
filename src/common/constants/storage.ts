@@ -290,7 +290,7 @@ export interface TerminalFontConfig {
 }
 
 export const DEFAULT_TERMINAL_FONT_CONFIG: TerminalFontConfig = {
-  fontFamily: "JetBrains Mono, Menlo, Monaco, monospace",
+  fontFamily: "ui-monospace, monospace",
   fontSize: 13,
 };
 
