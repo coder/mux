@@ -1617,9 +1617,7 @@ export class WorkspaceStore {
   ): StreamingMessageAggregator {
     if (!this.aggregators.has(workspaceId)) {
       // Create new aggregator with required createdAt and workspaceId for localStorage persistence
-      const aggregator = new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt, {
-        debugShowAllMessages: window.api?.debugShowAllMessages === true,
-      });
+      const aggregator = new StreamingMessageAggregator(createdAt, workspaceId, unarchivedAt);
       // Wire up navigation callback for notification clicks
       if (this.navigateToWorkspaceCallback) {
         aggregator.onNavigateToWorkspace = this.navigateToWorkspaceCallback;
@@ -1953,6 +1951,24 @@ export function useWorkspaceAggregator(
 ): StreamingMessageAggregator | undefined {
   const store = useWorkspaceStoreRaw();
   return store.getAggregator(workspaceId);
+}
+
+/**
+ * Disable the displayed message cap for a workspace and trigger a re-render.
+ * Used by HistoryHiddenMessage “Load all”.
+ */
+export function showAllMessages(workspaceId: string): void {
+  assert(
+    typeof workspaceId === "string" && workspaceId.length > 0,
+    "showAllMessages requires workspaceId"
+  );
+
+  const store = getStoreInstance();
+  const aggregator = store.getAggregator(workspaceId);
+  if (aggregator) {
+    aggregator.setShowAllMessages(true);
+    store.bumpState(workspaceId);
+  }
 }
 
 /**

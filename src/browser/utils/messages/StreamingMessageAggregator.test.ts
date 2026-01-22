@@ -5,6 +5,35 @@ import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 // Test helper: create aggregator with default createdAt for tests
 const TEST_CREATED_AT = "2024-01-01T00:00:00.000Z";
 
+// Test helper: enable debugLlmRequest for the duration of a test.
+function withDebugLlmRequestEnabled<T>(fn: () => T): T {
+  const globalWithWindow = globalThis as unknown as { window?: { api?: WindowApi } };
+
+  const previousWindow = globalWithWindow.window;
+  const previousApi = previousWindow?.api;
+  const previousDebugLlmRequest = previousApi?.debugLlmRequest;
+
+  globalWithWindow.window ??= {};
+  globalWithWindow.window.api ??= { platform: process.platform, versions: {} };
+  globalWithWindow.window.api.debugLlmRequest = true;
+
+  try {
+    return fn();
+  } finally {
+    if (!previousWindow) {
+      delete globalWithWindow.window;
+    } else {
+      globalWithWindow.window = previousWindow;
+
+      if (!previousApi) {
+        delete previousWindow.api;
+      } else {
+        previousApi.debugLlmRequest = previousDebugLlmRequest;
+        previousWindow.api = previousApi;
+      }
+    }
+  }
+}
 // Helper to wait for throttled init output updates (100ms throttle + buffer)
 const waitForInitThrottle = () => new Promise((r) => setTimeout(r, 120));
 
@@ -155,7 +184,7 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
-  describe("debugShowAllMessages", () => {
+  describe("display flags", () => {
     test("should hide synthetic messages by default", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
@@ -177,34 +206,34 @@ describe("StreamingMessageAggregator", () => {
       expect(contents).toEqual(["hello"]);
     });
 
-    test("should show synthetic messages when enabled", () => {
-      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT, undefined, undefined, {
-        debugShowAllMessages: true,
+    test("should show synthetic messages when debugLlmRequest is enabled", () => {
+      withDebugLlmRequestEnabled(() => {
+        const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+        const synthetic = createMuxMessage("s1", "user", "synthetic", {
+          timestamp: 1,
+          historySequence: 1,
+          synthetic: true,
+        });
+        const user = createMuxMessage("u1", "user", "hello", {
+          timestamp: 2,
+          historySequence: 2,
+        });
+
+        aggregator.loadHistoricalMessages([synthetic, user], false);
+
+        const displayed = aggregator.getDisplayedMessages();
+        const userMessages = displayed.filter((m) => m.type === "user");
+
+        expect(userMessages).toHaveLength(2);
+        expect(userMessages[0].content).toBe("synthetic");
+        expect(userMessages[0].isSynthetic).toBe(true);
+        expect(userMessages[1].content).toBe("hello");
+        expect(userMessages[1].isSynthetic).toBeUndefined();
       });
-
-      const synthetic = createMuxMessage("s1", "user", "synthetic", {
-        timestamp: 1,
-        historySequence: 1,
-        synthetic: true,
-      });
-      const user = createMuxMessage("u1", "user", "hello", {
-        timestamp: 2,
-        historySequence: 2,
-      });
-
-      aggregator.loadHistoricalMessages([synthetic, user], false);
-
-      const displayed = aggregator.getDisplayedMessages();
-      const userMessages = displayed.filter((m) => m.type === "user");
-
-      expect(userMessages).toHaveLength(2);
-      expect(userMessages[0].content).toBe("synthetic");
-      expect(userMessages[0].isSynthetic).toBe(true);
-      expect(userMessages[1].content).toBe("hello");
-      expect(userMessages[1].isSynthetic).toBeUndefined();
     });
 
-    test("should disable displayed message cap when enabled", () => {
+    test("should disable displayed message cap when showAllMessages is enabled", () => {
       const manyMessages = Array.from({ length: 200 }, (_, i) =>
         createMuxMessage(`u${i}`, "user", `msg-${i}`, {
           timestamp: i,
@@ -212,29 +241,21 @@ describe("StreamingMessageAggregator", () => {
         })
       );
 
-      const defaultAggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
-      defaultAggregator.loadHistoricalMessages(manyMessages, false);
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(manyMessages, false);
 
-      const defaultDisplayed = defaultAggregator.getDisplayedMessages();
-      expect(defaultDisplayed).toHaveLength(129);
-      expect(defaultDisplayed[0]?.type).toBe("history-hidden");
-      if (defaultDisplayed[0]?.type === "history-hidden") {
-        expect(defaultDisplayed[0].hiddenCount).toBe(72);
+      const capped = aggregator.getDisplayedMessages();
+      expect(capped).toHaveLength(129);
+      expect(capped[0]?.type).toBe("history-hidden");
+      if (capped[0]?.type === "history-hidden") {
+        expect(capped[0].hiddenCount).toBe(72);
       }
 
-      const debugAggregator = new StreamingMessageAggregator(
-        TEST_CREATED_AT,
-        undefined,
-        undefined,
-        {
-          debugShowAllMessages: true,
-        }
-      );
-      debugAggregator.loadHistoricalMessages(manyMessages, false);
+      aggregator.setShowAllMessages(true);
 
-      const debugDisplayed = debugAggregator.getDisplayedMessages();
-      expect(debugDisplayed).toHaveLength(200);
-      expect(debugDisplayed.some((m) => m.type === "history-hidden")).toBe(false);
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed).toHaveLength(200);
+      expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
     });
   });
 

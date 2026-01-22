@@ -207,8 +207,9 @@ export class StreamingMessageAggregator {
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
 
-  // Debug: show synthetic messages + disable displayed message cap
-  private readonly debugShowAllMessages: boolean;
+  // Whether to disable DOM message capping for this workspace.
+  // Controlled via the HistoryHiddenMessage “Load all” button.
+  private showAllMessages = false;
   // Workspace ID (used for status persistence)
   private readonly workspaceId: string | undefined;
 
@@ -288,16 +289,10 @@ export class StreamingMessageAggregator {
   // Used for notification click handling in browser mode
   onNavigateToWorkspace?: (workspaceId: string) => void;
 
-  constructor(
-    createdAt: string,
-    workspaceId?: string,
-    unarchivedAt?: string,
-    options?: { debugShowAllMessages?: boolean }
-  ) {
+  constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
     this.createdAt = createdAt;
     this.workspaceId = workspaceId;
     this.unarchivedAt = unarchivedAt;
-    this.debugShowAllMessages = options?.debugShowAllMessages === true;
     // Load persisted agent status from localStorage
     if (workspaceId) {
       const persistedStatus = this.loadPersistedAgentStatus();
@@ -313,6 +308,19 @@ export class StreamingMessageAggregator {
   setUnarchivedAt(unarchivedAt: string | undefined): void {
     this.unarchivedAt = unarchivedAt;
     this.updateRecency();
+  }
+
+  /**
+   * Disable the displayed message cap for this workspace.
+   * Intended for user-triggered “Load all” UI.
+   */
+  setShowAllMessages(showAllMessages: boolean): void {
+    assert(typeof showAllMessages === "boolean", "setShowAllMessages requires boolean");
+    if (this.showAllMessages === showAllMessages) {
+      return;
+    }
+    this.showAllMessages = showAllMessages;
+    this.invalidateCache();
   }
 
   /** Load persisted agent status from localStorage */
@@ -1979,12 +1987,14 @@ export class StreamingMessageAggregator {
     if (!this.cache.displayedMessages) {
       const displayedMessages: DisplayedMessage[] = [];
       const allMessages = this.getAllMessages();
+      const showSyntheticMessages =
+        typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
       for (const message of allMessages) {
         const isSynthetic = message.metadata?.synthetic === true;
 
         // Synthetic messages are typically for model context only, but can be shown in debug mode.
-        if (isSynthetic && !this.debugShowAllMessages) {
+        if (isSynthetic && !showSyntheticMessages) {
           continue;
         }
 
@@ -2025,9 +2035,9 @@ export class StreamingMessageAggregator {
         displayedMessages.unshift(initMessage);
       }
 
-      // Limit to last N messages for DOM performance
+      // Limit to last N messages for DOM performance (unless explicitly disabled)
       // Full history is still maintained internally for token counting
-      if (!this.debugShowAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
+      if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
         const hiddenCount = displayedMessages.length - MAX_DISPLAYED_MESSAGES;
         const slicedMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
 

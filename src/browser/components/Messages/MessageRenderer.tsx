@@ -76,7 +76,9 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
       case "stream-error":
         return <StreamErrorMessage message={message} className={className} />;
       case "history-hidden":
-        return <HistoryHiddenMessage message={message} className={className} />;
+        return (
+          <HistoryHiddenMessage message={message} className={className} workspaceId={workspaceId} />
+        );
       case "workspace-init":
         return <InitMessage message={message} className={className} />;
       case "plan-display":

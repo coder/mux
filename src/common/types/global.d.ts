@@ -16,7 +16,6 @@ declare global {
       electron?: string;
     };
     // Debug flags (dev-only, passed through preload)
-    debugShowAllMessages?: boolean;
     debugLlmRequest?: boolean;
     // Allow maintainers to opt into telemetry while running the dev server.
     enableTelemetryInDev?: boolean;

@@ -1,14 +1,17 @@
 import React from "react";
 import { cn } from "@/common/lib/utils";
 import type { DisplayedMessage } from "@/common/types/message";
+import { showAllMessages } from "@/browser/stores/WorkspaceStore";
 
 interface HistoryHiddenMessageProps {
   message: DisplayedMessage & { type: "history-hidden" };
+  workspaceId?: string;
   className?: string;
 }
 
 export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
   message,
+  workspaceId,
   className,
 }) => {
   return (
@@ -21,6 +24,18 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
     >
       {message.hiddenCount} older message{message.hiddenCount !== 1 ? "s" : ""} hidden for
       performance
+      {workspaceId && (
+        <>
+          {" "}
+          <button
+            type="button"
+            className="text-link hover:text-link-hover cursor-pointer border-none bg-transparent p-0 hover:underline"
+            onClick={() => showAllMessages(workspaceId)}
+          >
+            Load all
+          </button>
+        </>
+      )}
     </div>
   );
 };
