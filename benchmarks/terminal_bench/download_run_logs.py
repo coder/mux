@@ -207,17 +207,23 @@ def main():
     if args.run_id:
         run_id = args.run_id
     else:
-        runs = list_nightly_runs(limit=1)
-        if not runs:
-            print("No runs found", file=sys.stderr)
+        # Get latest completed run (not in-progress)
+        runs = list_nightly_runs(limit=5)
+        completed_runs = [
+            r for r in runs if r.get("conclusion") in ("success", "failure")
+        ]
+        if not completed_runs:
+            print("No completed runs found", file=sys.stderr)
             return 1
-        run_id = runs[0]["databaseId"]
-        print(f"Using latest run: {run_id}")
+        run_id = completed_runs[0]["databaseId"]
+        print(f"Using latest completed run: {run_id}")
 
-    # Download if needed
+    # Download if needed - include smoke test artifacts for log inspection
     run_dir = args.output_dir / str(run_id)
     if not run_dir.exists():
-        if not download_run_artifacts(run_id, run_dir, verbose=True):
+        if not download_run_artifacts(
+            run_id, run_dir, include_smoke_test=True, verbose=True
+        ):
             return 1
     else:
         print(f"Using cached run data from {run_dir}")

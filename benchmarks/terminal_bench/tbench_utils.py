@@ -142,6 +142,7 @@ def download_run_artifacts(
     run_id: int,
     output_dir: Path,
     artifact_names: list[str] | None = None,
+    include_smoke_test: bool = False,
     verbose: bool = False,
 ) -> bool:
     """Download terminal-bench artifacts for a run.
@@ -150,13 +151,16 @@ def download_run_artifacts(
         run_id: GitHub Actions run ID
         output_dir: Directory to download artifacts to
         artifact_names: Specific artifact names to download, or None for all
+        include_smoke_test: If True, include smoke test artifact (for log inspection)
         verbose: If True, print commands being run
 
     Returns:
         True if download succeeded, False otherwise
     """
     if artifact_names is None:
-        artifacts = list_artifacts_for_run(run_id, verbose=verbose)
+        artifacts = list_artifacts_for_run(
+            run_id, include_smoke_test=include_smoke_test, verbose=verbose
+        )
         if not artifacts:
             print(f"No artifacts found for run {run_id}", file=sys.stderr)
             return False
