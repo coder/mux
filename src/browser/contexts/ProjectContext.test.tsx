@@ -31,6 +31,16 @@ describe("ProjectContext", () => {
     currentClientMock = {};
   });
 
+  test("sets loadError when initial project load fails", async () => {
+    createMockAPI({
+      list: () => Promise.reject(new Error("boom")),
+    });
+
+    const ctx = await setup();
+
+    await waitFor(() => expect(ctx().loading).toBe(false));
+    expect(ctx().loadError).toContain("boom");
+  });
   test("loads projects on mount and supports add/remove mutations", async () => {
     const initialProjects: Array<[string, ProjectConfig]> = [
       ["/alpha", { workspaces: [] }],
