@@ -1243,7 +1243,6 @@ code {
   font-size: 12px;
   line-height: 1.6;
   color: var(--color-text-light);
-  overflow-wrap: anywhere;
 }
 
 .plan-content h1,
@@ -1384,7 +1383,6 @@ code {
   line-height: 1.6;
   color: var(--color-foreground);
   white-space: normal;
-  overflow-wrap: anywhere;
 }
 
 .markdown-content h1,
@@ -1661,7 +1659,6 @@ span.search-highlight {
 .code-line {
   padding: 0 8px;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .code-line code {
