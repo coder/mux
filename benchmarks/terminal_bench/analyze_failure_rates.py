@@ -34,6 +34,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    from .tbench_utils import extract_task_id, get_passed
+except ImportError:
+    from tbench_utils import extract_task_id, get_passed  # type: ignore[import-not-found,no-redef]
+
 # Data directory for caching downloaded results
 CACHE_DIR = Path(__file__).parent / ".leaderboard_cache"
 LEADERBOARD_REPO = "alexgshaw/terminal-bench-2-leaderboard"
@@ -258,25 +263,10 @@ def parse_leaderboard_results(
 
                 # Extract task_id from folder name (format: task-name__HASH)
                 trial_folder = result_file.parent.name
-                task_id = (
-                    trial_folder.rsplit("__", 1)[0]
-                    if "__" in trial_folder
-                    else trial_folder
-                )
+                task_id = extract_task_id(trial_folder)
 
-                # Determine pass/fail
-                passed = False
-                if "passed" in data:
-                    passed = bool(data["passed"])
-                elif "score" in data:
-                    passed = float(data.get("score", 0)) > 0
-                elif "verifier_result" in data:
-                    vr = data["verifier_result"]
-                    if vr is not None:
-                        if "passed" in vr:
-                            passed = bool(vr["passed"])
-                        elif "rewards" in vr:
-                            passed = float(vr["rewards"].get("reward", 0)) > 0
+                # Determine pass/fail using shared logic
+                passed = get_passed(data) or False
 
                 results.append(
                     TaskResult(

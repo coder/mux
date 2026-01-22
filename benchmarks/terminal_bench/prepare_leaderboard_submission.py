@@ -41,17 +41,30 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
+try:
+    from .tbench_utils import (
+        download_run_artifacts,
+        list_artifacts_for_run,
+        list_nightly_runs,
+        run_command,
+        SMOKE_TEST_MODEL,
+    )
+except ImportError:
+    from tbench_utils import (  # type: ignore[import-not-found,no-redef]
+        download_run_artifacts,
+        list_artifacts_for_run,
+        list_nightly_runs,
+        run_command,
+        SMOKE_TEST_MODEL,
+    )
+
 # HuggingFace leaderboard repo
 LEADERBOARD_REPO = "alexgshaw/terminal-bench-2-leaderboard"
-
-# GitHub repository for fetching artifacts
-GITHUB_REPO = "coder/mux"
 
 
 # Agent metadata for Mux
@@ -95,107 +108,14 @@ MODEL_METADATA = {
 }
 
 
-def run_command(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    """Run a command and return the result."""
-    print(f"  Running: {' '.join(cmd)}")
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
-
-
 def get_latest_successful_nightly_run() -> dict | None:
     """Get the latest successful nightly Terminal-Bench run."""
     print("Fetching latest successful nightly run...")
-    result = run_command(
-        [
-            "gh",
-            "run",
-            "list",
-            f"--repo={GITHUB_REPO}",
-            "--workflow=nightly-terminal-bench.yml",
-            "--status=success",
-            "--limit=1",
-            "--json=databaseId,createdAt,displayTitle",
-        ],
-        check=False,
-    )
-
-    if result.returncode != 0:
-        print(f"Error fetching runs: {result.stderr}")
-        return None
-
-    runs = json.loads(result.stdout)
+    runs = list_nightly_runs(limit=1, status="success", verbose=True)
     if not runs:
         print("No successful nightly runs found")
         return None
-
     return runs[0]
-
-
-# Smoke test model - excluded from submissions by default
-SMOKE_TEST_MODEL = "anthropic/claude-sonnet-4-5"
-
-
-def list_artifacts_for_run(run_id: int, include_smoke_test: bool = False) -> list[dict]:
-    """List all terminal-bench artifacts for a given run.
-
-    By default, excludes the smoke test artifact (claude-sonnet-4-5) since it
-    only runs a single task and isn't suitable for leaderboard submission.
-    """
-    print(f"Listing artifacts for run {run_id}...")
-    result = run_command(
-        [
-            "gh",
-            "api",
-            f"repos/{GITHUB_REPO}/actions/runs/{run_id}/artifacts",
-            "--jq",
-            '.artifacts[] | select(.name | startswith("terminal-bench-results")) | {name, id, size_in_bytes}',
-        ],
-        check=False,
-    )
-
-    if result.returncode != 0:
-        print(f"Error listing artifacts: {result.stderr}")
-        return []
-
-    artifacts = []
-    for line in result.stdout.strip().split("\n"):
-        if line:
-            artifact = json.loads(line)
-            # Filter out smoke test artifact unless explicitly included
-            if not include_smoke_test:
-                smoke_test_pattern = SMOKE_TEST_MODEL.replace("/", "-")
-                if smoke_test_pattern in artifact["name"]:
-                    continue
-            artifacts.append(artifact)
-
-    return artifacts
-
-
-def download_artifacts(
-    run_id: int, artifact_names: list[str], output_dir: Path
-) -> bool:
-    """Download artifacts for a run using gh run download."""
-    print(f"Downloading {len(artifact_names)} artifact(s) to {output_dir}...")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build download command with all artifact names
-    cmd = [
-        "gh",
-        "run",
-        "download",
-        str(run_id),
-        f"--repo={GITHUB_REPO}",
-        f"--dir={output_dir}",
-    ]
-    for name in artifact_names:
-        cmd.extend(["--name", name])
-
-    result = run_command(cmd, check=False)
-
-    if result.returncode != 0:
-        print(f"Error downloading artifacts: {result.stderr}")
-        return False
-
-    return True
 
 
 def create_metadata_yaml(model: str) -> str:
@@ -439,7 +359,7 @@ def main():
         print(f"Using run {run_id} from {run_date}")
 
         # List artifacts for this run
-        artifacts = list_artifacts_for_run(run_id)
+        artifacts = list_artifacts_for_run(run_id, verbose=True)
         if not artifacts:
             print("No terminal-bench artifacts found for this run")
             sys.exit(1)
@@ -458,7 +378,9 @@ def main():
         # Download artifacts
         artifacts_dir = Path(tempfile.mkdtemp(prefix="tbench-"))
         artifact_names = [a["name"] for a in artifacts]
-        if not download_artifacts(run_id, artifact_names, artifacts_dir):
+        if not download_run_artifacts(
+            run_id, artifacts_dir, artifact_names, verbose=True
+        ):
             print("Failed to download artifacts")
             sys.exit(1)
 

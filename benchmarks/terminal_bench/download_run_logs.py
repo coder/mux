@@ -47,90 +47,25 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 
-GITHUB_REPO = "coder/mux"
+try:
+    from .tbench_utils import (
+        download_run_artifacts,
+        extract_task_id,
+        get_passed,
+        list_nightly_runs,
+    )
+except ImportError:
+    from tbench_utils import (  # type: ignore[import-not-found,no-redef]
+        download_run_artifacts,
+        extract_task_id,
+        get_passed,
+        list_nightly_runs,
+    )
+
 CACHE_DIR = Path(__file__).parent / ".run_logs"
-
-
-def run_command(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    """Run a command and return the result."""
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
-
-
-def list_nightly_runs(limit: int = 10) -> list[dict]:
-    """List recent nightly Terminal-Bench runs."""
-    result = run_command(
-        [
-            "gh",
-            "run",
-            "list",
-            f"--repo={GITHUB_REPO}",
-            "--workflow=nightly-terminal-bench.yml",
-            f"--limit={limit}",
-            "--json=databaseId,status,conclusion,createdAt,displayTitle",
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
-        print(f"Error listing runs: {result.stderr}", file=sys.stderr)
-        return []
-    return json.loads(result.stdout)
-
-
-def list_artifacts_for_run(run_id: int) -> list[dict]:
-    """List all terminal-bench artifacts for a given run."""
-    result = run_command(
-        [
-            "gh",
-            "api",
-            f"repos/{GITHUB_REPO}/actions/runs/{run_id}/artifacts",
-            "--jq",
-            '.artifacts[] | select(.name | startswith("terminal-bench-results")) '
-            "| {name, id, size_in_bytes}",
-        ],
-        check=False,
-    )
-    if result.returncode != 0:
-        print(f"Error listing artifacts: {result.stderr}", file=sys.stderr)
-        return []
-
-    artifacts = []
-    for line in result.stdout.strip().split("\n"):
-        if line:
-            artifacts.append(json.loads(line))
-    return artifacts
-
-
-def download_artifacts(run_id: int, output_dir: Path) -> bool:
-    """Download all terminal-bench artifacts for a run."""
-    artifacts = list_artifacts_for_run(run_id)
-    if not artifacts:
-        print(f"No artifacts found for run {run_id}", file=sys.stderr)
-        return False
-
-    print(f"Downloading {len(artifacts)} artifact(s) to {output_dir}...")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        "gh",
-        "run",
-        "download",
-        str(run_id),
-        f"--repo={GITHUB_REPO}",
-        f"--dir={output_dir}",
-    ]
-    for artifact in artifacts:
-        cmd.extend(["--name", artifact["name"]])
-
-    result = run_command(cmd, check=False)
-    if result.returncode != 0:
-        print(f"Error downloading: {result.stderr}", file=sys.stderr)
-        return False
-
-    return True
 
 
 def find_trial_results(run_dir: Path) -> list[dict]:
@@ -154,7 +89,7 @@ def find_trial_results(run_dir: Path) -> list[dict]:
             # Derive task_name from folder structure (format: task-name__HASH)
             # Fall back to JSON field if present
             trial_folder = result_file.parent.name
-            task_name = data.get("task_name") or trial_folder.rsplit("__", 1)[0]
+            task_name = data.get("task_name") or extract_task_id(trial_folder)
             trial_name = data.get("trial_name") or trial_folder
 
             results.append(
@@ -162,7 +97,7 @@ def find_trial_results(run_dir: Path) -> list[dict]:
                     "path": result_file,
                     "task_name": task_name,
                     "trial_name": trial_name,
-                    "passed": _get_passed(data),
+                    "passed": get_passed(data),
                     "data": data,
                 }
             )
@@ -170,28 +105,6 @@ def find_trial_results(run_dir: Path) -> list[dict]:
             continue
 
     return sorted(results, key=lambda x: x["task_name"])
-
-
-def _get_passed(data: dict) -> bool | None:
-    """Extract pass/fail status from result data.
-
-    Mirrors the logic in analyze_failure_rates.py to handle all result formats:
-    - data["passed"] (explicit boolean)
-    - data["score"] > 0
-    - data["verifier_result"]["passed"]
-    - data["verifier_result"]["rewards"]["reward"] > 0
-    """
-    if "passed" in data and data["passed"] is not None:
-        return data["passed"]
-    if "score" in data:
-        return float(data.get("score", 0)) > 0
-    vr = data.get("verifier_result")
-    if vr is not None:
-        if "passed" in vr:
-            return bool(vr["passed"])
-        if "rewards" in vr:
-            return float(vr["rewards"].get("reward", 0)) > 0
-    return None
 
 
 def print_trial_summary(trial: dict, verbose: bool = False) -> None:
@@ -299,7 +212,7 @@ def main():
     # Download if needed
     run_dir = args.output_dir / str(run_id)
     if not run_dir.exists():
-        if not download_artifacts(run_id, run_dir):
+        if not download_run_artifacts(run_id, run_dir, verbose=True):
             return 1
     else:
         print(f"Using cached run data from {run_dir}")
