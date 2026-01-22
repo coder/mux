@@ -30,6 +30,8 @@ import {
   type WorkspaceIdentity,
 } from "@/browser/hooks/useWorkspaceName";
 
+export const DEFAULT_DEVCONTAINER_CONFIG_PATH = ".devcontainer/devcontainer.json";
+
 interface UseCreationWorkspaceOptions {
   projectPath: string;
   onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
@@ -139,6 +141,12 @@ function resolveDevcontainerConfigPath(
     : [];
 
   if (configs.length === 0) {
+    if (selectedPath.length > 0) {
+      return selectedPath;
+    }
+    if (availabilityState.status !== "loaded") {
+      return DEFAULT_DEVCONTAINER_CONFIG_PATH;
+    }
     return selectedPath;
   }
 

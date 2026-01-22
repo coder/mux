@@ -635,23 +635,30 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     return this.ensureDirViaExec(dirPath);
   }
 
-  override resolvePath(filePath: string): Promise<string> {
-    const expanded = this.expandTildeForContainer(filePath);
+  override async resolvePath(filePath: string): Promise<string> {
+    let expanded = this.expandTildeForContainer(filePath);
 
-    // If tilde couldn't be expanded (user unknown), return as-is to avoid
-    // resolving against wrong base path. Callers handle unexpanded tilde.
     if (this.hasUnexpandedTilde(expanded)) {
-      return Promise.resolve(expanded);
+      await this.fetchRemoteHome();
+      if (this.remoteHomeDir) {
+        expanded =
+          filePath === "~" ? this.remoteHomeDir : this.remoteHomeDir + filePath.slice(1);
+      } else {
+        throw new RuntimeError(
+          `Failed to resolve path ${filePath}: container home directory unavailable`,
+          "exec"
+        );
+      }
     }
 
     // Resolve relative paths against container workspace (avoid host cwd leakage)
     if (!expanded.startsWith("/")) {
       const basePath = this.remoteWorkspaceFolder ?? "/";
-      return Promise.resolve(path.posix.resolve(basePath, expanded));
+      return path.posix.resolve(basePath, expanded);
     }
 
     // For absolute paths, resolve using posix (container is Linux)
-    return Promise.resolve(path.posix.resolve(expanded));
+    return path.posix.resolve(expanded);
   }
 
   override tempDir(): Promise<string> {

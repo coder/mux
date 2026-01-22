@@ -118,10 +118,7 @@ function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode
     case RUNTIME_MODE.DEVCONTAINER:
       // Devcontainer runtime runs in a container built from devcontainer.json
       description = `You are in a git worktree at ${workspacePath} inside a Dev Container`;
-      lines = [
-        ...gitCommonLines,
-        "- Do not modify or visit other worktrees (especially the main project) without explicit user intent",
-      ];
+      lines = gitCommonLines;
       break;
 
     default:

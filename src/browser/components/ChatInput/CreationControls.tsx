@@ -5,7 +5,10 @@ import {
   type ParsedRuntime,
   getDevcontainerConfigs,
 } from "@/common/types/runtime";
-import type { RuntimeAvailabilityState } from "./useCreationWorkspace";
+import {
+  DEFAULT_DEVCONTAINER_CONFIG_PATH,
+  type RuntimeAvailabilityState,
+} from "./useCreationWorkspace";
 import { Select } from "../Select";
 import {
   Select as RadixSelect,
@@ -263,6 +266,15 @@ export function CreationControls(props: CreationControlsProps) {
     ? getDevcontainerConfigs(availabilityMap.devcontainer)
     : [];
   const { selectedRuntime, onSelectedRuntimeChange } = props;
+
+  const showDevcontainerConfigFallback =
+    selectedRuntime.mode === "devcontainer" &&
+    devcontainerConfigs.length === 0 &&
+    runtimeAvailabilityState.status !== "loaded";
+
+  const showDevcontainerControls =
+    selectedRuntime.mode === "devcontainer" &&
+    (devcontainerConfigs.length > 0 || showDevcontainerConfigFallback);
 
   // Check if git is required (worktree unavailable due to git or no branches)
   const isNonGitRepo =
@@ -542,33 +554,61 @@ export function CreationControls(props: CreationControlsProps) {
         </div>
 
         {/* Dev container controls - config dropdown + credential sharing in bordered box */}
-        {selectedRuntime.mode === "devcontainer" && devcontainerConfigs.length > 0 && (
+        {showDevcontainerControls && (
           <div className="border-border-medium flex w-fit flex-col gap-1.5 rounded-md border p-2">
             <div className="flex flex-col gap-1">
               <label className="text-muted-foreground text-xs">Config</label>
-              <RadixSelect
-                value={selectedRuntime.configPath}
-                onValueChange={(value) =>
-                  onSelectedRuntimeChange({
-                    mode: "devcontainer",
-                    configPath: value,
-                    shareCredentials: selectedRuntime.shareCredentials,
-                  })
-                }
-                disabled={props.disabled}
-              >
-                <SelectTrigger className="h-6 w-[280px] text-xs" aria-label="Dev container config">
-                  <SelectValue placeholder="Select config" />
-                </SelectTrigger>
-                <SelectContent>
-                  {devcontainerConfigs.map((config) => (
-                    <SelectItem key={config.path} value={config.path}>
-                      {config.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </RadixSelect>
+              {devcontainerConfigs.length > 0 ? (
+                <RadixSelect
+                  value={selectedRuntime.configPath}
+                  onValueChange={(value) =>
+                    onSelectedRuntimeChange({
+                      mode: "devcontainer",
+                      configPath: value,
+                      shareCredentials: selectedRuntime.shareCredentials,
+                    })
+                  }
+                  disabled={props.disabled}
+                >
+                  <SelectTrigger
+                    className="h-6 w-[280px] text-xs"
+                    aria-label="Dev container config"
+                  >
+                    <SelectValue placeholder="Select config" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {devcontainerConfigs.map((config) => (
+                      <SelectItem key={config.path} value={config.path}>
+                        {config.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </RadixSelect>
+              ) : (
+                <input
+                  type="text"
+                  value={selectedRuntime.configPath}
+                  onChange={(e) =>
+                    onSelectedRuntimeChange({
+                      mode: "devcontainer",
+                      configPath: e.target.value,
+                      shareCredentials: selectedRuntime.shareCredentials,
+                    })
+                  }
+                  placeholder={DEFAULT_DEVCONTAINER_CONFIG_PATH}
+                  disabled={props.disabled}
+                  className={cn(
+                    "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-[280px] rounded-md border px-2 text-xs focus:outline-none disabled:opacity-50"
+                  )}
+                  aria-label="Dev container config path"
+                />
+              )}
             </div>
+            {showDevcontainerConfigFallback && runtimeAvailabilityState.status === "failed" && (
+              <p className="text-muted-foreground text-xs">
+                Configs couldn't be loaded. Enter a path to continue.
+              </p>
+            )}
             <label className="flex items-center gap-1.5 text-xs">
               <input
                 type="checkbox"
