@@ -67,9 +67,5 @@ export function useInitialLoadState(options: InitialLoadOptions): InitialLoadSta
     setLoading(false);
   }, [load, timeoutMessage, timeoutMs]);
 
-  const retry = useCallback(async () => {
-    await run();
-  }, [run]);
-
-  return { loading, loadError, run, retry, setLoadError };
+  return { loading, loadError, run, retry: run, setLoadError };
 }

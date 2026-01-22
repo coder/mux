@@ -105,39 +105,38 @@ export function ProjectProvider(props: { children: ReactNode }) {
   });
   const workspaceModalProjectRef = useRef<string | null>(null);
 
-  const loadProjects = useCallback(async (): Promise<Result<void, string | null>> => {
-    if (!api) {
-      return { success: false, error: null };
-    }
-    try {
-      const projectsList = await withTimeout(
-        api.projects.list(),
-        INITIAL_LOAD_TIMEOUT_MS,
-        PROJECT_LOAD_TIMEOUT_MESSAGE
-      );
-      setProjects(new Map(projectsList));
-      return { success: true, data: undefined };
-    } catch (error) {
-      console.error("Failed to load projects:", error);
-      const errorMessage = getErrorMessage(error);
-      setProjects(new Map());
-      return { success: false, error: errorMessage };
-    }
-  }, [api]);
-
-  const runProjectInitialLoad = useCallback(
-    async ({ isCurrent }: InitialLoadHelpers): Promise<Result<void, string | null>> => {
-      const result = await loadProjects();
-      if (!isCurrent()) {
+  const loadProjects = useCallback(
+    async (helpers?: InitialLoadHelpers): Promise<Result<void, string | null>> => {
+      if (!api) {
         return { success: false, error: null };
       }
-      return result;
+      const isCurrent = helpers?.isCurrent;
+      try {
+        const projectsList = await withTimeout(
+          api.projects.list(),
+          INITIAL_LOAD_TIMEOUT_MS,
+          PROJECT_LOAD_TIMEOUT_MESSAGE
+        );
+        if (isCurrent && !isCurrent()) {
+          return { success: false, error: null };
+        }
+        setProjects(new Map(projectsList));
+        return { success: true, data: undefined };
+      } catch (error) {
+        console.error("Failed to load projects:", error);
+        if (isCurrent && !isCurrent()) {
+          return { success: false, error: null };
+        }
+        const errorMessage = getErrorMessage(error);
+        setProjects(new Map());
+        return { success: false, error: errorMessage };
+      }
     },
-    [loadProjects]
+    [api]
   );
 
   const initialLoadState = useInitialLoadState({
-    load: runProjectInitialLoad,
+    load: loadProjects,
   });
 
   const {

@@ -379,13 +379,9 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       // After loading metadata (which may trigger migration), reload projects
       // to ensure frontend has the updated config with workspace IDs
-      const projectResult = await refreshProjects({ reportLoadError: true, isCurrent });
+      await refreshProjects({ reportLoadError: true, isCurrent });
       if (!isCurrent()) {
         return { success: false, error: null };
-      }
-
-      if (!projectResult.success) {
-        return { success: true, data: undefined };
       }
 
       return { success: true, data: undefined };
