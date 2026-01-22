@@ -4,7 +4,7 @@ import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelsFromSettings";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
-import { getModelKey } from "@/common/constants/storage";
+import { getModelKey, PREFERRED_SYSTEM_1_MODEL_KEY } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -37,6 +37,7 @@ interface ExperimentValues {
   postCompactionContext: boolean | undefined;
   programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
+  system1: boolean | undefined;
 }
 
 /**
@@ -53,7 +54,8 @@ function constructSendMessageOptions(
   providerOptions: MuxProviderOptions,
   fallbackModel: string,
   gateway: GatewayState,
-  experimentValues: ExperimentValues
+  experimentValues: ExperimentValues,
+  system1Model: string | undefined
 ): SendMessageOptions {
   // Ensure model is always a valid string (defensive against corrupted localStorage)
   const rawModel =
@@ -71,6 +73,7 @@ function constructSendMessageOptions(
   return {
     thinkingLevel: uiThinking,
     model,
+    ...(system1Model ? { system1Model } : {}),
     agentId,
     mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
@@ -79,6 +82,7 @@ function constructSendMessageOptions(
       postCompactionContext: experimentValues.postCompactionContext,
       programmaticToolCalling: experimentValues.programmaticToolCalling,
       programmaticToolCallingExclusive: experimentValues.programmaticToolCallingExclusive,
+      system1: experimentValues.system1,
     },
   };
 }
@@ -126,6 +130,13 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   const programmaticToolCalling = useExperimentOverrideValue(
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
   );
+  const system1 = useExperimentOverrideValue(EXPERIMENT_IDS.SYSTEM_1);
+
+  const [preferredSystem1Model] = usePersistedState<string>(PREFERRED_SYSTEM_1_MODEL_KEY, "", {
+    listener: true,
+  });
+  const system1Model = preferredSystem1Model.trim() || undefined;
+
   const programmaticToolCallingExclusive = useExperimentOverrideValue(
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
   );
@@ -143,7 +154,8 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     providerOptions,
     defaultModel,
     gateway,
-    { postCompactionContext, programmaticToolCalling, programmaticToolCallingExclusive }
+    { postCompactionContext, programmaticToolCalling, programmaticToolCallingExclusive, system1 },
+    system1Model
   );
 
   return {

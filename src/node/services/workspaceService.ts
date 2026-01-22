@@ -1731,12 +1731,15 @@ export class WorkspaceService extends EventEmitter {
       // - Else if remote evaluation enabled → use PostHog assignment
       // - Else → use frontend value (dev fallback) or default
       const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
-      const frontendValue = options?.experiments?.postCompactionContext;
+      const postCompactionFrontendValue = options?.experiments?.postCompactionContext;
+
+      const system1Experiment = EXPERIMENTS[EXPERIMENT_IDS.SYSTEM_1];
+      const system1FrontendValue = options?.experiments?.system1;
 
       let postCompactionContextEnabled: boolean | undefined;
-      if (postCompactionExperiment.userOverridable && frontendValue !== undefined) {
+      if (postCompactionExperiment.userOverridable && postCompactionFrontendValue !== undefined) {
         // User-overridable: trust frontend value (user's explicit choice)
-        postCompactionContextEnabled = frontendValue;
+        postCompactionContextEnabled = postCompactionFrontendValue;
       } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
         // Remote evaluation: use PostHog assignment
         postCompactionContextEnabled = this.experimentsService.isExperimentEnabled(
@@ -1744,17 +1747,37 @@ export class WorkspaceService extends EventEmitter {
         );
       } else {
         // Fallback to frontend value (dev mode or telemetry disabled)
-        postCompactionContextEnabled = frontendValue;
+        postCompactionContextEnabled = postCompactionFrontendValue;
+      }
+
+      let system1Enabled: boolean | undefined;
+      if (system1Experiment.userOverridable && system1FrontendValue !== undefined) {
+        // User-overridable: trust frontend value (user's explicit choice)
+        system1Enabled = system1FrontendValue;
+      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
+        // Remote evaluation: use PostHog assignment
+        system1Enabled = this.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1);
+      } else {
+        // Fallback to frontend value (dev mode or telemetry disabled)
+        system1Enabled = system1FrontendValue;
+      }
+
+      const resolvedExperiments: Record<string, boolean> = {};
+      if (postCompactionContextEnabled !== undefined) {
+        resolvedExperiments.postCompactionContext = postCompactionContextEnabled;
+      }
+      if (system1Enabled !== undefined) {
+        resolvedExperiments.system1 = system1Enabled;
       }
 
       const resolvedOptions =
-        postCompactionContextEnabled === undefined
+        Object.keys(resolvedExperiments).length === 0
           ? options
           : {
               ...(options ?? { model: defaultModel }),
               experiments: {
                 ...(options?.experiments ?? {}),
-                postCompactionContext: postCompactionContextEnabled,
+                ...resolvedExperiments,
               },
             };
 

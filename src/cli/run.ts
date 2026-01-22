@@ -204,6 +204,7 @@ function buildExperimentsObject(experimentIds: string[]): SendMessageOptions["ex
     programmaticToolCalling: experimentIds.includes("programmatic-tool-calling"),
     programmaticToolCallingExclusive: experimentIds.includes("programmatic-tool-calling-exclusive"),
     postCompactionContext: experimentIds.includes("post-compaction-context"),
+    system1: experimentIds.includes("system-1"),
   };
 }
 

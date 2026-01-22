@@ -1,17 +1,26 @@
 import * as fs from "fs/promises";
+import * as path from "path";
 import * as os from "os";
+import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
+import { convertToModelMessages, generateText, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
+import {
+  applySystem1KeepRangesToOutput,
+  formatNumberedLinesForSystem1,
+  parseSystem1KeepRanges,
+  splitBashOutputLines,
+} from "@/node/services/system1/bashOutputFiltering";
 import { linkAbortSignal } from "@/node/utils/abort";
 import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
 import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToolMediaAsUserMessages";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import {
   PROVIDER_REGISTRY,
@@ -393,6 +402,34 @@ function getTaskDepthFromConfig(
   }
 
   return depth;
+}
+
+const SYSTEM1_BASH_MIN_LINES = 10;
+const SYSTEM1_BASH_MIN_TOTAL_BYTES = 4 * 1024;
+const SYSTEM1_BASH_MAX_KEPT_LINES = 40;
+const SYSTEM1_TIMEOUT_MS = 5_000;
+
+function cloneToolPreservingDescriptors(tool: Tool): Tool {
+  assert(tool && typeof tool === "object", "tool must be an object");
+
+  // Clone without invoking getters.
+  const prototype = Object.getPrototypeOf(tool) as unknown;
+  assert(
+    prototype === null || typeof prototype === "object",
+    "tool prototype must be an object or null"
+  );
+
+  const clone = Object.create(prototype) as object;
+  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(tool));
+  return clone as Tool;
+}
+
+function appendToolNote(existing: string | undefined, extra: string): string {
+  if (!existing) {
+    return extra;
+  }
+
+  return `${existing}\n\n${extra}`;
 }
 
 export class AIService extends EventEmitter {
@@ -1078,7 +1115,8 @@ export class AIService extends EventEmitter {
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
-    experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean },
+    experiments?: SendMessageOptions["experiments"],
+    system1Model?: string,
     disableWorkspaceAgents?: boolean,
     hasQueuedMessage?: () => boolean,
     openaiTruncationModeOverride?: "auto" | "disabled"
@@ -1981,6 +2019,226 @@ export class AIService extends EventEmitter {
         const errMsg = error instanceof Error ? error.message : String(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
+      const toolsForStream =
+        experiments?.system1 === true
+          ? (() => {
+              const baseBashTool = tools.bash;
+              if (!baseBashTool) {
+                return tools;
+              }
+
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const baseBashToolRecord = baseBashTool as any as Record<string, unknown>;
+              const originalExecute = baseBashToolRecord.execute;
+              if (typeof originalExecute !== "function") {
+                return tools;
+              }
+
+              const executeFn = originalExecute as (
+                this: unknown,
+                args: unknown,
+                options: unknown
+              ) => Promise<unknown>;
+
+              const system1ModelString =
+                typeof system1Model === "string" ? system1Model.trim() : "";
+              let cachedSystem1Model: { modelString: string; model: LanguageModel } | undefined;
+              let cachedSystem1ModelFailed = false;
+
+              const getSystem1ModelForStream = async (): Promise<
+                { modelString: string; model: LanguageModel } | undefined
+              > => {
+                if (!system1ModelString) {
+                  return { modelString, model: modelResult.data };
+                }
+
+                if (cachedSystem1Model) {
+                  return cachedSystem1Model;
+                }
+                if (cachedSystem1ModelFailed) {
+                  return undefined;
+                }
+
+                const created = await this.createModel(
+                  system1ModelString,
+                  effectiveMuxProviderOptions
+                );
+                if (!created.success) {
+                  cachedSystem1ModelFailed = true;
+                  log.debug("[system1] Failed to create System 1 model", {
+                    workspaceId,
+                    system1Model: system1ModelString,
+                    error: created.error,
+                  });
+                  return undefined;
+                }
+
+                cachedSystem1Model = { modelString: system1ModelString, model: created.data };
+                return cachedSystem1Model;
+              };
+
+              const wrappedBashTool = cloneToolPreservingDescriptors(baseBashTool);
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const wrappedBashToolRecord = wrappedBashTool as any as Record<string, unknown>;
+
+              wrappedBashToolRecord.execute = async (args: unknown, options: unknown) => {
+                const result: unknown = await executeFn.call(baseBashTool, args, options);
+
+                try {
+                  const runInBackground =
+                    Boolean(
+                      (args as { run_in_background?: unknown } | undefined)?.run_in_background
+                    ) ||
+                    (result && typeof result === "object" && "backgroundProcessId" in result);
+                  if (runInBackground) {
+                    return result;
+                  }
+
+                  const output = (result as { output?: unknown } | undefined)?.output;
+                  if (typeof output !== "string" || output.length === 0) {
+                    return result;
+                  }
+
+                  const lines = splitBashOutputLines(output);
+                  const bytes = Buffer.byteLength(output, "utf-8");
+                  const triggeredByLines = lines.length > SYSTEM1_BASH_MIN_LINES;
+                  const triggeredByBytes = bytes > SYSTEM1_BASH_MIN_TOTAL_BYTES;
+
+                  if (!triggeredByLines && !triggeredByBytes) {
+                    return result;
+                  }
+
+                  let fullOutputPath: string | undefined;
+                  try {
+                    // Use 8 hex characters for short, memorable temp file IDs.
+                    const fileId = Math.random().toString(16).substring(2, 10);
+                    fullOutputPath = path.posix.join(runtimeTempDir, `bash-s1-${fileId}.txt`);
+
+                    const writer = runtime.writeFile(
+                      fullOutputPath,
+                      (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal
+                    );
+                    const encoder = new TextEncoder();
+                    const writerInstance = writer.getWriter();
+                    await writerInstance.write(encoder.encode(output));
+                    await writerInstance.close();
+                  } catch (error) {
+                    log.debug("[system1] Failed to save full bash output to temp file", {
+                      workspaceId,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                    fullOutputPath = undefined;
+                  }
+
+                  const system1 = await getSystem1ModelForStream();
+                  if (!system1) {
+                    return result;
+                  }
+
+                  const numberedOutput = formatNumberedLinesForSystem1(lines);
+
+                  const systemPrompt =
+                    "You are System 1: a fast log filtering assistant.\n" +
+                    "Given numbered bash output, return ONLY valid JSON (no markdown, no prose).\n" +
+                    'Schema: {"keep_ranges":[{"start":number,"end":number,"reason":string}]}\n' +
+                    `Rules:\n- start/end are 1-based line numbers\n- Keep at most ${SYSTEM1_BASH_MAX_KEPT_LINES} lines total\n- Prefer errors, stack traces, failing test summaries, and actionable warnings\n- If uncertain, keep the most informative 1-5 lines`;
+
+                  const script =
+                    typeof (args as { script?: unknown } | undefined)?.script === "string"
+                      ? String((args as { script?: unknown }).script)
+                      : "";
+
+                  const userMessage =
+                    `Bash script:\n${script}\n\n` + `Numbered output:\n${numberedOutput}`;
+
+                  // Use a small slice of conversation context to help judge relevance.
+                  const contextMessages = finalMessages.slice(
+                    Math.max(0, finalMessages.length - 8)
+                  );
+
+                  const system1AbortController = new AbortController();
+                  const unlink = linkAbortSignal(
+                    (options as { abortSignal?: AbortSignal } | undefined)?.abortSignal,
+                    system1AbortController
+                  );
+                  const timeout = setTimeout(
+                    () => system1AbortController.abort(),
+                    SYSTEM1_TIMEOUT_MS
+                  );
+                  timeout.unref?.();
+
+                  let system1Text: string;
+                  try {
+                    const response = await generateText({
+                      model: system1.model,
+                      system: systemPrompt,
+                      messages: [...contextMessages, { role: "user", content: userMessage }],
+                      abortSignal: system1AbortController.signal,
+                      maxOutputTokens: 600,
+                    });
+                    system1Text = response.text;
+                  } finally {
+                    clearTimeout(timeout);
+                    unlink();
+                  }
+
+                  const keepRanges = parseSystem1KeepRanges(system1Text);
+                  if (!keepRanges) {
+                    return result;
+                  }
+
+                  const applied = applySystem1KeepRangesToOutput({
+                    rawOutput: output,
+                    keepRanges,
+                    maxKeptLines: SYSTEM1_BASH_MAX_KEPT_LINES,
+                  });
+                  if (!applied || applied.keptLines === 0) {
+                    return result;
+                  }
+
+                  const trigger = [
+                    triggeredByLines ? "lines" : null,
+                    triggeredByBytes ? "bytes" : null,
+                  ]
+                    .filter(Boolean)
+                    .join("+");
+
+                  const notice =
+                    `System 1 filtered ${applied.keptLines}/${applied.totalLines} lines (trigger: ${trigger}).` +
+                    (fullOutputPath ? `\n\nFull output saved to ${fullOutputPath}` : "");
+
+                  log.debug("[system1] Filtered bash tool output", {
+                    workspaceId,
+                    system1Model: system1.modelString,
+                    keptLines: applied.keptLines,
+                    totalLines: applied.totalLines,
+                    triggeredByLines,
+                    triggeredByBytes,
+                  });
+
+                  const existingNote = (result as { note?: unknown } | undefined)?.note;
+                  return {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    ...(result as any as Record<string, unknown>),
+                    output: applied.filteredOutput,
+                    note: appendToolNote(
+                      typeof existingNote === "string" ? existingNote : undefined,
+                      notice
+                    ),
+                  };
+                } catch (error) {
+                  log.debug("[system1] Failed to filter bash tool output", {
+                    workspaceId,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  return result;
+                }
+              };
+
+              return { ...tools, bash: wrappedBashTool };
+            })()
+          : tools;
+
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
@@ -1991,7 +2249,7 @@ export class AIService extends EventEmitter {
         runtime,
         assistantMessageId, // Shared messageId ensures nested tool events match stream events
         combinedAbortSignal,
-        tools,
+        toolsForStream,
         {
           systemMessageTokens,
           timestamp: Date.now(),

@@ -4,6 +4,7 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getDisableWorkspaceAgentsKey,
+  PREFERRED_SYSTEM_1_MODEL_KEY,
 } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -75,6 +76,9 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   // Plan mode instructions are now handled by the backend (has access to plan file path)
 
   // Read disableWorkspaceAgents toggle (workspace-scoped)
+
+  const system1Model =
+    readPersistedState<string>(PREFERRED_SYSTEM_1_MODEL_KEY, "").trim() || undefined;
   const disableWorkspaceAgents = readPersistedState<boolean>(
     getDisableWorkspaceAgentsKey(workspaceId),
     false
@@ -82,6 +86,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   return {
     model,
+    system1Model,
     agentId,
     mode,
     thinkingLevel,
@@ -94,6 +99,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
       programmaticToolCallingExclusive: isExperimentEnabled(
         EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
       ),
+      system1: isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1),
     },
   };
 }
