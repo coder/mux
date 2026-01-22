@@ -166,13 +166,24 @@ def find_trial_results(run_dir: Path) -> list[dict]:
 
 
 def _get_passed(data: dict) -> bool | None:
-    """Extract pass/fail status from result data."""
+    """Extract pass/fail status from result data.
+
+    Mirrors the logic in analyze_failure_rates.py to handle all result formats:
+    - data["passed"] (explicit boolean)
+    - data["score"] > 0
+    - data["verifier_result"]["passed"]
+    - data["verifier_result"]["rewards"]["reward"] > 0
+    """
     if "passed" in data and data["passed"] is not None:
         return data["passed"]
-    vr = data.get("verifier_result", {})
-    if vr:
-        reward = vr.get("rewards", {}).get("reward", 0)
-        return reward > 0
+    if "score" in data:
+        return float(data.get("score", 0)) > 0
+    vr = data.get("verifier_result")
+    if vr is not None:
+        if "passed" in vr:
+            return bool(vr["passed"])
+        if "rewards" in vr:
+            return float(vr["rewards"].get("reward", 0)) > 0
     return None
 
 
