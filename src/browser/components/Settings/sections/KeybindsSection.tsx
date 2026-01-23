@@ -49,6 +49,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   TOGGLE_VOICE_INPUT: "Toggle voice input",
   NAVIGATE_BACK: "Navigate back",
   NAVIGATE_FORWARD: "Navigate forward",
+  TOGGLE_NOTIFICATIONS: "Toggle notifications",
 };
 
 /** Groups for organizing keybinds in the UI */
@@ -63,6 +64,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "TOGGLE_SIDEBAR",
       "CYCLE_MODEL",
       "TOGGLE_THINKING",
+      "TOGGLE_NOTIFICATIONS",
     ],
   },
   {

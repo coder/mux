@@ -339,6 +339,13 @@ export class WorkspaceStore {
   // Global callback for navigating to a workspace (set by App, used for notification clicks)
   private navigateToWorkspaceCallback: ((workspaceId: string) => void) | null = null;
 
+  // Global callback when a response completes (for "notify on response" feature)
+  // isFinal is true when no more active streams remain (assistant done with all work)
+  // finalText is the text content after any tool calls (for notification body)
+  private responseCompleteCallback:
+    | ((workspaceId: string, messageId: string, isFinal: boolean, finalText: string) => void)
+    | null = null;
+
   // Tracks when a file-modifying tool (file_edit_*, bash) last completed per workspace.
   // ReviewPanel subscribes to trigger diff refresh. Two structures:
   // - timestamps: actual Date.now() values for cache invalidation checks
@@ -630,6 +637,21 @@ export class WorkspaceStore {
 
   navigateToWorkspace(workspaceId: string): void {
     this.navigateToWorkspaceCallback?.(workspaceId);
+  }
+
+  /**
+   * Set the callback for when a response completes (used for "notify on response" feature).
+   * isFinal is true when no more active streams remain (assistant done with all work).
+   * finalText is the text content after any tool calls (for notification body).
+   */
+  setOnResponseComplete(
+    callback: (workspaceId: string, messageId: string, isFinal: boolean, finalText: string) => void
+  ): void {
+    this.responseCompleteCallback = callback;
+    // Update existing aggregators with the callback
+    for (const aggregator of this.aggregators.values()) {
+      aggregator.onResponseComplete = callback;
+    }
   }
 
   /**
@@ -1674,6 +1696,10 @@ export class WorkspaceStore {
       // Wire up navigation callback for notification clicks
       if (this.navigateToWorkspaceCallback) {
         aggregator.onNavigateToWorkspace = this.navigateToWorkspaceCallback;
+      }
+      // Wire up response complete callback for "notify on response" feature
+      if (this.responseCompleteCallback) {
+        aggregator.onResponseComplete = this.responseCompleteCallback;
       }
       this.aggregators.set(workspaceId, aggregator);
       this.workspaceCreatedAt.set(workspaceId, createdAt);

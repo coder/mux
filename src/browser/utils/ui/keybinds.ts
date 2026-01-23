@@ -339,6 +339,11 @@ export const KEYBINDS = {
   // macOS: Cmd+], Win/Linux: Ctrl+]
   // Standard browser/editor forward navigation
   NAVIGATE_FORWARD: { key: "]", ctrl: true },
+
+  /** Toggle notifications on response for current workspace */
+  // macOS: Cmd+Shift+N, Win/Linux: Ctrl+Shift+N
+  // "N" for Notifications
+  TOGGLE_NOTIFICATIONS: { key: "N", ctrl: true, shift: true },
 } as const;
 
 /**

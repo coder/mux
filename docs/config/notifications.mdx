@@ -5,9 +5,13 @@ description: Configure how agents notify you about important events
 
 ## Overview
 
-Mux agents can send system notifications to alert you about important events. Notifications appear as native OS notifications (macOS Notification Center, Windows Toast, Linux notification daemon) and work even when Mux is in the background.
+Mux can send system notifications to alert you about important events. Notifications appear as native OS notifications (macOS Notification Center, Windows Toast, Linux notification daemon) and work even when Mux is in the background. Clicking a notification takes you directly to the workspace that sent it.
 
-The `notify` tool gives agents the ability to send these notifications. Clicking a notification takes you directly to the workspace that sent it. You control when and how agents use this tool through your prompts or scoped instructions.
+There are two ways to receive notifications:
+
+1. **Automatic notifications** — Toggle the bell icon in the workspace header to get notified when the agent completes a response. Use <kbd>Ctrl+Shift+N</kbd> (<kbd>⌘+Shift+N</kbd> on macOS) to toggle quickly.
+
+2. **Agent-triggered notifications** — The `notify` tool lets agents send notifications for specific events. You control when agents use this through prompts or scoped instructions.
 
 ## Quick examples
 

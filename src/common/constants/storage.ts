@@ -368,6 +368,25 @@ export function getFileTreeExpandStateKey(workspaceId: string): string {
  * Stores the most recent successful status_set payload (emoji, message, url)
  * Format: "statusState:{workspaceId}"
  */
+
+/**
+ * Get the localStorage key for "notify on response" toggle per workspace.
+ * When true, a browser notification is shown when assistant responses complete.
+ * Format: "notifyOnResponse:{workspaceId}"
+ */
+export function getNotifyOnResponseKey(workspaceId: string): string {
+  return `notifyOnResponse:${workspaceId}`;
+}
+
+/**
+ * Get the localStorage key for "auto-enable notifications" toggle per project.
+ * When true, new workspaces in this project automatically have notifications enabled.
+ * Format: "notifyOnResponseAutoEnable:{projectPath}"
+ */
+export function getNotifyOnResponseAutoEnableKey(projectPath: string): string {
+  return `notifyOnResponseAutoEnable:${projectPath}`;
+}
+
 export function getStatusStateKey(workspaceId: string): string {
   return `statusState:${workspaceId}`;
 }

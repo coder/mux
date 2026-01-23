@@ -1,14 +1,20 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Menu, Pencil, Server } from "lucide-react";
+import { Bell, BellOff, Menu, Pencil, Server } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
-import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import {
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
+  getNotifyOnResponseKey,
+  getNotifyOnResponseAutoEnableKey,
+} from "@/common/constants/storage";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
 import { WorkspaceMCPModal } from "./WorkspaceMCPModal";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
+import { Checkbox } from "./ui/checkbox";
+import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { Button } from "@/browser/components/ui/button";
@@ -65,6 +71,21 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     listener: true,
   });
 
+  // Notification on response toggle (workspace-level) - defaults to disabled
+  const [notifyOnResponse, setNotifyOnResponse] = usePersistedState<boolean>(
+    getNotifyOnResponseKey(workspaceId),
+    false
+  );
+
+  // Auto-enable notifications for new workspaces (project-level)
+  const [autoEnableNotifications, setAutoEnableNotifications] = usePersistedState<boolean>(
+    getNotifyOnResponseAutoEnableKey(projectPath),
+    false
+  );
+
+  // Popover state for notification settings (interactive on click)
+  const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+
   const handleOpenTerminal = useCallback(() => {
     // On mobile touch devices, always use popout since the right sidebar is hidden
     const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
@@ -101,6 +122,18 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     window.addEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
     return () => window.removeEventListener(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST, handler);
   }, []);
+
+  // Keybind for toggling notifications
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.TOGGLE_NOTIFICATIONS)) {
+        e.preventDefault();
+        setNotifyOnResponse((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [setNotifyOnResponse]);
 
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
@@ -162,6 +195,109 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />
+        <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
+          <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setNotifyOnResponse((prev) => !prev)}
+                  className={cn(
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded",
+                    notifyOnResponse
+                      ? "text-foreground"
+                      : "text-muted hover:bg-sidebar-hover hover:text-foreground"
+                  )}
+                  data-testid="notify-on-response-button"
+                  aria-pressed={notifyOnResponse}
+                >
+                  {notifyOnResponse ? (
+                    <Bell className="h-4 w-4" />
+                  ) : (
+                    <BellOff className="h-4 w-4" />
+                  )}
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="end">
+              <div className="flex flex-col gap-2">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Checkbox
+                    checked={notifyOnResponse}
+                    onCheckedChange={(checked) => setNotifyOnResponse(checked === true)}
+                  />
+                  <span className="text-foreground">
+                    Notify on all responses{" "}
+                    <span className="text-muted-foreground">
+                      ({formatKeybind(KEYBINDS.TOGGLE_NOTIFICATIONS)})
+                    </span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2">
+                  <Checkbox
+                    checked={autoEnableNotifications}
+                    onCheckedChange={(checked) => setAutoEnableNotifications(checked === true)}
+                  />
+                  <span className="text-muted-foreground">
+                    Auto-enable for new workspaces in this project
+                  </span>
+                </label>
+                <p className="text-muted-foreground border-separator-light border-t pt-2">
+                  Agents can also notify on specific events.{" "}
+                  <a
+                    href="https://mux.coder.com/config/notifications"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent hover:underline"
+                  >
+                    Learn more
+                  </a>
+                </p>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+
+          <PopoverContent
+            side="bottom"
+            align="end"
+            className="bg-modal-bg border-separator-light w-64 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+          >
+            <div className="flex flex-col gap-2">
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={notifyOnResponse}
+                  onCheckedChange={(checked) => setNotifyOnResponse(checked === true)}
+                />
+                <span className="text-foreground">
+                  Notify on all responses{" "}
+                  <span className="text-muted-foreground">
+                    ({formatKeybind(KEYBINDS.TOGGLE_NOTIFICATIONS)})
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2">
+                <Checkbox
+                  checked={autoEnableNotifications}
+                  onCheckedChange={(checked) => setAutoEnableNotifications(checked === true)}
+                />
+                <span className="text-muted-foreground">
+                  Auto-enable for new workspaces in this project
+                </span>
+              </label>
+              <p className="text-muted-foreground border-separator-light border-t pt-2">
+                Agents can also notify on specific events.{" "}
+                <a
+                  href="https://mux.coder.com/config/notifications"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  Learn more
+                </a>
+              </p>
+            </div>
+          </PopoverContent>
+        </Popover>
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>

@@ -289,6 +289,16 @@ export class StreamingMessageAggregator {
   // Used for notification click handling in browser mode
   onNavigateToWorkspace?: (workspaceId: string) => void;
 
+  // Optional callback when an assistant response completes (used for "notify on response" feature)
+  // isFinal is true when no more active streams remain (assistant done with all work)
+  // finalText is the text content after any tool calls (the final response to show in notification)
+  onResponseComplete?: (
+    workspaceId: string,
+    messageId: string,
+    isFinal: boolean,
+    finalText: string
+  ) => void;
+
   constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
     this.createdAt = createdAt;
     this.workspaceId = workspaceId;
@@ -622,6 +632,23 @@ export class StreamingMessageAggregator {
    * Called when streaming ends to convert thousands of delta parts into single strings.
    * This reduces memory from O(deltas) small objects to O(content_types) merged objects.
    */
+
+  /**
+   * Extract the final response text from a message (text after the last tool call).
+   * Used for notification body content.
+   */
+  private extractFinalResponseText(message: MuxMessage | undefined): string {
+    if (!message) return "";
+    const parts = message.parts;
+    const lastToolIndex = parts.findLastIndex((part) => part.type === "dynamic-tool");
+    const textPartsAfterTools = lastToolIndex >= 0 ? parts.slice(lastToolIndex + 1) : parts;
+    return textPartsAfterTools
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("")
+      .trim();
+  }
+
   private compactMessageParts(message: MuxMessage): void {
     message.parts = mergeAdjacentParts(message.parts);
   }
@@ -1208,6 +1235,14 @@ export class StreamingMessageAggregator {
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
+
+      // Notify on normal stream completion (skip replay-only reconstruction)
+      // isFinal = true when this was the last active stream (assistant done with all work)
+      if (this.workspaceId && this.onResponseComplete) {
+        const isFinal = this.activeStreams.size === 0;
+        const finalText = this.extractFinalResponseText(message);
+        this.onResponseComplete(this.workspaceId, data.messageId, isFinal, finalText);
+      }
     } else {
       // Reconnection case: user reconnected after stream completed
       // We reconstruct the entire message from the stream-end event

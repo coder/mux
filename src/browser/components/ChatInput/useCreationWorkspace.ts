@@ -16,6 +16,8 @@ import {
   getInputKey,
   getInputImagesKey,
   getModelKey,
+  getNotifyOnResponseAutoEnableKey,
+  getNotifyOnResponseKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
   getPendingScopeId,
@@ -83,6 +85,15 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
       },
       {}
     );
+  }
+
+  // Auto-enable notifications if the project-level preference is set
+  const autoEnableNotifications = readPersistedState<boolean>(
+    getNotifyOnResponseAutoEnableKey(projectPath),
+    false
+  );
+  if (autoEnableNotifications) {
+    updatePersistedState(getNotifyOnResponseKey(workspaceId), true);
   }
 }
 

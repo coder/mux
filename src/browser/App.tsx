@@ -37,6 +37,7 @@ import {
   getAgentIdKey,
   getAgentsInitNudgeKey,
   getModelKey,
+  getNotifyOnResponseKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByModeKey,
@@ -142,6 +143,9 @@ function AppInner() {
 
   // Track telemetry when workspace selection changes
   const prevWorkspaceRef = useRef<WorkspaceSelection | null>(null);
+  // Ref for selectedWorkspace to access in callbacks without stale closures
+  const selectedWorkspaceRef = useRef(selectedWorkspace);
+  selectedWorkspaceRef.current = selectedWorkspace;
   useEffect(() => {
     const prev = prevWorkspaceRef.current;
     if (prev && selectedWorkspace && prev.workspaceId !== selectedWorkspace.workspaceId) {
@@ -671,6 +675,60 @@ function AppInner() {
     // Single source of truth: WorkspaceStore owns the navigation callback.
     // Browser notifications and Electron notification clicks both route through this.
     workspaceStore.setNavigateToWorkspace(navigateToWorkspace);
+
+    // Callback for "notify on response" feature - fires when any assistant response completes.
+    // Only notify when isFinal=true (assistant done with all work, no more active streams).
+    // finalText is extracted by the aggregator (text after tool calls).
+    const handleResponseComplete = (
+      workspaceId: string,
+      _messageId: string,
+      isFinal: boolean,
+      finalText: string
+    ) => {
+      // Only notify on final message (when assistant is done with all work)
+      if (!isFinal) return;
+
+      // Skip notification if workspace is focused (like Slack behavior)
+      const isWorkspaceFocused =
+        document.hasFocus() && selectedWorkspaceRef.current?.workspaceId === workspaceId;
+      if (isWorkspaceFocused) return;
+
+      // Check if notifications are enabled for this workspace
+      const notifyEnabled = readPersistedState(getNotifyOnResponseKey(workspaceId), false);
+      if (!notifyEnabled) return;
+
+      const metadata = workspaceMetadataRef.current.get(workspaceId);
+      const title = metadata?.title ?? metadata?.name ?? "Response complete";
+
+      const body = finalText
+        ? finalText.length > 200
+          ? `${finalText.slice(0, 197)}…`
+          : finalText
+        : "Response complete";
+
+      // Send browser notification
+      if ("Notification" in window) {
+        const showNotification = () => {
+          const notification = new Notification(title, { body });
+          notification.onclick = () => {
+            window.focus();
+            navigateToWorkspace(workspaceId);
+          };
+        };
+
+        if (Notification.permission === "granted") {
+          showNotification();
+        } else if (Notification.permission !== "denied") {
+          void Notification.requestPermission().then((perm) => {
+            if (perm === "granted") {
+              showNotification();
+            }
+          });
+        }
+      }
+    };
+
+    workspaceStore.setOnResponseComplete(handleResponseComplete);
 
     const unsubscribe = window.api?.onNotificationClicked?.((data) => {
       workspaceStore.navigateToWorkspace(data.workspaceId);
