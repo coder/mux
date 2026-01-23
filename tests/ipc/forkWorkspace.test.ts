@@ -548,6 +548,11 @@ describeIntegration("Workspace fork", () => {
         expect(forkedWorkspace!.runtimeConfig.type).toBe("local");
         expect("srcBaseDir" in forkedWorkspace!.runtimeConfig).toBe(false);
 
+        // Verify namedWorkspacePath is the project path (not ~/.mux/src/...) for local workspaces
+        // This ensures Open-in-Editor and path display work correctly after reload
+        expect(forkedWorkspace!.namedWorkspacePath).toBe(tempGitRepo);
+        expect(forkResult.metadata.namedWorkspacePath).toBe(tempGitRepo);
+
         // Cleanup
         await client.workspace.remove({ workspaceId: sourceWorkspaceId });
         await client.workspace.remove({ workspaceId: forkedWorkspaceId });

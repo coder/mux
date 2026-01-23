@@ -762,7 +762,10 @@ export class Config {
    * @param projectPath Absolute path to the project
    * @param metadata Workspace metadata to save
    */
-  async addWorkspace(projectPath: string, metadata: WorkspaceMetadata): Promise<void> {
+  async addWorkspace(
+    projectPath: string,
+    metadata: WorkspaceMetadata & { namedWorkspacePath?: string }
+  ): Promise<void> {
     await this.editConfig((config) => {
       let project = config.projects.get(projectPath);
 
@@ -774,10 +777,11 @@ export class Config {
       // Check if workspace already exists (by ID)
       const existingIndex = project.workspaces.findIndex((w) => w.id === metadata.id);
 
-      // Compute workspace path - this is only for legacy config migration
-      // New code should use Runtime.getWorkspacePath() directly
+      // Use provided namedWorkspacePath if available (runtime-aware),
+      // otherwise fall back to worktree-style path for legacy compatibility
       const projectName = this.getProjectName(projectPath);
-      const workspacePath = path.join(this.srcDir, projectName, metadata.name);
+      const workspacePath =
+        metadata.namedWorkspacePath ?? path.join(this.srcDir, projectName, metadata.name);
       const workspaceEntry: Workspace = {
         path: workspacePath,
         id: metadata.id,
