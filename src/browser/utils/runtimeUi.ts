@@ -131,7 +131,7 @@ export const RUNTIME_UI = {
   devcontainer: {
     label: "Dev container",
     description: "Uses project's devcontainer.json configuration",
-    docsPath: "/runtime", // TODO: add /runtime/devcontainer docs page
+    docsPath: "/runtime/devcontainer",
     Icon: DevcontainerIcon,
     button: {
       activeClass:

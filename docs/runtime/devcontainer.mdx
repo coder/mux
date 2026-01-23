@@ -1,0 +1,45 @@
+---
+title: Dev Container Runtime
+description: Run agents in containers defined by devcontainer.json
+---
+
+Dev Container runtime runs each workspace in a container built from your project's [devcontainer.json](https://containers.dev/implementors/json_reference/). If your project already uses dev containers for VS Code or other editors, Mux can use the same configuration.
+
+## Requirements
+
+- [Dev Container CLI](https://github.com/devcontainers/cli): `npm install -g @devcontainers/cli`
+- Docker daemon running
+- A `devcontainer.json` in the project
+
+## How it works
+
+1. Mux creates a git worktree on the host machine
+2. Runs `devcontainer up` to build/start the container
+3. Commands execute inside the container via `devcontainer exec`
+4. Deleting the workspace stops the container and removes the worktree
+
+## Configuration
+
+Select Dev Container in the workspace creation UI. If your project has multiple configs, choose one from the dropdown.
+
+Mux searches these locations:
+
+- `.devcontainer.json`
+- `.devcontainer/devcontainer.json`
+- `.devcontainer/*/devcontainer.json` (named configs)
+
+## Credential sharing
+
+Like the [Docker runtime](/runtime/docker), you can check "Share credentials" to enable git authentication inside the container:
+
+- **SSH agent forwarding** — Your SSH keys work without copying private keys
+- **Git config** — Host `~/.gitconfig` is copied into the container
+- **GitHub CLI** — If `GH_TOKEN` is set in [project secrets](/config/project-secrets), it's passed to the container
+
+## Filesystem layout
+
+Worktrees live on the host at `~/.mux/src/<project>/<workspace>`. The container mounts this directory (location inside the container depends on your devcontainer.json `workspaceFolder`).
+
+## Notes
+
+- The Dev Container runtime button only appears if Mux finds a `devcontainer.json` in the project.
