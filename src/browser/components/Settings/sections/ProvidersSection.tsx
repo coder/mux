@@ -868,15 +868,37 @@ export function ProvidersSection() {
                           Turn on Mux Gateway for every eligible model.
                         </span>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={enableGatewayForAllModels}
-                        disabled={!canEnableGatewayForAllModels}
-                        aria-label="Enable Mux Gateway for all models"
-                      >
-                        Enable all
-                      </Button>
+                      {canEnableGatewayForAllModels ? (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={enableGatewayForAllModels}
+                          aria-label="Enable Mux Gateway for all models"
+                        >
+                          Enable all
+                        </Button>
+                      ) : (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex">
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={enableGatewayForAllModels}
+                                  disabled
+                                  aria-label="Enable Mux Gateway for all models"
+                                >
+                                  Enable all
+                                </Button>
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              All eligible models are already enabled.
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                     </div>
                   </div>
                 )}
