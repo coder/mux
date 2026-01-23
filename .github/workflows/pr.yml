@@ -108,8 +108,18 @@ jobs:
           curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf https://astral.sh/uv/install.sh | sh
       - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: make -j static-check
+
+  lint-actions:
+    name: Lint Actions
+    needs: [changes]
+    if: ${{ (needs.changes.outputs.config == 'true') && (github.event_name != 'push' || github.actor != 'github-merge-queue[bot]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - run: make lint-actions
         env:
-          # Used by zizmor to lint third-party GitHub actions
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test-unit:
@@ -487,6 +497,7 @@ jobs:
     needs:
       - changes
       - static-check
+      - lint-actions
       - test-unit
       - test-integration
       - test-storybook
