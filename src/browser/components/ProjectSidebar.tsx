@@ -349,7 +349,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   };
 
   const handleArchiveWorkspace = useCallback(
-    async (workspaceId: string, buttonElement: HTMLElement) => {
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
       // Mark workspace as being archived for UI feedback
       setArchivingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
 
@@ -357,11 +357,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         const result = await onArchiveWorkspace(workspaceId);
         if (!result.success) {
           const error = result.error ?? "Failed to archive workspace";
-          const rect = buttonElement.getBoundingClientRect();
-          const anchor = {
-            top: rect.top + window.scrollY,
-            left: rect.right + 10,
-          };
+          let anchor: { top: number; left: number } | undefined;
+          if (buttonElement) {
+            const rect = buttonElement.getBoundingClientRect();
+            anchor = {
+              top: rect.top + window.scrollY,
+              left: rect.right + 10,
+            };
+          }
           workspaceArchiveError.showError(workspaceId, error, anchor);
         }
       } finally {
@@ -466,12 +469,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
         handleAddWorkspace(selectedWorkspace.projectPath);
+      } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
+        e.preventDefault();
+        void handleArchiveWorkspace(selectedWorkspace.workspaceId);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedWorkspace, handleAddWorkspace]);
+  }, [selectedWorkspace, handleAddWorkspace, handleArchiveWorkspace]);
 
   return (
     <RenameProvider onRenameWorkspace={onRenameWorkspace}>

@@ -1,4 +1,5 @@
 import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -35,7 +36,7 @@ export interface WorkspaceListItemProps {
   lastReadTimestamp?: number;
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
-  onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onArchiveWorkspace: (workspaceId: string, button?: HTMLElement) => Promise<void>;
   /** @deprecated No longer used since status dot was removed, kept for API compatibility */
   onToggleUnread?: (workspaceId: string) => void;
 }
@@ -207,7 +208,9 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 <ArchiveIcon className="h-3 w-3" />
               </button>
             </TooltipTrigger>
-            <TooltipContent align="start">Archive workspace</TooltipContent>
+            <TooltipContent align="start">
+              Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+            </TooltipContent>
           </Tooltip>
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
