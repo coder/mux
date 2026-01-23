@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 
 import { buildProviderOptions } from "../../src/common/utils/ai/providerOptions";
 import { getThinkingPolicyForModel } from "../../src/common/utils/thinking/policy";
@@ -7,6 +7,7 @@ import {
   applySystem1KeepRangesToOutput,
   buildSystem1BashKeepRangesPrompt,
   formatNumberedLinesForSystem1,
+  parseSystem1KeepRanges,
   splitBashOutputLines,
   system1BashKeepRangesSchema,
 } from "../../src/node/services/system1/bashOutputFiltering";
@@ -170,6 +171,8 @@ describeIntegration("System1 bash output compaction (keep_ranges matrix)", () =>
         const allowedThinkingLevels = policy.length > 0 ? policy : THINKING_LEVELS;
         const thinkingLevels = pickThinkingLevels(allowedThinkingLevels);
 
+        const provider = parseModelString(modelString)?.provider;
+
         for (const thinkingLevel of thinkingLevels) {
           const providerOptions = buildProviderOptions(
             modelString,
@@ -178,20 +181,47 @@ describeIntegration("System1 bash output compaction (keep_ranges matrix)", () =>
             undefined,
             undefined,
             "system1-test"
-          ) as unknown as Parameters<typeof generateObject>[0]["providerOptions"];
+          ) as unknown;
 
-          const result = await generateObject({
-            model: modelResult.data,
-            schema: system1BashKeepRangesSchema,
-            mode: "json",
-            system: systemPrompt,
-            messages: [{ role: "user", content: userMessage }],
-            providerOptions,
-            maxOutputTokens: 600,
-            maxRetries: 0,
-          });
+          let keepRanges: Parameters<typeof applySystem1KeepRangesToOutput>[0]["keepRanges"];
 
-          const keepRanges = result.object.keep_ranges;
+          if (provider === "anthropic") {
+            const result = await generateText({
+              model: modelResult.data,
+              system: systemPrompt,
+              messages: [{ role: "user", content: userMessage }],
+              providerOptions: providerOptions as Parameters<
+                typeof generateText
+              >[0]["providerOptions"],
+              maxOutputTokens: 600,
+              maxRetries: 0,
+            });
+
+            const parsedKeepRanges = parseSystem1KeepRanges(result.text);
+            if (!parsedKeepRanges) {
+              throw new Error(
+                `Failed to parse keep_ranges from ${modelString} (${thinkingLevel}): ${result.text.slice(0, 200)}`
+              );
+            }
+
+            keepRanges = parsedKeepRanges;
+          } else {
+            const result = await generateObject({
+              model: modelResult.data,
+              schema: system1BashKeepRangesSchema,
+              mode: "json",
+              system: systemPrompt,
+              messages: [{ role: "user", content: userMessage }],
+              providerOptions: providerOptions as Parameters<
+                typeof generateObject
+              >[0]["providerOptions"],
+              maxOutputTokens: 600,
+              maxRetries: 0,
+            });
+
+            keepRanges = result.object.keep_ranges;
+          }
+
           const applied = applySystem1KeepRangesToOutput({
             rawOutput: RAW_OUTPUT,
             keepRanges,

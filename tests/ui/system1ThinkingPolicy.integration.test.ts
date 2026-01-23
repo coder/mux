@@ -3,7 +3,8 @@
  * supported by the selected System 1 model.
  */
 
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import { waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
@@ -39,17 +40,11 @@ describeIntegration("System 1 reasoning policy", () => {
       updatePersistedState(PREFERRED_SYSTEM_1_MODEL_KEY, GEMINI_FLASH_PREVIEW);
       updatePersistedState(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, "xhigh");
 
-      const settingsButton = await waitFor(() => {
-        const el = harness.view.container.querySelector<HTMLElement>(
-          '[data-testid="settings-button"]'
-        );
-        if (!el) {
-          throw new Error("Settings button not found");
-        }
-        return el;
-      });
+      const user = userEvent.setup();
 
-      fireEvent.click(settingsButton);
+      const canvas = within(harness.view.container);
+      const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10_000 });
+      await user.click(settingsButton);
 
       const body = within(harness.view.container.ownerDocument.body);
       const dialog = await body.findByRole("dialog");
@@ -58,7 +53,7 @@ describeIntegration("System 1 reasoning policy", () => {
       const system1TabButton = await dialogCanvas.findByRole("button", {
         name: /system 1/i,
       });
-      fireEvent.click(system1TabButton);
+      await user.click(system1TabButton);
 
       await dialogCanvas.findByText(/System 1 Reasoning/i);
 
@@ -78,7 +73,7 @@ describeIntegration("System 1 reasoning policy", () => {
       });
 
       // Open dropdown and assert options are filtered.
-      fireEvent.click(reasoningSelect);
+      await user.click(reasoningSelect);
 
       await body.findByRole("option", { name: "high" });
 

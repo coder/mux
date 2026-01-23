@@ -8,13 +8,13 @@ export interface System1KeepRange {
   reason?: string;
 }
 
+const system1BashKeepRangeSchema = z.object({
+  start: z.coerce.number().finite(),
+  end: z.coerce.number().finite(),
+});
+
 export const system1BashKeepRangesSchema = z.object({
-  keep_ranges: z.array(
-    z.object({
-      start: z.number(),
-      end: z.number(),
-    })
-  ),
+  keep_ranges: z.array(system1BashKeepRangeSchema),
 });
 
 export type System1BashKeepRangesObject = z.infer<typeof system1BashKeepRangesSchema>;
@@ -149,23 +149,26 @@ export function parseSystem1KeepRanges(text: string): System1KeepRange[] | undef
 
   const out: System1KeepRange[] = [];
   for (const entry of keepRanges) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    const parsedEntry = system1BashKeepRangeSchema.safeParse(entry);
+    if (!parsedEntry.success) {
       continue;
     }
 
-    const record = entry as { start?: unknown; end?: unknown; reason?: unknown };
-    if (typeof record.start !== "number" || typeof record.end !== "number") {
-      continue;
-    }
+    const reasonValue =
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? (entry as { reason?: unknown }).reason
+        : undefined;
+
+    const reason = typeof reasonValue === "string" ? reasonValue : undefined;
 
     out.push({
-      start: record.start,
-      end: record.end,
-      reason: typeof record.reason === "string" ? record.reason : undefined,
+      start: parsedEntry.data.start,
+      end: parsedEntry.data.end,
+      reason,
     });
   }
 
-  return out;
+  return out.length > 0 ? out : undefined;
 }
 
 const HEURISTIC_IMPORTANT_LINE_REGEX =

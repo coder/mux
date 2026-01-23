@@ -51,6 +51,10 @@ describe("bashOutputFiltering", () => {
   });
 
   describe("parseSystem1KeepRanges", () => {
+    it("coerces numeric strings for start/end", () => {
+      const ranges = parseSystem1KeepRanges('{"keep_ranges":[{"start":"2","end":"4"}]}');
+      expect(ranges).toEqual([{ start: 2, end: 4, reason: undefined }]);
+    });
     it("parses keep_ranges JSON", () => {
       const ranges = parseSystem1KeepRanges(
         '{"keep_ranges":[{"start":2,"end":4,"reason":"error"}]}'

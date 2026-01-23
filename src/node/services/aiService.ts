@@ -10,6 +10,7 @@ import {
   TypeValidationError,
   convertToModelMessages,
   generateObject,
+  generateText,
   type LanguageModel,
   type Tool,
 } from "ai";
@@ -21,6 +22,7 @@ import {
   formatNumberedLinesForSystem1,
   formatSystem1BashFilterNotice,
   getHeuristicKeepRangesForBashOutput,
+  parseSystem1KeepRanges,
   splitBashOutputLines,
   system1BashKeepRangesSchema,
 } from "@/node/services/system1/bashOutputFiltering";
@@ -2125,6 +2127,10 @@ export class AIService extends EventEmitter {
                 typeof generateObject
               >[0]["providerOptions"];
 
+              type GenerateTextProviderOptions = Parameters<
+                typeof generateText
+              >[0]["providerOptions"];
+
               const maybeFilterBashOutputWithSystem1 = async (params: {
                 toolName: string;
                 output: string;
@@ -2253,10 +2259,31 @@ export class AIService extends EventEmitter {
                   let lastErrorMessage: string | undefined;
                   let lastErrorText: string | undefined;
 
+                  const system1Provider = system1.modelString.split(":", 2)[0];
+
+                  // Anthropic forbids extended thinking when tool_choice forces tool use.
+                  // The AI SDK's generateObject({ mode: "json" }) path uses forced tool calls for Anthropic,
+                  // so we use generateText + JSON parsing for keep_ranges to keep extended thinking enabled.
+                  const useGenerateTextForKeepRanges = system1Provider === "anthropic";
+
+                  class KeepRangesParseError extends Error {
+                    public readonly text: string;
+
+                    constructor(text: string) {
+                      super("Failed to parse System 1 keep_ranges JSON");
+                      this.name = "KeepRangesParseError";
+                      this.text = text;
+                    }
+                  }
+
                   let applied: ReturnType<typeof applySystem1KeepRangesToOutput> = undefined;
 
                   const getErrorText = (error: unknown): string | undefined => {
                     if (JSONParseError.isInstance(error)) {
+                      return error.text;
+                    }
+
+                    if (error instanceof KeepRangesParseError) {
                       return error.text;
                     }
 
@@ -2290,6 +2317,33 @@ export class AIService extends EventEmitter {
                     const attemptUserMessage = correctionSnippet
                       ? `${userMessage}\n\nPrevious invalid response (truncated):\n${correctionSnippet}\n\nReturn corrected JSON only.`
                       : userMessage;
+
+                    if (useGenerateTextForKeepRanges) {
+                      const response = await generateText({
+                        model: system1.model,
+                        system: attemptSystemPrompt,
+                        messages: [{ role: "user", content: attemptUserMessage }],
+                        abortSignal: system1AbortController.signal,
+                        providerOptions:
+                          system1ProviderOptions as unknown as GenerateTextProviderOptions,
+                        maxOutputTokens: 600,
+                        maxRetries: 0,
+                      });
+
+                      finishReason = response.finishReason;
+
+                      const keepRanges = parseSystem1KeepRanges(response.text);
+                      if (!keepRanges) {
+                        throw new KeepRangesParseError(response.text);
+                      }
+                      keepRangesCount = keepRanges.length;
+
+                      return applySystem1KeepRangesToOutput({
+                        rawOutput: params.output,
+                        keepRanges,
+                        maxKeptLines,
+                      });
+                    }
 
                     const response = await generateObject({
                       model: system1.model,

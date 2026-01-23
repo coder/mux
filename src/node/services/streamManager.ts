@@ -1244,10 +1244,43 @@ export class StreamManager extends EventEmitter {
               }
 
               case "text-delta": {
+                // Providers/SDKs may stream text deltas under different keys.
+                const textDeltaPart = part as {
+                  text?: unknown;
+                  delta?: unknown;
+                  textDelta?: unknown;
+                };
+
+                const deltaText =
+                  typeof textDeltaPart.text === "string"
+                    ? textDeltaPart.text
+                    : typeof textDeltaPart.delta === "string"
+                      ? textDeltaPart.delta
+                      : typeof textDeltaPart.textDelta === "string"
+                        ? textDeltaPart.textDelta
+                        : "";
+
+                if (deltaText.length === 0) {
+                  if (
+                    textDeltaPart.text !== undefined ||
+                    textDeltaPart.delta !== undefined ||
+                    textDeltaPart.textDelta !== undefined
+                  ) {
+                    log.debug("[streamManager] Ignoring non-string text-delta payload", {
+                      workspaceId,
+                      model: streamInfo.model,
+                      textType: typeof textDeltaPart.text,
+                      deltaType: typeof textDeltaPart.delta,
+                      textDeltaType: typeof textDeltaPart.textDelta,
+                    });
+                  }
+                  break;
+                }
+
                 // Append each delta as a new part (merging happens at display time)
                 const textPart = {
                   type: "text" as const,
-                  text: part.text,
+                  text: deltaText,
                   timestamp: Date.now(),
                 };
                 await this.appendPartAndEmit(workspaceId, streamInfo, textPart, true);
