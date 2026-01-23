@@ -4,6 +4,11 @@ export interface LiveBashOutputView {
   /** Combined output in emission order (stdout/stderr interleaved). */
   combined: string;
   truncated: boolean;
+  /**
+   * Optional UI state hint. When set to "filtering", the backend has finished producing output
+   * and is post-processing it (e.g., System1 log filtering) before emitting tool-call-end.
+   */
+  phase?: "output" | "filtering";
 }
 
 interface LiveBashOutputSegment {
@@ -57,7 +62,7 @@ function getUtf8ByteLength(text: string): number {
 
 export function appendLiveBashOutputChunk(
   prev: LiveBashOutputInternal | undefined,
-  chunk: { text: string; isError: boolean },
+  chunk: { text: string; isError: boolean; phase?: "output" | "filtering" },
   maxBytes: number
 ): LiveBashOutputInternal {
   if (maxBytes <= 0) {
@@ -71,12 +76,17 @@ export function appendLiveBashOutputChunk(
       stderr: "",
       combined: "",
       truncated: false,
+      phase: undefined,
       segments: [],
       totalBytes: 0,
     } satisfies LiveBashOutputInternal);
 
   const normalizedText = normalizeNewlines(chunk.text);
-  if (normalizedText.length === 0) return base;
+
+  const phaseChanged = chunk.phase !== undefined && chunk.phase !== base.phase;
+
+  // Phase-only updates (no new text) are valid; they power UI overlays like "Compacting output…".
+  if (normalizedText.length === 0 && !phaseChanged) return base;
 
   // Clone for purity (tests + avoids hidden mutation assumptions).
   const next: LiveBashOutputInternal = {
@@ -84,9 +94,18 @@ export function appendLiveBashOutputChunk(
     stderr: base.stderr,
     combined: base.combined,
     truncated: base.truncated,
+    phase: base.phase,
     segments: base.segments.slice(),
     totalBytes: base.totalBytes,
   };
+
+  if (chunk.phase !== undefined) {
+    next.phase = chunk.phase;
+  }
+
+  if (normalizedText.length === 0) {
+    return next;
+  }
 
   const segment: LiveBashOutputSegment = {
     isError: chunk.isError,
@@ -131,5 +150,6 @@ export function toLiveBashOutputView(state: LiveBashOutputInternal): LiveBashOut
     stderr: state.stderr,
     combined: state.combined,
     truncated: state.truncated,
+    phase: state.phase,
   };
 }

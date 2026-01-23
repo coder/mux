@@ -40,6 +40,7 @@ import {
 } from "@/common/constants/providers";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
+import type { BashOutputEvent } from "@/common/types/stream";
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config, ProviderConfig } from "@/node/config";
@@ -2197,6 +2198,7 @@ export class AIService extends EventEmitter {
                 toolName: string;
                 output: string;
                 script: string;
+                toolCallId?: string;
                 abortSignal?: AbortSignal;
               }): Promise<{ filteredOutput: string; notice: string } | undefined> => {
                 try {
@@ -2269,6 +2271,17 @@ export class AIService extends EventEmitter {
                   );
                   timeout.unref?.();
 
+                  if (typeof params.toolCallId === "string" && params.toolCallId.length > 0) {
+                    this.emit("bash-output", {
+                      type: "bash-output",
+                      workspaceId,
+                      toolCallId: params.toolCallId,
+                      phase: "filtering",
+                      text: "",
+                      isError: false,
+                      timestamp: Date.now(),
+                    } satisfies BashOutputEvent);
+                  }
                   let system1Text: string;
                   try {
                     const response = await generateText({
@@ -2360,10 +2373,17 @@ export class AIService extends EventEmitter {
                       ? String((args as { script?: unknown }).script)
                       : "";
 
+                  const toolCallId =
+                    typeof (options as { toolCallId?: unknown } | undefined)?.toolCallId ===
+                    "string"
+                      ? (options as { toolCallId?: string }).toolCallId
+                      : undefined;
+
                   const filtered = await maybeFilterBashOutputWithSystem1({
                     toolName: "bash",
                     output,
                     script,
+                    toolCallId,
                     abortSignal: (options as { abortSignal?: AbortSignal } | undefined)
                       ?.abortSignal,
                   });

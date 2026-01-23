@@ -464,10 +464,25 @@ export class WorkspaceStore {
       // Cleanup live bash output once the real tool result contains output.
       // If output is missing (e.g. tmpfile overflow), keep the tail buffer so the UI still shows something.
       if (toolCallEnd.toolName === "bash") {
-        const output = (toolCallEnd.result as { output?: unknown } | undefined)?.output;
-        if (typeof output === "string") {
-          const transient = this.chatTransientState.get(workspaceId);
-          transient?.liveBashOutput.delete(toolCallEnd.toolCallId);
+        const transient = this.chatTransientState.get(workspaceId);
+        if (transient) {
+          const output = (toolCallEnd.result as { output?: unknown } | undefined)?.output;
+          if (typeof output === "string") {
+            transient.liveBashOutput.delete(toolCallEnd.toolCallId);
+          } else {
+            // If we keep the tail buffer, ensure we don't get stuck in "filtering" UI state.
+            const prev = transient.liveBashOutput.get(toolCallEnd.toolCallId);
+            if (prev?.phase === "filtering") {
+              const next = appendLiveBashOutputChunk(
+                prev,
+                { text: "", isError: false, phase: "output" },
+                BASH_TRUNCATE_MAX_TOTAL_BYTES
+              );
+              if (next !== prev) {
+                transient.liveBashOutput.set(toolCallEnd.toolCallId, next);
+              }
+            }
+          }
         }
       }
 
@@ -1836,16 +1851,21 @@ export class WorkspaceStore {
     }
 
     if (isBashOutputEvent(data)) {
-      if (data.text.length === 0) return;
+      const hasText = data.text.length > 0;
+      const hasPhase = data.phase !== undefined;
+      if (!hasText && !hasPhase) return;
 
       const transient = this.assertChatTransientState(workspaceId);
 
       const prev = transient.liveBashOutput.get(data.toolCallId);
       const next = appendLiveBashOutputChunk(
         prev,
-        { text: data.text, isError: data.isError },
+        { text: data.text, isError: data.isError, phase: data.phase },
         BASH_TRUNCATE_MAX_TOTAL_BYTES
       );
+
+      // Avoid unnecessary re-renders if this event didn't change the stored state.
+      if (next === prev) return;
 
       transient.liveBashOutput.set(data.toolCallId, next);
 

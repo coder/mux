@@ -11,6 +11,7 @@
  * Usage:
  *   bun scripts/system1-noisy-output.ts
  *   bun scripts/system1-noisy-output.ts --bursts 5 --sleep-ms 200
+ *   bun scripts/system1-noisy-output.ts --git
  *
  * Notes:
  * - Use --bursts/--sleep-ms for background-bash testing (bash_output/task_await).
@@ -45,6 +46,24 @@ const TEXT_LINE_TARGET_LEN = 96;
 // Intentionally a plausible-looking phrase (no digits) so it can be buried in noise.
 // We keep it constant so it is easy to grep for during manual testing.
 const NEEDLE_PHRASE = "maecenas faucibus mollis interdum";
+
+// A realistic-ish git rebase conflict transcript, condensed to remove hint blocks and repeated
+// "Rebasing (n/N)" progress spam.
+//
+// This fixture is intentionally > 10 lines so it reliably triggers System 1 filtering.
+const GIT_REBASE_CONFLICT_OUTPUT_LINES = [
+  "Rebasing (6/14)",
+  "Applying: chore: format",
+  "Applying: refactor(router): split handlers",
+  "Applying: refactor(router): clean up error reporting",
+  "Applying: fix: include plan path in harness bearings",
+  "Applying: tests: update router snapshots",
+  "Applying: build: regenerate orpc types",
+  "Auto-merging src/node/orpc/router.ts",
+  "CONFLICT (content): Merge conflict in src/node/orpc/router.ts",
+  "error: could not apply 678c593ed... fix: include plan path in harness bearings",
+  "Could not apply 678c593ed... fix: include plan path in harness bearings",
+] as const;
 
 const LOREM_WORDS = [
   // Classic lorem ipsum core
@@ -150,12 +169,18 @@ function lineBytesWithNewline(line: string): number {
   return bytes + 1; // + "\n"
 }
 
-function parseArgs(argv: string[]): { bursts: number; sleepMs: number } {
+function parseArgs(argv: string[]): { bursts: number; sleepMs: number; isGit: boolean } {
   let bursts = 1;
   let sleepMs = 0;
+  let isGit = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
+
+    if (arg === "--git") {
+      isGit = true;
+      continue;
+    }
 
     if (arg === "--bursts") {
       const raw = argv[i + 1];
@@ -175,7 +200,9 @@ function parseArgs(argv: string[]): { bursts: number; sleepMs: number } {
 
     if (arg === "--help" || arg === "-h") {
       // Avoid printing in normal use; throwing is fine for dev tooling.
-      throw new Error("Usage: bun scripts/system1-noisy-output.ts [--bursts N] [--sleep-ms MS]");
+      throw new Error(
+        "Usage: bun scripts/system1-noisy-output.ts [--git] [--bursts N] [--sleep-ms MS]"
+      );
     }
 
     throw new Error(`Unknown arg: ${arg}`);
@@ -184,7 +211,37 @@ function parseArgs(argv: string[]): { bursts: number; sleepMs: number } {
   assert(Number.isInteger(bursts) && bursts >= 1, "--bursts must be an integer >= 1");
   assert(Number.isInteger(sleepMs) && sleepMs >= 0, "--sleep-ms must be an integer >= 0");
 
-  return { bursts, sleepMs };
+  if (isGit) {
+    assert(bursts === 1, "--git mode does not support --bursts");
+    assert(sleepMs === 0, "--git mode does not support --sleep-ms");
+  }
+
+  return { bursts, sleepMs, isGit };
+}
+
+function getGitRebaseConflictOutput(): string {
+  const lines = [...GIT_REBASE_CONFLICT_OUTPUT_LINES];
+
+  // Ensure we *definitely* cross System 1 activation thresholds.
+  assert(lines.length > SYSTEM1_BASH_MIN_LINES, "Git output did not exceed System 1 min lines");
+
+  const output = lines.join("\n") + "\n";
+  const outputBytes = Buffer.byteLength(output, "utf8");
+
+  // Defensive checks (should never fire unless assumptions change).
+  assert(lines.length < BASH_HARD_MAX_LINES, "Git output exceeded bash max lines");
+  assert(outputBytes < BASH_MAX_TOTAL_BYTES, "Git output exceeded bash max bytes");
+
+  // Ensure we never emit a single line that breaks the tool output limit.
+  for (const line of lines) {
+    void lineBytesWithNewline(line);
+  }
+
+  // Sanity: keep the core conflict lines intact.
+  assert(output.includes("CONFLICT (content):"), "Git output missing CONFLICT line");
+  assert(output.includes("could not apply"), "Git output missing could-not-apply line");
+
+  return output;
 }
 
 function capitalizeFirstLetter(text: string): string {
@@ -311,7 +368,12 @@ function generateBurst(params: {
 }
 
 async function main(): Promise<void> {
-  const { bursts, sleepMs } = parseArgs(process.argv.slice(2));
+  const { bursts, sleepMs, isGit } = parseArgs(process.argv.slice(2));
+
+  if (isGit) {
+    process.stdout.write(getGitRebaseConflictOutput());
+    return;
+  }
 
   const perBurstTarget = bursts > 1 ? TARGET_MAX_TOTAL_BYTES_BURST : TARGET_MAX_TOTAL_BYTES_SINGLE;
 

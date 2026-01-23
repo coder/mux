@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { FileText, Layers } from "lucide-react";
+import { FileText, Layers, Loader2 } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 import {
@@ -95,11 +95,14 @@ const ElapsedTimeDisplay: React.FC<{ startedAt: number | undefined; isActive: bo
   return <> • {Math.round(elapsedRef.current / 1000)}s</>;
 };
 
-const EMPTY_LIVE_OUTPUT = {
+type BashLiveOutputView = NonNullable<ReturnType<typeof useBashToolLiveOutput>>;
+
+const EMPTY_LIVE_OUTPUT: BashLiveOutputView = {
   stdout: "",
   stderr: "",
   combined: "",
   truncated: false,
+  phase: undefined,
 };
 
 export const BashToolCall: React.FC<BashToolCallProps> = ({
@@ -194,6 +197,8 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
   const showLiveOutput =
     !isBackground && (status === "executing" || (Boolean(liveOutput) && !resultHasOutput));
+
+  const isFilteringLiveOutput = showLiveOutput && liveOutputView.phase === "filtering";
 
   const canSendToBackground = Boolean(
     toolCallId && workspaceId && foregroundBashToolCallIds.has(toolCallId)
@@ -315,16 +320,27 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
               <DetailSection>
                 <DetailLabel>Output</DetailLabel>
-                <DetailContent
-                  ref={outputRef}
-                  onScroll={(e) => updatePinned(e.currentTarget)}
-                  className={cn(
-                    "px-2 py-1.5",
-                    combinedLiveOutput.length === 0 && "text-muted italic"
+                <div className="relative">
+                  <DetailContent
+                    ref={outputRef}
+                    onScroll={(e) => updatePinned(e.currentTarget)}
+                    className={cn(
+                      "px-2 py-1.5",
+                      combinedLiveOutput.length === 0 && "text-muted italic",
+                      isFilteringLiveOutput && "opacity-60 blur-[1px]"
+                    )}
+                  >
+                    {combinedLiveOutput.length > 0 ? combinedLiveOutput : "No output yet"}
+                  </DetailContent>
+                  {isFilteringLiveOutput && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                      <div className="text-muted flex items-center gap-1 rounded border border-white/10 bg-[var(--color-bg-tertiary)]/80 px-2 py-1 text-[10px] backdrop-blur-sm">
+                        <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
+                        Compacting output…
+                      </div>
+                    </div>
                   )}
-                >
-                  {combinedLiveOutput.length > 0 ? combinedLiveOutput : "No output yet"}
-                </DetailContent>
+                </div>
               </DetailSection>
             </>
           )}

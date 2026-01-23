@@ -198,6 +198,10 @@ export const BashOutputEventSchema = z.object({
   type: z.literal("bash-output"),
   workspaceId: z.string(),
   toolCallId: z.string(),
+  phase: z
+    .enum(["output", "filtering"])
+    .optional()
+    .meta({ description: "UI hint for bash output state" }),
   text: z.string(),
   isError: z.boolean().meta({ description: "True if this chunk is from stderr" }),
   timestamp: z.number().meta({ description: "When output was flushed (Date.now())" }),

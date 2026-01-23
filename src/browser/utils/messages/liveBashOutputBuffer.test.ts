@@ -16,6 +16,22 @@ describe("appendLiveBashOutputChunk", () => {
     expect(b.truncated).toBe(false);
   });
 
+  it("supports phase-only updates", () => {
+    const a = appendLiveBashOutputChunk(undefined, { text: "out\n", isError: false }, 1024);
+    expect(a.phase).toBeUndefined();
+
+    const b = appendLiveBashOutputChunk(a, { text: "", isError: false, phase: "filtering" }, 1024);
+    expect(b.combined).toBe("out\n");
+    expect(b.phase).toBe("filtering");
+
+    // Phase-only updates should be referentially stable when nothing changes.
+    const c = appendLiveBashOutputChunk(b, { text: "", isError: false, phase: "filtering" }, 1024);
+    expect(c).toBe(b);
+
+    const d = appendLiveBashOutputChunk(b, { text: "", isError: false, phase: "output" }, 1024);
+    expect(d.phase).toBe("output");
+  });
+
   it("normalizes carriage returns to newlines", () => {
     const a = appendLiveBashOutputChunk(undefined, { text: "a\rb", isError: false }, 1024);
     expect(a.stdout).toBe("a\nb");
