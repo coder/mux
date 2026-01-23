@@ -615,6 +615,7 @@ describe("StreamManager - previousResponseId recovery", () => {
     const streamManager = new StreamManager(mockHistoryService, mockPartialService);
 
     const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
+      workspaceId: string,
       error: unknown,
       streamInfo: unknown
     ) => void;
@@ -631,7 +632,10 @@ describe("StreamManager - previousResponseId recovery", () => {
       data: { error: { code: "previous_response_not_found" } },
     });
 
-    recordMethod.call(streamManager, apiError, { messageId: "msg-1", model: "openai:gpt-mini" });
+    recordMethod.call(streamManager, "workspace-1", apiError, {
+      messageId: "msg-1",
+      model: "openai:gpt-mini",
+    });
 
     expect(streamManager.isResponseIdLost("resp_deadbeef")).toBe(true);
   });
@@ -642,6 +646,7 @@ describe("StreamManager - previousResponseId recovery", () => {
     const streamManager = new StreamManager(mockHistoryService, mockPartialService);
 
     const recordMethod = Reflect.get(streamManager, "recordLostResponseIdIfApplicable") as (
+      workspaceId: string,
       error: unknown,
       streamInfo: unknown
     ) => void;
@@ -658,7 +663,10 @@ describe("StreamManager - previousResponseId recovery", () => {
       data: { error: { code: "server_error" } },
     });
 
-    recordMethod.call(streamManager, apiError, { messageId: "msg-2", model: "openai:gpt-mini" });
+    recordMethod.call(streamManager, "workspace-2", apiError, {
+      messageId: "msg-2",
+      model: "openai:gpt-mini",
+    });
 
     expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
   });
