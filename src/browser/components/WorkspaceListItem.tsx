@@ -209,7 +209,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               </button>
             </TooltipTrigger>
             <TooltipContent align="start">
-              Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+              Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)} when selected)
             </TooltipContent>
           </Tooltip>
         )}
