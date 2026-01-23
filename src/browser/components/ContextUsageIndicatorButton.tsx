@@ -7,9 +7,6 @@ import {
   HorizontalThresholdSlider,
   type AutoCompactionConfig,
 } from "./RightSidebar/ThresholdSlider";
-import { OutputReserveIndicator } from "./RightSidebar/OutputReserveIndicator";
-import { OutputReserveDetails } from "./RightSidebar/OutputReserveDetails";
-import { getOutputReserveDisplayState } from "./RightSidebar/contextUsageUtils";
 import { Switch } from "./ui/switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { cn } from "@/common/lib/utils";
@@ -82,16 +79,6 @@ const AutoCompactSettings: React.FC<{
   const showUsageSlider = Boolean(usageConfig && data.maxTokens);
   const isIdleEnabled = idleConfig?.hours !== null && idleConfig?.hours !== undefined;
 
-  const outputReserveDisplay = getOutputReserveDisplayState({
-    data,
-    showThresholdSlider: showUsageSlider,
-    threshold: usageConfig?.threshold,
-  });
-
-  const outputReserveInfo = outputReserveDisplay.info;
-  const showOutputReserveIndicator = outputReserveDisplay.showIndicator;
-  const showOutputReserveWarning = outputReserveDisplay.showWarning;
-
   const handleIdleToggle = (enabled: boolean) => {
     if (!idleConfig) return;
     const parsed = parseInt(idleInputValue, 10);
@@ -131,19 +118,9 @@ const AutoCompactSettings: React.FC<{
       <div>
         <div className="relative w-full py-1.5">
           <TokenMeter segments={data.segments} orientation="horizontal" />
-          {showOutputReserveIndicator && outputReserveInfo.threshold !== null && (
-            <OutputReserveIndicator threshold={outputReserveInfo.threshold} />
-          )}
           {showUsageSlider && usageConfig && <HorizontalThresholdSlider config={usageConfig} />}
         </div>
         {showUsageSlider && <PercentTickMarks />}
-        <OutputReserveDetails
-          info={outputReserveInfo}
-          showDetails={showOutputReserveIndicator}
-          showWarning={showOutputReserveWarning}
-          detailClassName="text-muted mt-1 text-[10px]"
-          warningClassName="warning-text mt-1 text-[10px]"
-        />
       </div>
 
       {/* Idle-based auto-compact */}

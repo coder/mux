@@ -2,9 +2,6 @@ import React from "react";
 import { TokenMeter } from "./TokenMeter";
 import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
-import { OutputReserveIndicator } from "./OutputReserveIndicator";
-import { OutputReserveDetails } from "./OutputReserveDetails";
-import { getOutputReserveDisplayState } from "./contextUsageUtils";
 
 interface ContextUsageBarProps {
   data: TokenMeterData;
@@ -27,16 +24,6 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
   const showWarning = !data.maxTokens;
   const showThresholdSlider = Boolean(autoCompaction && data.maxTokens);
 
-  const outputReserveDisplay = getOutputReserveDisplayState({
-    data,
-    showThresholdSlider,
-    threshold: autoCompaction?.threshold,
-  });
-
-  const outputReserveInfo = outputReserveDisplay.info;
-  const showOutputReserveIndicator = outputReserveDisplay.showIndicator;
-  const showOutputReserveWarning = outputReserveDisplay.showWarning;
-
   if (data.totalTokens === 0) return null;
 
   return (
@@ -56,21 +43,10 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
 
       <div className="relative w-full overflow-hidden py-2">
         <TokenMeter segments={data.segments} orientation="horizontal" />
-        {showOutputReserveIndicator && outputReserveInfo.threshold !== null && (
-          <OutputReserveIndicator threshold={outputReserveInfo.threshold} />
-        )}
         {showThresholdSlider && autoCompaction && (
           <HorizontalThresholdSlider config={autoCompaction} />
         )}
       </div>
-
-      <OutputReserveDetails
-        info={outputReserveInfo}
-        showDetails={showOutputReserveIndicator}
-        showWarning={showOutputReserveWarning}
-        detailClassName="text-muted mt-1 text-[11px]"
-        warningClassName="warning-text mt-1 text-[11px]"
-      />
 
       {showWarning && (
         <div className="text-subtle mt-2 text-[11px] italic">

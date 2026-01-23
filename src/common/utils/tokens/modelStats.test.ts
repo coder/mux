@@ -25,8 +25,8 @@ describe("getModelStats", () => {
     });
 
     test("models-extra.ts should override models.json", () => {
-      // gpt-5.2 exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k
-      const stats = getModelStats("openai:gpt-5.2");
+      // gpt-5.2-codex exists in both files - models-extra.ts has correct 272k, models.json has incorrect 400k
+      const stats = getModelStats("openai:gpt-5.2-codex");
       expect(stats).not.toBeNull();
       expect(stats?.max_input_tokens).toBe(272000); // models-extra.ts override
     });

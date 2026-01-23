@@ -40,7 +40,8 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
-  // GPT-5.2 - Released December 11, 2025
+  // GPT-5.2 / GPT-5.2 Codex - keep aligned
+  // LiteLLM reports 400k context for Codex, but it should match GPT-5.2 (272k)
   // $1.75/M input, $14/M output
   // Cached input: $0.175/M
   // Supports off, low, medium, high, xhigh reasoning levels
@@ -58,6 +59,20 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_reasoning: true,
     supports_response_schema: true,
     knowledge_cutoff: "2025-08-31",
+  },
+  "gpt-5.2-codex": {
+    max_input_tokens: 272000,
+    max_output_tokens: 128000,
+    input_cost_per_token: 0.00000175, // $1.75 per million input tokens
+    output_cost_per_token: 0.000014, // $14 per million output tokens
+    // OpenAI model page lists "cached input" pricing, which corresponds to prompt cache reads.
+    cache_read_input_token_cost: 0.000000175, // $0.175 per million cached input tokens
+    litellm_provider: "openai",
+    mode: "responses",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
   },
 
   // GPT-5.2 Pro - Released December 11, 2025
