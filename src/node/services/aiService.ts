@@ -45,6 +45,7 @@ import {
   injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
@@ -1092,15 +1093,18 @@ export class AIService extends EventEmitter {
       // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
       // Similar to how OpenAI handles reasoning vs non-reasoning models
       let effectiveModelString = modelString;
-      const [providerName, modelId] = parseModelString(modelString);
-      if (providerName === "xai" && modelId === "grok-4-1-fast") {
+      const [providerName] = parseModelString(modelString);
+      const normalizedModelString = normalizeGatewayModel(modelString);
+      const [normalizedProviderName, normalizedModelId] = parseModelString(normalizedModelString);
+      const isMuxGatewayModel = providerName === "mux-gateway";
+      if (normalizedProviderName === "xai" && normalizedModelId === "grok-4-1-fast") {
         // xAI Grok only supports full reasoning (no medium/low)
         // Map to appropriate variant based on thinking level
-        if (effectiveThinkingLevel !== "off") {
-          effectiveModelString = "xai:grok-4-1-fast-reasoning";
-        } else {
-          effectiveModelString = "xai:grok-4-1-fast-non-reasoning";
-        }
+        const variant =
+          effectiveThinkingLevel !== "off"
+            ? "grok-4-1-fast-reasoning"
+            : "grok-4-1-fast-non-reasoning";
+        effectiveModelString = isMuxGatewayModel ? `mux-gateway:xai/${variant}` : `xai:${variant}`;
         log.debug("Mapping xAI Grok model to variant", {
           original: modelString,
           effective: effectiveModelString,
@@ -1117,7 +1121,9 @@ export class AIService extends EventEmitter {
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
 
-      // Use the provider name already extracted above (providerName variable)
+      // Normalize provider for provider-specific handling (Mux Gateway models should behave
+      // like their underlying provider for message transforms and compliance checks).
+      const providerForMessages = normalizedProviderName;
 
       // Tool names are needed for the mode transition sentinel injection.
       // Compute them once we know the effective agent + tool policy.
@@ -1127,14 +1133,14 @@ export class AIService extends EventEmitter {
       // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
       // to comply with Extended Thinking API requirements
       const preserveReasoningOnly =
-        providerName === "anthropic" && effectiveThinkingLevel !== "off";
+        providerForMessages === "anthropic" && effectiveThinkingLevel !== "off";
       const filteredMessages = filterEmptyAssistantMessages(messages, preserveReasoningOnly);
       log.debug(`Filtered ${messages.length - filteredMessages.length} empty assistant messages`);
       log.debug_obj(`${workspaceId}/1a_filtered_messages.json`, filteredMessages);
 
       // OpenAI-specific: Keep reasoning parts in history
       // OpenAI manages conversation state via previousResponseId
-      if (providerName === "openai") {
+      if (providerForMessages === "openai") {
         log.debug("Keeping reasoning parts for OpenAI (managed via previousResponseId)");
       }
 
@@ -1456,8 +1462,9 @@ export class AIService extends EventEmitter {
       log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
 
       // Apply ModelMessage transforms based on provider requirements
-      const transformedMessages = transformModelMessages(modelMessages, providerName, {
-        anthropicThinkingEnabled: providerName === "anthropic" && effectiveThinkingLevel !== "off",
+      const transformedMessages = transformModelMessages(modelMessages, providerForMessages, {
+        anthropicThinkingEnabled:
+          providerForMessages === "anthropic" && effectiveThinkingLevel !== "off",
       });
 
       // Apply cache control for Anthropic models AFTER transformation
@@ -1466,7 +1473,7 @@ export class AIService extends EventEmitter {
       log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
 
       // Validate the messages meet Anthropic requirements (Anthropic only)
-      if (providerName === "anthropic") {
+      if (providerForMessages === "anthropic") {
         const validation = validateAnthropicCompliance(finalMessages);
         if (!validation.valid) {
           log.error(

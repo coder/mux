@@ -167,8 +167,8 @@ export function buildProviderOptions(
     // 4. The response ID hasn't been invalidated by OpenAI
     let previousResponseId: string | undefined;
     if (messages && messages.length > 0 && reasoningEffort) {
-      // Parse current model name (without provider prefix)
-      const [, currentModelName] = modelString.split(":");
+      // Parse current model name (without provider prefix), normalize gateway format if needed
+      const currentModelName = normalizeGatewayModel(modelString).split(":")[1];
 
       // Find last assistant message from the same model
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -176,7 +176,7 @@ export function buildProviderOptions(
         if (msg.role === "assistant") {
           // Check if this message is from the same model
           const msgModel = msg.metadata?.model;
-          const [, msgModelName] = msgModel?.split(":") ?? [];
+          const msgModelName = msgModel ? normalizeGatewayModel(msgModel).split(":")[1] : undefined;
 
           if (msgModelName === currentModelName) {
             const metadata = msg.metadata?.providerMetadata;
