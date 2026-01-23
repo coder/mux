@@ -299,7 +299,7 @@ export function useDraftWorkspaceSettings(
 
   // Initialize trunk branch from backend recommendation or first branch
   useEffect(() => {
-    if (!trunkBranch && branches.length > 0) {
+    if (branches.length > 0 && (!trunkBranch || !branches.includes(trunkBranch))) {
       const defaultBranch = recommendedTrunk ?? branches[0];
       setTrunkBranch(defaultBranch);
     }
