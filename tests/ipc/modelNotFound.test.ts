@@ -17,6 +17,7 @@ describeIntegration("model_not_found error handling", () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       const collector = createStreamCollector(env.orpc, workspaceId);
       collector.start();
+      await collector.waitForSubscription();
       try {
         // Send a message with a non-existent model
         // Anthropic returns 404 with error.type === 'not_found_error'
@@ -54,6 +55,7 @@ describeIntegration("model_not_found error handling", () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("openai");
       const collector = createStreamCollector(env.orpc, workspaceId);
       collector.start();
+      await collector.waitForSubscription();
       try {
         // Send a message with a non-existent model
         // OpenAI returns 400 with error.code === 'model_not_found'
