@@ -168,7 +168,8 @@ export async function openInEditor(args: {
 
     // VS Code's dev-container URI scheme only supports opening folders as workspaces,
     // not individual files. Open the parent directory so the file is visible in the file tree.
-    const targetDir = args.isFile ? getParentDirectory(args.targetPath) : args.targetPath;
+    const normalizedTargetPath = normalizePathSeparators(args.targetPath);
+    const targetDir = args.isFile ? getParentDirectory(normalizedTargetPath) : normalizedTargetPath;
 
     const hostWorkspacePath = trimTrailingSlash(info.hostWorkspacePath);
     const containerPath = mapHostPathToContainerPath({
