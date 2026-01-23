@@ -5,7 +5,11 @@ import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { getWorkspaceDockLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
+import {
+  getWorkspaceDockLayoutKey,
+  RIGHT_SIDEBAR_TAB_KEY,
+  WINDOW_DOCK_LAYOUT_KEY,
+} from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { CommandIds } from "@/browser/utils/commandIds";
@@ -19,7 +23,9 @@ import type { LayoutPresetsConfig, LayoutSlotNumber } from "@/common/types/uiLay
 import {
   addTabToFocusedTabset,
   collectAllTabsWithTabset,
+  getFocusedActiveTab,
   parseDockLayoutState,
+  removeTabEverywhere,
   selectTabInFocusedTabset,
   selectTabInTabset,
   setFocusedTabset,
@@ -35,6 +41,13 @@ import {
   isWorkspacePaneId,
   type WorkspacePaneId,
 } from "@/browser/utils/workspaceDockLayout";
+import {
+  ensureWindowDockLayoutState,
+  findFirstNonNavTabsetId,
+  getDefaultWindowDockLayoutState,
+  isWindowPaneId,
+  type WindowPaneId,
+} from "@/browser/utils/windowDockLayout";
 
 import type { ProjectConfig } from "@/node/config";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -176,8 +189,48 @@ const findFirstTerminalSessionTab = (
     findFirstTerminalSessionTab(node.children[0]) ?? findFirstTerminalSessionTab(node.children[1])
   );
 };
+
 export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandAction[]> {
   const actions: Array<() => CommandAction[]> = [];
+
+  const getWindowDockFallbackTab = (_moved: WindowPaneId): WindowPaneId => "welcome";
+
+  const getDefaultWindowDockLayout = (): DockLayoutState<WindowPaneId> => {
+    const mainPane: Exclude<WindowPaneId, "nav"> = p.selectedWorkspace
+      ? (`workspace:${p.selectedWorkspace.workspaceId}` as Exclude<WindowPaneId, "nav">)
+      : "welcome";
+
+    return getDefaultWindowDockLayoutState(mainPane);
+  };
+
+  const ensureWindowDockLayout = (state: DockLayoutState<WindowPaneId>) => {
+    const defaultLayout = getDefaultWindowDockLayout();
+
+    return ensureWindowDockLayoutState(state, {
+      isWorkspaceIdValid: (workspaceId) => p.workspaceMetadata.has(workspaceId),
+      getDefaultState: () => defaultLayout,
+    });
+  };
+
+  const updateWindowDockLayout = (
+    updater: (state: DockLayoutState<WindowPaneId>) => DockLayoutState<WindowPaneId>
+  ) => {
+    const defaultLayout = getDefaultWindowDockLayout();
+
+    updatePersistedState<DockLayoutState<WindowPaneId>>(
+      WINDOW_DOCK_LAYOUT_KEY,
+      (prev) => {
+        const parsed = parseDockLayoutState(prev, {
+          isPaneId: isWindowPaneId,
+          defaultState: defaultLayout,
+          ensureRequiredPanes: ensureWindowDockLayout,
+        });
+
+        return ensureWindowDockLayout(updater(parsed));
+      },
+      defaultLayout
+    );
+  };
 
   // NOTE: We intentionally route to the chat-based creation flow instead of
   // building a separate prompt. This keeps `/new`, keybinds, and the command
@@ -227,7 +280,88 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       });
     }
 
-    // Remove current workspace (rename action intentionally omitted until we add a proper modal)
+    // Workspace management actions
+
+    if (p.workspaceMetadata.size > 0) {
+      const openWorkspaceInSplit = (workspaceId: string, direction: "horizontal" | "vertical") => {
+        const meta = p.workspaceMetadata.get(workspaceId);
+        if (!meta) {
+          return;
+        }
+
+        updateWindowDockLayout((s) => {
+          let next = s;
+
+          // Avoid adding workspaces to the nav tabset.
+          if (getFocusedActiveTab(next, "welcome") === "nav") {
+            const nonNavTabsetId = findFirstNonNavTabsetId(next.root);
+            if (nonNavTabsetId) {
+              next = setFocusedTabset(next, nonNavTabsetId);
+            }
+          }
+
+          next = selectTabInFocusedTabset(next, `workspace:${meta.id}` as WindowPaneId);
+          return splitFocusedTabset(next, direction, getWindowDockFallbackTab);
+        });
+
+        p.onSelectWorkspace({
+          projectPath: meta.projectPath,
+          projectName: meta.projectName,
+          namedWorkspacePath: meta.namedWorkspacePath,
+          workspaceId: meta.id,
+        });
+      };
+
+      const workspaceSelectPrompt = {
+        title: "Open Workspace in Split",
+        fields: [
+          {
+            type: "select" as const,
+            name: "workspaceId",
+            label: "Workspace",
+            placeholder: "Search workspaces…",
+            getOptions: () =>
+              Array.from(p.workspaceMetadata.values()).map((meta) => {
+                const label = `${meta.projectName} / ${meta.name}`;
+                return {
+                  id: meta.id,
+                  label,
+                  keywords: [
+                    meta.name,
+                    meta.projectName,
+                    meta.namedWorkspacePath,
+                    meta.id,
+                    meta.title,
+                  ].filter((k): k is string => !!k),
+                };
+              }),
+          },
+        ],
+      };
+
+      list.push(
+        {
+          id: CommandIds.windowOpenWorkspaceInSplitVertical(),
+          title: "Open Workspace in Split (Vertical)…",
+          section: section.workspaces,
+          run: () => undefined,
+          prompt: {
+            ...workspaceSelectPrompt,
+            onSubmit: (vals) => openWorkspaceInSplit(vals.workspaceId, "vertical"),
+          },
+        },
+        {
+          id: CommandIds.windowOpenWorkspaceInSplitHorizontal(),
+          title: "Open Workspace in Split (Horizontal)…",
+          section: section.workspaces,
+          run: () => undefined,
+          prompt: {
+            ...workspaceSelectPrompt,
+            onSubmit: (vals) => openWorkspaceInSplit(vals.workspaceId, "horizontal"),
+          },
+        }
+      );
+    }
     if (selected?.namedWorkspacePath) {
       const workspaceDisplayName = `${selected.projectName}/${selected.namedWorkspacePath.split("/").pop() ?? selected.namedWorkspacePath}`;
       const selectedMeta = p.workspaceMetadata.get(selected.workspaceId);
@@ -446,8 +580,107 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
       },
     ];
 
-    // Right sidebar layout commands require a selected workspace (layout is per-workspace)
+    // Window DockLayout commands
+
+    list.push(
+      {
+        id: CommandIds.windowFocusNextPane(),
+        title: "Window: Focus Next Pane",
+        section: section.navigation,
+        run: () =>
+          updateWindowDockLayout((s) => {
+            const candidates = collectAllTabsWithTabset(s.root).filter((t) => t.tab !== "nav");
+            if (candidates.length === 0) return s;
+
+            const active = getFocusedActiveTab(s, candidates[0].tab);
+            const currentIndex = candidates.findIndex((t) => t.tab === active);
+            const nextIndex = (currentIndex === -1 ? 0 : currentIndex + 1) % candidates.length;
+            const target = candidates[nextIndex];
+
+            const withFocus = setFocusedTabset(s, target.tabsetId);
+            return selectTabInTabset(withFocus, target.tabsetId, target.tab);
+          }),
+      },
+      {
+        id: CommandIds.windowFocusPrevPane(),
+        title: "Window: Focus Previous Pane",
+        section: section.navigation,
+        run: () =>
+          updateWindowDockLayout((s) => {
+            const candidates = collectAllTabsWithTabset(s.root).filter((t) => t.tab !== "nav");
+            if (candidates.length === 0) return s;
+
+            const active = getFocusedActiveTab(s, candidates[0].tab);
+            const currentIndex = candidates.findIndex((t) => t.tab === active);
+            const nextIndex =
+              (currentIndex === -1 ? 0 : currentIndex - 1 + candidates.length) % candidates.length;
+            const target = candidates[nextIndex];
+
+            const withFocus = setFocusedTabset(s, target.tabsetId);
+            return selectTabInTabset(withFocus, target.tabsetId, target.tab);
+          }),
+      },
+      {
+        id: CommandIds.windowSplitHorizontal(),
+        title: "Window: Split Horizontally",
+        section: section.navigation,
+        run: () =>
+          updateWindowDockLayout((s) => {
+            let next = s;
+            if (getFocusedActiveTab(next, "welcome") === "nav") {
+              const nonNavTabsetId = findFirstNonNavTabsetId(next.root);
+              if (nonNavTabsetId) {
+                next = setFocusedTabset(next, nonNavTabsetId);
+              }
+            }
+
+            return splitFocusedTabset(next, "horizontal", getWindowDockFallbackTab);
+          }),
+      },
+      {
+        id: CommandIds.windowSplitVertical(),
+        title: "Window: Split Vertically",
+        section: section.navigation,
+        run: () =>
+          updateWindowDockLayout((s) => {
+            let next = s;
+            if (getFocusedActiveTab(next, "welcome") === "nav") {
+              const nonNavTabsetId = findFirstNonNavTabsetId(next.root);
+              if (nonNavTabsetId) {
+                next = setFocusedTabset(next, nonNavTabsetId);
+              }
+            }
+
+            return splitFocusedTabset(next, "vertical", getWindowDockFallbackTab);
+          }),
+      },
+      {
+        id: CommandIds.windowCloseActivePane(),
+        title: "Window: Close Active Pane",
+        section: section.navigation,
+        run: () =>
+          updateWindowDockLayout((s) => {
+            const active = getFocusedActiveTab(s, "welcome");
+            if (active === "nav") {
+              return s;
+            }
+
+            return removeTabEverywhere(s, active, getDefaultWindowDockLayout);
+          }),
+      },
+      {
+        id: CommandIds.windowResetLayout(),
+        title: "Window: Reset Layout",
+        section: section.layouts,
+        run: () => {
+          const defaultLayout = getDefaultWindowDockLayout();
+          updatePersistedState(WINDOW_DOCK_LAYOUT_KEY, () => defaultLayout, defaultLayout);
+        },
+      }
+    );
     const wsId = p.selectedWorkspace?.workspaceId;
+
+    // Right sidebar layout commands require a selected workspace (layout is per-workspace)
     if (wsId) {
       list.push(
         {

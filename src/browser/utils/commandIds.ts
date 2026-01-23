@@ -38,6 +38,16 @@ export const CommandIds = {
   navRightSidebarFocusTerminal: () => "nav:rightSidebar:focusTerminal" as const,
   navRightSidebarSplitHorizontal: () => "nav:rightSidebar:splitHorizontal" as const,
   navRightSidebarSplitVertical: () => "nav:rightSidebar:splitVertical" as const,
+
+  // Window DockLayout commands
+  windowSplitHorizontal: () => "window:splitHorizontal" as const,
+  windowSplitVertical: () => "window:splitVertical" as const,
+  windowFocusNextPane: () => "window:focusNextPane" as const,
+  windowFocusPrevPane: () => "window:focusPrevPane" as const,
+  windowCloseActivePane: () => "window:closeActivePane" as const,
+  windowResetLayout: () => "window:resetLayout" as const,
+  windowOpenWorkspaceInSplitHorizontal: () => "window:openWorkspaceInSplitHorizontal" as const,
+  windowOpenWorkspaceInSplitVertical: () => "window:openWorkspaceInSplitVertical" as const,
   navRightSidebarAddTool: () => "nav:rightSidebar:addTool" as const,
 
   // Chat commands

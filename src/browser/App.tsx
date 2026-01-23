@@ -134,9 +134,9 @@ function AppInner() {
     ? (pendingNewWorkspaceProject ?? defaultProjectPath)
     : null;
 
-  // Window-level DockLayout (nav + multiple workspaces) is intentionally disabled.
-  // UX: navigation stays pinned left and only one workspace is active at a time.
-  const shouldUseWindowDockLayout = false;
+  // Window-level DockLayout (nav + workspaces/projects/welcome) is enabled.
+  // This lets users tile multiple main panes (and even drag the nav) like a window manager.
+  const shouldUseWindowDockLayout = true;
 
   const windowMainPane: Exclude<WindowPaneId, "nav"> = selectedWorkspace
     ? `workspace:${selectedWorkspace.workspaceId}`
@@ -969,7 +969,6 @@ function AppInner() {
     if (paneId === "nav") {
       return {
         title: "Navigation",
-        draggable: false,
         render: () => (
           <LeftSidebar
             lastReadTimestamps={lastReadTimestamps}
