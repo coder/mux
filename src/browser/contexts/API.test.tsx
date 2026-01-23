@@ -212,7 +212,7 @@ describe("API reconnection", () => {
     });
   });
 
-  test("shows auth_required on first connection failure without token", async () => {
+  test("retries on first connection failure without showing auth_required", async () => {
     const states: string[] = [];
 
     render(
@@ -224,17 +224,22 @@ describe("API reconnection", () => {
     const ws1 = MockWebSocket.lastInstance();
     expect(ws1).toBeDefined();
 
-    // First connection fails - browser fires error then close
+    // First connection fails - browser fires error then close.
     act(() => {
       ws1!.simulateError();
       ws1!.simulateClose(1006);
     });
 
     await waitFor(() => {
-      expect(states).toContain("auth_required");
+      expect(states).toContain("reconnecting");
     });
 
-    expect(states.filter((s) => s === "reconnecting")).toHaveLength(0);
+    expect(states.filter((s) => s === "auth_required")).toHaveLength(0);
+
+    // Should create a new WebSocket for the reconnect attempt.
+    await waitFor(() => {
+      expect(MockWebSocket.instances.length).toBeGreaterThan(1);
+    });
   });
 
   test("reconnects on connection loss when previously connected", async () => {
