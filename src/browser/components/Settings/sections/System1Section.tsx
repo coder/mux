@@ -10,10 +10,12 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { useAPI } from "@/browser/contexts/API";
-import { getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { getDefaultModel, getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import {
+  getModelKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
@@ -23,6 +25,7 @@ import {
   normalizeTaskSettings,
   type TaskSettings,
 } from "@/common/types/tasks";
+import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { THINKING_LEVELS, coerceThinkingLevel } from "@/common/types/thinking";
 
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
@@ -40,13 +43,19 @@ export function System1Section() {
   const savingRef = useRef(false);
   const pendingSaveRef = useRef<TaskSettings | null>(null);
 
-  const [system1Model, setSystem1Model] = usePersistedState<string>(
+  const [system1ModelRaw, setSystem1ModelRaw] = usePersistedState<unknown>(
     PREFERRED_SYSTEM_1_MODEL_KEY,
     "",
     {
       listener: true,
     }
   );
+
+  const system1Model = typeof system1ModelRaw === "string" ? system1ModelRaw : "";
+
+  const setSystem1Model = (value: string) => {
+    setSystem1ModelRaw(value);
+  };
 
   const [system1ThinkingLevelRaw, setSystem1ThinkingLevelRaw] = usePersistedState<unknown>(
     PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
@@ -56,6 +65,33 @@ export function System1Section() {
 
   const system1ThinkingLevel = coerceThinkingLevel(system1ThinkingLevelRaw) ?? "off";
 
+  const workspaceContext = useOptionalWorkspaceContext();
+  const selectedWorkspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
+  const defaultModel = getDefaultModel();
+
+  const workspaceModelStorageKey = selectedWorkspaceId
+    ? getModelKey(selectedWorkspaceId)
+    : "__system1_workspace_model_fallback__";
+
+  const [workspaceModelRaw] = usePersistedState<unknown>(workspaceModelStorageKey, defaultModel, {
+    listener: true,
+  });
+
+  const system1ModelTrimmed = system1Model.trim();
+  const workspaceModelTrimmed =
+    typeof workspaceModelRaw === "string" ? workspaceModelRaw.trim() : "";
+
+  const effectiveSystem1ModelStringForThinking =
+    system1ModelTrimmed || workspaceModelTrimmed || defaultModel;
+
+  const policyThinkingLevels = getThinkingPolicyForModel(effectiveSystem1ModelStringForThinking);
+  const allowedThinkingLevels =
+    policyThinkingLevels.length > 0 ? policyThinkingLevels : THINKING_LEVELS;
+
+  const effectiveSystem1ThinkingLevel = enforceThinkingPolicy(
+    effectiveSystem1ModelStringForThinking,
+    system1ThinkingLevel
+  );
   const setSystem1ThinkingLevel = (value: string) => {
     setSystem1ThinkingLevelRaw(coerceThinkingLevel(value) ?? "off");
   };
@@ -178,12 +214,13 @@ export function System1Section() {
     );
   };
 
-  const setBashOutputCompactionMinTotalBytes = (rawValue: string) => {
-    const parsed = Number(rawValue);
+  const setBashOutputCompactionMinTotalKb = (rawValue: string) => {
+    const parsedKb = Number(rawValue);
+    const bytes = parsedKb * 1024;
     setTaskSettings((prev) =>
       normalizeTaskSettings({
         ...prev,
-        bashOutputCompactionMinTotalBytes: parsed,
+        bashOutputCompactionMinTotalBytes: bytes,
       })
     );
   };
@@ -198,12 +235,13 @@ export function System1Section() {
     );
   };
 
-  const setBashOutputCompactionTimeoutMs = (rawValue: string) => {
-    const parsed = Number(rawValue);
+  const setBashOutputCompactionTimeoutSeconds = (rawValue: string) => {
+    const parsedSeconds = Number(rawValue);
+    const ms = parsedSeconds * 1000;
     setTaskSettings((prev) =>
       normalizeTaskSettings({
         ...prev,
-        bashOutputCompactionTimeoutMs: parsed,
+        bashOutputCompactionTimeoutMs: ms,
       })
     );
   };
@@ -231,6 +269,9 @@ export function System1Section() {
   const bashOutputCompactionTimeoutMs =
     taskSettings.bashOutputCompactionTimeoutMs ??
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default;
+
+  const bashOutputCompactionMinTotalKb = Math.floor(bashOutputCompactionMinTotalBytes / 1024);
+  const bashOutputCompactionTimeoutSeconds = Math.floor(bashOutputCompactionTimeoutMs / 1000);
 
   return (
     <div className="space-y-6">
@@ -261,12 +302,16 @@ export function System1Section() {
               <div className="text-muted-light text-[10px]">Log filtering</div>
             </div>
             <div className="min-w-0 flex-1">
-              <Select value={system1ThinkingLevel} onValueChange={setSystem1ThinkingLevel}>
+              <Select
+                value={effectiveSystem1ThinkingLevel}
+                onValueChange={setSystem1ThinkingLevel}
+                disabled={allowedThinkingLevels.length <= 1}
+              >
                 <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {THINKING_LEVELS.map((level) => (
+                  {allowedThinkingLevels.map((level) => (
                     <SelectItem key={level} value={level}>
                       {level}
                     </SelectItem>
@@ -305,22 +350,29 @@ export function System1Section() {
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
-              <div className="text-foreground text-sm">Min Total Bytes</div>
+              <div className="text-foreground text-sm">Min Total (KB)</div>
               <div className="text-muted text-xs">
-                Filter when output exceeds this many bytes. Range{" "}
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.min}–
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.max}.
+                Filter when output exceeds this many kilobytes. Range{" "}
+                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.min / 1024}
+                –
+                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.max / 1024}
+                .
               </div>
             </div>
             <Input
               type="number"
-              value={bashOutputCompactionMinTotalBytes}
-              min={SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.min}
-              max={SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.max}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setBashOutputCompactionMinTotalBytes(e.target.value)
+              value={bashOutputCompactionMinTotalKb}
+              min={
+                SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.min / 1024
               }
-              className="border-border-medium bg-background-secondary h-9 w-36"
+              max={
+                SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.max / 1024
+              }
+              step={1}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setBashOutputCompactionMinTotalKb(e.target.value)
+              }
+              className="border-border-medium bg-background-secondary h-9 w-28"
             />
           </div>
 
@@ -347,20 +399,21 @@ export function System1Section() {
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
-              <div className="text-foreground text-sm">Timeout (ms)</div>
+              <div className="text-foreground text-sm">Timeout (seconds)</div>
               <div className="text-muted text-xs">
-                Abort filtering if it takes longer than this many milliseconds. Range{" "}
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min}–
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max}.
+                Abort filtering if it takes longer than this many seconds. Range{" "}
+                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min / 1000}–
+                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max / 1000}.
               </div>
             </div>
             <Input
               type="number"
-              value={bashOutputCompactionTimeoutMs}
-              min={SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min}
-              max={SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max}
+              value={bashOutputCompactionTimeoutSeconds}
+              min={SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min / 1000}
+              max={SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max / 1000}
+              step={1}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                setBashOutputCompactionTimeoutMs(e.target.value)
+                setBashOutputCompactionTimeoutSeconds(e.target.value)
               }
               className="border-border-medium bg-background-secondary h-9 w-28"
             />
