@@ -1157,6 +1157,7 @@ export class AIService extends EventEmitter {
       }
 
       const metadata = metadataResult.data;
+      const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
 
       // Get actual workspace path from config (handles both legacy and new format)
       const workspace = this.config.findWorkspace(workspaceId);
@@ -1252,8 +1253,7 @@ export class AIService extends EventEmitter {
       try {
         agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, effectiveAgentId);
       } catch (error) {
-        log.warn("Failed to load agent definition; falling back to exec", {
-          workspaceId,
+        workspaceLog.warn("Failed to load agent definition; falling back to exec", {
           effectiveAgentId,
           agentDiscoveryPath,
           disableWorkspaceAgents,
@@ -1533,7 +1533,7 @@ export class AIService extends EventEmitter {
           mcpTools = result.tools;
           mcpStats = result.stats;
         } catch (error) {
-          log.error("Failed to start MCP servers", { workspaceId, error });
+          workspaceLog.error("Failed to start MCP servers", { error });
         } finally {
           mcpSetupDurationMs = Date.now() - start;
         }
@@ -1946,7 +1946,7 @@ export class AIService extends EventEmitter {
         this.lastLlmRequestByWorkspace.set(workspaceId, cloned);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        log.warn("Failed to capture debug LLM request snapshot", { workspaceId, error: errMsg });
+        workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
       }
       const streamResult = await this.streamManager.startStream(
         workspaceId,
@@ -1968,7 +1968,8 @@ export class AIService extends EventEmitter {
         maxOutputTokens,
         effectiveToolPolicy,
         streamToken, // Pass the pre-generated stream token
-        hasQueuedMessage
+        hasQueuedMessage,
+        metadata.name
       );
 
       if (!streamResult.success) {

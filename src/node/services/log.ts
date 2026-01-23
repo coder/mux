@@ -29,7 +29,21 @@ function getDebugObjDir(): string {
   return _debugObjDir;
 }
 
-/** Log levels in order of verbosity (lower = less verbose) */
+/** Logging types */
+
+export type LogFields = Record<string, unknown>;
+
+export interface Logger {
+  info: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+  debug: (...args: unknown[]) => void;
+  debug_obj: (filename: string, obj: unknown) => void;
+  setLevel: (level: LogLevel) => void;
+  getLevel: () => LogLevel;
+  isDebugMode: () => boolean;
+  withFields: (fields: LogFields) => Logger;
+}
 export type LogLevel = "error" | "warn" | "info" | "debug";
 
 const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
@@ -272,6 +286,69 @@ function debugObject(filename: string, obj: unknown): void {
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  if (Array.isArray(value)) {
+    return false;
+  }
+  if (value instanceof Error) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value) as object | null;
+  return proto === Object.prototype || proto === null;
+}
+
+function normalizeFields(fields?: LogFields): LogFields | undefined {
+  return fields && Object.keys(fields).length > 0 ? fields : undefined;
+}
+
+function mergeLogFields(base?: LogFields, extra?: LogFields): LogFields | undefined {
+  return normalizeFields({ ...(base ?? {}), ...(extra ?? {}) });
+}
+
+const baseLogger = {
+  debug_obj: debugObject,
+  setLevel: (level: LogLevel): void => {
+    currentLogLevel = level;
+  },
+  getLevel: (): LogLevel => currentLogLevel,
+  isDebugMode,
+};
+function appendFieldsToArgs(args: unknown[], fields?: LogFields): unknown[] {
+  if (!fields) {
+    return args;
+  }
+  if (args.length === 0) {
+    return [fields];
+  }
+  const lastArg = args[args.length - 1];
+  if (isPlainObject(lastArg)) {
+    return [...args.slice(0, -1), { ...fields, ...lastArg }];
+  }
+  return [...args, fields];
+}
+
+function createLogger(boundFields?: LogFields): Logger {
+  const normalizedFields = normalizeFields(boundFields);
+  const logAtLevel =
+    (level: LogLevel) =>
+    (...args: unknown[]): void => {
+      safePipeLog(level, ...appendFieldsToArgs(args, normalizedFields));
+    };
+
+  return {
+    ...baseLogger,
+    info: logAtLevel("info"),
+    warn: logAtLevel("warn"),
+    error: logAtLevel("error"),
+    debug: logAtLevel("debug"),
+    withFields: (fields: LogFields): Logger =>
+      createLogger(mergeLogFields(normalizedFields, fields)),
+  };
+}
+
 /**
  * Unified logging interface for mux
  *
@@ -286,57 +363,8 @@ function debugObject(filename: string, obj: unknown): void {
  * - Desktop mode: info
  * - MUX_DEBUG=1: debug
  * - MUX_LOG_LEVEL=<level>: explicit override
+ *
+ * Use log.withFields({ workspaceId }) to create a sub-logger that
+ * automatically includes fields in every log entry.
  */
-export const log = {
-  /**
-   * Log an informational message to stdout (shown at info+ level)
-   */
-  info: (...args: unknown[]): void => {
-    safePipeLog("info", ...args);
-  },
-
-  /**
-   * Log a warning message to stderr (shown at warn+ level)
-   */
-  warn: (...args: unknown[]): void => {
-    safePipeLog("warn", ...args);
-  },
-
-  /**
-   * Log an error message to stderr (always shown)
-   */
-  error: (...args: unknown[]): void => {
-    safePipeLog("error", ...args);
-  },
-
-  /**
-   * Log a debug message to stdout (shown at debug level only)
-   */
-  debug: (...args: unknown[]): void => {
-    safePipeLog("debug", ...args);
-  },
-
-  /**
-   * Dump an object to a JSON file for debugging (only at debug level)
-   * Files are written to ~/.mux/debug_obj/
-   */
-  debug_obj: debugObject,
-
-  /**
-   * Set the current log level programmatically
-   * @example log.setLevel("info") // Enable verbose output
-   */
-  setLevel: (level: LogLevel): void => {
-    currentLogLevel = level;
-  },
-
-  /**
-   * Get the current log level
-   */
-  getLevel: (): LogLevel => currentLogLevel,
-
-  /**
-   * Check if debug mode is enabled (backwards compatibility)
-   */
-  isDebugMode,
-};
+export const log = createLogger();

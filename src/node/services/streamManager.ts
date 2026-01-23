@@ -14,7 +14,7 @@ import {
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import { log } from "./log";
+import { log, type Logger } from "./log";
 import type {
   StreamStartEvent,
   StreamEndEvent,
@@ -149,6 +149,7 @@ interface WorkspaceStreamInfo {
   streamResult: Awaited<ReturnType<typeof streamText>>;
   unlinkAbortSignal?: () => void;
   abortController: AbortController;
+  workspaceName?: string;
   messageId: string;
   token: StreamToken;
   startTime: number;
@@ -224,6 +225,16 @@ export class StreamManager extends EventEmitter {
     this.sessionUsageService = sessionUsageService;
   }
 
+  private getWorkspaceLogger(
+    workspaceId: WorkspaceId,
+    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName">
+  ): Logger {
+    const fields: Record<string, unknown> = { workspaceId };
+    if (streamInfo?.workspaceName) {
+      fields.workspaceName = streamInfo.workspaceName;
+    }
+    return log.withFields(fields);
+  }
   setMCPServerManager(manager: MCPServerManager | undefined): void {
     this.mcpServerManager = manager;
   }
@@ -732,7 +743,8 @@ export class StreamManager extends EventEmitter {
       usage,
       providerMetadata,
       "Failed to record session usage on abort",
-      "error"
+      "error",
+      streamInfo
     );
 
     // Emit abort event with usage if available
@@ -754,7 +766,8 @@ export class StreamManager extends EventEmitter {
     usage: LanguageModelV2Usage | undefined,
     providerMetadata: Record<string, unknown> | undefined,
     logMessage: string,
-    logLevel: "warn" | "error"
+    logLevel: "warn" | "error",
+    streamInfo?: Pick<WorkspaceStreamInfo, "workspaceName">
   ): Promise<void> {
     if (!this.sessionUsageService || !usage) {
       return;
@@ -763,6 +776,7 @@ export class StreamManager extends EventEmitter {
     if (!messageUsage) {
       return;
     }
+    const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
     try {
       await this.sessionUsageService.recordUsage(
         workspaceId as string,
@@ -770,7 +784,7 @@ export class StreamManager extends EventEmitter {
         messageUsage
       );
     } catch (error) {
-      (logLevel === "error" ? log.error : log.warn)(logMessage, { workspaceId, error });
+      (logLevel === "error" ? workspaceLog.error : workspaceLog.warn)(logMessage, { error });
     }
   }
 
@@ -919,7 +933,8 @@ export class StreamManager extends EventEmitter {
     providerOptions?: Record<string, unknown>,
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
-    hasQueuedMessage?: () => boolean
+    hasQueuedMessage?: () => boolean,
+    workspaceName?: string
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -950,6 +965,7 @@ export class StreamManager extends EventEmitter {
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
       streamResult,
+      workspaceName,
       abortController,
       messageId,
       token: streamToken,
@@ -1569,7 +1585,8 @@ export class StreamManager extends EventEmitter {
                 totalUsage,
                 providerMetadata,
                 "Failed to record session usage (stream completion unaffected)",
-                "warn"
+                "warn",
+                streamInfo
               );
             }
 
@@ -1646,11 +1663,13 @@ export class StreamManager extends EventEmitter {
   ): Promise<void> {
     streamInfo.state = StreamState.ERROR;
 
+    const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+
     // Log the actual error for debugging
-    log.error("Stream processing error:", error);
+    workspaceLog.error("Stream processing error:", error);
 
     // Record lost previousResponseId so future requests can filter it out
-    this.recordLostResponseIdIfApplicable(error, streamInfo);
+    this.recordLostResponseIdIfApplicable(workspaceId, error, streamInfo, workspaceLog);
 
     const errorPayload = this.buildStreamErrorPayload(streamInfo, error);
     await this.persistStreamError(workspaceId, streamInfo, errorPayload);
@@ -1769,7 +1788,7 @@ export class StreamManager extends EventEmitter {
   private async resetStreamStateForRetry(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
-    options?: { preserveParts?: boolean; preserveUsage?: boolean }
+    options?: { preserveParts?: boolean; preserveUsage?: boolean; workspaceLog?: Logger }
   ): Promise<void> {
     const preserveParts = options?.preserveParts ?? false;
     const preserveUsage = options?.preserveUsage ?? false;
@@ -1798,7 +1817,8 @@ export class StreamManager extends EventEmitter {
       try {
         await this.partialService.deletePartial(workspaceId as string);
       } catch (deleteError) {
-        log.warn("Failed to clear partial state before retry", { workspaceId, error: deleteError });
+        const logger = options?.workspaceLog ?? this.getWorkspaceLogger(workspaceId, streamInfo);
+        logger.warn("Failed to clear partial state before retry", { error: deleteError });
       }
     }
   }
@@ -1858,7 +1878,8 @@ export class StreamManager extends EventEmitter {
       return false;
     }
 
-    this.recordLostResponseIdIfApplicable(error, streamInfo);
+    const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+    this.recordLostResponseIdIfApplicable(workspaceId, error, streamInfo, workspaceLog);
 
     // Step-boundary retries restart the SDK stream, so totalUsage only reflects
     // the retried step. Track this to prefer cumulativeUsage at stream end.
@@ -1866,8 +1887,7 @@ export class StreamManager extends EventEmitter {
       streamInfo.didRetryPreviousResponseIdAtStep = true;
     }
 
-    log.info("Retrying stream without invalid previousResponseId", {
-      workspaceId,
+    workspaceLog.info("Retrying stream without invalid previousResponseId", {
       messageId: streamInfo.messageId,
       model: streamInfo.model,
       retryScope: hasParts ? "step" : "stream",
@@ -1879,6 +1899,7 @@ export class StreamManager extends EventEmitter {
     await this.resetStreamStateForRetry(workspaceId, streamInfo, {
       preserveParts: hasParts,
       preserveUsage: hasParts,
+      workspaceLog,
     });
 
     streamInfo.currentStepStartIndex = streamInfo.parts.length;
@@ -2081,7 +2102,8 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     providedStreamToken?: StreamToken,
-    hasQueuedMessage?: () => boolean
+    hasQueuedMessage?: () => boolean,
+    workspaceName?: string
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2154,7 +2176,8 @@ export class StreamManager extends EventEmitter {
           providerOptions,
           maxOutputTokens,
           toolPolicy,
-          hasQueuedMessage
+          hasQueuedMessage,
+          workspaceName
         );
 
         // Guard against a narrow race:
@@ -2201,7 +2224,12 @@ export class StreamManager extends EventEmitter {
    * Record a previousResponseId as lost if the error indicates OpenAI no longer has it.
    * StreamManager retries once automatically, and buildProviderOptions filters it for future requests.
    */
-  private recordLostResponseIdIfApplicable(error: unknown, streamInfo: WorkspaceStreamInfo): void {
+  private recordLostResponseIdIfApplicable(
+    workspaceId: WorkspaceId,
+    error: unknown,
+    streamInfo: WorkspaceStreamInfo,
+    workspaceLog?: Logger
+  ): void {
     const responseId = this.extractPreviousResponseIdFromError(error);
     if (!responseId) {
       return;
@@ -2223,7 +2251,8 @@ export class StreamManager extends EventEmitter {
       return;
     }
 
-    log.info("Recording lost previousResponseId for future filtering", {
+    const logger = workspaceLog ?? this.getWorkspaceLogger(workspaceId, streamInfo);
+    logger.info("Recording lost previousResponseId for future filtering", {
       previousResponseId: responseId,
       messageId: streamInfo.messageId,
       model: streamInfo.model,
