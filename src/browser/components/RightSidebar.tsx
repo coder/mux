@@ -1255,15 +1255,21 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {renderLayoutNode(layout.root)}
+              <SidebarCollapseButton
+                collapsed={collapsed}
+                onToggle={() => setCollapsed(!collapsed)}
+                side="right"
+              />
             </div>
           </div>
         )}
-
-        <SidebarCollapseButton
-          collapsed={collapsed}
-          onToggle={() => setCollapsed(!collapsed)}
-          side="right"
-        />
+        {collapsed && (
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={() => setCollapsed(!collapsed)}
+            side="right"
+          />
+        )}
       </SidebarContainer>
 
       {/* Drag overlay - shows tab being dragged at cursor position */}
