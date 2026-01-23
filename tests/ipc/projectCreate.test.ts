@@ -2,13 +2,15 @@
  * Integration tests for PROJECT_CREATE IPC handler
  *
  * Tests:
- * - Tilde expansion in project paths
- * - Path validation (directory check)
- * - Creating new projects for non-existent paths
+ * - Bare project names resolve to ~/.mux/projects/<name>
+ * - Tilde expansion in project paths (home + ~/.mux)
+ * - Auto-creation for non-existent paths
+ * - Path validation (directory check, duplicates, empty paths)
  */
 
 import * as fs from "fs/promises";
 import * as path from "path";
+import { getMuxHome, getMuxProjectsDir } from "../../src/common/constants/paths";
 import * as os from "os";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import type { TestEnvironment } from "./setup";
@@ -17,6 +19,118 @@ import { resolveOrpcClient } from "./helpers";
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 describeIntegration("PROJECT_CREATE IPC Handler", () => {
+  test.concurrent("should resolve bare project name to mux projects dir", async () => {
+    const env = await createTestEnvironment();
+    const bareName = `mux-test-bare-${Date.now()}`;
+    const expectedPath = path.join(getMuxProjectsDir(), bareName);
+    const client = resolveOrpcClient(env);
+
+    try {
+      const result = await client.projects.create({ projectPath: bareName });
+
+      if (!result.success) {
+        throw new Error(`Expected success but got: ${result.error}`);
+      }
+
+      expect(result.data.normalizedPath).toBe(expectedPath);
+
+      const stats = await fs.stat(expectedPath);
+      expect(stats.isDirectory()).toBe(true);
+    } finally {
+      await fs.rm(expectedPath, { recursive: true, force: true });
+      await cleanupTestEnvironment(env);
+    }
+  });
+
+  test.concurrent("should expand ~/.mux paths to mux home", async () => {
+    const env = await createTestEnvironment();
+    const tildeSubpath = `mux-test-tilde-${Date.now()}`;
+    const tildeProjectPath = `~/.mux/test-projects/${tildeSubpath}`;
+    const expectedPath = path.join(getMuxHome(), "test-projects", tildeSubpath);
+    const client = resolveOrpcClient(env);
+
+    try {
+      const result = await client.projects.create({ projectPath: tildeProjectPath });
+
+      if (!result.success) {
+        throw new Error(`Expected success but got: ${result.error}`);
+      }
+
+      expect(result.data.normalizedPath).toBe(expectedPath);
+
+      const stats = await fs.stat(expectedPath);
+      expect(stats.isDirectory()).toBe(true);
+    } finally {
+      await fs.rm(expectedPath, { recursive: true, force: true });
+      await cleanupTestEnvironment(env);
+    }
+  });
+
+  test.concurrent("should expand windows-style mux tilde paths", async () => {
+    const env = await createTestEnvironment();
+    const tildeSubpath = `mux-test-tilde-win-${Date.now()}`;
+    const tildeProjectPath = `~\\.mux\\test-projects\\${tildeSubpath}`;
+    const expectedPath = path.join(getMuxHome(), "test-projects", tildeSubpath);
+    const client = resolveOrpcClient(env);
+
+    try {
+      const result = await client.projects.create({ projectPath: tildeProjectPath });
+
+      if (!result.success) {
+        throw new Error(`Expected success but got: ${result.error}`);
+      }
+
+      expect(result.data.normalizedPath).toBe(expectedPath);
+
+      const stats = await fs.stat(expectedPath);
+      expect(stats.isDirectory()).toBe(true);
+    } finally {
+      await fs.rm(expectedPath, { recursive: true, force: true });
+      await cleanupTestEnvironment(env);
+    }
+  });
+
+  test.concurrent("should reject duplicate bare project name", async () => {
+    const env = await createTestEnvironment();
+    const bareName = `mux-test-dup-${Date.now()}`;
+    const expectedPath = path.join(getMuxProjectsDir(), bareName);
+    const client = resolveOrpcClient(env);
+
+    try {
+      const result1 = await client.projects.create({ projectPath: bareName });
+      if (!result1.success) {
+        throw new Error(`Expected success but got: ${result1.error}`);
+      }
+
+      const result2 = await client.projects.create({ projectPath: bareName });
+      if (result2.success) {
+        throw new Error("Expected failure but got success");
+      }
+
+      expect(result2.error).toBe("Project already exists");
+    } finally {
+      await fs.rm(expectedPath, { recursive: true, force: true });
+      await cleanupTestEnvironment(env);
+    }
+  });
+
+  test.concurrent("should reject empty project path", async () => {
+    const env = await createTestEnvironment();
+    const client = resolveOrpcClient(env);
+
+    try {
+      const result = await client.projects.create({ projectPath: "" });
+
+      if (result.success) {
+        throw new Error("Expected failure but got success");
+      }
+
+      expect(result.error).toBe("Project path cannot be empty");
+    } finally {
+      await cleanupTestEnvironment(env);
+    }
+  });
+
   test.concurrent("should expand tilde in project path and create project", async () => {
     const env = await createTestEnvironment();
     const tempProjectDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-project-test-"));
