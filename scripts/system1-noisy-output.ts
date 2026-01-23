@@ -12,6 +12,7 @@
  *   bun scripts/system1-noisy-output.ts
  *   bun scripts/system1-noisy-output.ts --bursts 5 --sleep-ms 200
  *   bun scripts/system1-noisy-output.ts --git
+ *   bun scripts/system1-noisy-output.ts --needles
  *
  * Notes:
  * - Use --bursts/--sleep-ms for background-bash testing (bash_output/task_await).
@@ -40,6 +41,11 @@ const TARGET_MAX_TOTAL_BYTES_BURST = Math.min(
   SYSTEM1_BASH_MIN_TOTAL_BYTES + 2048
 );
 
+const TARGET_MAX_TOTAL_BYTES_NEEDLES = Math.min(
+  TARGET_MAX_TOTAL_BYTES_SINGLE,
+  SYSTEM1_BASH_MIN_TOTAL_BYTES + 8 * 1024
+);
+
 // Keep lines short and ASCII-only so byte counts are predictable.
 const TEXT_LINE_TARGET_LEN = 96;
 
@@ -63,6 +69,31 @@ const GIT_REBASE_CONFLICT_OUTPUT_LINES = [
   "CONFLICT (content): Merge conflict in src/node/orpc/router.ts",
   "error: could not apply 678c593ed... fix: include plan path in harness bearings",
   "Could not apply 678c593ed... fix: include plan path in harness bearings",
+] as const;
+
+const DEVELOPER_SIGNAL_LINES = [
+  // High-priority (should always surface):
+  "Error: ECONNREFUSED 127.0.0.1:5432 - database connection failed",
+  "FATAL: Out of memory, killing process",
+  "warning: deprecated API 'fetchSync' will be removed in v3.0",
+  "Tests: 47 passed, 2 failed, 1 skipped",
+  "Build failed with exit code 1",
+  // Medium-priority (likely important):
+  "Listening on http://localhost:3000",
+  "Compiled successfully in 1.2s",
+  "warning: unused variable 'config' on line 42",
+  "Migration 20240115_add_users applied successfully",
+  // Subtle/tricky (tests semantic understanding):
+  "Retrying request (attempt 3/3)...",
+  "Skipping optional dependency: fsevents",
+  "Connection pool exhausted, waiting...",
+  // False positive traps (should NOT surface):
+  "Processing error_handler.ts...",
+  "const WARNING_LEVEL = 3;",
+  "// TODO: handle edge case",
+  // Security-sensitive (definitely surface):
+  "API_KEY=sk-live-abc123...",
+  "Permission denied: /etc/shadow",
 ] as const;
 
 const LOREM_WORDS = [
@@ -169,16 +200,27 @@ function lineBytesWithNewline(line: string): number {
   return bytes + 1; // + "\n"
 }
 
-function parseArgs(argv: string[]): { bursts: number; sleepMs: number; isGit: boolean } {
+function parseArgs(argv: string[]): {
+  bursts: number;
+  sleepMs: number;
+  isGit: boolean;
+  isNeedles: boolean;
+} {
   let bursts = 1;
   let sleepMs = 0;
   let isGit = false;
+  let isNeedles = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
 
     if (arg === "--git") {
       isGit = true;
+      continue;
+    }
+
+    if (arg === "--needles") {
+      isNeedles = true;
       continue;
     }
 
@@ -201,7 +243,7 @@ function parseArgs(argv: string[]): { bursts: number; sleepMs: number; isGit: bo
     if (arg === "--help" || arg === "-h") {
       // Avoid printing in normal use; throwing is fine for dev tooling.
       throw new Error(
-        "Usage: bun scripts/system1-noisy-output.ts [--git] [--bursts N] [--sleep-ms MS]"
+        "Usage: bun scripts/system1-noisy-output.ts [--git] [--needles] [--bursts N] [--sleep-ms MS]"
       );
     }
 
@@ -210,13 +252,14 @@ function parseArgs(argv: string[]): { bursts: number; sleepMs: number; isGit: bo
 
   assert(Number.isInteger(bursts) && bursts >= 1, "--bursts must be an integer >= 1");
   assert(Number.isInteger(sleepMs) && sleepMs >= 0, "--sleep-ms must be an integer >= 0");
+  assert(!(isGit && isNeedles), "--git and --needles are mutually exclusive");
 
-  if (isGit) {
-    assert(bursts === 1, "--git mode does not support --bursts");
-    assert(sleepMs === 0, "--git mode does not support --sleep-ms");
+  if (isGit || isNeedles) {
+    assert(bursts === 1, "--git/--needles mode does not support --bursts");
+    assert(sleepMs === 0, "--git/--needles mode does not support --sleep-ms");
   }
 
-  return { bursts, sleepMs, isGit };
+  return { bursts, sleepMs, isGit, isNeedles };
 }
 
 function getGitRebaseConflictOutput(): string {
@@ -240,6 +283,98 @@ function getGitRebaseConflictOutput(): string {
   // Sanity: keep the core conflict lines intact.
   assert(output.includes("CONFLICT (content):"), "Git output missing CONFLICT line");
   assert(output.includes("could not apply"), "Git output missing could-not-apply line");
+
+  return output;
+}
+
+function makePlausibleDevLogLine(index: number): string {
+  assert(Number.isInteger(index) && index >= 0, "index must be a non-negative integer");
+
+  const fileId = String(index % 97).padStart(2, "0");
+
+  switch (index % 6) {
+    case 0:
+      return `info: [builder] transpiling src/module-${fileId}.ts -> dist/module-${fileId}.js`;
+    case 1:
+      return `info: [builder] resolved ${100 + index} modules, ${20 + (index % 15)} cached`;
+    case 2:
+      return `debug: [cache] hit for pkg-${index % 17}@${1 + (index % 3)}.${index % 10}.${index % 7}`;
+    case 3:
+      return `info: [bundler] emitted chunk-${index % 12} (${50 + (index % 40)}kb)`;
+    case 4:
+      return `info: [lint] checking src/file-${fileId}.ts (mode=${index % 4 === 0 ? "fast" : "full"})`;
+    case 5:
+      return `debug: [timing] step=${index} duration=${(index % 9) + 1}.${index % 10}s`;
+    default:
+      // This should be unreachable due to modulo.
+      assert(false, "Unreachable dev log line case");
+  }
+}
+
+function getNeedlesOutput(params: { targetMaxTotalBytes: number }): string {
+  assert(
+    Number.isInteger(params.targetMaxTotalBytes) && params.targetMaxTotalBytes > 0,
+    "targetMaxTotalBytes must be a positive integer"
+  );
+
+  const lines: string[] = [];
+  let totalBytes = 0;
+
+  const addLine = (line: string): void => {
+    const lineBytes = lineBytesWithNewline(line);
+
+    // Must stay under bash tmpfile overflow limits or System 1 will never run.
+    assert(lines.length + 1 < BASH_HARD_MAX_LINES, "Exceeded bash max lines");
+    assert(totalBytes + lineBytes < BASH_MAX_TOTAL_BYTES, "Exceeded bash max bytes");
+
+    lines.push(line);
+    totalBytes += lineBytes;
+  };
+
+  // Preamble: looks like a plausible command run.
+  addLine("$ bun run build");
+
+  let noiseIndex = 0;
+  const noiseBetweenSignals = 6;
+
+  for (const signalLine of DEVELOPER_SIGNAL_LINES) {
+    for (let i = 0; i < noiseBetweenSignals; i++) {
+      addLine(makePlausibleDevLogLine(noiseIndex));
+      noiseIndex += 1;
+    }
+
+    addLine(signalLine);
+  }
+
+  // Fill with more plausible noise so System 1 has to choose (max kept lines is limited).
+  for (;;) {
+    const candidate = makePlausibleDevLogLine(noiseIndex);
+    noiseIndex += 1;
+
+    const candidateBytes = lineBytesWithNewline(candidate);
+
+    if (lines.length + 1 >= BASH_HARD_MAX_LINES) break;
+    if (totalBytes + candidateBytes >= params.targetMaxTotalBytes) break;
+
+    addLine(candidate);
+  }
+
+  const output = lines.join("\n") + "\n";
+  const outputBytes = Buffer.byteLength(output, "utf8");
+
+  // Final defensive checks (should never fire unless assumptions change).
+  assert(lines.length > SYSTEM1_BASH_MIN_LINES, "Needles output did not exceed System 1 min lines");
+  assert(
+    outputBytes > SYSTEM1_BASH_MIN_TOTAL_BYTES,
+    "Needles output did not exceed System 1 min bytes"
+  );
+  assert(outputBytes < BASH_MAX_TOTAL_BYTES, "Needles output exceeded bash max bytes");
+  assert(lines.length < BASH_HARD_MAX_LINES, "Needles output exceeded bash max lines");
+
+  // Sanity: keep our intended signal lines intact.
+  for (const signalLine of DEVELOPER_SIGNAL_LINES) {
+    assert(output.includes(signalLine), `Needles output missing expected line: ${signalLine}`);
+  }
 
   return output;
 }
@@ -368,10 +503,19 @@ function generateBurst(params: {
 }
 
 async function main(): Promise<void> {
-  const { bursts, sleepMs, isGit } = parseArgs(process.argv.slice(2));
+  const { bursts, sleepMs, isGit, isNeedles } = parseArgs(process.argv.slice(2));
 
   if (isGit) {
     process.stdout.write(getGitRebaseConflictOutput());
+    return;
+  }
+
+  if (isNeedles) {
+    process.stdout.write(
+      getNeedlesOutput({
+        targetMaxTotalBytes: TARGET_MAX_TOTAL_BYTES_NEEDLES,
+      })
+    );
     return;
   }
 
