@@ -78,14 +78,49 @@ export function generateForkTitle(sourceTitle: string): string {
 }
 
 /**
- * Generate both name and title for a forked workspace.
+ * Generate the next fork title for a given suffix.
+ */
+export function generateForkTitleWithSuffix(sourceTitle: string, suffix: number): string {
+  const { base } = parseWorkspaceTitle(sourceTitle);
+  return `${base} ${suffix}`;
+}
+
+/**
+ * Generate the next fork name for a given suffix.
+ */
+export function generateForkNameWithSuffix(sourceName: string, suffix: number): string {
+  const { base } = parseWorkspaceName(sourceName);
+  return `${base}-${suffix}`;
+}
+
+/**
+ * Find the next available fork suffix by checking existing workspace names.
+ * Starts from 2 and increments until finding an unused suffix.
+ */
+export function findNextForkSuffix(sourceName: string, existingNames: Set<string>): number {
+  const { base, suffix: currentSuffix } = parseWorkspaceName(sourceName);
+  let nextSuffix = currentSuffix === 0 ? 2 : currentSuffix + 1;
+
+  // Find next available suffix
+  while (existingNames.has(`${base}-${nextSuffix}`)) {
+    nextSuffix++;
+  }
+
+  return nextSuffix;
+}
+
+/**
+ * Generate both name and title for a forked workspace, avoiding collisions.
+ * @param existingNames Set of existing workspace names to avoid collisions
  */
 export function generateForkIdentity(
   sourceName: string,
-  sourceTitle: string | undefined
+  sourceTitle: string | undefined,
+  existingNames = new Set<string>()
 ): { name: string; title: string | undefined } {
+  const nextSuffix = findNextForkSuffix(sourceName, existingNames);
   return {
-    name: generateForkName(sourceName),
-    title: sourceTitle ? generateForkTitle(sourceTitle) : undefined,
+    name: generateForkNameWithSuffix(sourceName, nextSuffix),
+    title: sourceTitle ? generateForkTitleWithSuffix(sourceTitle, nextSuffix) : undefined,
   };
 }

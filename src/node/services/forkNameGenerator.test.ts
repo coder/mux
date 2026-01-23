@@ -5,6 +5,7 @@ import {
   generateForkName,
   generateForkTitle,
   generateForkIdentity,
+  findNextForkSuffix,
 } from "./forkNameGenerator";
 
 describe("forkNameGenerator", () => {
@@ -114,6 +115,45 @@ describe("forkNameGenerator", () => {
         name: "bugs-asd23-3",
         title: "Fixing bugs 3",
       });
+    });
+
+    it("should avoid collisions with existing workspace names", () => {
+      const existingNames = new Set(["bugs-asd23-2", "bugs-asd23-3"]);
+      const result = generateForkIdentity("bugs-asd23", "Fixing bugs", existingNames);
+      expect(result).toEqual({
+        name: "bugs-asd23-4",
+        title: "Fixing bugs 4",
+      });
+    });
+
+    it("should find next available suffix when forking from middle of sequence", () => {
+      const existingNames = new Set(["bugs-asd23-2", "bugs-asd23-4"]);
+      const result = generateForkIdentity("bugs-asd23", "Fixing bugs", existingNames);
+      // Starts at 2, finds collision, tries 3, no collision
+      expect(result).toEqual({
+        name: "bugs-asd23-3",
+        title: "Fixing bugs 3",
+      });
+    });
+  });
+
+  describe("findNextForkSuffix", () => {
+    it("should return 2 for first fork with no collisions", () => {
+      expect(findNextForkSuffix("bugs-asd23", new Set())).toBe(2);
+    });
+
+    it("should skip existing names", () => {
+      const existingNames = new Set(["bugs-asd23-2", "bugs-asd23-3"]);
+      expect(findNextForkSuffix("bugs-asd23", existingNames)).toBe(4);
+    });
+
+    it("should increment from source suffix when forking a fork", () => {
+      expect(findNextForkSuffix("bugs-asd23-5", new Set())).toBe(6);
+    });
+
+    it("should handle gaps in sequence", () => {
+      const existingNames = new Set(["bugs-asd23-2", "bugs-asd23-5"]);
+      expect(findNextForkSuffix("bugs-asd23", existingNames)).toBe(3);
     });
   });
 });

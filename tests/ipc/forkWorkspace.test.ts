@@ -665,4 +665,55 @@ describeIntegration("Workspace fork", () => {
     },
     15000
   );
+
+  test.concurrent(
+    "should avoid name collisions when forking same source multiple times",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+        const client = resolveOrpcClient(env);
+
+        // Create source workspace
+        const createResult = await client.workspace.create({
+          projectPath: tempGitRepo,
+          branchName: "collision-test",
+          trunkBranch,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) return;
+        const sourceWorkspaceId = createResult.metadata.id;
+
+        // Fork from source - should get -2
+        const fork1 = await client.workspace.fork({ sourceWorkspaceId });
+        expect(fork1.success).toBe(true);
+        if (!fork1.success) return;
+        expect(fork1.metadata.name).toBe("collision-test-2");
+
+        // Fork from source AGAIN - should get -3 (avoids collision with -2)
+        const fork2 = await client.workspace.fork({ sourceWorkspaceId });
+        expect(fork2.success).toBe(true);
+        if (!fork2.success) return;
+        expect(fork2.metadata.name).toBe("collision-test-3");
+
+        // Fork from source a third time - should get -4
+        const fork3 = await client.workspace.fork({ sourceWorkspaceId });
+        expect(fork3.success).toBe(true);
+        if (!fork3.success) return;
+        expect(fork3.metadata.name).toBe("collision-test-4");
+
+        // Cleanup
+        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        await client.workspace.remove({ workspaceId: fork1.metadata.id });
+        await client.workspace.remove({ workspaceId: fork2.metadata.id });
+        await client.workspace.remove({ workspaceId: fork3.metadata.id });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
 });

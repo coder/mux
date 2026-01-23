@@ -1496,12 +1496,24 @@ export class WorkspaceService extends EventEmitter {
       }
       const sourceMetadata = sourceMetadataResult.data;
 
-      // Auto-generate name and title if not provided
-      const forkIdentity = newName
-        ? { name: newName, title: undefined }
-        : generateForkIdentity(sourceMetadata.name, sourceMetadata.title);
-      const resolvedName = forkIdentity.name;
-      const resolvedTitle = forkIdentity.title;
+      // Auto-generate name and title if not provided, avoiding collisions with existing workspaces
+      let resolvedName: string;
+      let resolvedTitle: string | undefined;
+      if (newName) {
+        resolvedName = newName;
+        resolvedTitle = undefined;
+      } else {
+        // Get existing workspace names to avoid collisions
+        const existingWorkspaces = await this.config.getAllWorkspaceMetadata();
+        const existingNames = new Set(existingWorkspaces.map((w) => w.name));
+        const forkIdentity = generateForkIdentity(
+          sourceMetadata.name,
+          sourceMetadata.title,
+          existingNames
+        );
+        resolvedName = forkIdentity.name;
+        resolvedTitle = forkIdentity.title;
+      }
 
       const validation = validateWorkspaceName(resolvedName);
       if (!validation.valid) {
