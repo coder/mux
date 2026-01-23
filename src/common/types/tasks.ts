@@ -4,6 +4,12 @@ import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 export interface TaskSettings {
   maxParallelAgentTasks: number;
   maxTaskNestingDepth: number;
+
+  // System 1: bash output compaction (log filtering)
+  bashOutputCompactionMinLines?: number;
+  bashOutputCompactionMinTotalBytes?: number;
+  bashOutputCompactionMaxKeptLines?: number;
+  bashOutputCompactionTimeoutMs?: number;
 }
 
 export const TASK_SETTINGS_LIMITS = {
@@ -11,9 +17,25 @@ export const TASK_SETTINGS_LIMITS = {
   maxTaskNestingDepth: { min: 1, max: 5, default: 3 },
 } as const;
 
+export const SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS = {
+  bashOutputCompactionMinLines: { min: 0, max: 100_000, default: 10 },
+  bashOutputCompactionMinTotalBytes: { min: 0, max: 100 * 1024 * 1024, default: 4 * 1024 },
+  bashOutputCompactionMaxKeptLines: { min: 1, max: 1_000, default: 40 },
+  bashOutputCompactionTimeoutMs: { min: 250, max: 120_000, default: 5_000 },
+} as const;
+
 export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
+
+  bashOutputCompactionMinLines:
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
+  bashOutputCompactionMinTotalBytes:
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default,
+  bashOutputCompactionMaxKeptLines:
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default,
+  bashOutputCompactionTimeoutMs:
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
 };
 
 export interface SubagentAiDefaultsEntry {
@@ -80,18 +102,64 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     TASK_SETTINGS_LIMITS.maxTaskNestingDepth.max
   );
 
+  const bashOutputCompactionMinLines = clampInt(
+    record.bashOutputCompactionMinLines,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.min,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.max
+  );
+  const bashOutputCompactionMinTotalBytes = clampInt(
+    record.bashOutputCompactionMinTotalBytes,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.min,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.max
+  );
+  const bashOutputCompactionMaxKeptLines = clampInt(
+    record.bashOutputCompactionMaxKeptLines,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.min,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.max
+  );
+  const bashOutputCompactionTimeoutMs = clampInt(
+    record.bashOutputCompactionTimeoutMs,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min,
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max
+  );
+
   const result: TaskSettings = {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
+    bashOutputCompactionMinLines,
+    bashOutputCompactionMinTotalBytes,
+    bashOutputCompactionMaxKeptLines,
+    bashOutputCompactionTimeoutMs,
   };
 
   assert(
-    Number.isInteger(result.maxParallelAgentTasks),
+    Number.isInteger(maxParallelAgentTasks),
     "normalizeTaskSettings: maxParallelAgentTasks must be an integer"
   );
   assert(
-    Number.isInteger(result.maxTaskNestingDepth),
+    Number.isInteger(maxTaskNestingDepth),
     "normalizeTaskSettings: maxTaskNestingDepth must be an integer"
+  );
+
+  assert(
+    Number.isInteger(bashOutputCompactionMinLines),
+    "normalizeTaskSettings: bashOutputCompactionMinLines must be an integer"
+  );
+  assert(
+    Number.isInteger(bashOutputCompactionMinTotalBytes),
+    "normalizeTaskSettings: bashOutputCompactionMinTotalBytes must be an integer"
+  );
+  assert(
+    Number.isInteger(bashOutputCompactionMaxKeptLines),
+    "normalizeTaskSettings: bashOutputCompactionMaxKeptLines must be an integer"
+  );
+  assert(
+    Number.isInteger(bashOutputCompactionTimeoutMs),
+    "normalizeTaskSettings: bashOutputCompactionTimeoutMs must be an integer"
   );
 
   return result;

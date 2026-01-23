@@ -1,22 +1,6 @@
-import React, { useState, useCallback, useRef, useEffect } from "react";
-import { Plus, Loader2, Check, ChevronDown } from "lucide-react";
-import { SUPPORTED_PROVIDERS, PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { THINKING_LEVELS, coerceThinkingLevel } from "@/common/types/thinking";
-import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import {
-  LAST_CUSTOM_MODEL_PROVIDER_KEY,
-  PREFERRED_COMPACTION_MODEL_KEY,
-  PREFERRED_SYSTEM_1_MODEL_KEY,
-  PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-} from "@/common/constants/storage";
-import { useModelsFromSettings, getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
-import { useExperimentValue } from "@/browser/hooks/useExperiments";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { ModelRow } from "./ModelRow";
-import { useAPI } from "@/browser/contexts/API";
-import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import React, { useCallback, useState } from "react";
+import { Loader2, Plus } from "lucide-react";
+import { Button } from "@/browser/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -24,177 +8,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
-import { Button } from "@/browser/components/ui/button";
-import { getModelName, getModelProvider } from "@/common/utils/ai/models";
-import { ProviderIcon } from "@/browser/components/ProviderIcon";
-import { cn } from "@/common/lib/utils";
-
-/** Searchable model dropdown with keyboard navigation */
-function SearchableModelSelect(props: {
-  value: string;
-  onChange: (value: string) => void;
-  models: string[];
-  placeholder?: string;
-  emptyOption?: { value: string; label: string };
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  const displayValue =
-    props.emptyOption && !props.value
-      ? props.emptyOption.label
-      : (getModelName(props.value) ?? props.placeholder ?? "Select model");
-  const selectedProvider = props.value ? getModelProvider(props.value) : "";
-
-  // Filter models based on search
-  const searchLower = search.toLowerCase();
-  const filteredModels = props.models.filter(
-    (m) =>
-      m.toLowerCase().includes(searchLower) ||
-      (getModelName(m)?.toLowerCase().includes(searchLower) ?? false)
-  );
-
-  // Build list of all selectable items (empty option + filtered models)
-  const items: Array<{ value: string; label: string; provider?: string; isMuted?: boolean }> = [];
-  if (props.emptyOption) {
-    items.push({
-      value: props.emptyOption.value,
-      label: props.emptyOption.label,
-      isMuted: true,
-    });
-  }
-  for (const model of filteredModels) {
-    items.push({
-      value: model,
-      label: getModelName(model) ?? model,
-      provider: getModelProvider(model),
-    });
-  }
-
-  // Reset highlight when search changes or popover opens
-  useEffect(() => {
-    setHighlightedIndex(0);
-  }, [search]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setSearch("");
-      setHighlightedIndex(0);
-      // Focus input after popover renders
-      const timer = setTimeout(() => inputRef.current?.focus(), 10);
-      return () => clearTimeout(timer);
-    }
-  }, [isOpen]);
-
-  // Scroll highlighted item into view
-  useEffect(() => {
-    if (!listRef.current) return;
-    const highlighted = listRef.current.querySelector("[data-highlighted=true]");
-    if (highlighted) {
-      highlighted.scrollIntoView({ block: "nearest" });
-    }
-  }, [highlightedIndex]);
-
-  const handleSelect = (value: string) => {
-    props.onChange(value);
-    setIsOpen(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        setHighlightedIndex((i) => Math.min(i + 1, items.length - 1));
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setHighlightedIndex((i) => Math.max(i - 1, 0));
-        break;
-      case "Enter":
-        e.preventDefault();
-        if (items[highlightedIndex]) {
-          handleSelect(items[highlightedIndex].value);
-        }
-        break;
-      case "Escape":
-        e.preventDefault();
-        setIsOpen(false);
-        break;
-    }
-  };
-
-  return (
-    <Popover open={isOpen} onOpenChange={setIsOpen} modal>
-      <PopoverTrigger asChild>
-        <button className="bg-background-secondary border-border-medium focus:border-accent flex h-8 w-full items-center justify-between rounded border px-2 text-xs">
-          <span
-            className={cn(
-              "flex items-center gap-1.5 truncate",
-              !props.value && props.emptyOption && "text-muted"
-            )}
-          >
-            {selectedProvider && (
-              <ProviderIcon provider={selectedProvider} className="text-muted shrink-0" />
-            )}
-            {displayValue}
-          </span>
-          <ChevronDown className="text-muted h-3 w-3 shrink-0" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="max-h-[350px] w-[320px] p-0">
-        {/* Search input */}
-        <div className="border-border border-b px-2 py-1.5">
-          <input
-            ref={inputRef}
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Search models..."
-            className="text-foreground placeholder:text-muted w-full bg-transparent text-xs outline-none"
-          />
-        </div>
-
-        {/* Scrollable list */}
-        <div ref={listRef} className="max-h-[280px] overflow-y-auto p-1">
-          {items.length === 0 ? (
-            <div className="text-muted py-2 text-center text-[10px]">No matching models</div>
-          ) : (
-            items.map((item, index) => (
-              <button
-                key={item.value || "__empty__"}
-                data-highlighted={index === highlightedIndex}
-                onClick={() => handleSelect(item.value)}
-                onMouseEnter={() => setHighlightedIndex(index)}
-                className={cn(
-                  "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-xs",
-                  index === highlightedIndex ? "bg-hover" : "hover:bg-hover"
-                )}
-              >
-                <Check
-                  className={cn(
-                    "h-3 w-3 shrink-0",
-                    props.value === item.value || (!props.value && !item.value)
-                      ? "opacity-100"
-                      : "opacity-0"
-                  )}
-                />
-                {item.provider && (
-                  <ProviderIcon provider={item.provider} className="text-muted shrink-0" />
-                )}
-                <span className={cn("truncate", item.isMuted && "text-muted")}>{item.label}</span>
-              </button>
-            ))
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
+import { useAPI } from "@/browser/contexts/API";
+import { getSuggestedModels, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import { SearchableModelSelect } from "../components/SearchableModelSelect";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { PROVIDER_DISPLAY_NAMES, SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import {
+  LAST_CUSTOM_MODEL_PROVIDER_KEY,
+  PREFERRED_COMPACTION_MODEL_KEY,
+} from "@/common/constants/storage";
+import { ModelRow } from "./ModelRow";
 
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
@@ -243,28 +69,6 @@ export function ModelsSection() {
     "",
     { listener: true }
   );
-
-  const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
-
-  // System 1 model preference (experiment-gated)
-  const [system1Model, setSystem1Model] = usePersistedState<string>(
-    PREFERRED_SYSTEM_1_MODEL_KEY,
-    "",
-    { listener: true }
-  );
-
-  // System 1 thinking preference (experiment-gated)
-  const [system1ThinkingLevelRaw, setSystem1ThinkingLevelRaw] = usePersistedState<unknown>(
-    PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-    "off",
-    { listener: true }
-  );
-
-  const system1ThinkingLevel = coerceThinkingLevel(system1ThinkingLevelRaw) ?? "off";
-
-  const setSystem1ThinkingLevel = (value: string) => {
-    setSystem1ThinkingLevelRaw(coerceThinkingLevel(value) ?? "off");
-  };
 
   // All models (including hidden) for the settings dropdowns
   const allModels = getSuggestedModels(config);
@@ -438,45 +242,6 @@ export function ModelsSection() {
               />
             </div>
           </div>
-          {system1Enabled && (
-            <>
-              <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-                <div className="w-28 shrink-0 md:w-32">
-                  <div className="text-muted text-xs">System 1 Model</div>
-                  <div className="text-muted-light text-[10px]">Context optimization</div>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <SearchableModelSelect
-                    value={system1Model}
-                    onChange={setSystem1Model}
-                    models={allModels}
-                    emptyOption={{ value: "", label: "Use workspace model" }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-                <div className="w-28 shrink-0 md:w-32">
-                  <div className="text-muted text-xs">System 1 Reasoning</div>
-                  <div className="text-muted-light text-[10px]">Log filtering</div>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <Select value={system1ThinkingLevel} onValueChange={setSystem1ThinkingLevel}>
-                    <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {THINKING_LEVELS.map((level) => (
-                        <SelectItem key={level} value={level}>
-                          {level}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </>
-          )}
         </div>
       </div>
 

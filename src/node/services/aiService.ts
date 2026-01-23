@@ -86,7 +86,7 @@ import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+import { DEFAULT_TASK_SETTINGS, SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 import type {
   StreamAbortEvent,
   StreamAbortReason,
@@ -416,11 +416,6 @@ function getTaskDepthFromConfig(
 
   return depth;
 }
-
-const SYSTEM1_BASH_MIN_LINES = 10;
-const SYSTEM1_BASH_MIN_TOTAL_BYTES = 4 * 1024;
-const SYSTEM1_BASH_MAX_KEPT_LINES = 40;
-const SYSTEM1_TIMEOUT_MS = 5_000;
 
 function cloneToolPreservingDescriptors(tool: Tool): Tool {
   assert(tool && typeof tool === "object", "tool must be an object");
@@ -2206,10 +2201,23 @@ export class AIService extends EventEmitter {
                     return undefined;
                   }
 
+                  const minLines =
+                    taskSettings.bashOutputCompactionMinLines ??
+                    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default;
+                  const minTotalBytes =
+                    taskSettings.bashOutputCompactionMinTotalBytes ??
+                    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default;
+                  const maxKeptLines =
+                    taskSettings.bashOutputCompactionMaxKeptLines ??
+                    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default;
+                  const timeoutMs =
+                    taskSettings.bashOutputCompactionTimeoutMs ??
+                    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default;
+
                   const lines = splitBashOutputLines(params.output);
                   const bytes = Buffer.byteLength(params.output, "utf-8");
-                  const triggeredByLines = lines.length > SYSTEM1_BASH_MIN_LINES;
-                  const triggeredByBytes = bytes > SYSTEM1_BASH_MIN_TOTAL_BYTES;
+                  const triggeredByLines = lines.length > minLines;
+                  const triggeredByBytes = bytes > minTotalBytes;
 
                   if (!triggeredByLines && !triggeredByBytes) {
                     return undefined;
@@ -2254,7 +2262,7 @@ export class AIService extends EventEmitter {
                     "You are a fast log filtering assistant.\n" +
                     "Given numbered bash output, return ONLY valid JSON (no markdown, no prose).\n" +
                     'Schema: {"keep_ranges":[{"start":number,"end":number,"reason":string}]}\n' +
-                    `Rules:\n- start/end are 1-based line numbers\n- Keep at most ${SYSTEM1_BASH_MAX_KEPT_LINES} lines total\n- Prefer errors, stack traces, failing test summaries, and actionable warnings\n- If uncertain, keep the most informative 1-5 lines`;
+                    `Rules:\n- start/end are 1-based line numbers\n- Keep at most ${maxKeptLines} lines total\n- Prefer errors, stack traces, failing test summaries, and actionable warnings\n- If uncertain, keep the most informative 1-5 lines`;
 
                   const userMessage =
                     `Bash script:\n${params.script}\n\n` + `Numbered output:\n${numberedOutput}`;
@@ -2265,10 +2273,7 @@ export class AIService extends EventEmitter {
 
                   const system1AbortController = new AbortController();
                   const unlink = linkAbortSignal(params.abortSignal, system1AbortController);
-                  const timeout = setTimeout(
-                    () => system1AbortController.abort(),
-                    SYSTEM1_TIMEOUT_MS
-                  );
+                  const timeout = setTimeout(() => system1AbortController.abort(), timeoutMs);
                   timeout.unref?.();
 
                   if (typeof params.toolCallId === "string" && params.toolCallId.length > 0) {
@@ -2306,7 +2311,7 @@ export class AIService extends EventEmitter {
                   const applied = applySystem1KeepRangesToOutput({
                     rawOutput: params.output,
                     keepRanges,
-                    maxKeptLines: SYSTEM1_BASH_MAX_KEPT_LINES,
+                    maxKeptLines,
                   });
                   if (!applied || applied.keptLines === 0) {
                     return undefined;
