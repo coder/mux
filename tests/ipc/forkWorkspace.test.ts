@@ -502,4 +502,60 @@ describeIntegration("Workspace fork", () => {
     },
     15000
   );
+
+  test.concurrent(
+    "should persist local runtimeConfig through config reload after fork",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        // Create source workspace with LocalRuntime (project-dir mode)
+        const localRuntimeConfig = { type: "local" as const };
+
+        const client = resolveOrpcClient(env);
+        const createResult = await client.workspace.create({
+          projectPath: tempGitRepo,
+          branchName: "local-persist-test",
+          trunkBranch: "main",
+          runtimeConfig: localRuntimeConfig,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) return;
+        const sourceWorkspaceId = createResult.metadata.id;
+
+        // Fork the local workspace
+        const forkResult = await client.workspace.fork({
+          sourceWorkspaceId,
+          newName: "local-persist-forked",
+        });
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+        const forkedWorkspaceId = forkResult.metadata.id;
+
+        // Verify forked workspace has local runtimeConfig immediately
+        expect(forkResult.metadata.runtimeConfig.type).toBe("local");
+        expect("srcBaseDir" in forkResult.metadata.runtimeConfig).toBe(false);
+
+        // BUG REPRO: Reload config and verify runtimeConfig persisted correctly
+        // This simulates what happens after app restart or when getAllWorkspaceMetadata is called
+        const workspaces = await client.workspace.list();
+        const forkedWorkspace = workspaces.find((w: { id: string }) => w.id === forkedWorkspaceId);
+
+        // This is the critical assertion that would fail before the fix:
+        // After reload, the workspace should still have type: "local" without srcBaseDir
+        expect(forkedWorkspace).toBeDefined();
+        expect(forkedWorkspace!.runtimeConfig.type).toBe("local");
+        expect("srcBaseDir" in forkedWorkspace!.runtimeConfig).toBe(false);
+
+        // Cleanup
+        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        await client.workspace.remove({ workspaceId: forkedWorkspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
 });

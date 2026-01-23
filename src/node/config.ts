@@ -783,6 +783,7 @@ export class Config {
         id: metadata.id,
         name: metadata.name,
         createdAt: metadata.createdAt,
+        runtimeConfig: metadata.runtimeConfig,
       };
 
       if (existingIndex >= 0) {
