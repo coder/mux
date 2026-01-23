@@ -17,7 +17,7 @@ interface UseAIViewKeybindsParams {
   showRetryBarrier: boolean;
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
-  handleOpenTerminal: () => void;
+  handleOpenTerminal: () => void | Promise<unknown>;
   handleOpenInEditor: () => void;
   aggregator: StreamingMessageAggregator | undefined; // For compaction detection
   setEditingMessage: (editing: { id: string; content: string } | undefined) => void;
@@ -109,7 +109,7 @@ export function useAIViewKeybinds({
       }
       if (matchesKeybind(e, KEYBINDS.OPEN_TERMINAL)) {
         e.preventDefault();
-        handleOpenTerminal();
+        void handleOpenTerminal();
         return;
       }
 

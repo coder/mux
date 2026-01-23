@@ -76,7 +76,9 @@ interface ChatPaneProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   status?: "creating";
-  onOpenTerminal: (options?: TerminalSessionCreateOptions) => void;
+  onOpenTerminal: (
+    options?: TerminalSessionCreateOptions
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 type ReviewsState = ReturnType<typeof useReviews>;

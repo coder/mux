@@ -23,7 +23,6 @@ import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceSto
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
-import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
 import { CommandPalette } from "./components/CommandPalette";
@@ -200,8 +199,6 @@ function AppInner() {
       }
     }
   }, [selectedWorkspace, workspaceMetadata, setSelectedWorkspace]);
-
-  const openWorkspaceInTerminal = useOpenTerminal();
 
   const handleRemoveProject = useCallback(
     async (path: string): Promise<{ success: boolean; error?: string }> => {
@@ -459,12 +456,6 @@ function AppInner() {
     onRemoveProject: removeProjectFromPalette,
     onToggleSidebar: toggleSidebarFromPalette,
     onNavigateWorkspace: navigateWorkspaceFromPalette,
-    onOpenWorkspaceInTerminal: (workspaceId, runtimeConfig) => {
-      // Best-effort only. Palette actions should never throw.
-      void openWorkspaceInTerminal(workspaceId, runtimeConfig).catch(() => {
-        // Errors are surfaced elsewhere (toasts/logs) and users can retry.
-      });
-    },
     onToggleTheme: toggleTheme,
     onSetTheme: setThemePreference,
     onOpenSettings: openSettings,

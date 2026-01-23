@@ -310,14 +310,9 @@ async function loadServices(): Promise<void> {
   // - ServiceContainer transitively imports the entire AI SDK (ai, @ai-sdk/anthropic, etc.)
   // - These are large modules (~100ms load time) that would block splash from appearing
   // - Loading happens once, then cached
-  const [
-    { Config: ConfigClass },
-    { ServiceContainer: ServiceContainerClass },
-    { TerminalWindowManager: TerminalWindowManagerClass },
-  ] = await Promise.all([
+  const [{ Config: ConfigClass }, { ServiceContainer: ServiceContainerClass }] = await Promise.all([
     import("@/node/config"),
     import("@/node/services/serviceContainer"),
-    import("@/desktop/terminalWindowManager"),
   ]);
   /* eslint-enable no-restricted-syntax */
   config = new ConfigClass();
@@ -482,8 +477,6 @@ async function loadServices(): Promise<void> {
     }
   }
 
-  // Set TerminalWindowManager for desktop mode (pop-out terminal windows)
-  const terminalWindowManager = new TerminalWindowManagerClass(config);
   services.setProjectDirectoryPicker(async () => {
     const win = BrowserWindow.getFocusedWindow();
     if (!win) return null;
@@ -496,8 +489,6 @@ async function loadServices(): Promise<void> {
 
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
   });
-
-  services.setTerminalWindowManager(terminalWindowManager);
 
   loadTokenizerModules().catch((error) => {
     console.error("Failed to preload tokenizer modules:", error);

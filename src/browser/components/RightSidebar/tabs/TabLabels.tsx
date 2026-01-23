@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
+import { FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { FileIcon } from "../../FileIcon";
 import { formatTabDuration, type ReviewStats } from "./registry";
@@ -114,17 +114,14 @@ interface TerminalTabLabelProps {
   dynamicTitle?: string;
   /** Terminal index (0-based) within the current tabset */
   terminalIndex: number;
-  /** Callback when pop-out button is clicked */
-  onPopOut: () => void;
   /** Callback when close button is clicked */
   onClose: () => void;
 }
 
-/** Terminal tab label with icon, dynamic title, and action buttons */
+/** Terminal tab label with icon, dynamic title, and close button */
 export const TerminalTabLabel: React.FC<TerminalTabLabelProps> = ({
   dynamicTitle,
   terminalIndex,
-  onPopOut,
   onClose,
 }) => {
   const fallbackName = terminalIndex === 0 ? "Terminal" : `Terminal ${terminalIndex + 1}`;
@@ -134,22 +131,6 @@ export const TerminalTabLabel: React.FC<TerminalTabLabelProps> = ({
     <span className="inline-flex items-center gap-1">
       <TerminalIcon className="h-3 w-3 shrink-0" />
       <span className="max-w-[20ch] min-w-0 truncate">{displayName}</span>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="text-muted hover:text-foreground -my-0.5 rounded p-0.5 transition-colors"
-            onClick={(e) => {
-              e.stopPropagation();
-              onPopOut();
-            }}
-            aria-label="Open terminal in new window"
-          >
-            <ExternalLink className="h-3 w-3" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">Open in new window</TooltipContent>
-      </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
           <button

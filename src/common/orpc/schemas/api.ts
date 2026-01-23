@@ -833,18 +833,6 @@ export const terminal = {
     input: z.object({ sessionId: z.string() }),
     output: eventIterator(z.number()),
   },
-  openWindow: {
-    input: z.object({
-      workspaceId: z.string(),
-      /** Optional session ID to reattach to an existing terminal session (for pop-out handoff) */
-      sessionId: z.string().optional(),
-    }),
-    output: z.void(),
-  },
-  closeWindow: {
-    input: z.object({ workspaceId: z.string() }),
-    output: z.void(),
-  },
   /**
    * List active terminal sessions for a workspace.
    * Used by frontend to discover existing sessions to reattach to after reload.
@@ -852,15 +840,6 @@ export const terminal = {
   listSessions: {
     input: z.object({ workspaceId: z.string() }),
     output: z.array(z.string()),
-  },
-  /**
-   * Open the native system terminal for a workspace.
-   * Opens the user's preferred terminal emulator (Ghostty, Terminal.app, etc.)
-   * with the working directory set to the workspace path.
-   */
-  openNative: {
-    input: z.object({ workspaceId: z.string() }),
-    output: z.void(),
   },
 };
 

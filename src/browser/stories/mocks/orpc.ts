@@ -773,9 +773,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         yield* [];
         await new Promise<void>(() => undefined);
       },
-      openWindow: () => Promise.resolve(undefined),
-      closeWindow: () => Promise.resolve(undefined),
-      openNative: () => Promise.resolve(undefined),
     },
     update: {
       check: () => Promise.resolve(undefined),
