@@ -39,3 +39,7 @@ Like the [Docker runtime](/runtime/docker), you can check "Share credentials" to
 ## Filesystem layout
 
 Worktrees live on the host at `~/.mux/src/<project>/<workspace>`. The container mounts this directory (location inside the container depends on your devcontainer.json `workspaceFolder`).
+
+## Notes
+
+- The Dev Container runtime button only appears if Mux finds a `devcontainer.json` in the project.
