@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   copyWorkspaceStorage,
   deleteWorkspaceStorage,
+  getDraftScopeId,
   getInputAttachmentsKey,
 } from "@/common/constants/storage";
 
@@ -50,6 +51,12 @@ describe("storage workspace-scoped keys", () => {
     } else {
       delete (globalThis as { localStorage?: unknown }).localStorage;
     }
+  });
+
+  test("getDraftScopeId formats scope id", () => {
+    expect(getDraftScopeId("/Users/me/repo", "draft-123")).toBe(
+      "__draft__//Users/me/repo/draft-123"
+    );
   });
 
   test("getInputAttachmentsKey formats key", () => {

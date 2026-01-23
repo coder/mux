@@ -21,6 +21,7 @@ import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePers
 import {
   getAgentIdKey,
   getAgentsInitNudgeKey,
+  getDraftScopeId,
   getInputKey,
   getPendingScopeId,
   getProjectScopeId,
@@ -34,6 +35,8 @@ interface ProjectPageProps {
   projectName: string;
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
+  /** Draft ID for UI-only workspace creation drafts (from URL) */
+  pendingDraftId?: string | null;
   /** Section ID to pre-select when creating (from sidebar section "+" button) */
   pendingSectionId?: string | null;
   onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
@@ -65,6 +68,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   projectName,
   leftSidebarCollapsed,
   onToggleLeftSidebarCollapsed,
+  pendingDraftId,
   pendingSectionId,
   onProviderConfig,
   onWorkspaceCreated,
@@ -209,12 +213,15 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
       });
     } else {
       pendingAgentsInitSendRef.current = true;
-      const pendingScopeId = getPendingScopeId(projectPath);
+      const pendingScopeId =
+        typeof pendingDraftId === "string" && pendingDraftId.trim().length > 0
+          ? getDraftScopeId(projectPath, pendingDraftId)
+          : getPendingScopeId(projectPath);
       updatePersistedState(getInputKey(pendingScopeId), "/init");
     }
 
     setShowAgentsInitNudge(false);
-  }, [projectPath, setShowAgentsInitNudge]);
+  }, [projectPath, pendingDraftId, setShowAgentsInitNudge]);
 
   const handleChatReady = useCallback((api: ChatInputAPI) => {
     chatInputRef.current = api;
@@ -298,6 +305,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                         projectPath={projectPath}
                         projectName={projectName}
                         pendingSectionId={pendingSectionId}
+                        pendingDraftId={pendingDraftId}
                         onProviderConfig={onProviderConfig}
                         onReady={handleChatReady}
                         onWorkspaceCreated={onWorkspaceCreated}

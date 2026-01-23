@@ -37,6 +37,7 @@ import {
   VIM_ENABLED_KEY,
   getProjectScopeId,
   getPendingScopeId,
+  getDraftScopeId,
   getPendingWorkspaceSendErrorKey,
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
@@ -159,7 +160,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Storage keys differ by variant
   const storageKeys = (() => {
     if (variant === "creation") {
-      const pendingScopeId = getPendingScopeId(props.projectPath);
+      const pendingScopeId =
+        typeof props.pendingDraftId === "string" && props.pendingDraftId.trim().length > 0
+          ? getDraftScopeId(props.projectPath, props.pendingDraftId)
+          : getPendingScopeId(props.projectPath);
       return {
         inputKey: getInputKey(pendingScopeId),
         attachmentsKey: getInputAttachmentsKey(pendingScopeId),
@@ -325,7 +329,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
   const { open } = useSettings();
-  const { selectedWorkspace } = useWorkspaceContext();
+  const { selectedWorkspace, deleteWorkspaceDraft } = useWorkspaceContext();
   const { agentId, currentAgent } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
@@ -543,6 +547,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onWorkspaceCreated: props.onWorkspaceCreated,
           message: input,
           sectionId: selectedSectionId,
+          draftId: props.pendingDraftId,
           userModel: preferredModel,
         }
       : {
@@ -1514,6 +1519,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // to let CSS min-height take over
         if (inputRef.current) {
           inputRef.current.style.height = "";
+        }
+
+        if (typeof props.pendingDraftId === "string" && props.pendingDraftId.trim().length > 0) {
+          deleteWorkspaceDraft(props.projectPath, props.pendingDraftId);
         }
       }
       return;

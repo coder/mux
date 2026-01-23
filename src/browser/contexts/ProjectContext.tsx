@@ -13,6 +13,12 @@ import type { ProjectConfig, SectionConfig } from "@/common/types/project";
 import type { BranchListResult } from "@/common/orpc/types";
 import type { Secret } from "@/common/types/secrets";
 import type { Result } from "@/common/types/result";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+  deleteWorkspaceStorage,
+  getDraftScopeId,
+} from "@/common/constants/storage";
 
 interface WorkspaceModalState {
   isOpen: boolean;
@@ -130,6 +136,35 @@ export function ProjectProvider(props: { children: ReactNode }) {
             next.delete(path);
             return next;
           });
+
+          // Clean up any UI-only workspace drafts for this project.
+          const draftsValue = readPersistedState<unknown>(WORKSPACE_DRAFTS_BY_PROJECT_KEY, {});
+          if (draftsValue && typeof draftsValue === "object") {
+            const record = draftsValue as Record<string, unknown>;
+            const drafts = record[path];
+            if (drafts !== undefined) {
+              if (Array.isArray(drafts)) {
+                for (const draft of drafts) {
+                  if (!draft || typeof draft !== "object") continue;
+                  const draftId = (draft as { draftId?: unknown }).draftId;
+                  if (typeof draftId === "string" && draftId.trim().length > 0) {
+                    deleteWorkspaceStorage(getDraftScopeId(path, draftId));
+                  }
+                }
+              }
+
+              updatePersistedState<Record<string, unknown>>(
+                WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+                (prev) => {
+                  const next = prev && typeof prev === "object" ? { ...prev } : {};
+                  delete next[path];
+                  return next;
+                },
+                {}
+              );
+            }
+          }
+
           return { success: true };
         } else {
           console.error("Failed to remove project:", result.error);

@@ -21,6 +21,7 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
+  getDraftScopeId,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
 } from "@/common/constants/storage";
@@ -48,6 +49,8 @@ interface UseCreationWorkspaceOptions {
   message: string;
   /** Section ID to assign the new workspace to */
   sectionId?: string | null;
+  /** Draft ID for UI-only workspace creation drafts (from URL) */
+  draftId?: string | null;
   /** User's currently selected model (for name generation fallback) */
   userModel?: string;
 }
@@ -177,6 +180,7 @@ export function useCreationWorkspace({
   onWorkspaceCreated,
   message,
   sectionId,
+  draftId,
   userModel,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const { api } = useAPI();
@@ -409,7 +413,11 @@ export function useCreationWorkspace({
             // Ignore - sendMessage will persist AI settings as a fallback.
           });
 
-        const pendingScopeId = projectPath ? getPendingScopeId(projectPath) : null;
+        const pendingScopeId = projectPath
+          ? typeof draftId === "string" && draftId.trim().length > 0
+            ? getDraftScopeId(projectPath, draftId)
+            : getPendingScopeId(projectPath)
+          : null;
 
         // Sync preferences before switching (keeps workspace settings consistent).
         syncCreationPreferences(projectPath, metadata.id);
@@ -481,6 +489,7 @@ export function useCreationWorkspace({
       settings.trunkBranch,
       waitForGeneration,
       sectionId,
+      draftId,
     ]
   );
 

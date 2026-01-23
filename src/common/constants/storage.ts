@@ -26,6 +26,18 @@ export function getPendingScopeId(projectPath: string): string {
 }
 
 /**
+ * Get draft workspace scope ID for storage keys.
+ *
+ * This is used for UI-only workspace creation drafts so multiple pending drafts can
+ * exist per project without colliding.
+ *
+ * Format: "__draft__/{projectPath}/{draftId}"
+ */
+export function getDraftScopeId(projectPath: string, draftId: string): string {
+  return `__draft__/${projectPath}/${draftId}`;
+}
+
+/**
  * Global scope ID for workspace-independent preferences
  */
 export const GLOBAL_SCOPE_ID = "__global__";
@@ -53,6 +65,14 @@ export const SELECTED_WORKSPACE_KEY = "selectedWorkspace";
  * Format: "expandedProjects"
  */
 export const EXPANDED_PROJECTS_KEY = "expandedProjects";
+
+/**
+ * LocalStorage key for UI-only workspace creation drafts.
+ *
+ * Value: Record<string, Array<{ draftId: string; sectionId: string | null; createdAt: number }>>
+ * Keyed by projectPath.
+ */
+export const WORKSPACE_DRAFTS_BY_PROJECT_KEY = "workspaceDraftsByProject";
 
 /**
  * LocalStorage keys for Mux Gateway routing preferences (global).

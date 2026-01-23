@@ -81,6 +81,7 @@ function AppInner() {
     setSelectedWorkspace,
     pendingNewWorkspaceProject,
     pendingNewWorkspaceSectionId,
+    pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
   const { currentWorkspaceId } = useRouter();
@@ -835,6 +836,7 @@ function AppInner() {
                     leftSidebarCollapsed={sidebarCollapsed}
                     onToggleLeftSidebarCollapsed={handleToggleSidebar}
                     pendingSectionId={pendingNewWorkspaceSectionId}
+                    pendingDraftId={pendingNewWorkspaceDraftId}
                     onProviderConfig={handleProviderConfig}
                     onWorkspaceCreated={(metadata) => {
                       // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure

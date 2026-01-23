@@ -17,16 +17,26 @@ import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import {
   deleteWorkspaceStorage,
   getAgentIdKey,
+  getDraftScopeId,
+  getInputAttachmentsKey,
+  getInputKey,
   getModelKey,
+  getPendingScopeId,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
   SELECTED_WORKSPACE_KEY,
+  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -134,6 +144,63 @@ function ensureCreatedAt(metadata: FrontendWorkspaceMetadata): void {
   }
 }
 
+export interface WorkspaceDraft {
+  draftId: string;
+  sectionId: string | null;
+  createdAt: number;
+}
+
+type WorkspaceDraftsByProject = Record<string, WorkspaceDraft[]>;
+
+function isWorkspaceDraft(value: unknown): value is WorkspaceDraft {
+  if (!value || typeof value !== "object") return false;
+
+  const record = value as { draftId?: unknown; sectionId?: unknown; createdAt?: unknown };
+  return (
+    typeof record.draftId === "string" &&
+    record.draftId.trim().length > 0 &&
+    typeof record.createdAt === "number" &&
+    Number.isFinite(record.createdAt) &&
+    (record.sectionId === null ||
+      record.sectionId === undefined ||
+      typeof record.sectionId === "string")
+  );
+}
+
+function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByProject {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const result: WorkspaceDraftsByProject = {};
+
+  for (const [projectPath, drafts] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(drafts)) continue;
+
+    const nextDrafts: WorkspaceDraft[] = [];
+    for (const draft of drafts) {
+      if (!isWorkspaceDraft(draft)) continue;
+
+      const normalizedSectionId =
+        typeof draft.sectionId === "string" && draft.sectionId.trim().length > 0
+          ? draft.sectionId
+          : null;
+
+      nextDrafts.push({
+        draftId: draft.draftId,
+        sectionId: normalizedSectionId,
+        createdAt: draft.createdAt,
+      });
+    }
+
+    if (nextDrafts.length > 0) {
+      result[projectPath] = nextDrafts;
+    }
+  }
+
+  return result;
+}
+
 export interface WorkspaceContext {
   // Workspace data
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
@@ -174,7 +241,16 @@ export interface WorkspaceContext {
   pendingNewWorkspaceProject: string | null;
   /** Section ID to pre-select when creating a new workspace (from URL) */
   pendingNewWorkspaceSectionId: string | null;
+  /** Draft ID to open when creating a UI-only workspace draft (from URL) */
+  pendingNewWorkspaceDraftId: string | null;
+  /** Legacy entry point: open the creation screen (no new draft is created) */
   beginWorkspaceCreation: (projectPath: string, sectionId?: string) => void;
+
+  // UI-only workspace creation drafts (placeholders)
+  workspaceDraftsByProject: WorkspaceDraftsByProject;
+  createWorkspaceDraft: (projectPath: string, sectionId?: string) => void;
+  openWorkspaceDraft: (projectPath: string, draftId: string, sectionId?: string | null) => void;
+  deleteWorkspaceDraft: (projectPath: string, draftId: string) => void;
 
   // Helpers
   getWorkspaceInfo: (workspaceId: string) => Promise<FrontendWorkspaceMetadata | null>;
@@ -246,6 +322,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     currentProjectId,
     currentProjectPathFromState,
     pendingSectionId,
+    pendingDraftId,
   } = useRouter();
 
   const workspaceStore = useWorkspaceStoreRaw();
@@ -268,6 +345,18 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [workspaceStore]
   );
   const [loading, setLoading] = useState(true);
+
+  const [workspaceDraftsByProjectState, setWorkspaceDraftsByProjectState] =
+    usePersistedState<WorkspaceDraftsByProject>(
+      WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+      {},
+      { listener: true }
+    );
+
+  const workspaceDraftsByProject = useMemo(
+    () => normalizeWorkspaceDraftsByProject(workspaceDraftsByProjectState),
+    [workspaceDraftsByProjectState]
+  );
 
   const currentProjectPath = useMemo(() => {
     if (currentProjectPathFromState) return currentProjectPathFromState;
@@ -292,6 +381,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const pendingNewWorkspaceProject = currentProjectPath;
   // pendingNewWorkspaceSectionId is derived from section URL param
   const pendingNewWorkspaceSectionId = pendingSectionId;
+  const pendingNewWorkspaceDraftId = pendingNewWorkspaceProject ? pendingDraftId : null;
 
   // selectedWorkspace is derived from currentWorkspaceId in URL + workspaceMetadata
   const selectedWorkspace = useMemo(() => {
@@ -763,6 +853,76 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     },
     [navigateToProject, navigateToWorkspace, workspaceMetadata]
   );
+  const createWorkspaceDraft = useCallback(
+    (projectPath: string, sectionId?: string) => {
+      const draftId = crypto.randomUUID();
+      const createdAt = Date.now();
+      const draft: WorkspaceDraft = {
+        draftId,
+        sectionId: sectionId ?? null,
+        createdAt,
+      };
+
+      setWorkspaceDraftsByProjectState((prev) => {
+        const current = normalizeWorkspaceDraftsByProject(prev);
+        const existing = current[projectPath] ?? [];
+
+        // One-time migration: if the user has an old per-project pending draft, move it
+        // into the first draft scope so it stays accessible.
+        if (existing.length === 0) {
+          const pendingScopeId = getPendingScopeId(projectPath);
+          const legacyInput = readPersistedState<string>(getInputKey(pendingScopeId), "");
+          const legacyAttachments = readPersistedState<unknown>(
+            getInputAttachmentsKey(pendingScopeId),
+            []
+          );
+          const hasLegacyAttachments =
+            Array.isArray(legacyAttachments) && legacyAttachments.length > 0;
+          if (legacyInput.trim().length > 0 || hasLegacyAttachments) {
+            migrateWorkspaceStorage(pendingScopeId, getDraftScopeId(projectPath, draftId));
+          }
+        }
+
+        return {
+          ...current,
+          [projectPath]: [...existing, draft],
+        };
+      });
+
+      navigateToProject(projectPath, sectionId, draftId);
+    },
+    [navigateToProject, setWorkspaceDraftsByProjectState]
+  );
+
+  const openWorkspaceDraft = useCallback(
+    (projectPath: string, draftId: string, sectionId?: string | null) => {
+      const normalizedSectionId =
+        typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : undefined;
+      navigateToProject(projectPath, normalizedSectionId, draftId);
+    },
+    [navigateToProject]
+  );
+
+  const deleteWorkspaceDraft = useCallback(
+    (projectPath: string, draftId: string) => {
+      deleteWorkspaceStorage(getDraftScopeId(projectPath, draftId));
+
+      setWorkspaceDraftsByProjectState((prev) => {
+        const current = normalizeWorkspaceDraftsByProject(prev);
+        const existing = current[projectPath] ?? [];
+        const nextDrafts = existing.filter((draft) => draft.draftId !== draftId);
+
+        const next: WorkspaceDraftsByProject = { ...current };
+        if (nextDrafts.length === 0) {
+          delete next[projectPath];
+        } else {
+          next[projectPath] = nextDrafts;
+        }
+        return next;
+      });
+    },
+    [setWorkspaceDraftsByProjectState]
+  );
 
   const value = useMemo<WorkspaceContext>(
     () => ({
@@ -779,7 +939,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
       pendingNewWorkspaceSectionId,
+      pendingNewWorkspaceDraftId,
       beginWorkspaceCreation,
+      workspaceDraftsByProject,
+      createWorkspaceDraft,
+      openWorkspaceDraft,
+      deleteWorkspaceDraft,
       getWorkspaceInfo,
     }),
     [
@@ -796,7 +961,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       setSelectedWorkspace,
       pendingNewWorkspaceProject,
       pendingNewWorkspaceSectionId,
+      pendingNewWorkspaceDraftId,
       beginWorkspaceCreation,
+      workspaceDraftsByProject,
+      createWorkspaceDraft,
+      openWorkspaceDraft,
+      deleteWorkspaceDraft,
       getWorkspaceInfo,
     ]
   );

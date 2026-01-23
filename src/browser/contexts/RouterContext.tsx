@@ -16,7 +16,7 @@ import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 
 export interface RouterContext {
   navigateToWorkspace: (workspaceId: string) => void;
-  navigateToProject: (projectPath: string, sectionId?: string) => void;
+  navigateToProject: (projectPath: string, sectionId?: string, draftId?: string) => void;
   navigateToHome: () => void;
   currentWorkspaceId: string | null;
 
@@ -28,6 +28,9 @@ export interface RouterContext {
 
   /** Section ID for pending workspace creation (from URL) */
   pendingSectionId: string | null;
+
+  /** Draft ID for UI-only workspace creation drafts (from URL) */
+  pendingDraftId: string | null;
 }
 
 const RouterContext = createContext<RouterContext | undefined>(undefined);
@@ -115,14 +118,22 @@ function RouterContextInner(props: { children: ReactNode }) {
     const projectParam = params.get("project");
     if (!projectParam && legacyPath) {
       const section = params.get("section");
+      const draft = params.get("draft");
       const projectId = getProjectRouteId(legacyPath);
-      const url = section
-        ? `/project?project=${encodeURIComponent(projectId)}&section=${encodeURIComponent(section)}`
-        : `/project?project=${encodeURIComponent(projectId)}`;
+      const nextParams = new URLSearchParams();
+      nextParams.set("project", projectId);
+      if (section) {
+        nextParams.set("section", section);
+      }
+      if (draft) {
+        nextParams.set("draft", draft);
+      }
+      const url = `/project?${nextParams.toString()}`;
       void navigateRef.current(url, { replace: true, state: { projectPath: legacyPath } });
     }
   }, [location.pathname, location.search]);
   const pendingSectionId = location.pathname === "/project" ? searchParams.get("section") : null;
+  const pendingDraftId = location.pathname === "/project" ? searchParams.get("draft") : null;
 
   // Navigation functions use push (not replace) to build history for back/forward navigation.
   // See App.tsx handleMouseNavigation and KEYBINDS.NAVIGATE_BACK/FORWARD.
@@ -130,11 +141,17 @@ function RouterContextInner(props: { children: ReactNode }) {
     void navigateRef.current(`/workspace/${encodeURIComponent(id)}`);
   }, []);
 
-  const navigateToProject = useCallback((path: string, sectionId?: string) => {
+  const navigateToProject = useCallback((path: string, sectionId?: string, draftId?: string) => {
     const projectId = getProjectRouteId(path);
-    const url = sectionId
-      ? `/project?project=${encodeURIComponent(projectId)}&section=${encodeURIComponent(sectionId)}`
-      : `/project?project=${encodeURIComponent(projectId)}`;
+    const params = new URLSearchParams();
+    params.set("project", projectId);
+    if (sectionId) {
+      params.set("section", sectionId);
+    }
+    if (draftId) {
+      params.set("draft", draftId);
+    }
+    const url = `/project?${params.toString()}`;
     void navigateRef.current(url, { state: { projectPath: path } });
   }, []);
 
@@ -151,6 +168,7 @@ function RouterContextInner(props: { children: ReactNode }) {
       currentProjectId,
       currentProjectPathFromState,
       pendingSectionId,
+      pendingDraftId,
     }),
     [
       navigateToHome,
@@ -160,6 +178,7 @@ function RouterContextInner(props: { children: ReactNode }) {
       currentProjectPathFromState,
       currentWorkspaceId,
       pendingSectionId,
+      pendingDraftId,
     ]
   );
 
