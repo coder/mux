@@ -127,27 +127,54 @@ export function ProvidersSection() {
   const { api } = useAPI();
   const { config, updateOptimistically } = useProvidersConfig();
 
+  const gateway = useGateway();
+
   const [gatewayModels, setGatewayModels] = usePersistedState<string[]>(GATEWAY_MODELS_KEY, [], {
     listener: true,
   });
 
   const eligibleGatewayModels = useMemo(() => getEligibleGatewayModels(config), [config]);
 
-  const isGatewayDefaultEnabled = useMemo(
+  const canEnableGatewayForAllModels = useMemo(
     () =>
       eligibleGatewayModels.length > 0 &&
-      eligibleGatewayModels.every((modelId) => gatewayModels.includes(modelId)),
+      !eligibleGatewayModels.every((modelId) => gatewayModels.includes(modelId)),
     [eligibleGatewayModels, gatewayModels]
   );
 
-  const setGatewayDefaultEnabled = useCallback(
-    (next: boolean) => {
-      setGatewayModels(next ? eligibleGatewayModels : []);
+  const persistGatewayModels = useCallback(
+    (nextModels: string[]) => {
+      if (!api?.config?.updateMuxGatewayPrefs) {
+        return;
+      }
+
+      api.config
+        .updateMuxGatewayPrefs({
+          muxGatewayEnabled: gateway.isEnabled,
+          muxGatewayModels: nextModels,
+        })
+        .catch(() => {
+          // Best-effort only.
+        });
     },
-    [eligibleGatewayModels, setGatewayModels]
+    [api, gateway.isEnabled]
   );
 
-  const gateway = useGateway();
+  const applyGatewayModels = useCallback(
+    (nextModels: string[]) => {
+      setGatewayModels(nextModels);
+      persistGatewayModels(nextModels);
+    },
+    [persistGatewayModels, setGatewayModels]
+  );
+
+  const enableGatewayForAllModels = useCallback(() => {
+    if (!canEnableGatewayForAllModels) {
+      return;
+    }
+
+    applyGatewayModels(eligibleGatewayModels);
+  }, [applyGatewayModels, canEnableGatewayForAllModels, eligibleGatewayModels]);
 
   const backendBaseUrl = getBackendBaseUrl();
   const backendOrigin = (() => {
@@ -268,7 +295,7 @@ export function ProvidersSection() {
               return;
             }
 
-            setGatewayModels(getEligibleGatewayModels(latestConfig));
+            applyGatewayModels(getEligibleGatewayModels(latestConfig));
             muxGatewayApplyDefaultModelsOnSuccessRef.current = false;
           }
 
@@ -367,7 +394,7 @@ export function ProvidersSection() {
 
           const applyLatest = (latestConfig: ProvidersConfigMap | null) => {
             if (muxGatewayLoginAttemptRef.current !== attempt) return;
-            setGatewayModels(getEligibleGatewayModels(latestConfig));
+            applyGatewayModels(getEligibleGatewayModels(latestConfig));
           };
 
           if (api) {
@@ -398,7 +425,7 @@ export function ProvidersSection() {
     backendOrigin,
     api,
     config,
-    setGatewayModels,
+    applyGatewayModels,
   ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
   const muxGatewayLoginInProgress =
@@ -832,19 +859,24 @@ export function ProvidersSection() {
                       />
                     </div>
 
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-3">
                       <div>
-                        <label className="text-foreground block text-xs font-medium">Default</label>
+                        <label className="text-foreground block text-xs font-medium">
+                          Enable for all models
+                        </label>
                         <span className="text-muted text-xs">
-                          Enabling Mux Gateway as default will set all models to be used through Mux
-                          Gateway.
+                          Turn on Mux Gateway for every eligible model.
                         </span>
                       </div>
-                      <Switch
-                        checked={isGatewayDefaultEnabled}
-                        onCheckedChange={setGatewayDefaultEnabled}
-                        aria-label="Toggle Mux Gateway Default"
-                      />
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={enableGatewayForAllModels}
+                        disabled={!canEnableGatewayForAllModels}
+                        aria-label="Enable Mux Gateway for all models"
+                      >
+                        Enable all
+                      </Button>
                     </div>
                   </div>
                 )}
