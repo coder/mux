@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { WORKSPACE_NAME_MAX_LENGTH } from "@/constants/workspaceNaming";
 import {
   parseWorkspaceName,
   parseWorkspaceTitle,
@@ -70,6 +71,13 @@ describe("forkNameGenerator", () => {
     it("should append -2 for first fork", () => {
       expect(generateForkName("bugs-asd23")).toBe("bugs-asd23-2");
       expect(generateForkName("sidebar")).toBe("sidebar-2");
+    });
+
+    it("should truncate base to fit suffix within limits", () => {
+      const base = "a".repeat(WORKSPACE_NAME_MAX_LENGTH);
+      const result = generateForkName(base);
+      expect(result.length).toBe(WORKSPACE_NAME_MAX_LENGTH);
+      expect(result.endsWith("-2")).toBe(true);
     });
 
     it("should increment suffix for subsequent forks", () => {

@@ -20,6 +20,7 @@ import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { createRuntime, runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { WORKSPACE_NAME_MAX_LENGTH } from "@/constants/workspaceNaming";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -171,14 +172,16 @@ function sanitizeAgentTypeForName(agentType: string): string {
 function buildAgentWorkspaceName(agentType: string, workspaceId: string): string {
   const safeType = sanitizeAgentTypeForName(agentType);
   const base = `agent_${safeType}_${workspaceId}`;
-  // Hard cap to validation limit (64). Ensure stable suffix is preserved.
-  if (base.length <= 64) return base;
+  // Hard cap to validation limit. Ensure stable suffix is preserved.
+  if (base.length <= WORKSPACE_NAME_MAX_LENGTH) return base;
 
   const suffix = `_${workspaceId}`;
-  const maxPrefixLen = 64 - suffix.length;
+  const maxPrefixLen = WORKSPACE_NAME_MAX_LENGTH - suffix.length;
   const prefix = `agent_${safeType}`.slice(0, Math.max(0, maxPrefixLen));
   const name = `${prefix}${suffix}`;
-  return name.length <= 64 ? name : `agent_${workspaceId}`.slice(0, 64);
+  return name.length <= WORKSPACE_NAME_MAX_LENGTH
+    ? name
+    : `agent_${workspaceId}`.slice(0, WORKSPACE_NAME_MAX_LENGTH);
 }
 
 function getIsoNow(): string {

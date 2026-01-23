@@ -4,13 +4,18 @@
  * - Can only contain: lowercase letters, digits, underscore, hyphen
  * - Pattern: [a-z0-9_-]{1,64}
  */
+import { WORKSPACE_NAME_MAX_LENGTH } from "@/constants/workspaceNaming";
+
 export function validateWorkspaceName(name: string): { valid: boolean; error?: string } {
   if (!name || name.length === 0) {
     return { valid: false, error: "Workspace name cannot be empty" };
   }
 
-  if (name.length > 64) {
-    return { valid: false, error: "Workspace name cannot exceed 64 characters" };
+  if (name.length > WORKSPACE_NAME_MAX_LENGTH) {
+    return {
+      valid: false,
+      error: `Workspace name cannot exceed ${WORKSPACE_NAME_MAX_LENGTH} characters`,
+    };
   }
 
   const validPattern = /^[a-z0-9_-]+$/;

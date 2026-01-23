@@ -23,13 +23,13 @@ import {
   runBackgroundInit,
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
-import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
-import { generateForkIdentity } from "@/node/services/forkNameGenerator";
+import { resolveWorkspaceName } from "@/node/services/workspaceNameResolver";
+import { generateForkTitleWithSuffix } from "@/node/services/forkNameGenerator";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
@@ -103,14 +103,6 @@ interface FileCompletionsCacheEntry {
  */
 function isWorkspaceNameCollision(error: string | undefined): boolean {
   return error?.includes("Workspace already exists") ?? false;
-}
-
-/**
- * Generates a unique workspace name by appending a random suffix
- */
-function appendCollisionSuffix(baseName: string): string {
-  const suffix = Math.random().toString(36).substring(2, 6);
-  return `${baseName}-${suffix}`;
 }
 
 export interface WorkspaceServiceEvents {
@@ -565,12 +557,6 @@ export class WorkspaceService extends EventEmitter {
     runtimeConfig?: RuntimeConfig,
     sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
-    // Validate workspace name
-    const validation = validateWorkspaceName(branchName);
-    if (!validation.valid) {
-      return Err(validation.error ?? "Invalid workspace name");
-    }
-
     // Generate stable workspace ID
     const workspaceId = this.config.generateStableId();
 
@@ -616,26 +602,21 @@ export class WorkspaceService extends EventEmitter {
 
     try {
       // Create workspace with automatic collision retry
-      let finalBranchName = branchName;
       let createResult: { success: boolean; workspacePath?: string; error?: string };
+      const existingNames = new Set(
+        (this.config.loadConfigOrDefault().projects.get(projectPath)?.workspaces ?? [])
+          .map((w) => w.name)
+          .filter((name): name is string => Boolean(name))
+      );
 
-      // If runtime uses config-level collision detection (e.g., Coder - can't reach host),
-      // check against existing workspace names before createWorkspace.
-      if (runtime.createFlags?.configLevelCollisionDetection) {
-        const existingNames = new Set(
-          (this.config.loadConfigOrDefault().projects.get(projectPath)?.workspaces ?? []).map(
-            (w) => w.name
-          )
-        );
-        for (
-          let i = 0;
-          i < MAX_WORKSPACE_NAME_COLLISION_RETRIES && existingNames.has(finalBranchName);
-          i++
-        ) {
-          log.debug(`Workspace name collision for "${finalBranchName}", adding suffix`);
-          finalBranchName = appendCollisionSuffix(branchName);
-        }
+      const initialResolution = resolveWorkspaceName(branchName, existingNames, {
+        type: "random-suffix",
+        maxAttempts: MAX_WORKSPACE_NAME_COLLISION_RETRIES,
+      });
+      if (!initialResolution.success) {
+        return Err(initialResolution.error);
       }
+      let finalBranchName = initialResolution.data.name;
 
       for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
         createResult = await runtime.createWorkspace({
@@ -654,7 +635,16 @@ export class WorkspaceService extends EventEmitter {
           attempt < MAX_WORKSPACE_NAME_COLLISION_RETRIES
         ) {
           log.debug(`Workspace name collision for "${finalBranchName}", retrying with suffix`);
-          finalBranchName = appendCollisionSuffix(branchName);
+          existingNames.add(finalBranchName);
+          const retryResolution = resolveWorkspaceName(branchName, existingNames, {
+            type: "random-suffix",
+            maxAttempts: MAX_WORKSPACE_NAME_COLLISION_RETRIES,
+          });
+          if (!retryResolution.success) {
+            initLogger.logComplete(-1);
+            return Err(retryResolution.error);
+          }
+          finalBranchName = retryResolution.data.name;
           continue;
         }
         break;
@@ -986,11 +976,6 @@ export class WorkspaceService extends EventEmitter {
         );
       }
 
-      const validation = validateWorkspaceName(newName);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
-      }
-
       // Mark workspace as renaming to block new streams during the rename operation
       this.renamingWorkspaces.add(workspaceId);
 
@@ -1006,12 +991,17 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const allWorkspaces = await this.config.getAllWorkspaceMetadata();
-      const collision = allWorkspaces.find(
-        (ws) => (ws.name === newName || ws.id === newName) && ws.id !== workspaceId
+      const existingNames = new Set(
+        allWorkspaces
+          .filter((ws) => ws.id !== workspaceId)
+          .map((ws) => ws.name)
+          .filter((name): name is string => Boolean(name))
       );
-      if (collision) {
-        return Err(`Workspace with name "${newName}" already exists`);
+      const resolution = resolveWorkspaceName(newName, existingNames, { type: "error" });
+      if (!resolution.success) {
+        return Err(resolution.error);
       }
+      const resolvedName = resolution.data.name;
 
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -1024,7 +1014,7 @@ export class WorkspaceService extends EventEmitter {
         workspaceName: oldName,
       });
 
-      const renameResult = await runtime.renameWorkspace(projectPath, oldName, newName);
+      const renameResult = await runtime.renameWorkspace(projectPath, oldName, resolvedName);
 
       if (!renameResult.success) {
         return Err(renameResult.error);
@@ -1039,7 +1029,7 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.id === workspaceId) ??
             projectConfig.workspaces.find((w) => w.path === oldPath);
           if (workspaceEntry) {
-            workspaceEntry.name = newName;
+            workspaceEntry.name = resolvedName;
             workspaceEntry.path = newPath;
           }
         }
@@ -1047,7 +1037,7 @@ export class WorkspaceService extends EventEmitter {
       });
 
       // Rename plan file if it exists (uses workspace name, not ID)
-      await movePlanFile(runtime, oldName, newName, oldMetadata.projectName);
+      await movePlanFile(runtime, oldName, resolvedName, oldMetadata.projectName);
 
       const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadataUpdated.find((m) => m.id === workspaceId);
@@ -1497,27 +1487,37 @@ export class WorkspaceService extends EventEmitter {
       const sourceMetadata = sourceMetadataResult.data;
 
       // Auto-generate name and title if not provided, avoiding collisions with existing workspaces
+      const existingWorkspaces = await this.config.getAllWorkspaceMetadata();
+      const existingNames = new Set(
+        existingWorkspaces.map((w) => w.name).filter((name): name is string => Boolean(name))
+      );
+
       let resolvedName: string;
       let resolvedTitle: string | undefined;
       if (newName) {
-        resolvedName = newName;
+        const resolution = resolveWorkspaceName(newName, existingNames, { type: "error" });
+        if (!resolution.success) {
+          return Err(resolution.error);
+        }
+        resolvedName = resolution.data.name;
         resolvedTitle = undefined;
       } else {
-        // Get existing workspace names to avoid collisions
-        const existingWorkspaces = await this.config.getAllWorkspaceMetadata();
-        const existingNames = new Set(existingWorkspaces.map((w) => w.name));
-        const forkIdentity = generateForkIdentity(
-          sourceMetadata.name,
-          sourceMetadata.title,
-          existingNames
-        );
-        resolvedName = forkIdentity.name;
-        resolvedTitle = forkIdentity.title;
-      }
-
-      const validation = validateWorkspaceName(resolvedName);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
+        const resolution = resolveWorkspaceName(sourceMetadata.name, existingNames, {
+          type: "numeric-suffix",
+        });
+        if (!resolution.success) {
+          return Err(resolution.error);
+        }
+        resolvedName = resolution.data.name;
+        if (sourceMetadata.title) {
+          const suffix = resolution.data.suffix;
+          if (!suffix) {
+            return Err("Failed to resolve fork suffix");
+          }
+          resolvedTitle = generateForkTitleWithSuffix(sourceMetadata.title, suffix);
+        } else {
+          resolvedTitle = undefined;
+        }
       }
       const foundProjectPath = sourceMetadata.projectPath;
       const projectName = sourceMetadata.projectName;

@@ -7,6 +7,8 @@
  *   Fork 2: title "Fixing bugs 3", name "bugs-asd23-3"
  */
 
+import { buildWorkspaceNameWithSuffix } from "@/common/utils/workspaceNaming";
+
 /**
  * Extract the base name and current suffix from a workspace name.
  * Returns { base, suffix } where suffix is the numeric fork count (0 if not a fork).
@@ -61,7 +63,7 @@ export function parseWorkspaceTitle(title: string): { base: string; suffix: numb
 export function generateForkName(sourceName: string): string {
   const { base, suffix } = parseWorkspaceName(sourceName);
   const nextSuffix = suffix === 0 ? 2 : suffix + 1;
-  return `${base}-${nextSuffix}`;
+  return buildWorkspaceNameWithSuffix(base, nextSuffix);
 }
 
 /**
@@ -90,7 +92,7 @@ export function generateForkTitleWithSuffix(sourceTitle: string, suffix: number)
  */
 export function generateForkNameWithSuffix(sourceName: string, suffix: number): string {
   const { base } = parseWorkspaceName(sourceName);
-  return `${base}-${suffix}`;
+  return buildWorkspaceNameWithSuffix(base, suffix);
 }
 
 /**
@@ -102,7 +104,7 @@ export function findNextForkSuffix(sourceName: string, existingNames: Set<string
   let nextSuffix = currentSuffix === 0 ? 2 : currentSuffix + 1;
 
   // Find next available suffix
-  while (existingNames.has(`${base}-${nextSuffix}`)) {
+  while (existingNames.has(buildWorkspaceNameWithSuffix(base, nextSuffix))) {
     nextSuffix++;
   }
 
