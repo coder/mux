@@ -65,6 +65,7 @@ import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
+import { useMobileKeyboardFix } from "./hooks/useMobileKeyboardFix";
 import { cn } from "@/common/lib/utils";
 
 function AppInner() {
@@ -102,6 +103,10 @@ function AppInner() {
 
   // Auto-collapse sidebar on mobile by default
   const isMobile = typeof window !== "undefined" && window.innerWidth <= 768;
+
+  // Fix iOS Safari visual viewport scroll issue on keyboard dismiss
+  useMobileKeyboardFix();
+
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("sidebarCollapsed", isMobile, {
     listener: true,
   });
