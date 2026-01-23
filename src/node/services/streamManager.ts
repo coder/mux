@@ -157,6 +157,8 @@ interface WorkspaceStreamInfo {
   request: StreamRequestConfig;
   // Track last prepared step messages for safe retries after tool steps
   stepTracker: StepMessageTracker;
+  // Track if a previousResponseId retry happened after a step completed
+  didRetryPreviousResponseIdAtStep: boolean;
   // Index into parts where the current step started (used to ensure safe retries)
   currentStepStartIndex: number;
   historySequence: number;
@@ -466,6 +468,18 @@ export class StreamManager extends EventEmitter {
       contextProviderMetadata,
       duration: Date.now() - streamInfo.startTime,
     };
+  }
+
+  private resolveTotalUsageForStreamEnd(
+    streamInfo: WorkspaceStreamInfo,
+    totalUsage: LanguageModelV2Usage | undefined
+  ): LanguageModelV2Usage | undefined {
+    const hasCumulativeUsage = (streamInfo.cumulativeUsage.totalTokens ?? 0) > 0;
+    if (streamInfo.didRetryPreviousResponseIdAtStep && hasCumulativeUsage) {
+      return streamInfo.cumulativeUsage;
+    }
+
+    return totalUsage;
   }
 
   /**
@@ -934,6 +948,7 @@ export class StreamManager extends EventEmitter {
       startTime: Date.now(),
       model: modelString,
       initialMetadata,
+      didRetryPreviousResponseIdAtStep: false,
       stepTracker,
       currentStepStartIndex: 0,
       request,
@@ -1485,9 +1500,13 @@ export class StreamManager extends EventEmitter {
             // - totalUsage: sum of all steps (for cost calculation)
             // - contextUsage: last step only (for context window display)
             // - contextProviderMetadata: last step (for context window cache tokens)
-            // Falls back to tracked values from finish-step if streamResult fails/times out
+            // Falls back to tracked values when step retries invalidate totalUsage
+            // or streamResult metadata fails/times out.
             const streamMeta = await this.getStreamMetadata(streamInfo);
-            const totalUsage = streamMeta.totalUsage;
+            const totalUsage = this.resolveTotalUsageForStreamEnd(
+              streamInfo,
+              streamMeta.totalUsage
+            );
             const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
             const contextProviderMetadata =
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
@@ -1832,6 +1851,10 @@ export class StreamManager extends EventEmitter {
     }
 
     this.recordLostResponseIdIfApplicable(error, streamInfo);
+
+    if (hasParts) {
+      streamInfo.didRetryPreviousResponseIdAtStep = true;
+    }
 
     log.info("Retrying stream without invalid previousResponseId", {
       workspaceId,

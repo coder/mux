@@ -689,6 +689,7 @@ describe("StreamManager - previousResponseId recovery", () => {
       model: "mux-gateway:openai/gpt-5.2-codex",
       historySequence: 1,
       stepTracker: { latestMessages: stepMessages },
+      didRetryPreviousResponseIdAtStep: false,
       currentStepStartIndex: 1,
       request: {
         model,
@@ -741,12 +742,59 @@ describe("StreamManager - previousResponseId recovery", () => {
     const retried = await retryMethod.call(streamManager, "ws-step", streamInfo, apiError, false);
     expect(retried).toBe(true);
     expect(streamInfo.parts).toHaveLength(1);
+    expect(streamInfo.didRetryPreviousResponseIdAtStep).toBe(true);
     expect(streamInfo.request.messages as ModelMessage[]).toBe(stepMessages);
 
     const openaiOptions = streamInfo.request.providerOptions as {
       openai?: Record<string, unknown>;
     };
     expect(openaiOptions.openai?.previousResponseId).toBeUndefined();
+  });
+
+  test("resolveTotalUsageForStreamEnd prefers cumulative usage after step retry", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
+      streamInfo: unknown,
+      totalUsage: unknown
+    ) => unknown;
+    expect(typeof resolveMethod).toBe("function");
+
+    const cumulativeUsage = { inputTokens: 4, outputTokens: 5, totalTokens: 9 };
+    const totalUsage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 };
+
+    const result = resolveMethod.call(
+      streamManager,
+      { didRetryPreviousResponseIdAtStep: true, cumulativeUsage },
+      totalUsage
+    );
+
+    expect(result).toEqual(cumulativeUsage);
+  });
+
+  test("resolveTotalUsageForStreamEnd keeps stream total without step retry", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
+      streamInfo: unknown,
+      totalUsage: unknown
+    ) => unknown;
+    expect(typeof resolveMethod).toBe("function");
+
+    const cumulativeUsage = { inputTokens: 4, outputTokens: 5, totalTokens: 9 };
+    const totalUsage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 };
+
+    const result = resolveMethod.call(
+      streamManager,
+      { didRetryPreviousResponseIdAtStep: false, cumulativeUsage },
+      totalUsage
+    );
+
+    expect(result).toEqual(totalUsage);
   });
 });
 
