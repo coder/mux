@@ -339,7 +339,7 @@ export async function devcontainerUp(
         const summaryText = parsed ? parsed.text : line;
         appendStderrSummary(summaryText);
         if (!parsed) return;
-        initLogger.logStderr(parsed.text);
+        initLogger.logStdout(parsed.text);
       });
 
       proc.stdout?.on("data", (data: Buffer) => {
