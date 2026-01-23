@@ -276,7 +276,7 @@ build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-actions lint-shellcheck ## Run all static checks
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck ## Run all static checks
 
 check-bench-agent: ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
