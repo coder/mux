@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { StreamManager } from "./streamManager";
-import { APICallError, RetryError } from "ai";
+import { APICallError, RetryError, type ModelMessage } from "ai";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -661,6 +661,92 @@ describe("StreamManager - previousResponseId recovery", () => {
     recordMethod.call(streamManager, apiError, { messageId: "msg-2", model: "openai:gpt-mini" });
 
     expect(streamManager.isResponseIdLost("resp_cafebabe")).toBe(true);
+  });
+
+  test("retryStreamWithoutPreviousResponseId retries at step boundary with existing parts", async () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const retryMethod = Reflect.get(streamManager, "retryStreamWithoutPreviousResponseId") as (
+      workspaceId: string,
+      streamInfo: unknown,
+      error: unknown,
+      hasRetried: boolean
+    ) => Promise<boolean>;
+
+    const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
+    const runtime = createRuntime({ type: "local", srcBaseDir: "/tmp" });
+    const stepMessages: ModelMessage[] = [{ role: "user", content: "next step" }];
+
+    const streamInfo = {
+      state: "streaming",
+      streamResult: {},
+      abortController: new AbortController(),
+      messageId: "msg-1",
+      token: "token",
+      startTime: Date.now(),
+      model: "mux-gateway:openai/gpt-5.2-codex",
+      historySequence: 1,
+      stepTracker: { latestMessages: stepMessages },
+      currentStepStartIndex: 1,
+      request: {
+        model,
+        messages: [{ role: "user", content: "original" }],
+        system: "system",
+        providerOptions: { openai: { previousResponseId: "resp_abc123" } },
+      },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tool-1",
+          toolName: "test",
+          state: "output-available",
+          input: {},
+          output: {},
+        },
+      ],
+      lastPartialWriteTime: 0,
+      processingPromise: Promise.resolve(),
+      softInterrupt: { pending: false },
+      runtimeTempDir: "/tmp",
+      runtime,
+      cumulativeUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      cumulativeProviderMetadata: { openai: {} },
+    };
+
+    (streamManager as unknown as { createStreamResult: () => unknown }).createStreamResult =
+      () => ({
+        fullStream: (async function* () {
+          await Promise.resolve();
+          yield* [];
+        })(),
+        totalUsage: Promise.resolve(undefined),
+        usage: Promise.resolve(undefined),
+        providerMetadata: Promise.resolve(undefined),
+        steps: Promise.resolve([]),
+      });
+
+    const apiError = new APICallError({
+      message: "Previous response with id 'resp_abc123' not found.",
+      url: "https://api.openai.com/v1/responses",
+      requestBodyValues: {},
+      statusCode: 400,
+      responseHeaders: {},
+      responseBody: "Previous response with id 'resp_abc123' not found.",
+      isRetryable: false,
+      data: { error: { code: "previous_response_not_found" } },
+    });
+
+    const retried = await retryMethod.call(streamManager, "ws-step", streamInfo, apiError, false);
+    expect(retried).toBe(true);
+    expect(streamInfo.parts).toHaveLength(1);
+    expect(streamInfo.request.messages as ModelMessage[]).toBe(stepMessages);
+
+    const openaiOptions = streamInfo.request.providerOptions as {
+      openai?: Record<string, unknown>;
+    };
+    expect(openaiOptions.openai?.previousResponseId).toBeUndefined();
   });
 });
 
