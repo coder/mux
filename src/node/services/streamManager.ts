@@ -1765,8 +1765,14 @@ export class StreamManager extends EventEmitter {
 
     const errorCode = this.extractErrorCode(error);
     const statusCode = this.extractStatusCode(error);
+    // Retry if: we have the specific error code, OR a likely status code,
+    // OR we successfully extracted a response ID from the error message
+    // (the message match is strong evidence this is a "not found" error regardless of status code)
     const shouldRetry =
-      errorCode === "previous_response_not_found" || statusCode === 404 || statusCode === 500;
+      errorCode === "previous_response_not_found" ||
+      statusCode === 404 ||
+      statusCode === 500 ||
+      statusCode === 400;
     if (!shouldRetry) {
       return false;
     }
@@ -2119,8 +2125,13 @@ export class StreamManager extends EventEmitter {
 
     const errorCode = this.extractErrorCode(error);
     const statusCode = this.extractStatusCode(error);
+    // Record if: we have the specific error code, OR a likely status code
+    // (400 included because mux-gateway wraps OpenAI's 404 as 400)
     const shouldRecord =
-      errorCode === "previous_response_not_found" || statusCode === 404 || statusCode === 500;
+      errorCode === "previous_response_not_found" ||
+      statusCode === 404 ||
+      statusCode === 500 ||
+      statusCode === 400;
 
     if (!shouldRecord || this.lostResponseIds.has(responseId)) {
       return;
