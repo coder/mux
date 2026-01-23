@@ -35,6 +35,9 @@ function getBackgroundProcessManager(env: TestEnvironment): BackgroundProcessMan
   return (env.services as unknown as ServiceContainerPrivates).backgroundProcessManager;
 }
 
+// Foreground bash startup can be slower on Windows CI (Git Bash init + IO flush).
+const FOREGROUND_MIGRATION_READY_MS = process.platform === "win32" ? 900 : 300;
+
 interface ToolExecuteResult {
   success: boolean;
   backgroundProcessId?: string;
@@ -427,7 +430,7 @@ describe("Foreground to Background Migration", () => {
     ) as Promise<ToolExecuteResult>;
 
     // Wait for foreground process to register and output first marker
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, FOREGROUND_MIGRATION_READY_MS));
 
     // Verify foreground process is registered
     const fgToolCallIds = manager.getForegroundToolCallIds(workspaceId);
@@ -517,7 +520,7 @@ describe("Foreground to Background Migration", () => {
     ) as Promise<ToolExecuteResult>;
 
     // Wait for marker1 to output
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, FOREGROUND_MIGRATION_READY_MS));
 
     // Send to background mid-execution
     manager.sendToBackground(toolCallId);
@@ -630,7 +633,7 @@ describe("Foreground to Background Migration", () => {
     ) as Promise<ToolExecuteResult>;
 
     // Wait for first marker
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, FOREGROUND_MIGRATION_READY_MS));
 
     // Send to background
     manager.sendToBackground(toolCallId);
