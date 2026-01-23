@@ -29,6 +29,7 @@ import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import { generateForkIdentity } from "@/node/services/forkNameGenerator";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
@@ -1482,14 +1483,9 @@ export class WorkspaceService extends EventEmitter {
 
   async fork(
     sourceWorkspaceId: string,
-    newName: string
+    newName?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
-      const validation = validateWorkspaceName(newName);
-      if (!validation.valid) {
-        return Err(validation.error ?? "Invalid workspace name");
-      }
-
       if (this.aiService.isStreaming(sourceWorkspaceId)) {
         await this.partialService.commitToHistory(sourceWorkspaceId);
       }
@@ -1499,6 +1495,18 @@ export class WorkspaceService extends EventEmitter {
         return Err(`Failed to get source workspace metadata: ${sourceMetadataResult.error}`);
       }
       const sourceMetadata = sourceMetadataResult.data;
+
+      // Auto-generate name and title if not provided
+      const forkIdentity = newName
+        ? { name: newName, title: undefined }
+        : generateForkIdentity(sourceMetadata.name, sourceMetadata.title);
+      const resolvedName = forkIdentity.name;
+      const resolvedTitle = forkIdentity.title;
+
+      const validation = validateWorkspaceName(resolvedName);
+      if (!validation.valid) {
+        return Err(validation.error ?? "Invalid workspace name");
+      }
       const foundProjectPath = sourceMetadata.projectPath;
       const projectName = sourceMetadata.projectName;
 
@@ -1527,7 +1535,7 @@ export class WorkspaceService extends EventEmitter {
       const forkResult = await runtime.forkWorkspace({
         projectPath: foundProjectPath,
         sourceWorkspaceName: sourceMetadata.name,
-        newWorkspaceName: newName,
+        newWorkspaceName: resolvedName,
         initLogger,
       });
 
@@ -1543,7 +1551,7 @@ export class WorkspaceService extends EventEmitter {
         runtime,
         {
           projectPath: foundProjectPath,
-          branchName: newName,
+          branchName: resolvedName,
           trunkBranch: forkResult.sourceBranch ?? "main",
           workspacePath: forkResult.workspacePath!,
           initLogger,
@@ -1598,7 +1606,7 @@ export class WorkspaceService extends EventEmitter {
           }
         }
       } catch (copyError) {
-        await runtime.deleteWorkspace(foundProjectPath, newName, true);
+        await runtime.deleteWorkspace(foundProjectPath, resolvedName, true);
         try {
           await fsPromises.rm(newSessionDir, { recursive: true, force: true });
         } catch (cleanupError) {
@@ -1610,7 +1618,13 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Copy plan file if it exists (checks both new and legacy paths)
-      await copyPlanFile(runtime, sourceMetadata.name, sourceWorkspaceId, newName, projectName);
+      await copyPlanFile(
+        runtime,
+        sourceMetadata.name,
+        sourceWorkspaceId,
+        resolvedName,
+        projectName
+      );
 
       // Apply runtime-provided config updates (e.g., Coder marks shared workspaces)
       const { forkedRuntimeConfig } = await applyForkRuntimeUpdates(
@@ -1621,11 +1635,12 @@ export class WorkspaceService extends EventEmitter {
       );
 
       // Compute namedWorkspacePath for frontend metadata
-      const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);
+      const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, resolvedName);
 
       const metadata: FrontendWorkspaceMetadata = {
         id: newWorkspaceId,
-        name: newName,
+        name: resolvedName,
+        title: resolvedTitle,
         projectName,
         projectPath: foundProjectPath,
         createdAt: new Date().toISOString(),

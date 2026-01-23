@@ -786,6 +786,7 @@ export class Config {
         path: workspacePath,
         id: metadata.id,
         name: metadata.name,
+        title: metadata.title,
         createdAt: metadata.createdAt,
         runtimeConfig: metadata.runtimeConfig,
       };

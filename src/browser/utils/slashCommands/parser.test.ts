@@ -174,8 +174,8 @@ describe("commandParser", () => {
       });
     });
 
-    it("should show /fork help when missing args", () => {
-      expectParse("/fork", { type: "fork-help" });
+    it("should parse /fork without arguments for auto-increment", () => {
+      expectParse("/fork", { type: "fork", newName: undefined, startMessage: undefined });
     });
   });
 });
