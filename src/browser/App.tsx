@@ -134,9 +134,10 @@ function AppInner() {
     ? (pendingNewWorkspaceProject ?? defaultProjectPath)
     : null;
 
-  // Window-level DockLayout (nav + workspaces/projects/welcome) is enabled.
-  // This lets users tile multiple main panes (and even drag the nav) like a window manager.
-  const shouldUseWindowDockLayout = true;
+  // Window-level DockLayout (nav + workspaces/projects/welcome).
+  // Desktop: enabled so users can tile multiple main panes like a window manager.
+  // Mobile: disabled for now (keep the single-pane UX).
+  const shouldUseWindowDockLayout = !isMobile;
 
   const windowMainPane: Exclude<WindowPaneId, "nav"> = selectedWorkspace
     ? `workspace:${selectedWorkspace.workspaceId}`
