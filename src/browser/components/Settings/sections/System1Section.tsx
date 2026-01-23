@@ -286,9 +286,8 @@ export function System1Section() {
             <div className="flex-1">
               <div className="text-foreground text-sm">Min Lines</div>
               <div className="text-muted text-xs">
-                Filter when output has more than{" "}
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default} lines.
-                Range {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.min}–
+                Filter when output has more than this many lines. Range{" "}
+                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.min}–
                 {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.max}.
               </div>
             </div>
@@ -308,9 +307,7 @@ export function System1Section() {
             <div className="flex-1">
               <div className="text-foreground text-sm">Min Total Bytes</div>
               <div className="text-muted text-xs">
-                Filter when output exceeds{" "}
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default}{" "}
-                bytes. Range{" "}
+                Filter when output exceeds this many bytes. Range{" "}
                 {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.min}–
                 {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.max}.
               </div>
@@ -331,9 +328,7 @@ export function System1Section() {
             <div className="flex-1">
               <div className="text-foreground text-sm">Max Kept Lines</div>
               <div className="text-muted text-xs">
-                Keep at most{" "}
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default}{" "}
-                lines. Range{" "}
+                Keep at most this many lines. Range{" "}
                 {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.min}–
                 {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.max}.
               </div>
@@ -354,9 +349,8 @@ export function System1Section() {
             <div className="flex-1">
               <div className="text-foreground text-sm">Timeout (ms)</div>
               <div className="text-muted text-xs">
-                Abort filtering after{" "}
-                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default}ms.
-                Range {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min}–
+                Abort filtering if it takes longer than this many milliseconds. Range{" "}
+                {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min}–
                 {SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max}.
               </div>
             </div>
