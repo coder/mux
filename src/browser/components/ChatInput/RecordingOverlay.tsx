@@ -14,8 +14,8 @@ const WINDOW_DURATION_MS = 10_000;
 const SAMPLE_INTERVAL_MS = 50;
 const NUM_SAMPLES = WINDOW_DURATION_MS / SAMPLE_INTERVAL_MS;
 
-// Render at 60fps using setInterval instead of RAF to avoid
-// waking JavaScript at 120Hz+ on high refresh rate displays
+// Target 60fps render cadence, throttled from rAF to stay vsync-aligned
+// while avoiding 120Hz+ over-rendering on high refresh displays
 const RENDER_INTERVAL_MS = 1000 / 60;
 
 /**
@@ -128,8 +128,10 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const samplesRef = useRef<number[]>(new Array<number>(NUM_SAMPLES).fill(0));
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const lastRenderTimeRef = useRef<number | null>(null);
   const lastSampleTimeRef = useRef<number>(0);
+  const resolvedColorRef = useRef<string>(props.color);
   // Pre-allocate typed array to avoid GC pressure during animation
   const dataArrayRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
 
@@ -181,20 +183,19 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
     }
   }, [props.mediaRecorder]);
 
-  // Render loop using setInterval at 60fps
-  // Unlike RAF which fires at display refresh rate (120Hz+), setInterval
-  // fires at a fixed rate, reducing CPU wake-ups on high refresh displays
+  // Render loop using rAF throttled to 60fps for vsync-aligned updates
   useEffect(() => {
     if (audioError) return;
 
-    const draw = () => {
+    resolvedColorRef.current = resolveCssColor(props.color);
+
+    const draw = (now: number) => {
       const canvas = canvasRef.current;
       const analyser = analyserRef.current;
       const dataArray = dataArrayRef.current;
       if (!canvas || !analyser || !dataArray) return;
 
       // Sample audio at fixed intervals (reuse pre-allocated array)
-      const now = performance.now();
       if (now - lastSampleTimeRef.current >= SAMPLE_INTERVAL_MS) {
         analyser.getByteTimeDomainData(dataArray);
 
@@ -224,7 +225,7 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
       const gap = barWidth * 0.4;
       const centerY = canvas.height / 2;
 
-      ctx.fillStyle = resolveCssColor(props.color);
+      ctx.fillStyle = resolvedColorRef.current;
 
       for (let i = 0; i < numBars; i++) {
         const scaledAmplitude = Math.min(1, samples[i] * 3); // Boost for visibility
@@ -242,11 +243,26 @@ const SlidingWaveform: React.FC<SlidingWaveformProps> = (props) => {
       }
     };
 
-    // Initial draw, then interval
-    draw();
-    intervalRef.current = setInterval(draw, RENDER_INTERVAL_MS);
+    const renderFrame = (now: number) => {
+      lastRenderTimeRef.current ??= now - RENDER_INTERVAL_MS;
+
+      const elapsed = now - lastRenderTimeRef.current;
+      if (elapsed >= RENDER_INTERVAL_MS) {
+        draw(now);
+        // Keep cadence stable by accounting for any drift
+        lastRenderTimeRef.current = now - (elapsed % RENDER_INTERVAL_MS);
+      }
+
+      animationFrameRef.current = requestAnimationFrame(renderFrame);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(renderFrame);
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      animationFrameRef.current = null;
+      lastRenderTimeRef.current = null;
     };
   }, [props.color, audioError]);
 
