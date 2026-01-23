@@ -10,6 +10,7 @@ export interface TaskSettings {
   bashOutputCompactionMinTotalBytes?: number;
   bashOutputCompactionMaxKeptLines?: number;
   bashOutputCompactionTimeoutMs?: number;
+  bashOutputCompactionHeuristicFallback?: boolean;
 }
 
 export const TASK_SETTINGS_LIMITS = {
@@ -36,6 +37,7 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default,
   bashOutputCompactionTimeoutMs:
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
+  bashOutputCompactionHeuristicFallback: true,
 };
 
 export interface SubagentAiDefaultsEntry {
@@ -126,6 +128,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min,
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max
   );
+
+  const bashOutputCompactionHeuristicFallback =
+    typeof record.bashOutputCompactionHeuristicFallback === "boolean"
+      ? record.bashOutputCompactionHeuristicFallback
+      : (DEFAULT_TASK_SETTINGS.bashOutputCompactionHeuristicFallback ?? true);
   const bashOutputCompactionTimeoutMs = Math.floor(bashOutputCompactionTimeoutMsRaw / 1000) * 1000;
 
   const result: TaskSettings = {
@@ -135,6 +142,7 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     bashOutputCompactionMinTotalBytes,
     bashOutputCompactionMaxKeptLines,
     bashOutputCompactionTimeoutMs,
+    bashOutputCompactionHeuristicFallback,
   };
 
   assert(
@@ -161,6 +169,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     Number.isInteger(bashOutputCompactionTimeoutMs),
     "normalizeTaskSettings: bashOutputCompactionTimeoutMs must be an integer"
+  );
+
+  assert(
+    typeof bashOutputCompactionHeuristicFallback === "boolean",
+    "normalizeTaskSettings: bashOutputCompactionHeuristicFallback must be a boolean"
   );
   assert(
     bashOutputCompactionTimeoutMs % 1000 === 0,

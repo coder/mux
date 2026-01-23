@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
+import { Switch } from "@/browser/components/ui/switch";
 import { Input } from "@/browser/components/ui/input";
 import {
   Select,
@@ -41,6 +42,7 @@ export function System1Section() {
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
+  const lastSyncedRef = useRef<TaskSettings | null>(null);
   const pendingSaveRef = useRef<TaskSettings | null>(null);
 
   const [system1ModelRaw, setSystem1ModelRaw] = usePersistedState<unknown>(
@@ -108,7 +110,9 @@ export function System1Section() {
     void api.config
       .getConfig()
       .then((cfg) => {
-        setTaskSettings(normalizeTaskSettings(cfg.taskSettings));
+        const normalized = normalizeTaskSettings(cfg.taskSettings);
+        setTaskSettings(normalized);
+        lastSyncedRef.current = normalized;
         setLoadFailed(false);
         setLoaded(true);
       })
@@ -131,6 +135,16 @@ export function System1Section() {
     }
 
     // Debounce settings writes so typing doesn't thrash the disk.
+    const lastSynced = lastSyncedRef.current;
+    if (lastSynced && areTaskSettingsEqual(lastSynced, taskSettings)) {
+      pendingSaveRef.current = null;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      return;
+    }
+
     pendingSaveRef.current = taskSettings;
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
@@ -154,6 +168,10 @@ export function System1Section() {
         void api.config
           .saveConfig({
             taskSettings: payload,
+          })
+          .then(() => {
+            lastSyncedRef.current = payload;
+            setSaveError(null);
           })
           .catch((error: unknown) => {
             setSaveError(error instanceof Error ? error.message : String(error));
@@ -235,6 +253,15 @@ export function System1Section() {
     );
   };
 
+  const setBashOutputCompactionHeuristicFallback = (value: boolean) => {
+    setTaskSettings((prev) =>
+      normalizeTaskSettings({
+        ...prev,
+        bashOutputCompactionHeuristicFallback: value,
+      })
+    );
+  };
+
   const setBashOutputCompactionTimeoutSeconds = (rawValue: string) => {
     const parsedSeconds = Math.floor(Number(rawValue));
     const ms = parsedSeconds * 1000;
@@ -266,6 +293,11 @@ export function System1Section() {
   const bashOutputCompactionMaxKeptLines =
     taskSettings.bashOutputCompactionMaxKeptLines ??
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default;
+  const bashOutputCompactionHeuristicFallback =
+    taskSettings.bashOutputCompactionHeuristicFallback ??
+    DEFAULT_TASK_SETTINGS.bashOutputCompactionHeuristicFallback ??
+    true;
+
   const bashOutputCompactionTimeoutMs =
     taskSettings.bashOutputCompactionTimeoutMs ??
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default;
@@ -327,6 +359,21 @@ export function System1Section() {
       <div>
         <h3 className="text-foreground mb-4 text-sm font-medium">Bash Output Compaction</h3>
         <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Heuristic Fallback</div>
+              <div className="text-muted text-xs">
+                If System 1 returns invalid keep_ranges, fall back to deterministic filtering
+                instead of showing full output.
+              </div>
+            </div>
+            <Switch
+              checked={bashOutputCompactionHeuristicFallback}
+              onCheckedChange={setBashOutputCompactionHeuristicFallback}
+              aria-label="Toggle heuristic fallback for bash output compaction"
+            />
+          </div>
+
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
               <div className="text-foreground text-sm">Min Lines</div>
@@ -423,5 +470,17 @@ export function System1Section() {
         {saveError ? <div className="text-danger-light mt-4 text-xs">{saveError}</div> : null}
       </div>
     </div>
+  );
+}
+
+function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
+  return (
+    a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
+    a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
+    a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
+    a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
+    a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
+    a.bashOutputCompactionTimeoutMs === b.bashOutputCompactionTimeoutMs &&
+    a.bashOutputCompactionHeuristicFallback === b.bashOutputCompactionHeuristicFallback
   );
 }

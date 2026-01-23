@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   applySystem1KeepRangesToOutput,
   formatNumberedLinesForSystem1,
+  getHeuristicKeepRangesForBashOutput,
   formatSystem1BashFilterNotice,
   parseSystem1KeepRanges,
   splitBashOutputLines,
@@ -71,6 +72,34 @@ describe("bashOutputFiltering", () => {
         '{"keep_ranges":[{"start":"nope","end":2},{"start":1,"end":2}]}'
       );
       expect(ranges).toEqual([{ start: 1, end: 2, reason: undefined }]);
+    });
+  });
+
+  describe("getHeuristicKeepRangesForBashOutput", () => {
+    it("keeps error context and respects maxKeptLines", () => {
+      const rawOutput = [
+        "starting...",
+        "step 1 ok",
+        "ERROR: expected X, got Y",
+        "  at path/to/file.ts:12:3",
+        "done",
+      ].join("\n");
+
+      const lines = splitBashOutputLines(rawOutput);
+      const keepRanges = getHeuristicKeepRangesForBashOutput({
+        lines,
+        maxKeptLines: 3,
+      });
+
+      const applied = applySystem1KeepRangesToOutput({
+        rawOutput,
+        keepRanges,
+        maxKeptLines: 3,
+      });
+
+      expect(applied).toBeDefined();
+      expect(applied?.keptLines).toBeLessThanOrEqual(3);
+      expect(applied?.filteredOutput).toContain("ERROR:");
     });
   });
 

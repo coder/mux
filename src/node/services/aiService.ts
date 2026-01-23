@@ -6,20 +6,23 @@ import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import {
+  JSONParseError,
+  TypeValidationError,
   convertToModelMessages,
-  generateText,
+  generateObject,
   type LanguageModel,
-  type ModelMessage,
   type Tool,
 } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import {
   applySystem1KeepRangesToOutput,
+  buildSystem1BashKeepRangesPrompt,
   formatNumberedLinesForSystem1,
   formatSystem1BashFilterNotice,
-  parseSystem1KeepRanges,
+  getHeuristicKeepRangesForBashOutput,
   splitBashOutputLines,
+  system1BashKeepRangesSchema,
 } from "@/node/services/system1/bashOutputFiltering";
 import {
   formatBashOutputReport,
@@ -2075,73 +2078,6 @@ export class AIService extends EventEmitter {
               const bashOutputExecuteFn = getExecuteFnForTool(baseBashOutputTool);
               const taskAwaitExecuteFn = getExecuteFnForTool(baseTaskAwaitTool);
 
-              const SYSTEM1_CONTEXT_MESSAGES_MAX = 8;
-              let cachedSystem1ContextMessages:
-                | {
-                    modelString: string;
-                    thinkingLevel: ThinkingLevel;
-                    contextMessages: ModelMessage[];
-                  }
-                | undefined;
-
-              const getContextMessagesForSystem1 = (
-                effectiveSystem1ModelString: string
-              ): ModelMessage[] => {
-                // If System 1 uses the same model string as the primary request, reuse the already
-                // provider-transformed messages. Otherwise, re-transform for the System 1 provider
-                // to avoid leaking provider-specific formatting (e.g. Anthropic cacheControl) into
-                // a different provider request.
-                if (
-                  effectiveSystem1ModelString === modelString &&
-                  effectiveSystem1ThinkingLevel === effectiveThinkingLevel
-                ) {
-                  return finalMessages.slice(
-                    Math.max(0, finalMessages.length - SYSTEM1_CONTEXT_MESSAGES_MAX)
-                  );
-                }
-
-                if (
-                  cachedSystem1ContextMessages?.modelString === effectiveSystem1ModelString &&
-                  cachedSystem1ContextMessages.thinkingLevel === effectiveSystem1ThinkingLevel
-                ) {
-                  return cachedSystem1ContextMessages.contextMessages;
-                }
-
-                const [system1ProviderName, system1ModelId] = parseModelString(
-                  effectiveSystem1ModelString
-                );
-                if (!system1ProviderName || !system1ModelId) {
-                  // Defensive fallback: if the model string is malformed, reuse the main context.
-                  return finalMessages.slice(
-                    Math.max(0, finalMessages.length - SYSTEM1_CONTEXT_MESSAGES_MAX)
-                  );
-                }
-
-                const transformedForSystem1 = transformModelMessages(
-                  modelMessages,
-                  system1ProviderName,
-                  {
-                    anthropicThinkingEnabled:
-                      system1ProviderName === "anthropic" &&
-                      effectiveSystem1ThinkingLevel !== "off",
-                  }
-                );
-                const finalForSystem1 = applyCacheControl(
-                  transformedForSystem1,
-                  effectiveSystem1ModelString
-                );
-
-                const contextMessages = finalForSystem1.slice(
-                  Math.max(0, finalForSystem1.length - SYSTEM1_CONTEXT_MESSAGES_MAX)
-                );
-
-                cachedSystem1ContextMessages = {
-                  modelString: effectiveSystem1ModelString,
-                  thinkingLevel: effectiveSystem1ThinkingLevel,
-                  contextMessages,
-                };
-                return contextMessages;
-              };
               const system1ModelString =
                 typeof system1Model === "string" ? system1Model.trim() : "";
               const effectiveSystem1ModelStringForThinking = system1ModelString || modelString;
@@ -2185,8 +2121,8 @@ export class AIService extends EventEmitter {
                 return cachedSystem1Model;
               };
 
-              type GenerateTextProviderOptions = Parameters<
-                typeof generateText
+              type GenerateObjectProviderOptions = Parameters<
+                typeof generateObject
               >[0]["providerOptions"];
 
               const maybeFilterBashOutputWithSystem1 = async (params: {
@@ -2196,6 +2132,8 @@ export class AIService extends EventEmitter {
                 toolCallId?: string;
                 abortSignal?: AbortSignal;
               }): Promise<{ filteredOutput: string; notice: string } | undefined> => {
+                let system1TimedOut = false;
+
                 try {
                   if (typeof params.output !== "string" || params.output.length === 0) {
                     return undefined;
@@ -2210,6 +2148,11 @@ export class AIService extends EventEmitter {
                   const maxKeptLines =
                     taskSettings.bashOutputCompactionMaxKeptLines ??
                     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default;
+                  const heuristicFallbackEnabled =
+                    taskSettings.bashOutputCompactionHeuristicFallback ??
+                    DEFAULT_TASK_SETTINGS.bashOutputCompactionHeuristicFallback ??
+                    true;
+
                   const timeoutMs =
                     taskSettings.bashOutputCompactionTimeoutMs ??
                     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default;
@@ -2222,6 +2165,20 @@ export class AIService extends EventEmitter {
                   if (!triggeredByLines && !triggeredByBytes) {
                     return undefined;
                   }
+
+                  log.debug("[system1] Bash output compaction triggered", {
+                    workspaceId,
+                    toolName: params.toolName,
+                    totalLines: lines.length,
+                    totalBytes: bytes,
+                    triggeredByLines,
+                    triggeredByBytes,
+                    minLines,
+                    minTotalBytes,
+                    maxKeptLines,
+                    heuristicFallbackEnabled,
+                    timeoutMs,
+                  });
 
                   let fullOutputPath: string | undefined;
                   try {
@@ -2254,26 +2211,26 @@ export class AIService extends EventEmitter {
                     undefined,
                     effectiveMuxProviderOptions,
                     workspaceId
-                  ) as unknown as GenerateTextProviderOptions;
+                  ) as unknown as GenerateObjectProviderOptions;
 
                   const numberedOutput = formatNumberedLinesForSystem1(lines);
 
-                  const systemPrompt =
-                    "You are a fast log filtering assistant.\n" +
-                    "Given numbered bash output, return ONLY valid JSON (no markdown, no prose).\n" +
-                    'Schema: {"keep_ranges":[{"start":number,"end":number,"reason":string}]}\n' +
-                    `Rules:\n- start/end are 1-based line numbers\n- Keep at most ${maxKeptLines} lines total\n- Prefer errors, stack traces, failing test summaries, and actionable warnings\n- If uncertain, keep the most informative 1-5 lines`;
+                  const { systemPrompt, userMessage } = buildSystem1BashKeepRangesPrompt({
+                    maxKeptLines,
+                    script: params.script,
+                    numberedOutput,
+                  });
 
-                  const userMessage =
-                    `Bash script:\n${params.script}\n\n` + `Numbered output:\n${numberedOutput}`;
-
-                  // Use a small slice of conversation context to help judge relevance.
-                  // Note: Build this context in the System 1 provider's message format.
-                  const contextMessages = getContextMessagesForSystem1(system1.modelString);
+                  const upstreamAborted = params.abortSignal?.aborted ?? false;
+                  const startTimeMs = Date.now();
+                  const deadlineMs = startTimeMs + timeoutMs;
 
                   const system1AbortController = new AbortController();
                   const unlink = linkAbortSignal(params.abortSignal, system1AbortController);
-                  const timeout = setTimeout(() => system1AbortController.abort(), timeoutMs);
+                  const timeout = setTimeout(() => {
+                    system1TimedOut = true;
+                    system1AbortController.abort();
+                  }, timeoutMs);
                   timeout.unref?.();
 
                   if (typeof params.toolCallId === "string" && params.toolCallId.length > 0) {
@@ -2287,35 +2244,152 @@ export class AIService extends EventEmitter {
                       timestamp: Date.now(),
                     } satisfies BashOutputEvent);
                   }
-                  let system1Text: string;
-                  try {
-                    const response = await generateText({
+
+                  let attempts = 0;
+                  let filterMethod: "system1" | "heuristic" = "system1";
+                  let keepRangesCount = 0;
+                  let finishReason: string | undefined;
+                  let lastErrorName: string | undefined;
+                  let lastErrorMessage: string | undefined;
+                  let lastErrorText: string | undefined;
+
+                  let applied: ReturnType<typeof applySystem1KeepRangesToOutput> = undefined;
+
+                  const getErrorText = (error: unknown): string | undefined => {
+                    if (JSONParseError.isInstance(error)) {
+                      return error.text;
+                    }
+
+                    if (TypeValidationError.isInstance(error)) {
+                      try {
+                        return JSON.stringify(error.value);
+                      } catch {
+                        return undefined;
+                      }
+                    }
+
+                    return undefined;
+                  };
+
+                  const tryGenerateKeepRanges = async (attemptParams: {
+                    correctionText?: string | undefined;
+                  }): Promise<ReturnType<typeof applySystem1KeepRangesToOutput>> => {
+                    attempts += 1;
+
+                    const correctionSnippet =
+                      typeof attemptParams.correctionText === "string" &&
+                      attemptParams.correctionText.length > 0
+                        ? attemptParams.correctionText.slice(0, 500)
+                        : undefined;
+
+                    const attemptSystemPrompt = correctionSnippet
+                      ? systemPrompt +
+                        "\n\nIMPORTANT: Your previous response was invalid. Output ONLY valid JSON that matches the schema exactly."
+                      : systemPrompt;
+
+                    const attemptUserMessage = correctionSnippet
+                      ? `${userMessage}\n\nPrevious invalid response (truncated):\n${correctionSnippet}\n\nReturn corrected JSON only.`
+                      : userMessage;
+
+                    const response = await generateObject({
                       model: system1.model,
-                      system: systemPrompt,
-                      messages: [...contextMessages, { role: "user", content: userMessage }],
+                      schema: system1BashKeepRangesSchema,
+                      mode: "json",
+                      system: attemptSystemPrompt,
+                      messages: [{ role: "user", content: attemptUserMessage }],
                       abortSignal: system1AbortController.signal,
                       providerOptions: system1ProviderOptions,
                       maxOutputTokens: 600,
+                      maxRetries: 0,
                     });
-                    system1Text = response.text;
+
+                    finishReason = response.finishReason;
+                    const keepRanges = response.object.keep_ranges;
+                    keepRangesCount = keepRanges.length;
+
+                    return applySystem1KeepRangesToOutput({
+                      rawOutput: params.output,
+                      keepRanges,
+                      maxKeptLines,
+                    });
+                  };
+
+                  try {
+                    try {
+                      applied = await tryGenerateKeepRanges({});
+                    } catch (error) {
+                      lastErrorName = error instanceof Error ? error.name : undefined;
+                      lastErrorMessage = error instanceof Error ? error.message : String(error);
+                      lastErrorText = getErrorText(error);
+                    }
+
+                    if (!applied || applied.keptLines === 0) {
+                      const remainingMs = deadlineMs - Date.now();
+                      if (remainingMs >= 750 && !system1AbortController.signal.aborted) {
+                        try {
+                          applied = await tryGenerateKeepRanges({
+                            correctionText: lastErrorText ?? "(invalid response)",
+                          });
+                        } catch (error) {
+                          lastErrorName = error instanceof Error ? error.name : undefined;
+                          lastErrorMessage = error instanceof Error ? error.message : String(error);
+                          lastErrorText = getErrorText(error);
+                        }
+                      }
+                    }
                   } finally {
                     clearTimeout(timeout);
                     unlink();
                   }
 
-                  const keepRanges = parseSystem1KeepRanges(system1Text);
-                  if (!keepRanges) {
+                  if (!applied || applied.keptLines === 0) {
+                    const elapsedMs = Date.now() - startTimeMs;
+
+                    log.debug("[system1] Failed to generate keep_ranges", {
+                      workspaceId,
+                      toolName: params.toolName,
+                      system1Model: system1.modelString,
+                      attempts,
+                      elapsedMs,
+                      remainingMs: deadlineMs - Date.now(),
+                      timedOut: system1TimedOut,
+                      upstreamAborted,
+                      errorName: lastErrorName,
+                      error: lastErrorMessage,
+                      responseLength: lastErrorText?.length,
+                      responseSnippet: lastErrorText?.slice(0, 200),
+                    });
+
+                    if (!heuristicFallbackEnabled || upstreamAborted) {
+                      return undefined;
+                    }
+
+                    const heuristicKeepRanges = getHeuristicKeepRangesForBashOutput({
+                      lines,
+                      maxKeptLines,
+                    });
+                    keepRangesCount = heuristicKeepRanges.length;
+                    applied = applySystem1KeepRangesToOutput({
+                      rawOutput: params.output,
+                      keepRanges: heuristicKeepRanges,
+                      maxKeptLines,
+                    });
+                    filterMethod = "heuristic";
+                  }
+
+                  if (!applied || applied.keptLines === 0) {
+                    log.debug("[system1] keep_ranges produced empty filtered output", {
+                      workspaceId,
+                      toolName: params.toolName,
+                      filterMethod,
+                      keepRangesCount,
+                      maxKeptLines,
+                      totalLines: lines.length,
+                    });
                     return undefined;
                   }
 
-                  const applied = applySystem1KeepRangesToOutput({
-                    rawOutput: params.output,
-                    keepRanges,
-                    maxKeptLines,
-                  });
-                  if (!applied || applied.keptLines === 0) {
-                    return undefined;
-                  }
+                  const elapsedMs = Date.now() - startTimeMs;
 
                   const trigger = [
                     triggeredByLines ? "lines" : null,
@@ -2335,18 +2409,34 @@ export class AIService extends EventEmitter {
                     workspaceId,
                     toolName: params.toolName,
                     system1Model: system1.modelString,
+                    filterMethod,
+                    attempts,
+                    keepRangesCount,
+                    finishReason,
+                    elapsedMs,
                     keptLines: applied.keptLines,
                     totalLines: applied.totalLines,
+                    totalBytes: bytes,
                     triggeredByLines,
                     triggeredByBytes,
+                    timeoutMs,
                   });
 
                   return { filteredOutput: applied.filteredOutput, notice };
                 } catch (error) {
+                  const errorMessage = error instanceof Error ? error.message : String(error);
+                  const errorName = error instanceof Error ? error.name : undefined;
+                  const upstreamAborted = params.abortSignal?.aborted ?? false;
+                  const isAbortError = errorName === "AbortError";
+
                   log.debug("[system1] Failed to filter bash tool output", {
                     workspaceId,
                     toolName: params.toolName,
-                    error: error instanceof Error ? error.message : String(error),
+                    error: errorMessage,
+                    errorName,
+                    timedOut: system1TimedOut,
+                    upstreamAborted,
+                    isAbortError,
                   });
                   return undefined;
                 }

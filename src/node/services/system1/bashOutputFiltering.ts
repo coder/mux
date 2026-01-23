@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import assert from "@/common/utils/assert";
 
 export interface System1KeepRange {
@@ -6,6 +8,16 @@ export interface System1KeepRange {
   reason?: string;
 }
 
+export const system1BashKeepRangesSchema = z.object({
+  keep_ranges: z.array(
+    z.object({
+      start: z.number(),
+      end: z.number(),
+    })
+  ),
+});
+
+export type System1BashKeepRangesObject = z.infer<typeof system1BashKeepRangesSchema>;
 export interface ApplySystem1KeepRangesResult {
   filteredOutput: string;
   keptLines: number;
@@ -56,6 +68,47 @@ export function splitBashOutputLines(output: string): string[] {
 
 export function formatNumberedLinesForSystem1(lines: string[]): string {
   return lines.map((line, index) => `${String(index + 1).padStart(4, "0")}| ${line}`).join("\n");
+}
+
+export function buildSystem1BashKeepRangesPrompt(params: {
+  maxKeptLines: number;
+  script: string;
+  numberedOutput: string;
+}): { systemPrompt: string; userMessage: string } {
+  assert(
+    Number.isInteger(params.maxKeptLines) && params.maxKeptLines > 0,
+    "maxKeptLines must be a positive integer"
+  );
+  assert(typeof params.script === "string", "script must be a string");
+  assert(
+    typeof params.numberedOutput === "string" && params.numberedOutput.length > 0,
+    "numberedOutput must be a non-empty string"
+  );
+
+  const systemPrompt = [
+    "You are a fast log filtering assistant.",
+    "Given numbered bash output, return ONLY valid JSON (no markdown, no prose).",
+    'Schema: {"keep_ranges":[{"start":number,"end":number}]}',
+    "Rules:",
+    "- start/end are 1-based line numbers into the numbered output",
+    `- Keep at most ${params.maxKeptLines} lines total (we may truncate)`,
+    "- Prefer errors, stack traces, failing test summaries, and actionable warnings",
+    "- Prefer fewer, wider ranges (return at most 8 ranges)",
+    "- If uncertain, keep the most informative 1-5 lines",
+    "",
+    "Example:",
+    "Numbered output:",
+    "0001| building...",
+    "0002| ERROR: expected X, got Y",
+    "0003|   at path/to/file.ts:12:3",
+    "0004| done",
+    "JSON:",
+    '{"keep_ranges":[{"start":2,"end":3}]}',
+  ].join("\n");
+
+  const userMessage = `Bash script:\n${params.script}\n\nNumbered output:\n${params.numberedOutput}`;
+
+  return { systemPrompt, userMessage };
 }
 
 function extractFirstJsonObject(text: string): string | undefined {
@@ -113,6 +166,64 @@ export function parseSystem1KeepRanges(text: string): System1KeepRange[] | undef
   }
 
   return out;
+}
+
+const HEURISTIC_IMPORTANT_LINE_REGEX =
+  /(^|\b)(error|failed|failure|fatal|panic|exception|traceback|warning|assertion failed|npm err!|err!|exited with code|exit code)(\b|$)/i;
+
+const HEURISTIC_CONTEXT_LINES = 2;
+const HEURISTIC_MAX_MATCH_RANGES = 50;
+
+export function getHeuristicKeepRangesForBashOutput(params: {
+  lines: string[];
+  maxKeptLines: number;
+}): System1KeepRange[] {
+  assert(Array.isArray(params.lines), "lines must be an array");
+  assert(
+    Number.isInteger(params.maxKeptLines) && params.maxKeptLines > 0,
+    "maxKeptLines must be a positive integer"
+  );
+
+  const totalLines = params.lines.length;
+  if (totalLines === 0) {
+    return [];
+  }
+
+  // Keep a small head/tail slice so users can see setup and summary.
+  const headTailLines = Math.max(1, Math.min(5, Math.floor(params.maxKeptLines / 8)));
+
+  const ranges: System1KeepRange[] = [];
+
+  const headEnd = Math.min(totalLines, headTailLines);
+  if (headEnd > 0) {
+    ranges.push({ start: 1, end: headEnd, reason: "head" });
+  }
+
+  const tailStart = Math.max(1, totalLines - headTailLines + 1);
+  if (tailStart <= totalLines) {
+    ranges.push({ start: tailStart, end: totalLines, reason: "tail" });
+  }
+
+  let matchRanges = 0;
+  for (let idx = 0; idx < totalLines; idx += 1) {
+    if (matchRanges >= HEURISTIC_MAX_MATCH_RANGES) {
+      break;
+    }
+
+    const line = params.lines[idx];
+    if (!HEURISTIC_IMPORTANT_LINE_REGEX.test(line)) {
+      continue;
+    }
+
+    const lineNo = idx + 1;
+    const start = Math.max(1, lineNo - HEURISTIC_CONTEXT_LINES);
+    const end = Math.min(totalLines, lineNo + HEURISTIC_CONTEXT_LINES);
+
+    ranges.push({ start, end, reason: "match" });
+    matchRanges += 1;
+  }
+
+  return ranges;
 }
 
 interface NormalizedRange {

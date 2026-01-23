@@ -192,6 +192,47 @@ function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode 
   );
 }
 
+function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
+  return (
+    a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
+    a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
+    a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
+    a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
+    a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
+    a.bashOutputCompactionTimeoutMs === b.bashOutputCompactionTimeoutMs &&
+    a.bashOutputCompactionHeuristicFallback === b.bashOutputCompactionHeuristicFallback
+  );
+}
+
+function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolean {
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) {
+    return false;
+  }
+
+  aKeys.sort();
+  bKeys.sort();
+
+  for (let i = 0; i < aKeys.length; i += 1) {
+    const key = aKeys[i];
+    if (key !== bKeys[i]) {
+      return false;
+    }
+
+    const aEntry = a[key];
+    const bEntry = b[key];
+    if ((aEntry?.modelString ?? undefined) !== (bEntry?.modelString ?? undefined)) {
+      return false;
+    }
+    if ((aEntry?.thinkingLevel ?? undefined) !== (bEntry?.thinkingLevel ?? undefined)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function TasksSection() {
   const { api } = useAPI();
   const { selectedWorkspace } = useWorkspaceContext();
@@ -215,6 +256,8 @@ export function TasksSection() {
   } | null>(null);
 
   const { models, hiddenModels } = useModelsFromSettings();
+  const lastSyncedTaskSettingsRef = useRef<TaskSettings | null>(null);
+  const lastSyncedAgentAiDefaultsRef = useRef<AgentAiDefaults | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -226,7 +269,8 @@ export function TasksSection() {
     void api.config
       .getConfig()
       .then((cfg) => {
-        setTaskSettings(normalizeTaskSettings(cfg.taskSettings));
+        const normalizedTaskSettings = normalizeTaskSettings(cfg.taskSettings);
+        setTaskSettings(normalizedTaskSettings);
         const normalizedAgentDefaults = normalizeAgentAiDefaults(cfg.agentAiDefaults);
         setAgentAiDefaults(normalizedAgentDefaults);
         updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedAgentDefaults);
@@ -238,6 +282,9 @@ export function TasksSection() {
         );
 
         setLoadFailed(false);
+        lastSyncedTaskSettingsRef.current = normalizedTaskSettings;
+        lastSyncedAgentAiDefaultsRef.current = normalizedAgentDefaults;
+
         setLoaded(true);
       })
       .catch((error: unknown) => {
@@ -289,6 +336,23 @@ export function TasksSection() {
     if (loadFailed) return;
 
     pendingSaveRef.current = { taskSettings, agentAiDefaults };
+    const lastTaskSettings = lastSyncedTaskSettingsRef.current;
+    const lastAgentDefaults = lastSyncedAgentAiDefaultsRef.current;
+
+    if (
+      lastTaskSettings &&
+      lastAgentDefaults &&
+      areTaskSettingsEqual(lastTaskSettings, taskSettings) &&
+      areAgentAiDefaultsEqual(lastAgentDefaults, agentAiDefaults)
+    ) {
+      pendingSaveRef.current = null;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      return;
+    }
+
     // Keep agent defaults cache up-to-date for any syncers/non-react readers.
     updatePersistedState(AGENT_AI_DEFAULTS_KEY, agentAiDefaults);
 
@@ -321,6 +385,11 @@ export function TasksSection() {
           .saveConfig({
             taskSettings: payload.taskSettings,
             agentAiDefaults: payload.agentAiDefaults,
+          })
+          .then(() => {
+            lastSyncedTaskSettingsRef.current = payload.taskSettings;
+            lastSyncedAgentAiDefaultsRef.current = payload.agentAiDefaults;
+            setSaveError(null);
           })
           .catch((error: unknown) => {
             setSaveError(error instanceof Error ? error.message : String(error));
