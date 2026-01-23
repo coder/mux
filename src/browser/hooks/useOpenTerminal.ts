@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { isSSHRuntime } from "@/common/types/runtime";
+import { isSSHRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import {
   createTerminalSession,
   openTerminalPopout,
@@ -12,8 +12,8 @@ import {
  * Hook to open a terminal window for a workspace.
  * Handles the difference between Desktop (Electron) and Browser (Web) environments.
  *
- * For SSH workspaces: Always opens a web-based xterm.js terminal that connects
- * through the backend PTY service (works in both browser and Electron modes).
+ * For SSH/Devcontainer workspaces: Always opens a web-based xterm.js terminal that
+ * connects through the backend PTY service (works in both browser and Electron modes).
  *
  * For local workspaces in Electron: Opens the user's native terminal emulator
  * (Ghostty, Terminal.app, etc.) with the working directory set to the workspace path.
@@ -36,16 +36,15 @@ export function useOpenTerminal() {
       // If window.api exists, we're in Electron; if not, we're in browser mode
       const isBrowser = !window.api;
       const isSSH = isSSHRuntime(runtimeConfig);
+      const isDevcontainer = isDevcontainerRuntime(runtimeConfig);
 
-      // SSH workspaces always use web terminal (in browser popup or Electron window)
-      // because the PTY service handles the SSH connection to the remote host
-      if (isBrowser || isSSH) {
+      // SSH/Devcontainer workspaces always use web terminal (in browser popup or Electron window)
+      // because the PTY service handles the SSH/container connection
+      if (isBrowser || isSSH || isDevcontainer) {
         // Create terminal session first - window needs sessionId to connect
         const session = await createTerminalSession(api, workspaceId, options);
         openTerminalPopout(api, workspaceId, session.sessionId);
       } else {
-        // In Electron (desktop) mode with local workspace, open the native system terminal
-        // This spawns the user's preferred terminal emulator (Ghostty, Terminal.app, etc.)
         void api.terminal.openNative({ workspaceId });
       }
     },

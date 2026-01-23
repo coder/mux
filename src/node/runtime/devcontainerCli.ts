@@ -582,6 +582,50 @@ export async function getDevcontainerContainerId(
 }
 
 /**
+ * Get the container name for a devcontainer workspace.
+ * Returns null if no container exists.
+ *
+ * Note: VS Code devcontainer deep links require the container NAME (not ID).
+ * The devcontainer CLI only returns container ID, so we query Docker directly.
+ */
+export async function getDevcontainerContainerName(
+  workspaceFolder: string,
+  timeoutMs = 10_000
+): Promise<string | null> {
+  // The devcontainer CLI labels containers with the workspace folder path
+  const labelValue = workspaceFolder;
+
+  return new Promise((resolve) => {
+    const proc = spawn(
+      "docker",
+      ["ps", "--format", "{{.Names}}", "--filter", `label=devcontainer.local_folder=${labelValue}`],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: timeoutMs,
+      }
+    );
+
+    let stdout = "";
+    proc.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.on("error", () => {
+      resolve(null);
+    });
+
+    proc.on("close", (code) => {
+      if (code === 0 && stdout.trim()) {
+        // Return first container name (there should only be one)
+        resolve(stdout.trim().split("\n")[0]);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+/**
  * Stop and remove the devcontainer (best-effort cleanup).
  * Does not throw on failure - container may not exist.
  *

@@ -2,6 +2,7 @@ import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import {
   getEditorDeepLink,
   getDockerDeepLink,
+  getDevcontainerDeepLink,
   isLocalhost,
   type DeepLinkEditor,
 } from "@/browser/utils/editorDeepLinks";
@@ -11,7 +12,7 @@ import {
   type EditorConfig,
 } from "@/common/constants/storage";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { isSSHRuntime, isDockerRuntime } from "@/common/types/runtime";
+import { isSSHRuntime, isDockerRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import type { APIClient } from "@/browser/contexts/API";
 
 export interface OpenInEditorResult {
@@ -27,6 +28,40 @@ function openUrl(url: string): void {
   if (typeof window !== "undefined" && window.open) {
     window.open(url, "_blank");
   }
+}
+
+function trimTrailingSlash(path: string): string {
+  return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+}
+
+function mapHostPathToContainerPath(options: {
+  hostWorkspacePath: string;
+  containerWorkspacePath: string;
+  targetPath: string;
+}): string {
+  const hostWorkspacePath = trimTrailingSlash(options.hostWorkspacePath);
+  const containerWorkspacePath = trimTrailingSlash(options.containerWorkspacePath);
+  const targetPath = trimTrailingSlash(options.targetPath);
+
+  if (targetPath === hostWorkspacePath) {
+    return containerWorkspacePath || "/";
+  }
+
+  const prefix = `${hostWorkspacePath}/`;
+  if (targetPath.startsWith(prefix)) {
+    const relative = targetPath.slice(hostWorkspacePath.length);
+    if (!relative) {
+      return containerWorkspacePath || "/";
+    }
+
+    if (containerWorkspacePath === "/") {
+      return relative;
+    }
+
+    return `${containerWorkspacePath}${relative}`;
+  }
+
+  return containerWorkspacePath || "/";
 }
 
 /**
@@ -101,6 +136,57 @@ export async function openInEditor(args: {
 
     if (!deepLink) {
       return { success: false, error: `${editorConfig.editor} does not support Docker containers` };
+    }
+
+    openUrl(deepLink);
+    return { success: true };
+  }
+
+  // Devcontainer workspaces use deep links with container info from backend
+  const isDevcontainer = isDevcontainerRuntime(args.runtimeConfig);
+  if (isDevcontainer && args.runtimeConfig?.type === "devcontainer") {
+    if (editorConfig.editor === "zed") {
+      return { success: false, error: "Zed does not support Dev Containers" };
+    }
+    if (editorConfig.editor === "custom") {
+      return { success: false, error: "Custom editors do not support Dev Containers" };
+    }
+
+    // Fetch container info from backend (on-demand discovery)
+    const info = await args.api?.workspace.getDevcontainerInfo({ workspaceId: args.workspaceId });
+    if (!info) {
+      return {
+        success: false,
+        error: "Dev Container not running. Try reopening the workspace.",
+      };
+    }
+
+    // VS Code's dev-container URI scheme only supports opening folders as workspaces,
+    // not individual files. Open the parent directory so the file is visible in the file tree.
+    const targetDir = args.isFile ? getParentDirectory(args.targetPath) : args.targetPath;
+
+    const hostWorkspacePath = trimTrailingSlash(info.hostWorkspacePath);
+    const containerPath = mapHostPathToContainerPath({
+      hostWorkspacePath,
+      containerWorkspacePath: info.containerWorkspacePath,
+      targetPath: targetDir,
+    });
+
+    // Build the config file path if available
+    const configFilePath = args.runtimeConfig.configPath
+      ? `${hostWorkspacePath}/${args.runtimeConfig.configPath}`
+      : undefined;
+
+    const deepLink = getDevcontainerDeepLink({
+      editor: editorConfig.editor as DeepLinkEditor,
+      containerName: info.containerName,
+      hostPath: hostWorkspacePath,
+      containerPath,
+      configFilePath,
+    });
+
+    if (!deepLink) {
+      return { success: false, error: `${editorConfig.editor} does not support Dev Containers` };
     }
 
     openUrl(deepLink);

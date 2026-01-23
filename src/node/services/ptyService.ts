@@ -19,6 +19,7 @@ import { spawnPtyProcess } from "@/node/runtime/ptySpawn";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { DockerRuntime } from "@/node/runtime/DockerRuntime";
+import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { access } from "fs/promises";
 import { constants } from "fs";
 import { resolveLocalPtyShell } from "@/node/utils/main/resolveLocalPtyShell";
@@ -99,6 +100,23 @@ export class PTYService {
       });
       runtimeLabel = "SSH";
       log.info(`[PTY] SSH terminal for ${sessionId}: ssh ${runtime.getConfig().host}`);
+    } else if (runtime instanceof DevcontainerRuntime) {
+      // Must check before LocalBaseRuntime since DevcontainerRuntime extends it
+      const devcontainerArgs = ["exec", "--workspace-folder", workspacePath, "--", "/bin/sh"];
+      runtimeLabel = "Devcontainer";
+      log.info(
+        `[PTY] Devcontainer terminal for ${sessionId}: devcontainer ${devcontainerArgs.join(" ")}`
+      );
+
+      ptyProcess = spawnPtyProcess({
+        runtimeLabel,
+        command: "devcontainer",
+        args: devcontainerArgs,
+        cwd: workspacePath,
+        cols: params.cols,
+        rows: params.rows,
+        preferElectronBuild: false,
+      });
     } else if (runtime instanceof LocalBaseRuntime) {
       try {
         await access(workspacePath, constants.F_OK);

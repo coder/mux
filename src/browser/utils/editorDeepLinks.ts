@@ -68,6 +68,26 @@ export function getEditorDeepLink(options: DeepLinkOptions): string | null {
   return url;
 }
 
+function normalizeContainerPathForDevcontainerDeepLink(path: string): string {
+  const trimmed = path.trim();
+  const unquoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ? trimmed.slice(1, -1)
+      : trimmed;
+
+  const pathWithSlashes = unquoted.replace(/\\/g, "/");
+
+  if (!pathWithSlashes) {
+    return "/";
+  }
+
+  if (pathWithSlashes.startsWith("/")) {
+    return pathWithSlashes;
+  }
+
+  return `/${pathWithSlashes}`;
+}
 function normalizeLocalPathForEditorDeepLink(path: string): string {
   const trimmed = path.trim();
   const unquoted =
@@ -126,4 +146,50 @@ export function getDockerDeepLink(options: {
   const config = JSON.stringify({ containerName: `/${containerName}` });
   const hexConfig = toHex(config);
   return `${editor}://vscode-remote/attached-container+${hexConfig}/${path}`;
+}
+
+/**
+ * Generate a deep link URL to open a devcontainer in VS Code/Cursor.
+ * Uses the dev-container URI scheme with hex-encoded JSON config.
+ *
+ * @returns Deep link URL, or null if the editor doesn't support devcontainers
+ */
+export function getDevcontainerDeepLink(options: {
+  editor: DeepLinkEditor;
+  containerName: string;
+  hostPath: string;
+  containerPath: string;
+  configFilePath?: string;
+}): string | null {
+  const { editor, containerName, hostPath, containerPath, configFilePath } = options;
+
+  // Zed doesn't support devcontainers
+  if (editor === "zed") {
+    return null;
+  }
+
+  // VS Code dev-container URI format:
+  // vscode://vscode-remote/dev-container+<hex_encoded_json>/<container_path>
+  //
+  // The JSON config contains:
+  // - containerName: Docker container name with leading /
+  // - hostPath: Path on the host machine to the workspace
+  // - configFile: Optional devcontainer.json location
+  // - localDocker: false (we're connecting to an existing container)
+  const config: Record<string, unknown> = {
+    containerName: `/${containerName}`,
+    hostPath,
+    localDocker: false,
+  };
+
+  if (configFilePath) {
+    config.configFile = {
+      path: configFilePath,
+      scheme: "vscode-fileHost",
+    };
+  }
+
+  const normalizedContainerPath = normalizeContainerPathForDevcontainerDeepLink(containerPath);
+  const hexConfig = toHex(JSON.stringify(config));
+  return `${editor}://vscode-remote/dev-container+${hexConfig}${normalizedContainerPath}`;
 }
