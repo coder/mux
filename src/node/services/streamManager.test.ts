@@ -774,6 +774,29 @@ describe("StreamManager - previousResponseId recovery", () => {
     expect(result).toEqual(cumulativeUsage);
   });
 
+  test("resolveTotalUsageForStreamEnd treats non-zero fields as valid usage", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const resolveMethod = Reflect.get(streamManager, "resolveTotalUsageForStreamEnd") as (
+      streamInfo: unknown,
+      totalUsage: unknown
+    ) => unknown;
+    expect(typeof resolveMethod).toBe("function");
+
+    const cumulativeUsage = { inputTokens: 4, outputTokens: 1, totalTokens: 0 };
+    const totalUsage = { inputTokens: 1, outputTokens: 2, totalTokens: 3 };
+
+    const result = resolveMethod.call(
+      streamManager,
+      { didRetryPreviousResponseIdAtStep: true, cumulativeUsage },
+      totalUsage
+    );
+
+    expect(result).toEqual(cumulativeUsage);
+  });
+
   test("resolveTotalUsageForStreamEnd keeps stream total without step retry", () => {
     const mockHistoryService = createMockHistoryService();
     const mockPartialService = createMockPartialService();

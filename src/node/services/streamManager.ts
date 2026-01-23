@@ -157,7 +157,8 @@ interface WorkspaceStreamInfo {
   request: StreamRequestConfig;
   // Track last prepared step messages for safe retries after tool steps
   stepTracker: StepMessageTracker;
-  // Track if a previousResponseId retry happened after a step completed
+  // Track if a previousResponseId retry happened after a step completed so
+  // stream-end uses cumulative usage instead of the retried step's totalUsage.
   didRetryPreviousResponseIdAtStep: boolean;
   // Index into parts where the current step started (used to ensure safe retries)
   currentStepStartIndex: number;
@@ -474,9 +475,16 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     totalUsage: LanguageModelV2Usage | undefined
   ): LanguageModelV2Usage | undefined {
-    const hasCumulativeUsage = (streamInfo.cumulativeUsage.totalTokens ?? 0) > 0;
+    const cumulativeUsage = streamInfo.cumulativeUsage;
+    // totalTokens can be omitted by providers, so treat any non-zero usage field as valid.
+    const hasCumulativeUsage =
+      (cumulativeUsage.inputTokens ?? 0) > 0 ||
+      (cumulativeUsage.outputTokens ?? 0) > 0 ||
+      (cumulativeUsage.totalTokens ?? 0) > 0 ||
+      (cumulativeUsage.cachedInputTokens ?? 0) > 0 ||
+      (cumulativeUsage.reasoningTokens ?? 0) > 0;
     if (streamInfo.didRetryPreviousResponseIdAtStep && hasCumulativeUsage) {
-      return streamInfo.cumulativeUsage;
+      return cumulativeUsage;
     }
 
     return totalUsage;
@@ -1852,6 +1860,8 @@ export class StreamManager extends EventEmitter {
 
     this.recordLostResponseIdIfApplicable(error, streamInfo);
 
+    // Step-boundary retries restart the SDK stream, so totalUsage only reflects
+    // the retried step. Track this to prefer cumulativeUsage at stream end.
     if (hasParts) {
       streamInfo.didRetryPreviousResponseIdAtStep = true;
     }
