@@ -318,18 +318,22 @@ export function useCreationWorkspace({
           .filter((part) => typeof part === "string" && part.trim().length > 0)
           .join("\n\n");
 
-        void api.workspace.sendMessage({
-          workspaceId: metadata.id,
-          message: messageText,
-          options: {
-            ...sendMessageOptions,
-            ...optionsOverride,
-            additionalSystemInstructions: additionalSystemInstructions.length
-              ? additionalSystemInstructions
-              : undefined,
-            imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
-          },
-        });
+        api.workspace
+          .sendMessage({
+            workspaceId: metadata.id,
+            message: messageText,
+            options: {
+              ...sendMessageOptions,
+              ...optionsOverride,
+              additionalSystemInstructions: additionalSystemInstructions.length
+                ? additionalSystemInstructions
+                : undefined,
+              imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
+            },
+          })
+          .catch(() => {
+            // Best-effort: if sending fails (e.g., disconnected), the user can retry in the workspace.
+          });
 
         return true;
       } catch (err) {

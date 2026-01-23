@@ -73,6 +73,17 @@ function getApiBase(): string {
   return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
 }
 
+function closeWebSocketSafely(ws: WebSocket) {
+  try {
+    // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
+    if (ws.readyState === 2 || ws.readyState === 3) return;
+    ws.close();
+  } catch {
+    // Some browsers throw if close() is called while already closing/closed.
+    // Since our cleanup can be invoked from multiple code paths, treat close as idempotent.
+  }
+}
+
 function createElectronClient(): { client: APIClient; cleanup: () => void } {
   const { port1: clientPort, port2: serverPort } = new MessageChannel();
   window.postMessage("start-orpc-client", "*", [serverPort]);
@@ -106,7 +117,7 @@ function createBrowserClient(
 
   return {
     client: createClient(link),
-    cleanup: () => ws.close(),
+    cleanup: () => closeWebSocketSafely(ws),
     ws,
   };
 }
@@ -148,6 +159,15 @@ export const APIProvider = (props: APIProviderProps) => {
   const connect = useCallback(
     (token: string | null) => {
       const connectionId = ++connectionIdRef.current;
+
+      // This connect() call supersedes any prior pending reconnect or active connection.
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+
+      cleanupRef.current?.();
+      cleanupRef.current = null;
 
       if (props.client) {
         window.__ORPC_CLIENT__ = props.client;

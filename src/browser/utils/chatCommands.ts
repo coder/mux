@@ -104,11 +104,15 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   // 3. WorkspaceStore to subscribe to the new workspace's IPC channel
   if (options.startMessage && options.sendMessageOptions) {
     requestAnimationFrame(() => {
-      void client.workspace.sendMessage({
-        workspaceId: result.metadata.id,
-        message: options.startMessage!,
-        options: options.sendMessageOptions,
-      });
+      client.workspace
+        .sendMessage({
+          workspaceId: result.metadata.id,
+          message: options.startMessage!,
+          options: options.sendMessageOptions,
+        })
+        .catch(() => {
+          // Best-effort: the user can send the message manually if this fails.
+        });
     });
   }
 
@@ -568,11 +572,15 @@ export async function createNewWorkspace(
   // If there's a start message, defer until React finishes rendering and WorkspaceStore subscribes
   if (options.startMessage && options.sendMessageOptions) {
     requestAnimationFrame(() => {
-      void options.client.workspace.sendMessage({
-        workspaceId: result.metadata.id,
-        message: options.startMessage!,
-        options: options.sendMessageOptions,
-      });
+      options.client.workspace
+        .sendMessage({
+          workspaceId: result.metadata.id,
+          message: options.startMessage!,
+          options: options.sendMessageOptions,
+        })
+        .catch(() => {
+          // Best-effort: the user can send the message manually if this fails.
+        });
     });
   }
 

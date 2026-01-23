@@ -11,6 +11,7 @@ import { useBackgroundBashError } from "@/browser/contexts/BackgroundBashContext
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import { useReviews } from "@/browser/hooks/useReviews";
 import type { ReviewNoteData } from "@/common/types/review";
+import { ConnectionStatusToast } from "./ConnectionStatusToast";
 import { ChatPane } from "./ChatPane";
 
 interface WorkspaceShellProps {
@@ -34,11 +35,15 @@ const WorkspacePlaceholder: React.FC<{
 }> = (props) => (
   <div
     className={cn(
-      "flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
+      "relative flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
       props.className
     )}
     style={{ containerType: "inline-size" }}
   >
+    <div className="pointer-events-none absolute right-[15px] bottom-[15px] left-[15px] z-[1000] [&>*]:pointer-events-auto">
+      <ConnectionStatusToast wrap={false} />
+    </div>
+
     <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center">
       <h3 className="m-0 mb-2.5 text-base font-medium">{props.title}</h3>
       {props.description && <p className="m-0 text-[13px]">{props.description}</p>}
