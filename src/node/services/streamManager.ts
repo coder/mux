@@ -85,6 +85,9 @@ type StreamToken = string & { __brand: "StreamToken" };
 
 type StreamToolChoice = { type: "tool"; toolName: string } | "required" | undefined;
 
+interface StepMessageTracker {
+  latestMessages?: ModelMessage[];
+}
 interface StreamRequestConfig {
   model: LanguageModel;
   messages: ModelMessage[];
@@ -152,6 +155,13 @@ interface WorkspaceStreamInfo {
   model: string;
   initialMetadata?: Partial<MuxMetadata>;
   request: StreamRequestConfig;
+  // Track last prepared step messages for safe retries after tool steps
+  stepTracker: StepMessageTracker;
+  // Track if a previousResponseId retry happened after a step completed so
+  // stream-end uses cumulative usage instead of the retried step's totalUsage.
+  didRetryPreviousResponseIdAtStep: boolean;
+  // Index into parts where the current step started (used to ensure safe retries)
+  currentStepStartIndex: number;
   historySequence: number;
   // Track accumulated parts for partial message (includes reasoning, text, and tools)
   parts: CompletedMessagePart[];
@@ -459,6 +469,25 @@ export class StreamManager extends EventEmitter {
       contextProviderMetadata,
       duration: Date.now() - streamInfo.startTime,
     };
+  }
+
+  private resolveTotalUsageForStreamEnd(
+    streamInfo: WorkspaceStreamInfo,
+    totalUsage: LanguageModelV2Usage | undefined
+  ): LanguageModelV2Usage | undefined {
+    const cumulativeUsage = streamInfo.cumulativeUsage;
+    // totalTokens can be omitted by providers, so treat any non-zero usage field as valid.
+    const hasCumulativeUsage =
+      (cumulativeUsage.inputTokens ?? 0) > 0 ||
+      (cumulativeUsage.outputTokens ?? 0) > 0 ||
+      (cumulativeUsage.totalTokens ?? 0) > 0 ||
+      (cumulativeUsage.cachedInputTokens ?? 0) > 0 ||
+      (cumulativeUsage.reasoningTokens ?? 0) > 0;
+    if (streamInfo.didRetryPreviousResponseIdAtStep && hasCumulativeUsage) {
+      return cumulativeUsage;
+    }
+
+    return totalUsage;
   }
 
   /**
@@ -834,7 +863,8 @@ export class StreamManager extends EventEmitter {
 
   private createStreamResult(
     request: StreamRequestConfig,
-    abortController: AbortController
+    abortController: AbortController,
+    stepTracker?: StepMessageTracker
   ): Awaited<ReturnType<typeof streamText>> {
     return streamText({
       model: request.model,
@@ -845,6 +875,10 @@ export class StreamManager extends EventEmitter {
         // streamText runs multiple internal LLM calls (steps) when tools are enabled.
         // Extract base64 images out of tool-result JSON so providers don't treat them as text.
         const rewritten = extractToolMediaAsUserMessagesFromModelMessages(stepMessages);
+        const effectiveMessages = rewritten === stepMessages ? stepMessages : rewritten;
+        if (stepTracker) {
+          stepTracker.latestMessages = effectiveMessages;
+        }
         if (rewritten === stepMessages) return undefined;
         return { messages: rewritten };
       },
@@ -889,6 +923,7 @@ export class StreamManager extends EventEmitter {
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
+    const stepTracker: StepMessageTracker = {};
     const request = this.buildStreamRequestConfig(
       model,
       modelString,
@@ -904,7 +939,7 @@ export class StreamManager extends EventEmitter {
     // Start streaming - this can throw immediately if API key is missing
     let streamResult;
     try {
-      streamResult = this.createStreamResult(request, abortController);
+      streamResult = this.createStreamResult(request, abortController, stepTracker);
     } catch (error) {
       // Clean up abort controller if stream creation fails
       abortController.abort();
@@ -921,6 +956,9 @@ export class StreamManager extends EventEmitter {
       startTime: Date.now(),
       model: modelString,
       initialMetadata,
+      didRetryPreviousResponseIdAtStep: false,
+      stepTracker,
+      currentStepStartIndex: 0,
       request,
       historySequence,
       parts: [], // Initialize empty parts array
@@ -1184,6 +1222,11 @@ export class StreamManager extends EventEmitter {
             // });
 
             switch (part.type) {
+              case "start-step": {
+                streamInfo.currentStepStartIndex = streamInfo.parts.length;
+                break;
+              }
+
               case "text-delta": {
                 // Append each delta as a new part (merging happens at display time)
                 const textPart = {
@@ -1399,7 +1442,6 @@ export class StreamManager extends EventEmitter {
 
               // Handle other event types as needed
               case "start":
-              case "start-step":
               case "text-start":
               case "finish":
                 // These events can be logged or handled if needed
@@ -1438,6 +1480,7 @@ export class StreamManager extends EventEmitter {
                   cumulativeUsage: streamInfo.cumulativeUsage,
                   cumulativeProviderMetadata: streamInfo.cumulativeProviderMetadata,
                 };
+                streamInfo.currentStepStartIndex = streamInfo.parts.length;
                 this.emit("usage-delta", usageEvent);
                 await this.checkSoftCancelStream(workspaceId, streamInfo);
                 break;
@@ -1465,9 +1508,13 @@ export class StreamManager extends EventEmitter {
             // - totalUsage: sum of all steps (for cost calculation)
             // - contextUsage: last step only (for context window display)
             // - contextProviderMetadata: last step (for context window cache tokens)
-            // Falls back to tracked values from finish-step if streamResult fails/times out
+            // Falls back to tracked values when step retries invalidate totalUsage
+            // or streamResult metadata fails/times out.
             const streamMeta = await this.getStreamMetadata(streamInfo);
-            const totalUsage = streamMeta.totalUsage;
+            const totalUsage = this.resolveTotalUsageForStreamEnd(
+              streamInfo,
+              streamMeta.totalUsage
+            );
             const contextUsage = streamMeta.contextUsage ?? streamInfo.lastStepUsage;
             const contextProviderMetadata =
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
@@ -1624,7 +1671,12 @@ export class StreamManager extends EventEmitter {
 
     let errorType = this.categorizeError(actualError);
 
-    // Enhance model-not-found error messages
+    // Enhance previous-response and model-not-found error messages
+
+    const previousResponseId = this.extractPreviousResponseIdFromError(actualError);
+    if (previousResponseId) {
+      errorMessage = "OpenAI lost the previous response state while streaming. Retry to continue.";
+    }
     if (errorType === "model_not_found") {
       // Extract model name from model string (e.g., "anthropic:sonnet-1m" -> "sonnet-1m")
       const [, modelName] = streamInfo.model.split(":");
@@ -1716,8 +1768,12 @@ export class StreamManager extends EventEmitter {
 
   private async resetStreamStateForRetry(
     workspaceId: WorkspaceId,
-    streamInfo: WorkspaceStreamInfo
+    streamInfo: WorkspaceStreamInfo,
+    options?: { preserveParts?: boolean; preserveUsage?: boolean }
   ): Promise<void> {
+    const preserveParts = options?.preserveParts ?? false;
+    const preserveUsage = options?.preserveUsage ?? false;
+
     if (streamInfo.partialWriteTimer) {
       clearTimeout(streamInfo.partialWriteTimer);
       streamInfo.partialWriteTimer = undefined;
@@ -1726,17 +1782,24 @@ export class StreamManager extends EventEmitter {
     await this.awaitPendingPartialWrite(streamInfo);
     streamInfo.partialWritePromise = undefined;
 
-    streamInfo.parts = [];
+    if (!preserveParts) {
+      streamInfo.parts = [];
+    }
     streamInfo.lastPartialWriteTime = 0;
-    streamInfo.cumulativeUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
-    streamInfo.cumulativeProviderMetadata = undefined;
-    streamInfo.lastStepUsage = undefined;
-    streamInfo.lastStepProviderMetadata = undefined;
 
-    try {
-      await this.partialService.deletePartial(workspaceId as string);
-    } catch (deleteError) {
-      log.warn("Failed to clear partial state before retry", { workspaceId, error: deleteError });
+    if (!preserveUsage) {
+      streamInfo.cumulativeUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+      streamInfo.cumulativeProviderMetadata = undefined;
+      streamInfo.lastStepUsage = undefined;
+      streamInfo.lastStepProviderMetadata = undefined;
+    }
+
+    if (!preserveParts) {
+      try {
+        await this.partialService.deletePartial(workspaceId as string);
+      } catch (deleteError) {
+        log.warn("Failed to clear partial state before retry", { workspaceId, error: deleteError });
+      }
     }
   }
 
@@ -1754,7 +1817,10 @@ export class StreamManager extends EventEmitter {
       return false;
     }
 
-    if (streamInfo.parts.length > 0) {
+    const hasParts = streamInfo.parts.length > 0;
+    const currentStepStartIndex = streamInfo.currentStepStartIndex;
+    // If the current step already emitted parts, retrying would duplicate output/tool calls.
+    if (hasParts && currentStepStartIndex !== streamInfo.parts.length) {
       return false;
     }
 
@@ -1782,6 +1848,11 @@ export class StreamManager extends EventEmitter {
       return false;
     }
 
+    const stepMessages = streamInfo.stepTracker.latestMessages;
+    if (hasParts && !stepMessages) {
+      return false;
+    }
+
     const providerOptions = this.clearOpenAIPreviousResponseId(streamInfo.request.providerOptions);
     if (providerOptions === streamInfo.request.providerOptions) {
       return false;
@@ -1789,24 +1860,37 @@ export class StreamManager extends EventEmitter {
 
     this.recordLostResponseIdIfApplicable(error, streamInfo);
 
+    // Step-boundary retries restart the SDK stream, so totalUsage only reflects
+    // the retried step. Track this to prefer cumulativeUsage at stream end.
+    if (hasParts) {
+      streamInfo.didRetryPreviousResponseIdAtStep = true;
+    }
+
     log.info("Retrying stream without invalid previousResponseId", {
       workspaceId,
       messageId: streamInfo.messageId,
       model: streamInfo.model,
+      retryScope: hasParts ? "step" : "stream",
       previousResponseId,
       errorCode,
       statusCode,
     });
 
-    await this.resetStreamStateForRetry(workspaceId, streamInfo);
+    await this.resetStreamStateForRetry(workspaceId, streamInfo, {
+      preserveParts: hasParts,
+      preserveUsage: hasParts,
+    });
 
+    streamInfo.currentStepStartIndex = streamInfo.parts.length;
     streamInfo.request = {
       ...streamInfo.request,
+      ...(stepMessages ? { messages: stepMessages } : {}),
       providerOptions,
     };
     streamInfo.streamResult = this.createStreamResult(
       streamInfo.request,
-      streamInfo.abortController
+      streamInfo.abortController,
+      streamInfo.stepTracker
     );
 
     return true;
