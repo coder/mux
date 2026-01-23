@@ -5,7 +5,8 @@
  * Goal:
  * - Large enough to trigger System 1 filtering (lines > 10 and/or bytes > 4KB)
  * - Small enough to avoid the bash tool tmpfile overflow path per burst (bytes < 16KB, lines < 300)
- * - Contains exactly ONE relevant random number (the only digits in the output)
+ * - Output looks like plausible text/log spam rather than random gibberish
+ * - Contains a single "needle" phrase embedded inside the noise (not on a standalone ERROR line)
  *
  * Usage:
  *   bun scripts/system1-noisy-output.ts
@@ -33,22 +34,112 @@ const BASH_MAX_LINE_BYTES = 1024;
 const TARGET_MAX_TOTAL_BYTES_SINGLE = BASH_MAX_TOTAL_BYTES - 512;
 
 // For burst mode, keep each burst modest so the final task output is still manageable.
-const TARGET_MAX_TOTAL_BYTES_BURST = Math.min(TARGET_MAX_TOTAL_BYTES_SINGLE, SYSTEM1_BASH_MIN_TOTAL_BYTES + 2048);
+const TARGET_MAX_TOTAL_BYTES_BURST = Math.min(
+  TARGET_MAX_TOTAL_BYTES_SINGLE,
+  SYSTEM1_BASH_MIN_TOTAL_BYTES + 2048
+);
 
-// Keep noise lines short and ASCII-only so byte counts are predictable.
-const NOISE_LINE_LEN = 80;
+// Keep lines short and ASCII-only so byte counts are predictable.
+const TEXT_LINE_TARGET_LEN = 96;
 
-function randomLowercaseLetters(len: number): string {
-  assert(Number.isInteger(len) && len > 0, "len must be a positive integer");
+// Intentionally a plausible-looking phrase (no digits) so it can be buried in noise.
+// We keep it constant so it is easy to grep for during manual testing.
+const NEEDLE_PHRASE = "maecenas faucibus mollis interdum";
 
-  const chars: string[] = [];
-  chars.length = len;
-  for (let i = 0; i < len; i++) {
-    // a-z only (no digits) so the secret number is the only numeric content in stdout
-    chars[i] = String.fromCharCode(97 + randomInt(0, 26));
-  }
-  return chars.join("");
-}
+const LOREM_WORDS = [
+  // Classic lorem ipsum core
+  "lorem",
+  "ipsum",
+  "dolor",
+  "sit",
+  "amet",
+  "consectetur",
+  "adipiscing",
+  "elit",
+  "sed",
+  "do",
+  "eiusmod",
+  "tempor",
+  "incididunt",
+  "ut",
+  "labore",
+  "et",
+  "dolore",
+  "magna",
+  "aliqua",
+  "enim",
+  "ad",
+  "minim",
+  "veniam",
+  "quis",
+  "nostrud",
+  "exercitation",
+  "ullamco",
+  "laboris",
+  "nisi",
+  "aliquip",
+  "ex",
+  "ea",
+  "commodo",
+  "consequat",
+  "duis",
+  "aute",
+  "irure",
+  "in",
+  "reprehenderit",
+  "voluptate",
+  "velit",
+  "esse",
+  "cillum",
+  "fugiat",
+  "nulla",
+  "pariatur",
+  "excepteur",
+  "sint",
+  "occaecat",
+  "cupidatat",
+  "non",
+  "proident",
+  "sunt",
+  "culpa",
+  "qui",
+  "officia",
+  "deserunt",
+  "mollit",
+  "anim",
+  "id",
+  "est",
+  "laborum",
+  // Additional filler to make output look less uniform
+  "pellentesque",
+  "habitant",
+  "morbi",
+  "tristique",
+  "senectus",
+  "netus",
+  "malesuada",
+  "fames",
+  "turpis",
+  "egestas",
+  "vestibulum",
+  "tortor",
+  "quam",
+  "feugiat",
+  "vitae",
+  "ultricies",
+  "eget",
+  "ante",
+  "donec",
+  "eu",
+  "libero",
+  "quam",
+  "semper",
+  "aenean",
+  "mauris",
+  "placerat",
+  "eleifend",
+  "leo",
+];
 
 function lineBytesWithNewline(line: string): number {
   const bytes = Buffer.byteLength(line, "utf8");
@@ -84,9 +175,7 @@ function parseArgs(argv: string[]): { bursts: number; sleepMs: number } {
 
     if (arg === "--help" || arg === "-h") {
       // Avoid printing in normal use; throwing is fine for dev tooling.
-      throw new Error(
-        "Usage: bun scripts/system1-noisy-output.ts [--bursts N] [--sleep-ms MS]"
-      );
+      throw new Error("Usage: bun scripts/system1-noisy-output.ts [--bursts N] [--sleep-ms MS]");
     }
 
     throw new Error(`Unknown arg: ${arg}`);
@@ -98,17 +187,68 @@ function parseArgs(argv: string[]): { bursts: number; sleepMs: number } {
   return { bursts, sleepMs };
 }
 
+function capitalizeFirstLetter(text: string): string {
+  assert(typeof text === "string" && text.length > 0, "text must be a non-empty string");
+  return text[0].toUpperCase() + text.slice(1);
+}
+
+function randomLoremWord(): string {
+  return LOREM_WORDS[randomInt(0, LOREM_WORDS.length)]!;
+}
+
+function makeLoremSentence(params: {
+  targetLen: number;
+  insertPhrase?: string | undefined;
+}): string {
+  assert(Number.isInteger(params.targetLen) && params.targetLen > 0, "targetLen must be > 0");
+
+  const words: string[] = [];
+  let currentLen = 0;
+
+  // Build up a sentence with word-ish lengths; keep it deterministic-ish by targeting characters.
+  while (currentLen < params.targetLen) {
+    const next = randomLoremWord();
+    words.push(next);
+    currentLen += next.length + 1;
+
+    // Avoid pathological loops if assumptions change.
+    assert(words.length < 200, "Generated too many words for a single line");
+  }
+
+  // Add a comma in roughly the middle to make it look slightly more natural.
+  if (words.length > 12) {
+    const commaAt = randomInt(4, Math.min(9, words.length - 2));
+    words[commaAt] = `${words[commaAt]},`;
+  }
+
+  if (typeof params.insertPhrase === "string" && params.insertPhrase.length > 0) {
+    const phraseWords = params.insertPhrase.split(/\s+/).filter(Boolean);
+    assert(phraseWords.length > 0, "insertPhrase produced no words");
+
+    // Prefer inserting somewhere "in the middle" so the phrase isn't the start or end of the line.
+    const minIndex = Math.min(6, Math.max(0, words.length - 1));
+    const maxIndex = Math.max(minIndex + 1, words.length - 3);
+    const insertAt = randomInt(minIndex, maxIndex);
+
+    words.splice(insertAt, 0, ...phraseWords);
+  }
+
+  const sentence = capitalizeFirstLetter(words.join(" ")) + ".";
+  // Must not accidentally exceed the bash tool line limit.
+  void lineBytesWithNewline(sentence);
+  return sentence;
+}
+
 function generateBurst(params: {
-  includeSecretLine: boolean;
-  secretNumber: number;
+  includeNeedle: boolean;
+  needlePhrase: string;
   targetMaxTotalBytes: number;
 }): string {
-  // Looks like an error so System 1 is strongly incentivized to keep it.
-  // NOTE: This is the ONLY line in the whole output that contains digits.
-  const secretLine = `ERROR: ONLY_RELEVANT_NUMBER=${params.secretNumber}`;
-
   const lines: string[] = [];
   let totalBytes = 0;
+
+  let needleInserted = false;
+  const needleInsertAfterLines = randomInt(8, 18);
 
   const addLine = (line: string): void => {
     const lineBytes = lineBytesWithNewline(line);
@@ -121,18 +261,35 @@ function generateBurst(params: {
     totalBytes += lineBytes;
   };
 
-  if (params.includeSecretLine) {
-    addLine(secretLine);
-  }
-
   // Ensure we *definitely* cross System 1 activation thresholds.
   while (lines.length <= SYSTEM1_BASH_MIN_LINES || totalBytes <= SYSTEM1_BASH_MIN_TOTAL_BYTES) {
-    addLine(randomLowercaseLetters(NOISE_LINE_LEN));
+    if (params.includeNeedle && !needleInserted && lines.length >= needleInsertAfterLines) {
+      addLine(
+        makeLoremSentence({
+          targetLen: TEXT_LINE_TARGET_LEN,
+          insertPhrase: params.needlePhrase,
+        })
+      );
+      needleInserted = true;
+      continue;
+    }
+
+    addLine(makeLoremSentence({ targetLen: TEXT_LINE_TARGET_LEN }));
+  }
+
+  // Defensive: ensure the needle exists even if our insertion assumptions change.
+  if (params.includeNeedle && !needleInserted) {
+    addLine(
+      makeLoremSentence({
+        targetLen: TEXT_LINE_TARGET_LEN,
+        insertPhrase: params.needlePhrase,
+      })
+    );
   }
 
   // Add as much additional noise as possible while staying safely under the target.
   for (;;) {
-    const candidate = randomLowercaseLetters(NOISE_LINE_LEN);
+    const candidate = makeLoremSentence({ targetLen: TEXT_LINE_TARGET_LEN });
     const candidateBytes = lineBytesWithNewline(candidate);
 
     if (lines.length + 1 >= BASH_HARD_MAX_LINES) break;
@@ -156,15 +313,12 @@ function generateBurst(params: {
 async function main(): Promise<void> {
   const { bursts, sleepMs } = parseArgs(process.argv.slice(2));
 
-  // 8-digit random number, avoids leading zeros.
-  const secretNumber = randomInt(10_000_000, 100_000_000);
-
   const perBurstTarget = bursts > 1 ? TARGET_MAX_TOTAL_BYTES_BURST : TARGET_MAX_TOTAL_BYTES_SINGLE;
 
   for (let i = 0; i < bursts; i++) {
     const output = generateBurst({
-      includeSecretLine: i === 0,
-      secretNumber,
+      includeNeedle: i === 0,
+      needlePhrase: NEEDLE_PHRASE,
       targetMaxTotalBytes: perBurstTarget,
     });
 
