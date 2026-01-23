@@ -134,7 +134,8 @@ export class TerminalService {
         runtime,
         workspacePath,
         onData,
-        onExit
+        onExit,
+        workspaceMetadata.runtimeConfig
       );
 
       tempSessionId = session.sessionId;

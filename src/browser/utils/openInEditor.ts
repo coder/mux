@@ -34,14 +34,19 @@ function trimTrailingSlash(path: string): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
+function normalizePathSeparators(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
 function mapHostPathToContainerPath(options: {
   hostWorkspacePath: string;
   containerWorkspacePath: string;
   targetPath: string;
 }): string {
-  const hostWorkspacePath = trimTrailingSlash(options.hostWorkspacePath);
+  // Normalize backslashes for Windows compatibility
+  const hostWorkspacePath = trimTrailingSlash(normalizePathSeparators(options.hostWorkspacePath));
   const containerWorkspacePath = trimTrailingSlash(options.containerWorkspacePath);
-  const targetPath = trimTrailingSlash(options.targetPath);
+  const targetPath = trimTrailingSlash(normalizePathSeparators(options.targetPath));
 
   if (targetPath === hostWorkspacePath) {
     return containerWorkspacePath || "/";

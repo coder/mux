@@ -79,11 +79,12 @@ describe("openInEditor", () => {
 
     const api = {
       workspace: {
-        getDevcontainerInfo: async () => ({
-          containerName: "jovial_newton",
-          containerWorkspacePath: "/workspaces/myapp",
-          hostWorkspacePath: "/Users/me/projects/myapp",
-        }),
+        getDevcontainerInfo: () =>
+          Promise.resolve({
+            containerName: "jovial_newton",
+            containerWorkspacePath: "/workspaces/myapp",
+            hostWorkspacePath: "/Users/me/projects/myapp",
+          }),
       },
     } as unknown as APIClient;
 
