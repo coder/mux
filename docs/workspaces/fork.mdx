@@ -8,10 +8,17 @@ Use `/fork` to clone a workspace with its full conversation history and UI state
 Usage:
 
 ```
-/fork <new-workspace-name>
+/fork [new-workspace-name]
 
 [start-message (optional)]
 ```
+
+When no name is provided, `/fork` auto-generates an incremented name and title:
+
+| Source               | First fork      | Second fork     |
+| -------------------- | --------------- | --------------- |
+| Name: `bugs-asd23`   | `bugs-asd23-2`  | `bugs-asd23-3`  |
+| Title: `Fixing bugs` | `Fixing bugs 2` | `Fixing bugs 3` |
 
 ## Use cases
 
@@ -24,7 +31,7 @@ Usage:
 The new workspace:
 
 - Appears at the top of the workspace list (most recent)
-- Uses the provided workspace name (you can rename later)
+- Uses the provided or auto-generated workspace name (you can rename later)
 - Branches from the current workspace's HEAD commit
 
 **What's copied**: Conversation history, model selection, thinking level, auto-retry setting, UI mode (plan/exec), chat input text
