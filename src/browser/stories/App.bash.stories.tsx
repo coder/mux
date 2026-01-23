@@ -67,6 +67,21 @@ async function expandAllBashTools(canvasElement: HTMLElement) {
   // Avoid leaving focus on a tool header.
   await waitForChatInputAutofocusDone(canvasElement);
   blurActiveElement();
+
+  // If the expanded tool rendered a note/notice tooltip trigger, hover it so Chromatic captures it.
+  const noticeButton = canvasElement.querySelector('button[aria-label="View notice"]');
+  if (noticeButton instanceof HTMLElement) {
+    await userEvent.hover(noticeButton);
+
+    // Tooltip content is portaled to document.body.
+    const doc = canvasElement.ownerDocument;
+    await waitFor(() => {
+      const tooltip = doc.querySelector('[role="tooltip"]');
+      if (!tooltip) {
+        throw new Error("Notice tooltip not shown");
+      }
+    });
+  }
 }
 
 export default {

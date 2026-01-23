@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { FileText, Layers, Loader2 } from "lucide-react";
+import { FileText, Info, Layers, Loader2 } from "lucide-react";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_DEFAULT_TIMEOUT_SECS } from "@/common/constants/toolLimits";
 import {
@@ -212,6 +212,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
   const truncatedInfo = result && "truncated" in result ? result.truncated : undefined;
   const note = result && "note" in result ? result.note : undefined;
 
+  const isBackgroundResult = Boolean(result && "backgroundProcessId" in result);
+  const completedOutput = isBackgroundResult ? undefined : result?.output;
+  const completedHasOutput = typeof completedOutput === "string" && completedOutput.length > 0;
+  const showCompletedOutputSection = !isBackgroundResult && (completedHasOutput || Boolean(note));
+
   const handleToggle = () => {
     userToggledRef.current = true;
     toggleExpanded();
@@ -347,15 +352,6 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
 
           {result && (
             <>
-              {note && (
-                <DetailSection>
-                  <DetailLabel>Notice</DetailLabel>
-                  <div className="text-muted text-[11px] break-words whitespace-pre-wrap">
-                    {note}
-                  </div>
-                </DetailSection>
-              )}
-
               {result.success === false && result.error && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
@@ -380,11 +376,33 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                   </code>
                 </div>
               ) : (
-                // Normal process: show output
-                result.output && (
+                // Normal process: show output (and any notice via tooltip)
+                showCompletedOutputSection && (
                   <DetailSection>
-                    <DetailLabel>Output</DetailLabel>
-                    <DetailContent className="px-2 py-1.5">{result.output}</DetailContent>
+                    <DetailLabel className="flex items-center gap-1">
+                      <span>Output</span>
+                      {note && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label="View notice"
+                              className="text-muted hover:text-secondary translate-y-[-1px] rounded p-0.5 transition-colors"
+                            >
+                              <Info size={12} />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </DetailLabel>
+                    <DetailContent
+                      className={cn("px-2 py-1.5", !completedHasOutput && "text-muted italic")}
+                    >
+                      {completedHasOutput ? completedOutput : "No output"}
+                    </DetailContent>
                   </DetailSection>
                 )
               )}

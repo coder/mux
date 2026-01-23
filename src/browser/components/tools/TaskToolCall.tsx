@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { Info } from "lucide-react";
 import {
   ToolContainer,
   ToolHeader,
@@ -385,6 +386,22 @@ const TaskAwaitResult: React.FC<{
         {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
         {exitCode !== undefined && <span className="text-muted text-[10px]">exit {exitCode}</span>}
         {elapsedMs !== undefined && <span className="text-muted text-[10px]">{elapsedMs}ms</span>}
+        {note && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="View notice"
+                className="text-muted hover:text-secondary translate-y-[-1px] rounded p-0.5 transition-colors"
+              >
+                <Info size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {!isCompleted && output && output.length > 0 && (
@@ -398,8 +415,6 @@ const TaskAwaitResult: React.FC<{
           <MarkdownRenderer content={reportMarkdown} />
         </div>
       )}
-
-      {note && <div className="text-muted mt-1 text-[10px]">{note}</div>}
 
       {"error" in result && result.error && (
         <div className="text-danger mt-1 text-[11px]">{result.error}</div>

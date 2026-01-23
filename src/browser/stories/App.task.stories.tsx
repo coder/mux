@@ -16,6 +16,7 @@ import {
   createTaskListTool,
   createTaskTerminateTool,
 } from "./mockFactory";
+import { userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -102,6 +103,7 @@ export const TaskWorkflow: AppStory = {
 Key patterns:
 - Context providers for state management
 - Custom hooks for reusable logic`,
+                      note: "NOTICE: This report was trimmed for display.\nOpen the task workspace for full context.",
                     },
                     {
                       taskId: "task-be-002",
@@ -120,6 +122,20 @@ Key patterns:
   ),
   play: async ({ canvasElement }) => {
     await waitForScrollStabilization(canvasElement);
+
+    const noticeButton = canvasElement.querySelector('button[aria-label="View notice"]');
+    if (noticeButton instanceof HTMLElement) {
+      await userEvent.hover(noticeButton);
+
+      // Tooltip content is portaled to document.body.
+      const doc = canvasElement.ownerDocument;
+      await waitFor(() => {
+        const tooltip = doc.querySelector('[role="tooltip"]');
+        if (!tooltip) {
+          throw new Error("Notice tooltip not shown");
+        }
+      });
+    }
   },
 };
 
@@ -172,6 +188,20 @@ Found **47 test files** across the project:
   ),
   play: async ({ canvasElement }) => {
     await waitForScrollStabilization(canvasElement);
+
+    const noticeButton = canvasElement.querySelector('button[aria-label="View notice"]');
+    if (noticeButton instanceof HTMLElement) {
+      await userEvent.hover(noticeButton);
+
+      // Tooltip content is portaled to document.body.
+      const doc = canvasElement.ownerDocument;
+      await waitFor(() => {
+        const tooltip = doc.querySelector('[role="tooltip"]');
+        if (!tooltip) {
+          throw new Error("Notice tooltip not shown");
+        }
+      });
+    }
   },
 };
 
@@ -263,5 +293,19 @@ export const TaskErrorStates: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     await waitForScrollStabilization(canvasElement);
+
+    const noticeButton = canvasElement.querySelector('button[aria-label="View notice"]');
+    if (noticeButton instanceof HTMLElement) {
+      await userEvent.hover(noticeButton);
+
+      // Tooltip content is portaled to document.body.
+      const doc = canvasElement.ownerDocument;
+      await waitFor(() => {
+        const tooltip = doc.querySelector('[role="tooltip"]');
+        if (!tooltip) {
+          throw new Error("Notice tooltip not shown");
+        }
+      });
+    }
   },
 };

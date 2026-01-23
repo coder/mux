@@ -6,6 +6,7 @@ import {
   BookOpen,
   FileText,
   Globe,
+  Info,
   List,
   Pencil,
   Sparkles,
@@ -325,24 +326,50 @@ export const OutputStatusBadge: React.FC<OutputStatusBadgeProps> = ({ hasOutput,
 interface OutputSectionProps {
   output?: string;
   emptyMessage?: string;
+  note?: string;
 }
 
 export const OutputSection: React.FC<OutputSectionProps> = ({
   output,
   emptyMessage = "No output",
+  note,
 }) => {
-  if (output) {
+  const hasOutput = typeof output === "string" && output.length > 0;
+  const showLabel = hasOutput || Boolean(note);
+
+  // Preserve existing behavior: when we have no output (and no note), render only the empty message.
+  if (!showLabel) {
     return (
       <DetailSection>
-        <DetailLabel>Output</DetailLabel>
-        <DetailContent className="px-2 py-1.5">{output}</DetailContent>
+        <DetailContent className="text-muted px-2 py-1.5 italic">{emptyMessage}</DetailContent>
       </DetailSection>
     );
   }
 
   return (
     <DetailSection>
-      <DetailContent className="text-muted px-2 py-1.5 italic">{emptyMessage}</DetailContent>
+      <DetailLabel className="flex items-center gap-1">
+        <span>Output</span>
+        {note && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label="View notice"
+                className="text-muted hover:text-secondary translate-y-[-1px] rounded p-0.5 transition-colors"
+              >
+                <Info size={12} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </DetailLabel>
+      <DetailContent className={cn("px-2 py-1.5", !hasOutput && "text-muted italic")}>
+        {hasOutput ? output : emptyMessage}
+      </DetailContent>
     </DetailSection>
   );
 };

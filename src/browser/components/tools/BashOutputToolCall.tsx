@@ -71,15 +71,6 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
         <ToolDetails>
           {result && (
             <>
-              {note && (
-                <DetailSection>
-                  <DetailLabel>Notice</DetailLabel>
-                  <div className="text-muted text-[11px] break-words whitespace-pre-wrap">
-                    {note}
-                  </div>
-                </DetailSection>
-              )}
-
               {result.success === false && (
                 <DetailSection>
                   <DetailLabel>Error</DetailLabel>
@@ -88,7 +79,7 @@ export const BashOutputToolCall: React.FC<BashOutputToolCallProps> = ({
               )}
 
               {result.success && (
-                <OutputSection output={result.output} emptyMessage="No new output" />
+                <OutputSection output={result.output} note={note} emptyMessage="No new output" />
               )}
             </>
           )}
