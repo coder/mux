@@ -836,10 +836,10 @@ export class WorkspaceService extends EventEmitter {
         const metadata = metadataResult.data;
         const projectPath = metadata.projectPath;
 
-        const runtime = createRuntime(
-          metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-          { projectPath, workspaceName: metadata.name }
-        );
+        const runtime = createRuntime(metadata.runtimeConfig, {
+          projectPath,
+          workspaceName: metadata.name,
+        });
 
         // Delete workspace from runtime first - if this fails with force=false, we abort
         // and keep workspace in config so user can retry. This prevents orphaned directories.
@@ -1018,10 +1018,10 @@ export class WorkspaceService extends EventEmitter {
       }
       const { projectPath } = workspace;
 
-      const runtime = createRuntime(
-        oldMetadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-        { projectPath, workspaceName: oldName }
-      );
+      const runtime = createRuntime(oldMetadata.runtimeConfig, {
+        projectPath,
+        workspaceName: oldName,
+      });
 
       const renameResult = await runtime.renameWorkspace(projectPath, oldName, newName);
 
@@ -1502,10 +1502,7 @@ export class WorkspaceService extends EventEmitter {
       const foundProjectPath = sourceMetadata.projectPath;
       const projectName = sourceMetadata.projectName;
 
-      const sourceRuntimeConfig = sourceMetadata.runtimeConfig ?? {
-        type: "local",
-        srcBaseDir: this.config.srcDir,
-      };
+      const sourceRuntimeConfig = sourceMetadata.runtimeConfig;
 
       // Block fork for remote runtimes - creates broken workspaces
       // Sub-agent task spawning uses a different code path (TaskService.create)
@@ -2348,16 +2345,7 @@ export class WorkspaceService extends EventEmitter {
       return { paths: [] };
     }
 
-    const runtimeConfig = metadata.runtimeConfig ?? {
-      type: "local" as const,
-      srcBaseDir: this.config.srcDir,
-    };
-
-    const runtime = createRuntimeForWorkspace({
-      runtimeConfig,
-      projectPath: metadata.projectPath,
-      name: metadata.name,
-    });
+    const runtime = createRuntimeForWorkspace(metadata);
     const isInPlace = metadata.projectPath === metadata.name;
     const workspacePath = isInPlace
       ? metadata.projectPath
@@ -2474,11 +2462,7 @@ export class WorkspaceService extends EventEmitter {
       using tempDir = new DisposableTempDir("mux-ipc-bash");
 
       // Create runtime and compute workspace path
-      const runtimeConfig = metadata.runtimeConfig ?? {
-        type: "local" as const,
-        srcBaseDir: this.config.srcDir,
-      };
-      const runtime = createRuntime(runtimeConfig, {
+      const runtime = createRuntime(metadata.runtimeConfig, {
         projectPath: metadata.projectPath,
         workspaceName: metadata.name,
       });
