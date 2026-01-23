@@ -345,10 +345,10 @@ export class AgentSession {
       const expectedPath = isInPlace
         ? metadata.projectPath
         : (() => {
-            const runtime = createRuntime(
-              metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-              { projectPath: metadata.projectPath, workspaceName: metadata.name }
-            );
+            const runtime = createRuntime(metadata.runtimeConfig, {
+              projectPath: metadata.projectPath,
+              workspaceName: metadata.name,
+            });
             return runtime.getWorkspacePath(metadata.projectPath, metadata.name);
           })();
       assert(
@@ -1272,14 +1272,7 @@ export class AgentSession {
 
         return attachments;
       }
-      const runtime = createRuntimeForWorkspace({
-        runtimeConfig: metadataResult.data.runtimeConfig ?? {
-          type: "local",
-          srcBaseDir: this.config.srcDir,
-        },
-        projectPath: metadataResult.data.projectPath,
-        name: metadataResult.data.name,
-      });
+      const runtime = createRuntimeForWorkspace(metadataResult.data);
 
       const attachments = await AttachmentService.generatePostCompactionAttachments(
         metadataResult.data.name,
@@ -1343,14 +1336,7 @@ export class AgentSession {
 
       return attachments;
     }
-    const runtime = createRuntimeForWorkspace({
-      runtimeConfig: metadataResult.data.runtimeConfig ?? {
-        type: "local",
-        srcBaseDir: this.config.srcDir,
-      },
-      projectPath: metadataResult.data.projectPath,
-      name: metadataResult.data.name,
-    });
+    const runtime = createRuntimeForWorkspace(metadataResult.data);
 
     const attachments = await AttachmentService.generatePostCompactionAttachments(
       metadataResult.data.name,
@@ -1399,11 +1385,7 @@ export class AgentSession {
     }
 
     const metadata = metadataResult.data;
-    const runtime = createRuntimeForWorkspace({
-      runtimeConfig: metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-      projectPath: metadata.projectPath,
-      name: metadata.name,
-    });
+    const runtime = createRuntimeForWorkspace(metadata);
     const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
 
     const materialized = await materializeFileAtMentions(messageText, {
@@ -1467,10 +1449,10 @@ export class AgentSession {
     }
 
     const metadata = metadataResult.data;
-    const runtime = createRuntime(
-      metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-      { projectPath: metadata.projectPath, workspaceName: metadata.name }
-    );
+    const runtime = createRuntime(metadata.runtimeConfig, {
+      projectPath: metadata.projectPath,
+      workspaceName: metadata.name,
+    });
 
     // In-place workspaces (CLI/benchmarks) have projectPath === name.
     // Use the path directly instead of reconstructing via getWorkspacePath.

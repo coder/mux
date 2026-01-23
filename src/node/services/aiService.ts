@@ -1159,10 +1159,10 @@ export class AIService extends EventEmitter {
       }
 
       // Get workspace path - handle both worktree and in-place modes
-      const runtime = createRuntime(
-        metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-        { projectPath: metadata.projectPath, workspaceName: metadata.name }
-      );
+      const runtime = createRuntime(metadata.runtimeConfig, {
+        projectPath: metadata.projectPath,
+        workspaceName: metadata.name,
+      });
       // In-place workspaces (CLI/benchmarks) have projectPath === name
       // Use path directly instead of reconstructing via getWorkspacePath
       const isInPlace = metadata.projectPath === metadata.name;

@@ -166,11 +166,7 @@ export class WorkspaceMcpOverridesService {
   }> {
     const metadata = await this.getWorkspaceMetadata(workspaceId);
 
-    const runtime = createRuntimeForWorkspace({
-      runtimeConfig: metadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-      projectPath: metadata.projectPath,
-      name: metadata.name,
-    });
+    const runtime = createRuntimeForWorkspace(metadata);
 
     // In-place workspaces (CLI/benchmarks) store the workspace path directly by setting
     // metadata.projectPath === metadata.name.

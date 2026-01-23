@@ -85,10 +85,10 @@ export class TerminalService {
       }
 
       // 2. Create runtime (pass workspace info for Docker container name derivation)
-      const runtime = createRuntime(
-        workspaceMetadata.runtimeConfig ?? { type: "local", srcBaseDir: this.config.srcDir },
-        { projectPath: workspaceMetadata.projectPath, workspaceName: workspaceMetadata.name }
-      );
+      const runtime = createRuntime(workspaceMetadata.runtimeConfig, {
+        projectPath: workspaceMetadata.projectPath,
+        workspaceName: workspaceMetadata.name,
+      });
 
       // 3. Compute workspace path
       const workspacePath = runtime.getWorkspacePath(
