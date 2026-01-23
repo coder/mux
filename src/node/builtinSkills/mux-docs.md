@@ -70,6 +70,7 @@ Use this index to find a page's:
       - SSH Runtime (`/runtime/ssh`) → `references/docs/runtime/ssh.mdx` — Run agents on remote hosts over SSH for security and performance
       - Coder Runtime (`/runtime/coder`) → `references/docs/runtime/coder.mdx` — Run agents on Coder workspaces
       - Docker Runtime (`/runtime/docker`) → `references/docs/runtime/docker.mdx` — Run agents in isolated Docker containers
+      - Dev Container Runtime (`/runtime/devcontainer`) → `references/docs/runtime/devcontainer.mdx` — Run agents in containers defined by devcontainer.json
     - **Hooks**
       - Init Hooks (`/hooks/init`) → `references/docs/hooks/init.mdx` — Run setup commands automatically when creating new workspaces
       - Tool Hooks (`/hooks/tools`) → `references/docs/hooks/tools.mdx` — Block dangerous commands, lint after edits, and set up your environment

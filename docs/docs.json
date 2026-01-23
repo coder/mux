@@ -64,7 +64,8 @@
                   "runtime/worktree",
                   "runtime/ssh",
                   "runtime/coder",
-                  "runtime/docker"
+                  "runtime/docker",
+                  "runtime/devcontainer"
                 ]
               },
               {
