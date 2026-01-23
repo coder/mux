@@ -268,13 +268,10 @@ export const APIProvider = (props: APIProviderProps) => {
           return;
         }
 
-        // First connection failed - check if auth might be needed
-        if (token) {
-          clearStoredAuthToken();
-          setState({ status: "auth_required", error: "Connection failed - invalid token?" });
-        } else {
-          setState({ status: "auth_required" });
-        }
+        // First connection failed.
+        // This can happen in dev-server mode if the UI boots before the backend is ready.
+        // Prefer retry/backoff over forcing the auth modal (auth will be detected via ping/close codes).
+        scheduleReconnectRef.current?.();
       });
     },
     [props.client, props.createWebSocket, wsFactory]
