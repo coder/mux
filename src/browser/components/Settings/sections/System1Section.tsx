@@ -215,7 +215,7 @@ export function System1Section() {
   };
 
   const setBashOutputCompactionMinTotalKb = (rawValue: string) => {
-    const parsedKb = Number(rawValue);
+    const parsedKb = Math.floor(Number(rawValue));
     const bytes = parsedKb * 1024;
     setTaskSettings((prev) =>
       normalizeTaskSettings({
@@ -236,7 +236,7 @@ export function System1Section() {
   };
 
   const setBashOutputCompactionTimeoutSeconds = (rawValue: string) => {
-    const parsedSeconds = Number(rawValue);
+    const parsedSeconds = Math.floor(Number(rawValue));
     const ms = parsedSeconds * 1000;
     setTaskSettings((prev) =>
       normalizeTaskSettings({

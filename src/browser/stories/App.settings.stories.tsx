@@ -449,21 +449,21 @@ export const System1: AppStory = {
 
     await waitFor(() => {
       const minLines = (inputs[0] as HTMLInputElement).value;
-      const minBytes = (inputs[1] as HTMLInputElement).value;
+      const minTotalKb = (inputs[1] as HTMLInputElement).value;
       const maxKeptLines = (inputs[2] as HTMLInputElement).value;
-      const timeoutMs = (inputs[3] as HTMLInputElement).value;
+      const timeoutSeconds = (inputs[3] as HTMLInputElement).value;
 
       if (minLines !== "12") {
         throw new Error(`Expected minLines=12, got ${JSON.stringify(minLines)}`);
       }
-      if (minBytes !== "8192") {
-        throw new Error(`Expected minTotalBytes=8192, got ${JSON.stringify(minBytes)}`);
+      if (minTotalKb !== "8") {
+        throw new Error(`Expected minTotalKb=8, got ${JSON.stringify(minTotalKb)}`);
       }
       if (maxKeptLines !== "55") {
         throw new Error(`Expected maxKeptLines=55, got ${JSON.stringify(maxKeptLines)}`);
       }
-      if (timeoutMs !== "9000") {
-        throw new Error(`Expected timeoutMs=9000, got ${JSON.stringify(timeoutMs)}`);
+      if (timeoutSeconds !== "9") {
+        throw new Error(`Expected timeoutSeconds=9, got ${JSON.stringify(timeoutSeconds)}`);
       }
     });
   },

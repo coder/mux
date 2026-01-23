@@ -18,10 +18,10 @@ export const TASK_SETTINGS_LIMITS = {
 } as const;
 
 export const SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS = {
-  bashOutputCompactionMinLines: { min: 0, max: 100_000, default: 10 },
-  bashOutputCompactionMinTotalBytes: { min: 0, max: 100 * 1024 * 1024, default: 4 * 1024 },
+  bashOutputCompactionMinLines: { min: 0, max: 1_000, default: 10 },
+  bashOutputCompactionMinTotalBytes: { min: 0, max: 16 * 1024, default: 4 * 1024 },
   bashOutputCompactionMaxKeptLines: { min: 1, max: 1_000, default: 40 },
-  bashOutputCompactionTimeoutMs: { min: 250, max: 120_000, default: 5_000 },
+  bashOutputCompactionTimeoutMs: { min: 1_000, max: 120_000, default: 5_000 },
 } as const;
 
 export const DEFAULT_TASK_SETTINGS: TaskSettings = {
@@ -120,12 +120,13 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.min,
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.max
   );
-  const bashOutputCompactionTimeoutMs = clampInt(
+  const bashOutputCompactionTimeoutMsRaw = clampInt(
     record.bashOutputCompactionTimeoutMs,
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min,
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.max
   );
+  const bashOutputCompactionTimeoutMs = Math.floor(bashOutputCompactionTimeoutMsRaw / 1000) * 1000;
 
   const result: TaskSettings = {
     maxParallelAgentTasks,
@@ -160,6 +161,10 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     Number.isInteger(bashOutputCompactionTimeoutMs),
     "normalizeTaskSettings: bashOutputCompactionTimeoutMs must be an integer"
+  );
+  assert(
+    bashOutputCompactionTimeoutMs % 1000 === 0,
+    "normalizeTaskSettings: bashOutputCompactionTimeoutMs must be a whole number of seconds"
   );
 
   return result;
