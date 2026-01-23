@@ -45,7 +45,7 @@ describe("bashOutputFiltering", () => {
         trigger: "bytes",
       });
 
-      expect(notice).toBe("System 1 filtered 1/2 lines (trigger: bytes).");
+      expect(notice).toBe("Auto-filtered output: kept 1/2 lines (trigger: bytes).");
     });
   });
 

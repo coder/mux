@@ -32,7 +32,7 @@ export function formatSystem1BashFilterNotice(params: {
     "trigger must be a string"
   );
 
-  const notice = `System 1 filtered ${params.keptLines}/${params.totalLines} lines (trigger: ${params.trigger}).`;
+  const notice = `Auto-filtered output: kept ${params.keptLines}/${params.totalLines} lines (trigger: ${params.trigger}).`;
 
   if (typeof params.fullOutputPath !== "string" || params.fullOutputPath.length === 0) {
     return notice;

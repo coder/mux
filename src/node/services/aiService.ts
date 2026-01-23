@@ -2217,7 +2217,7 @@ export class AIService extends EventEmitter {
                   try {
                     // Use 8 hex characters for short, memorable temp file IDs.
                     const fileId = Math.random().toString(16).substring(2, 10);
-                    fullOutputPath = path.posix.join(runtimeTempDir, `bash-s1-${fileId}.txt`);
+                    fullOutputPath = path.posix.join(runtimeTempDir, `bash-full-${fileId}.txt`);
 
                     const writer = runtime.writeFile(fullOutputPath, params.abortSignal);
                     const encoder = new TextEncoder();
@@ -2249,7 +2249,7 @@ export class AIService extends EventEmitter {
                   const numberedOutput = formatNumberedLinesForSystem1(lines);
 
                   const systemPrompt =
-                    "You are System 1: a fast log filtering assistant.\n" +
+                    "You are a fast log filtering assistant.\n" +
                     "Given numbered bash output, return ONLY valid JSON (no markdown, no prose).\n" +
                     'Schema: {"keep_ranges":[{"start":number,"end":number,"reason":string}]}\n' +
                     `Rules:\n- start/end are 1-based line numbers\n- Keep at most ${SYSTEM1_BASH_MAX_KEPT_LINES} lines total\n- Prefer errors, stack traces, failing test summaries, and actionable warnings\n- If uncertain, keep the most informative 1-5 lines`;

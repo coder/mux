@@ -436,7 +436,8 @@ export const TOOL_DEFINITIONS = {
       "Execute a bash command with a configurable timeout. " +
       `Output is strictly limited to ${BASH_HARD_MAX_LINES} lines, ${BASH_MAX_LINE_BYTES} bytes per line, and ${BASH_MAX_TOTAL_BYTES} bytes total. ` +
       "Commands that exceed these limits will FAIL with an error (no partial output returned). " +
-      "Be conservative: use 'head', 'tail', 'grep', or other filters to limit output before running commands.",
+      "Be conservative: use 'head', 'tail', 'grep', or other filters to limit output before running commands. " +
+      "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.",
     schema: z.object({
       script: z.string().describe("The bash script/command to execute"),
       timeout_secs: z
@@ -632,7 +633,8 @@ export const TOOL_DEFINITIONS = {
       "WARNING: when using filter, non-matching lines are permanently discarded. " +
       "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
       "This is similar to Promise.allSettled(): you always get per-task results. " +
-      "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error.",
+      "Possible statuses: completed, queued, running, awaiting_report, not_found, invalid_scope, error. " +
+      "Bash task outputs may be automatically filtered; when this happens, check each result's note for details and (if available) where the full output was saved.",
     schema: TaskAwaitToolArgsSchema,
   },
   task_terminate: {
@@ -735,7 +737,8 @@ export const TOOL_DEFINITIONS = {
       "Returns stdout and stderr output along with process status. " +
       "Supports optional regex filtering to show only lines matching a pattern. " +
       "WARNING: When using filter, non-matching lines are permanently discarded. " +
-      "Use timeout to wait for output instead of polling repeatedly.",
+      "Use timeout to wait for output instead of polling repeatedly. " +
+      "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.",
     schema: z.object({
       process_id: z.string().describe("The ID of the background process to retrieve output from"),
       filter: z
