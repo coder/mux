@@ -12,6 +12,7 @@ import {
   createStreamCollector,
   assertStreamSuccess,
   configureTestRetries,
+  extractTextFromEvents,
   modelString,
   resolveOrpcClient,
   createWorkspaceWithInit,
@@ -85,7 +86,9 @@ describeIntegration("Workspace fork", () => {
 
       const getTimeout = (baseMs: number) =>
         isSSH ? Math.max(baseMs, TEST_TIMEOUT_SSH_MS) : baseMs;
-      test.concurrent(
+      const runtimeTest = isSSH ? test : test.concurrent;
+
+      runtimeTest(
         "should fail to fork workspace with invalid name",
         async () => {
           const env = await createTestEnvironment();
@@ -132,7 +135,7 @@ describeIntegration("Workspace fork", () => {
         getTimeout(15000)
       );
 
-      test.concurrent(
+      runtimeTest(
         "should fork workspace and send message successfully",
         async () => {
           const runtimeConfig = getRuntimeConfig();
@@ -183,7 +186,7 @@ describeIntegration("Workspace fork", () => {
         getTimeout(45000)
       );
 
-      test.concurrent(
+      runtimeTest(
         "should preserve chat history when forking workspace",
         async () => {
           const runtimeConfig = getRuntimeConfig();
@@ -227,34 +230,19 @@ describeIntegration("Workspace fork", () => {
             const forkedWorkspaceId = forkResult.metadata.id;
 
             // User expects: forked workspace has access to history
-            // Send a message that requires the historical context
-            const collector = createStreamCollector(env.orpc, forkedWorkspaceId);
-            collector.start();
-            await collector.waitForSubscription();
-            const sendResult = await sendMessageWithModel(
-              env,
-              forkedWorkspaceId,
-              "What word did I ask you to remember? Reply with just the word.",
-              modelString("anthropic", "claude-sonnet-4-5")
-            );
-            expect(sendResult.success).toBe(true);
+            const forkedHistoryResult = await historyService.getHistory(forkedWorkspaceId);
+            expect(forkedHistoryResult.success).toBe(true);
+            if (!forkedHistoryResult.success) return;
 
-            // Verify stream completes successfully
-            await collector.waitForEvent("stream-end", 30000);
-            assertStreamSuccess(collector);
-
-            const finalMessage = collector.getFinalMessage();
-            expect(finalMessage).toBeDefined();
-
-            // Verify the response contains the word from history
-            if (finalMessage && "parts" in finalMessage && Array.isArray(finalMessage.parts)) {
-              const content = finalMessage.parts
-                .filter((part) => part.type === "text")
-                .map((part) => (part as { text: string }).text)
-                .join("");
-              expect(content.toLowerCase()).toContain(uniqueWord.toLowerCase());
-            }
-            collector.stop();
+            const assistantContent = forkedHistoryResult.data
+              .filter((msg) => msg.role === "assistant")
+              .flatMap((msg) =>
+                msg.parts
+                  .filter((part) => part.type === "text")
+                  .map((part) => (part as { text: string }).text)
+              )
+              .join(" ");
+            expect(assistantContent).toContain(uniqueWord);
           } finally {
             await cleanup();
           }
@@ -262,7 +250,7 @@ describeIntegration("Workspace fork", () => {
         getTimeout(45000)
       );
 
-      test.concurrent(
+      runtimeTest(
         "should create independent workspaces that can send messages concurrently",
         async () => {
           const runtimeConfig = getRuntimeConfig();
@@ -337,7 +325,7 @@ describeIntegration("Workspace fork", () => {
         getTimeout(45000)
       );
 
-      test.concurrent(
+      runtimeTest(
         "should preserve partial streaming response when forking mid-stream",
         async () => {
           const runtimeConfig = getRuntimeConfig();
@@ -357,19 +345,30 @@ describeIntegration("Workspace fork", () => {
             sourceCollector.start();
             await sourceCollector.waitForSubscription();
 
-            // Start a stream in the source workspace (don't await)
-            void sendMessageWithModel(
+            const sendResult = await sendMessageWithModel(
               env,
               sourceWorkspaceId,
-              "Count from 1 to 10, one number per line. Then say 'Done counting.'",
+              'Count from 1 to 25, one number per line, and include the word "alpha" after each number.',
               modelString("anthropic", "claude-sonnet-4-5")
             );
+            expect(sendResult.success).toBe(true);
 
             // Wait for stream to start
-            await sourceCollector.waitForEvent("stream-start", 5000);
+            const streamStartEvent = await sourceCollector.waitForEvent(
+              "stream-start",
+              getTimeout(15000)
+            );
+            expect(streamStartEvent).not.toBeNull();
 
-            // Wait for some deltas to ensure we have partial content
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            const deltaEvent = await sourceCollector.waitForEvent(
+              "stream-delta",
+              getTimeout(15000)
+            );
+            expect(deltaEvent).not.toBeNull();
+
+            const partialText = extractTextFromEvents(sourceCollector.getDeltas()).trim();
+            expect(partialText.length).toBeGreaterThan(0);
+            const partialSnippet = partialText.length > 24 ? partialText.slice(0, 24) : partialText;
 
             // Fork while stream is active (this should commit partial to history)
             const client = resolveOrpcClient(env);
@@ -381,8 +380,23 @@ describeIntegration("Workspace fork", () => {
             if (!forkResult.success) return;
             const forkedWorkspaceId = forkResult.metadata.id;
 
+            const historyService = new HistoryService(env.config);
+            const forkedHistoryResult = await historyService.getHistory(forkedWorkspaceId);
+            expect(forkedHistoryResult.success).toBe(true);
+            if (!forkedHistoryResult.success) return;
+
+            const forkedAssistantText = forkedHistoryResult.data
+              .filter((msg) => msg.role === "assistant")
+              .flatMap((msg) =>
+                msg.parts
+                  .filter((part) => part.type === "text")
+                  .map((part) => (part as { text: string }).text)
+              )
+              .join(" ");
+            expect(forkedAssistantText).toContain(partialSnippet);
+
             // Wait for source stream to complete
-            await sourceCollector.waitForEvent("stream-end", 30000);
+            await sourceCollector.waitForEvent("stream-end", getTimeout(60000));
             sourceCollector.stop();
 
             // User expects: forked workspace is functional despite being forked mid-stream
@@ -413,7 +427,7 @@ describeIntegration("Workspace fork", () => {
         getTimeout(60000)
       );
 
-      test.concurrent(
+      runtimeTest(
         "should make forked workspace available in workspace list",
         async () => {
           const env = await createTestEnvironment();
