@@ -479,7 +479,39 @@ export class AIService extends EventEmitter {
   private setupStreamEventForwarding(): void {
     this.streamManager.on("stream-start", (data) => this.emit("stream-start", data));
     this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
-    this.streamManager.on("stream-end", (data) => this.emit("stream-end", data));
+    this.streamManager.on("stream-end", (data: StreamEndEvent) => {
+      // Best-effort capture of the provider response for the "Last LLM request" debug modal.
+      // Must never break live streaming.
+      try {
+        const snapshot = this.lastLlmRequestByWorkspace.get(data.workspaceId);
+        if (snapshot) {
+          // If messageId is missing (legacy fixtures), attach anyway.
+          const shouldAttach = snapshot.messageId === data.messageId || snapshot.messageId == null;
+          if (shouldAttach) {
+            const updated: DebugLlmRequestSnapshot = {
+              ...snapshot,
+              response: {
+                capturedAt: Date.now(),
+                metadata: data.metadata,
+                parts: data.parts,
+              },
+            };
+
+            const cloned =
+              typeof structuredClone === "function"
+                ? structuredClone(updated)
+                : (JSON.parse(JSON.stringify(updated)) as DebugLlmRequestSnapshot);
+
+            this.lastLlmRequestByWorkspace.set(data.workspaceId, cloned);
+          }
+        }
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        log.warn("Failed to capture debug LLM response snapshot", { error: errMsg });
+      }
+
+      this.emit("stream-end", data);
+    });
 
     // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
@@ -1927,6 +1959,7 @@ export class AIService extends EventEmitter {
       const snapshot: DebugLlmRequestSnapshot = {
         capturedAt: Date.now(),
         workspaceId,
+        messageId: assistantMessageId,
         model: modelString,
         providerName,
         thinkingLevel: effectiveThinkingLevel,

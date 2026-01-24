@@ -8,7 +8,13 @@ import { ProjectConfigSchema, SectionConfigSchema } from "./project";
 import { ResultSchema } from "./result";
 import { RuntimeConfigSchema, RuntimeAvailabilitySchema } from "./runtime";
 import { SecretSchema } from "./secrets";
-import { SendMessageOptionsSchema, UpdateStatusSchema, WorkspaceChatMessageSchema } from "./stream";
+import {
+  CompletedMessagePartSchema,
+  SendMessageOptionsSchema,
+  StreamEndEventSchema,
+  UpdateStatusSchema,
+  WorkspaceChatMessageSchema,
+} from "./stream";
 import { LayoutPresetsConfigSchema } from "./uiLayouts";
 import {
   TerminalCreateParamsSchema,
@@ -333,6 +339,7 @@ const DebugLlmRequestSnapshotSchema = z
   .object({
     capturedAt: z.number(),
     workspaceId: z.string(),
+    messageId: z.string().optional(),
     model: z.string(),
     providerName: z.string(),
     thinkingLevel: z.string(),
@@ -341,6 +348,14 @@ const DebugLlmRequestSnapshotSchema = z
     maxOutputTokens: z.number().optional(),
     systemMessage: z.string(),
     messages: z.array(z.unknown()),
+    response: z
+      .object({
+        capturedAt: z.number(),
+        metadata: StreamEndEventSchema.shape.metadata,
+        parts: z.array(CompletedMessagePartSchema),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

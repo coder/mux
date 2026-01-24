@@ -1,3 +1,5 @@
+import type { CompletedMessagePart, StreamEndEvent } from "./stream";
+
 /**
  * Captured snapshot of the exact LLM request payload for debugging.
  *
@@ -8,6 +10,13 @@
 export interface DebugLlmRequestSnapshot {
   capturedAt: number;
   workspaceId: string;
+
+  /**
+   * Message ID used for the assistant placeholder / stream.
+   *
+   * Used to associate the request snapshot with the eventual stream-end response.
+   */
+  messageId?: string;
 
   model: string;
   providerName: string;
@@ -20,4 +29,11 @@ export interface DebugLlmRequestSnapshot {
   systemMessage: string;
   /** Final ModelMessage[] after transforms, stored as unknown for IPC safety */
   messages: unknown[];
+
+  /** Provider-agnostic response capture from stream-end (parts + metadata). */
+  response?: {
+    capturedAt: number;
+    metadata: StreamEndEvent["metadata"];
+    parts: CompletedMessagePart[];
+  };
 }

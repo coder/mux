@@ -8,7 +8,7 @@ import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 
 const JsonOutput: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="bg-code-bg text-text mt-3 max-h-[40vh] w-full max-w-full min-w-0 overflow-auto rounded-sm">
+  <div className="bg-code-bg text-text mt-3 w-full max-w-full min-w-0 overflow-x-auto rounded-sm">
     <pre className="min-w-max p-3 font-mono text-xs leading-relaxed whitespace-pre">{children}</pre>
   </div>
 );
@@ -176,7 +176,7 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
                   <summary className="text-foreground cursor-pointer text-sm font-medium">
                     System message
                   </summary>
-                  <pre className="bg-code-bg text-text mt-3 max-h-[40vh] overflow-auto rounded-sm p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
+                  <pre className="bg-code-bg text-text mt-3 rounded-sm p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap">
                     {snapshot.systemMessage}
                   </pre>
                 </details>
@@ -186,6 +186,19 @@ export const DebugLlmRequestModal: React.FC<DebugLlmRequestModalProps> = ({
                     Messages
                   </summary>
                   <JsonOutput>{JSON.stringify(snapshot.messages, null, 2)}</JsonOutput>
+                </details>
+
+                <details className="border-border-light bg-modal-bg min-w-0 rounded-md border p-3">
+                  <summary className="text-foreground cursor-pointer text-sm font-medium">
+                    Response
+                  </summary>
+                  {snapshot.response ? (
+                    <JsonOutput>{JSON.stringify(snapshot.response, null, 2)}</JsonOutput>
+                  ) : (
+                    <div className="text-muted mt-3 text-xs">
+                      No response captured yet (wait for the stream to finish).
+                    </div>
+                  )}
                 </details>
 
                 <details className="border-border-light bg-modal-bg min-w-0 rounded-md border p-3">

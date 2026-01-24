@@ -108,6 +108,7 @@ const LARGE_DIFF = [
 const createDebugLlmRequestSnapshot = (workspaceId: string): DebugLlmRequestSnapshot => ({
   capturedAt: STABLE_TIMESTAMP - 45000,
   workspaceId,
+  messageId: "assistant-debug-1",
   model: "anthropic:claude-3-5-sonnet-20241022",
   providerName: "anthropic",
   thinkingLevel: "medium",
@@ -131,6 +132,35 @@ const createDebugLlmRequestSnapshot = (workspaceId: string): DebugLlmRequestSnap
       content: "Summarized 3 tasks, trimmed history, and queued a retry.",
     },
   ],
+  response: {
+    capturedAt: STABLE_TIMESTAMP - 44000,
+    metadata: {
+      model: "anthropic:claude-3-5-sonnet-20241022",
+      usage: {
+        inputTokens: 123,
+        outputTokens: 456,
+        totalTokens: 579,
+      },
+      duration: 1234,
+      systemMessageTokens: 42,
+    },
+    parts: [
+      {
+        type: "text",
+        text: "Here’s a concise summary and the next steps to resume safely.",
+        timestamp: STABLE_TIMESTAMP - 44000,
+      },
+      {
+        type: "dynamic-tool",
+        toolCallId: "tool-1",
+        toolName: "write_summary",
+        state: "output-available",
+        input: { tasks: 3 },
+        output: { ok: true },
+        timestamp: STABLE_TIMESTAMP - 43950,
+      },
+    ],
+  },
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
