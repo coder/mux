@@ -679,20 +679,21 @@ function AppInner() {
     // Callback for "notify on response" feature - fires when any assistant response completes.
     // Only notify when isFinal=true (assistant done with all work, no more active streams).
     // finalText is extracted by the aggregator (text after tool calls).
-    // isCompaction is true when this was a compaction stream (for special notification text).
+    // compaction is provided when this was a compaction stream (includes continue metadata).
     const handleResponseComplete = (
       workspaceId: string,
       _messageId: string,
       isFinal: boolean,
       finalText: string,
-      isCompaction: boolean
+      compaction?: { hasContinueMessage: boolean }
     ) => {
       // Only notify on final message (when assistant is done with all work)
       if (!isFinal) return;
 
       // Skip notification if compaction completed with a continue message.
-      // The follow-up stream will notify when that completes.
-      if (isCompaction && workspaceStore.hasCompactionContinueMessage(workspaceId)) return;
+      // We use the compaction metadata instead of queued state since the queue
+      // can be drained before compaction finishes.
+      if (compaction?.hasContinueMessage) return;
 
       // Skip notification if workspace is focused (like Slack behavior)
       const isWorkspaceFocused =
@@ -707,7 +708,7 @@ function AppInner() {
       const title = metadata?.title ?? metadata?.name ?? "Response complete";
 
       // For compaction completions, use a specific message instead of the summary text
-      const body = isCompaction
+      const body = compaction
         ? "Compaction complete"
         : finalText
           ? finalText.length > 200

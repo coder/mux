@@ -342,14 +342,14 @@ export class WorkspaceStore {
   // Global callback when a response completes (for "notify on response" feature)
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (for notification body)
-  // isCompaction is true when this was a compaction stream (for special notification text)
+  // compaction is provided when this was a compaction stream (includes continue metadata)
   private responseCompleteCallback:
     | ((
         workspaceId: string,
         messageId: string,
         isFinal: boolean,
         finalText: string,
-        isCompaction: boolean
+        compaction?: { hasContinueMessage: boolean }
       ) => void)
     | null = null;
 
@@ -650,7 +650,7 @@ export class WorkspaceStore {
    * Set the callback for when a response completes (used for "notify on response" feature).
    * isFinal is true when no more active streams remain (assistant done with all work).
    * finalText is the text content after any tool calls (for notification body).
-   * isCompaction is true when this was a compaction stream (for special notification text).
+   * compaction is provided when this was a compaction stream (includes continue metadata).
    */
   setOnResponseComplete(
     callback: (
@@ -658,7 +658,7 @@ export class WorkspaceStore {
       messageId: string,
       isFinal: boolean,
       finalText: string,
-      isCompaction: boolean
+      compaction?: { hasContinueMessage: boolean }
     ) => void
   ): void {
     this.responseCompleteCallback = callback;
@@ -1229,27 +1229,6 @@ export class WorkspaceStore {
    */
   subscribeConsumers(workspaceId: string, listener: () => void): () => void {
     return this.consumersStore.subscribeKey(workspaceId, listener);
-  }
-
-  /**
-   * Check if the last compaction request included a continue message.
-   * Used to skip compaction-complete notifications when work will auto-continue.
-   */
-  hasCompactionContinueMessage(workspaceId: string): boolean {
-    const aggregator = this.aggregators.get(workspaceId);
-    if (!aggregator) return false;
-
-    const messages = aggregator.getAllMessages();
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (message.role !== "user") continue;
-      const muxMetadata = message.metadata?.muxMetadata;
-      if (muxMetadata?.type === "compaction-request") {
-        return Boolean(muxMetadata.parsed.continueMessage);
-      }
-    }
-
-    return false;
   }
 
   /**

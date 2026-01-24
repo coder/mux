@@ -66,6 +66,7 @@ interface StreamingContext {
 
   isComplete: boolean;
   isCompacting: boolean;
+  hasCompactionContinue: boolean;
   model: string;
 
   /** Timestamp of first content token (text or reasoning delta) - backend Date.now() */
@@ -292,13 +293,13 @@ export class StreamingMessageAggregator {
   // Optional callback when an assistant response completes (used for "notify on response" feature)
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (the final response to show in notification)
-  // isCompaction is true when this was a compaction stream (for special notification text)
+  // compaction is provided when this was a compaction stream (includes continue metadata)
   onResponseComplete?: (
     workspaceId: string,
     messageId: string,
     isFinal: boolean,
     finalText: string,
-    isCompaction: boolean
+    compaction?: { hasContinueMessage: boolean }
   ) => void;
 
   constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
@@ -1123,6 +1124,28 @@ export class StreamingMessageAggregator {
       return false;
     })();
 
+    // Capture compaction-continue metadata before clearing pending request state.
+    const hasCompactionContinue = isCompacting
+      ? (() => {
+          if (this.pendingCompactionRequest?.continueMessage) {
+            return true;
+          }
+
+          const messages = this.getAllMessages();
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (message.role !== "user") continue;
+            const muxMetadata = message.metadata?.muxMetadata;
+            if (muxMetadata?.type === "compaction-request") {
+              return Boolean(muxMetadata.parsed.continueMessage);
+            }
+            return false;
+          }
+
+          return false;
+        })()
+      : false;
+
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
     this.lastAbortReason = null;
@@ -1141,6 +1164,7 @@ export class StreamingMessageAggregator {
       lastServerTimestamp: data.startTime,
       isComplete: false,
       isCompacting,
+      hasCompactionContinue,
       model: data.model,
       serverFirstTokenTime: null,
       toolExecutionMs: 0,
@@ -1235,8 +1259,10 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
-      // Capture isCompacting before cleanup (cleanup removes the stream context)
-      const wasCompacting = activeStream.isCompacting;
+      // Capture compaction info before cleanup (cleanup removes the stream context)
+      const compaction = activeStream.isCompacting
+        ? { hasContinueMessage: activeStream.hasCompactionContinue }
+        : undefined;
 
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
@@ -1246,13 +1272,7 @@ export class StreamingMessageAggregator {
       if (this.workspaceId && this.onResponseComplete) {
         const isFinal = this.activeStreams.size === 0;
         const finalText = this.extractFinalResponseText(message);
-        this.onResponseComplete(
-          this.workspaceId,
-          data.messageId,
-          isFinal,
-          finalText,
-          wasCompacting
-        );
+        this.onResponseComplete(this.workspaceId, data.messageId, isFinal, finalText, compaction);
       }
     } else {
       // Reconnection case: user reconnected after stream completed
