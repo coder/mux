@@ -401,6 +401,14 @@ export function getSessionTimingKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for last-read timestamps per workspace.
+ * Format: "workspaceLastRead:{workspaceId}"
+ */
+export function getWorkspaceLastReadKey(workspaceId: string): string {
+  return `workspaceLastRead:${workspaceId}`;
+}
+
+/**
  * Right sidebar tab selection (global)
  * Format: "right-sidebar-tab"
  */
@@ -493,6 +501,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getReviewSearchStateKey,
   getReviewsKey,
   getAutoCompactionEnabledKey,
+  getWorkspaceLastReadKey,
   getStatusStateKey,
   // Note: auto-compaction threshold is per-model, not per-workspace
 ];

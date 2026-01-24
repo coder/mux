@@ -1,8 +1,9 @@
 import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getWorkspaceLastReadKey } from "@/common/constants/storage";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect } from "react";
@@ -32,13 +33,10 @@ export interface WorkspaceListItemProps {
   depth?: number;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
-  /** @deprecated No longer used since status dot was removed, kept for API compatibility */
-  lastReadTimestamp?: number;
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
-  onArchiveWorkspace: (workspaceId: string, button?: HTMLElement) => Promise<void>;
-  /** @deprecated No longer used since status dot was removed, kept for API compatibility */
-  onToggleUnread?: (workspaceId: string) => void;
+  onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onToggleUnread: (workspaceId: string, isUnread: boolean) => void;
 }
 
 const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
@@ -49,15 +47,18 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   isArchiving,
   depth,
   sectionId,
-  lastReadTimestamp: _lastReadTimestamp,
   onSelectWorkspace,
   onArchiveWorkspace,
-  onToggleUnread: _onToggleUnread,
+  onToggleUnread,
 }) => {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isCreating = status === "creating";
   const isDisabled = isCreating || isArchiving;
+
+  const [lastReadTimestamp] = usePersistedState<number>(getWorkspaceLastReadKey(workspaceId), 0, {
+    listener: true,
+  });
   const gitStatus = useGitStatus(workspaceId);
 
   // Get title edit context (renamed from rename context since we now edit titles, not names)
@@ -110,7 +111,11 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     }
   };
 
-  const { canInterrupt, awaitingUserQuestion, isStarting } = useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, awaitingUserQuestion, isStarting, recencyTimestamp } =
+    useWorkspaceSidebarState(workspaceId);
+
+  const isUnread = recencyTimestamp !== null && recencyTimestamp > lastReadTimestamp;
+  const showUnreadIndicator = !isCreating && !isEditing && isUnread;
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
   const paddingLeft = 9 + Math.min(32, safeDepth) * 12;
@@ -192,26 +197,44 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        {/* Archive button - vertically centered against entire item */}
+        {/* Archive button with unread badge overlay - vertically centered against entire item */}
         {!isCreating && !isEditing && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                className="text-muted hover:text-foreground inline-flex shrink-0 cursor-pointer items-center self-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void onArchiveWorkspace(workspaceId, e.currentTarget);
-                }}
-                aria-label={`Archive workspace ${displayTitle}`}
-                data-workspace-id={workspaceId}
-              >
-                <ArchiveIcon className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent align="start">
-              Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)} when selected)
-            </TooltipContent>
-          </Tooltip>
+          <div className="relative inline-flex h-4 w-4 shrink-0 items-center self-center">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onArchiveWorkspace(workspaceId, e.currentTarget);
+                  }}
+                  aria-label={`Archive workspace ${displayTitle}`}
+                  data-workspace-id={workspaceId}
+                >
+                  <ArchiveIcon className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent align="start">Archive workspace</TooltipContent>
+            </Tooltip>
+            {showUnreadIndicator && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className="absolute -top-0.5 -right-0.5 inline-flex h-3 w-3 cursor-pointer items-center justify-center border-none bg-transparent p-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleUnread(workspaceId, isUnread);
+                    }}
+                    aria-label={`Mark workspace ${displayTitle} as read`}
+                    data-workspace-id={workspaceId}
+                  >
+                    <span className="h-2 w-2 rounded-full bg-gray-300" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="start">Unread messages</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="grid min-w-0 grid-cols-[auto_1fr_auto] items-center gap-1.5">

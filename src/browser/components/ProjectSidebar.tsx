@@ -204,8 +204,7 @@ const ProjectDragLayer: React.FC = () => {
 };
 
 interface ProjectSidebarProps {
-  lastReadTimestamps: Record<string, number>;
-  onToggleUnread: (workspaceId: string) => void;
+  onToggleUnread: (workspaceId: string, isUnread: boolean) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
@@ -213,8 +212,7 @@ interface ProjectSidebarProps {
 }
 
 const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
-  lastReadTimestamps,
-  onToggleUnread: _onToggleUnread,
+  onToggleUnread,
   collapsed,
   onToggleCollapsed,
   sortedWorkspacesByProject,
@@ -667,10 +665,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   isArchiving={archivingWorkspaceIds.has(metadata.id)}
-                                  lastReadTimestamp={lastReadTimestamps[metadata.id] ?? 0}
                                   onSelectWorkspace={handleSelectWorkspace}
                                   onArchiveWorkspace={handleArchiveWorkspace}
-                                  onToggleUnread={_onToggleUnread}
+                                  onToggleUnread={onToggleUnread}
                                   depth={depthByWorkspaceId[metadata.id] ?? 0}
                                   sectionId={sectionId}
                                 />

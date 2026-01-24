@@ -155,7 +155,7 @@ function AppInner() {
   }, [selectedWorkspace, telemetry]);
 
   // Track last-read timestamps for unread indicators
-  const { lastReadTimestamps, onToggleUnread } = useUnreadTracking(selectedWorkspace);
+  const { onToggleUnread } = useUnreadTracking(selectedWorkspace);
 
   const workspaceMetadataRef = useRef(workspaceMetadata);
   useEffect(() => {
@@ -764,7 +764,6 @@ function AppInner() {
         onMouseUp={handleMouseNavigation}
       >
         <LeftSidebar
-          lastReadTimestamps={lastReadTimestamps}
           onToggleUnread={onToggleUnread}
           collapsed={sidebarCollapsed}
           onToggleCollapsed={handleToggleSidebar}
