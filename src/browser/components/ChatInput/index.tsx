@@ -37,6 +37,7 @@ import {
   VIM_ENABLED_KEY,
   getProjectScopeId,
   getPendingScopeId,
+  getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
   handleNewCommand,
@@ -2047,6 +2048,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             runtimeType,
             sendMessageOptions.thinkingLevel ?? "off"
           );
+
+          // Mark workspace as read after sending a message.
+          // This prevents the unread indicator from showing when the user
+          // just interacted with the workspace (their own message bumps recencyTimestamp,
+          // but since they initiated it, they've "read" the workspace).
+          updatePersistedState(getWorkspaceLastReadKey(props.workspaceId), Date.now());
 
           // Mark attached reviews as completed (checked)
           if (sentReviewIds.length > 0) {
