@@ -193,7 +193,12 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
   const [draftPrompt] = usePersistedState<string>(getInputKey(scopeId), "", {
     listener: true,
   });
-  const promptPreview = typeof draftPrompt === "string" ? draftPrompt.trim() : "";
+
+  // Collapse whitespace so multi-line prompts show up nicely as a single-line preview.
+  const promptPreview =
+    typeof draftPrompt === "string" ? draftPrompt.trim().replace(/\s+/g, " ") : "";
+
+  const titleText = promptPreview.length > 0 ? promptPreview : "Draft workspace";
 
   return (
     <div
@@ -236,10 +241,7 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
       </Tooltip>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-foreground block truncate text-left text-[14px]">
-          Draft workspace
-        </span>
-        <span className="text-muted block truncate text-left text-[11px]">{promptPreview}</span>
+        <span className="text-foreground block truncate text-left text-[14px]">{titleText}</span>
       </div>
     </div>
   );
