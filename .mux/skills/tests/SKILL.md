@@ -91,7 +91,20 @@ Otherwise, tests that live in `src/` run under `bun test` (generally these are u
   - Backend API calls are fine for setup/teardown or to avoid expensive operations.
   - Consider moving the test to `tests/ipc` if backend logic needs granular testing.
 - Never bypass the UI in these tests; e.g. do not call `updatePersistedState` to change UI state—go through the UI to trigger the desired behavior.
-- These tests require `TEST_INTEGRATION=1` and real API keys; use `shouldRunIntegrationTests()` guard.
+- These tests require `TEST_INTEGRATION=1`; use `shouldRunIntegrationTests()` guard.
+- Only call `validateApiKeys()` in tests that actually make AI API calls. Pure UI interaction tests (clicking buttons, selecting items) don't need API keys.
+
+### Happy-dom Limitations
+
+- **Radix Popover/Portal components don't render content** — Radix portals content to `document.body` but happy-dom doesn't support this properly. The trigger will render but popover content won't appear.
+- **Workaround:** Components that need tests/ui coverage should use conditional rendering (`{isOpen && <div>...}`) instead of Radix Portal. See `AgentModePicker` for the pattern.
+- If refactoring to conditional rendering isn't feasible, use tests/e2e instead (but note ~2min startup time).
+
+### Test Helper Conventions
+
+- Query elements within `view.container` (not `document.body`) when using non-portal components.
+- Use `waitFor()` with explicit error messages to aid debugging: `if (!el) throw new Error("Element not found")`.
+- Name helpers after user actions: `openBaseSelectorDropdown()`, `selectSuggestion()`, not implementation details.
 
 ## IPC Tests (`tests/ipc`)
 

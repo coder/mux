@@ -293,8 +293,14 @@ export const electronTest = base.extend<ElectronFixtures>({
         electronEnv.NODE_ENV = electronEnv.NODE_ENV ?? "production";
       }
 
+      // When running as root (e.g., in Docker/CI), Electron requires --no-sandbox
+      const launchArgs = ["."];
+      if (process.getuid?.() === 0) {
+        launchArgs.unshift("--no-sandbox");
+      }
+
       electronApp = await electron.launch({
-        args: ["."],
+        args: launchArgs,
         cwd: appRoot,
         env: electronEnv,
         recordVideo: {

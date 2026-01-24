@@ -132,6 +132,14 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - Avoid timing-based coordination (e.g., sleep/grace timers) when deterministic signals exist; prefer awaiting explicit completion/exit signals.
 - When asked to reduce LoC, focus on simplifying production logic—not stripping comments, docs, or tests.
 
+## UI Component Testability (tests/ui)
+
+- **Radix Popover portals don't work in happy-dom** — content renders to `document.body` via portal but happy-dom doesn't support this properly. Popover content won't appear in tests.
+- **Use conditional rendering for testability:** Components like `AgentModePicker` use `{isOpen && <div>...}` instead of Radix Portal. This renders inline and works in happy-dom.
+- When adding new dropdown/popover components that need tests/ui coverage, prefer the conditional rendering pattern over Radix Portal.
+- E2E tests (tests/e2e) work with Radix but are slow (~2min startup); reserve for scenarios that truly need real Electron.
+- Only use `validateApiKeys()` in tests that actually make AI API calls.
+
 ## Tool: status_set
 
 - Set status url to the Pull Request once opened

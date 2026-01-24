@@ -1,8 +1,13 @@
-import { waitFor } from "@testing-library/react";
+/**
+ * Integration tests for ReviewPanel base selector.
+ *
+ * Tests use UI interactions (clicking dropdown, selecting suggestions) to verify
+ * that changing the diff base works correctly. Pattern follows agentPicker tests.
+ */
 
-import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
-import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { fireEvent, waitFor } from "@testing-library/react";
+
+import { shouldRunIntegrationTests } from "../testUtils";
 import {
   cleanupSharedRepo,
   configureTestRetries,
@@ -19,7 +24,9 @@ configureTestRetries(2);
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
-validateApiKeys(["ANTHROPIC_API_KEY"]);
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /**
  * Helper to set up the full App UI and navigate to the Review tab.
@@ -28,12 +35,73 @@ async function setupReviewPanel(
   view: RenderedApp,
   metadata: FrontendWorkspaceMetadata,
   workspaceId: string
-): Promise<HTMLElement> {
+): Promise<void> {
   await setupWorkspaceView(view, metadata, workspaceId);
   await view.selectTab("review");
   // Wait for the review panel to be ready
   await view.findAllByText(/No changes found/i, {}, { timeout: 60_000 });
-  return view.getByTestId("review-refresh");
+}
+
+/**
+ * Open the base selector dropdown by clicking the trigger button.
+ * The component uses conditional rendering (not portal), so dropdown is inside container.
+ */
+async function openBaseSelectorDropdown(container: HTMLElement): Promise<void> {
+  const trigger = await waitFor(
+    () => {
+      const btn = container.querySelector('[data-testid="review-base-value"]') as HTMLElement;
+      if (!btn) throw new Error("Base selector trigger not found");
+      return btn;
+    },
+    { timeout: 5_000 }
+  );
+
+  fireEvent.click(trigger);
+
+  // Wait for dropdown to appear with input field
+  await waitFor(
+    () => {
+      const input = container.querySelector('[placeholder="Enter base..."]');
+      if (!input) throw new Error("Base selector dropdown not open");
+    },
+    { timeout: 5_000 }
+  );
+}
+
+/**
+ * Click a suggestion button in the base selector dropdown.
+ */
+async function selectBaseSuggestion(container: HTMLElement, base: string): Promise<void> {
+  const button = await waitFor(
+    () => {
+      const btn = container.querySelector(`[data-testid="base-suggestion-${base}"]`) as HTMLElement;
+      if (!btn) throw new Error(`Base suggestion "${base}" not found`);
+      return btn;
+    },
+    { timeout: 2_000 }
+  );
+  fireEvent.click(button);
+}
+
+/**
+ * Wait for the dropdown to close (input field no longer visible).
+ */
+async function waitForDropdownClose(container: HTMLElement): Promise<void> {
+  await waitFor(
+    () => {
+      const input = container.querySelector('[placeholder="Enter base..."]');
+      if (input) throw new Error("Dropdown still open");
+    },
+    { timeout: 2_000 }
+  );
+}
+
+/**
+ * Get the current displayed base value from the trigger button.
+ */
+function getDisplayedBase(container: HTMLElement): string {
+  const trigger = container.querySelector('[data-testid="review-base-value"]');
+  return trigger?.textContent ?? "";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -49,16 +117,9 @@ describeIntegration("ReviewPanel base selector", () => {
     await cleanupSharedRepo();
   });
 
-  test("base value updates when changed via localStorage sync", async () => {
-    // This test verifies that the ReviewPanel correctly syncs with persisted base value changes.
-    // We use localStorage directly because Radix popovers don't work reliably in happy-dom.
-    // The underlying fix ensures functional updates avoid stale closure issues.
+  test("clicking a suggestion updates the displayed base value", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
-
-      // Set initial base to HEAD
-      const storageKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
-      window.localStorage.setItem(storageKey, JSON.stringify("HEAD"));
 
       const view = renderReviewPanel({
         apiClient: env.orpc,
@@ -68,38 +129,30 @@ describeIntegration("ReviewPanel base selector", () => {
       try {
         await setupReviewPanel(view, metadata, workspaceId);
 
-        // Find the base selector button
-        const baseValueButton = view.getByTestId("review-base-value");
-        expect(baseValueButton).toBeTruthy();
+        // Verify initial base (default is origin/main per workspaceDefaults)
+        expect(getDisplayedBase(view.container)).toBe("origin/main");
 
-        // Check initial value
-        expect(baseValueButton.textContent).toBe("HEAD");
+        // Open dropdown and click HEAD~1
+        await openBaseSelectorDropdown(view.container);
+        await selectBaseSuggestion(view.container, "HEAD~1");
+        await waitForDropdownClose(view.container);
 
-        // Simulate external base change (like from GitStatusIndicator)
-        // This mimics what happens when the user changes the base elsewhere
-        const newBase = "HEAD~1";
-        updatePersistedState(storageKey, newBase);
-
-        // Wait for the UI to sync
+        // Verify the displayed value updated
         await waitFor(
           () => {
-            expect(baseValueButton.textContent).toBe(newBase);
+            expect(getDisplayedBase(view.container)).toBe("HEAD~1");
           },
-          { timeout: 5000 }
+          { timeout: 5_000 }
         );
       } finally {
         await cleanupView(view, cleanupDom);
       }
     });
-  });
+  }, 90_000);
 
-  test("multiple rapid base changes apply correctly", async () => {
-    // Tests that rapid successive base changes work (no stale closure issues)
+  test("multiple suggestion clicks work correctly", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
-
-      const storageKey = STORAGE_KEYS.reviewDiffBase(workspaceId);
-      window.localStorage.setItem(storageKey, JSON.stringify("HEAD"));
 
       const view = renderReviewPanel({
         apiClient: env.orpc,
@@ -109,29 +162,27 @@ describeIntegration("ReviewPanel base selector", () => {
       try {
         await setupReviewPanel(view, metadata, workspaceId);
 
-        const baseValueButton = view.getByTestId("review-base-value");
-        expect(baseValueButton.textContent).toBe("HEAD");
+        // Click through multiple suggestions
+        const selections = ["HEAD~1", "main", "origin/main"];
 
-        // Rapidly change base multiple times
-        const bases = ["HEAD~1", "HEAD~2", "main"];
+        for (const base of selections) {
+          await openBaseSelectorDropdown(view.container);
+          await selectBaseSuggestion(view.container, base);
+          await waitForDropdownClose(view.container);
 
-        for (const newBase of bases) {
-          updatePersistedState(storageKey, newBase);
-
-          // Wait for UI to update
           await waitFor(
             () => {
-              expect(baseValueButton.textContent).toBe(newBase);
+              expect(getDisplayedBase(view.container)).toBe(base);
             },
-            { timeout: 5000 }
+            { timeout: 5_000 }
           );
         }
 
-        // Final check
-        expect(baseValueButton.textContent).toBe("main");
+        // Final verification
+        expect(getDisplayedBase(view.container)).toBe("origin/main");
       } finally {
         await cleanupView(view, cleanupDom);
       }
     });
-  });
+  }, 90_000);
 });
