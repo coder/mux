@@ -1232,6 +1232,14 @@ export class WorkspaceStore {
   }
 
   /**
+   * Check if a workspace has a queued message (e.g., continue message after compaction).
+   * Used to skip notifications when work will continue after the current stream.
+   */
+  hasQueuedMessage(workspaceId: string): boolean {
+    return this.chatTransientState.get(workspaceId)?.queuedMessage !== null;
+  }
+
+  /**
    * Update usage and schedule consumer calculation after stream completion.
    *
    * CRITICAL ORDERING: This must be called AFTER the aggregator updates its messages.
