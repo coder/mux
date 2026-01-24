@@ -29,6 +29,11 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - Test documentation stays inside the relevant test file as commentary explaining setup/edge cases.
 - External API docs already live inside `/tmp/ai-sdk-docs/**.mdx`; never browse `https://sdk.vercel.ai/docs/ai-sdk-core` directly.
 
+### Code Comments
+- When delivering a user's request, leave their rationale in the code as comments.
+- Generally, prefer code comments that explain the "why" behind a change.
+- Still explain the "what" if the code is opaque, surprising, confusing, etc.
+
 ## Key Features & Performance
 
 - Core UX: projects sidebar (left panel), workspace management (local git worktrees or SSH clones), config stored in `~/.mux/config.json`.
