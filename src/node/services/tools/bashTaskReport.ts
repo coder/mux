@@ -1,5 +1,30 @@
 import assert from "@/common/utils/assert";
 
+function getMarkdownCodeFenceDelimiter(args: { output: string }): string {
+  assert(typeof args.output === "string", "output must be a string");
+
+  // Pick a fence longer than any run of backticks in the output so literal ``` lines
+  // can't terminate the block early (and lose the remaining output when re-parsing).
+  let longestBacktickRun = 0;
+  let currentRun = 0;
+  for (const char of args.output) {
+    if (char === "`") {
+      currentRun += 1;
+      continue;
+    }
+
+    if (currentRun > longestBacktickRun) {
+      longestBacktickRun = currentRun;
+    }
+    currentRun = 0;
+  }
+  if (currentRun > longestBacktickRun) {
+    longestBacktickRun = currentRun;
+  }
+
+  const fenceLength = Math.max(3, longestBacktickRun + 1);
+  return "`".repeat(fenceLength);
+}
 export interface ParsedBashOutputReport {
   processId: string;
   status: string;
@@ -28,10 +53,13 @@ export function formatBashOutputReport(args: {
   }
 
   if (args.output.trim().length > 0) {
+    const trimmedOutput = args.output.trimEnd();
+    const fence = getMarkdownCodeFenceDelimiter({ output: trimmedOutput });
+
     lines.push("");
-    lines.push("```text");
-    lines.push(args.output.trimEnd());
-    lines.push("```");
+    lines.push(`${fence}text`);
+    lines.push(trimmedOutput);
+    lines.push(fence);
   }
 
   return lines.join("\n");
@@ -76,13 +104,40 @@ export function tryParseBashOutputReport(
     return undefined;
   }
 
-  // Parse fenced output block (optional)
+  // Parse fenced output block (optional).
   let output = "";
-  const fenceStart = lines.findIndex((line) => line.trimEnd() === "```text");
+  const fenceStart = lines.findIndex((line) => /^`{3,}text\s*$/.test(line.trimEnd()));
   if (fenceStart !== -1) {
-    const fenceEnd = lines.findIndex(
-      (line, index) => index > fenceStart && line.trimEnd() === "```"
-    );
+    const fenceLine = lines[fenceStart]?.trimEnd() ?? "";
+    const match = /^(`{3,})text\s*$/.exec(fenceLine);
+    if (!match) {
+      return undefined;
+    }
+
+    const fence = match[1];
+
+    // We always append the closing fence at the end of the report. If the output contains
+    // literal fence lines (e.g. "```"), picking the *first* closing fence would truncate
+    // the parsed output and permanently drop data when we rewrite the report.
+    let fenceEnd = -1;
+    for (let index = lines.length - 1; index > fenceStart; index -= 1) {
+      if ((lines[index]?.trimEnd() ?? "") !== fence) {
+        continue;
+      }
+
+      const onlyBlankLinesAfterFence = lines
+        .slice(index + 1)
+        .every((line) => line.trim().length === 0);
+      if (onlyBlankLinesAfterFence) {
+        fenceEnd = index;
+        break;
+      }
+    }
+
+    if (fenceEnd === -1) {
+      fenceEnd = lines.findIndex((line, index) => index > fenceStart && line.trimEnd() === fence);
+    }
+
     if (fenceEnd === -1) {
       return undefined;
     }

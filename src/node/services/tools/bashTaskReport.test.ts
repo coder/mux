@@ -25,6 +25,43 @@ describe("bashTaskReport", () => {
     });
   });
 
+  it("roundtrips output that contains a literal ``` fence line", () => {
+    const report = formatBashOutputReport({
+      processId: "proc_123",
+      status: "exited",
+      exitCode: 0,
+      output: "before\n```\nafter\n",
+    });
+
+    // Ensure we picked a fence that can't be terminated by a literal ``` output line.
+    expect(report).toContain("````text");
+
+    const parsed = tryParseBashOutputReport(report);
+    expect(parsed?.output).toBe("before\n```\nafter");
+  });
+
+  it("parses legacy reports where output contains a literal ``` fence line", () => {
+    const legacy = [
+      "### Bash task: proc_123",
+      "",
+      "status: exited",
+      "exitCode: 0",
+      "",
+      "```text",
+      "before",
+      "```",
+      "after",
+      "```",
+    ].join("\n");
+
+    expect(tryParseBashOutputReport(legacy)).toEqual({
+      processId: "proc_123",
+      status: "exited",
+      exitCode: 0,
+      output: "before\n```\nafter",
+    });
+  });
+
   it("roundtrips a bash output report with no output", () => {
     const report = formatBashOutputReport({
       processId: "proc_123",
