@@ -1232,11 +1232,24 @@ export class WorkspaceStore {
   }
 
   /**
-   * Check if a workspace has a queued message (e.g., continue message after compaction).
-   * Used to skip notifications when work will continue after the current stream.
+   * Check if the last compaction request included a continue message.
+   * Used to skip compaction-complete notifications when work will auto-continue.
    */
-  hasQueuedMessage(workspaceId: string): boolean {
-    return this.chatTransientState.get(workspaceId)?.queuedMessage !== null;
+  hasCompactionContinueMessage(workspaceId: string): boolean {
+    const aggregator = this.aggregators.get(workspaceId);
+    if (!aggregator) return false;
+
+    const messages = aggregator.getAllMessages();
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role !== "user") continue;
+      const muxMetadata = message.metadata?.muxMetadata;
+      if (muxMetadata?.type === "compaction-request") {
+        return Boolean(muxMetadata.parsed.continueMessage);
+      }
+    }
+
+    return false;
   }
 
   /**
