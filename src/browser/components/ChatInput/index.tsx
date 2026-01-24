@@ -1109,9 +1109,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         restoreImages(imageParts);
       }
     };
-    window.addEventListener(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, handler as EventListener);
+    window.addEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
     return () =>
-      window.removeEventListener(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, handler as EventListener);
+      window.removeEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
   }, [appendText, restoreText, restoreImages, editingMessage]);
 
   // Allow external components to open the Model Selector

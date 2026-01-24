@@ -566,9 +566,9 @@ export class WorkspaceStore {
     "restore-to-input": (workspaceId, _aggregator, data) => {
       if (!isRestoreToInput(data)) return;
 
-      // Use INSERT_TO_CHAT_INPUT event with mode="replace"
+      // Use UPDATE_CHAT_INPUT event with mode="replace"
       window.dispatchEvent(
-        createCustomEvent(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, {
+        createCustomEvent(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, {
           text: data.text,
           mode: "replace",
           imageParts: data.imageParts,

@@ -255,7 +255,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
             run: () => {
               const text = s.replacement;
               window.dispatchEvent(
-                createCustomEvent(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, {
+                createCustomEvent(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, {
                   text,
                   mode: "append",
                 })

@@ -53,6 +53,14 @@ function hasMockMarker(text: string, marker: string): boolean {
   return normalized.includes(`${MOCK_MARKER_PREFIX}${marker.toLowerCase()}`);
 }
 
+function hasCompactionHistory(messages: MuxMessage[]): boolean {
+  return messages.some((message) => {
+    if (readCompactionRequest(message)) {
+      return true;
+    }
+    return Boolean(message.metadata?.compacted);
+  });
+}
 function readCompactionRequest(
   message: MuxMessage
 ): { continueMessage?: ContinueMessage } | undefined {
@@ -349,6 +357,15 @@ function buildApiErrorReply(): MockAiRouterReply {
   };
 }
 
+function buildContextExceededReply(): MockAiRouterReply {
+  return {
+    assistantText: "Streaming response before context limit.",
+    error: {
+      message: "Context length exceeded in mock stream.",
+      type: "context_exceeded",
+    },
+  };
+}
 function buildNetworkErrorReply(): MockAiRouterReply {
   return {
     assistantText: "",
@@ -456,6 +473,14 @@ const defaultHandlers: MockAiRouterHandler[] = [
       hasMockMarker(request.latestUserText, "review:show-doc") ||
       normalizeText(request.latestUserText) === "show the onboarding doc contents instead.",
     respond: () => buildReviewShowDocReply(),
+  },
+  {
+    match: (request) =>
+      !hasCompactionHistory(request.messages) &&
+      (hasMockMarker(request.latestUserText, "error:context") ||
+        normalizeText(request.latestUserText) === "trigger context error" ||
+        normalizeText(request.latestUserText) === "trigger context exceeded error"),
+    respond: () => buildContextExceededReply(),
   },
   {
     match: (request) =>

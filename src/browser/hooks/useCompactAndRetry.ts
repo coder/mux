@@ -15,6 +15,7 @@ import {
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ImagePart, ProvidersConfigMap } from "@/common/orpc/types";
 import {
   buildContinueMessage,
@@ -28,6 +29,7 @@ interface CompactAndRetryState {
   isRetryingWithCompaction: boolean;
   hasTriggerUserMessage: boolean;
   hasCompactionRequest: boolean;
+  /** Manual retry - user clicked "Compact & retry" button. May update chat input on failure. */
   retryWithCompaction: () => Promise<void>;
 }
 
@@ -47,9 +49,13 @@ function findTriggerUserMessage(
 export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRetryState {
   const workspaceState = useWorkspaceState(props.workspaceId);
   const { api } = useAPI();
-  const [providersConfig, setProvidersConfig] = useState<ProvidersConfigMap | null>(null);
+  // undefined = not loaded yet, null = load attempted but empty/failed, value = loaded
+  const [providersConfig, setProvidersConfig] = useState<ProvidersConfigMap | null | undefined>(
+    undefined
+  );
   const [isRetryingWithCompaction, setIsRetryingWithCompaction] = useState(false);
   const isMountedRef = useRef(true);
+  const autoCompactionAttemptRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -81,7 +87,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
   useEffect(() => {
     if (!api) return;
     if (!showCompactionUI) return;
-    if (providersConfig) return;
+    if (providersConfig !== undefined) return; // Already loaded or failed
 
     let active = true;
     const fetchProvidersConfig = async () => {
@@ -91,7 +97,10 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
           setProvidersConfig(cfg);
         }
       } catch {
-        // Ignore failures fetching config (we just won't show a suggestion).
+        // Mark as "loaded but empty" so dependents know fetch completed.
+        if (active) {
+          setProvidersConfig(null);
+        }
       }
     };
 
@@ -118,10 +127,13 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       return null;
     }
 
+    // Convert undefined to null for helper functions (undefined = loading, null = no config)
+    const config = providersConfig ?? null;
+
     if (isCompactionRecoveryFlow) {
       return getHigherContextCompactionSuggestion({
         currentModel: compactionTargetModel,
-        providersConfig,
+        providersConfig: config,
       });
     }
 
@@ -129,7 +141,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
     if (preferred.length > 0) {
       const explicit = getExplicitCompactionSuggestion({
         modelId: preferred,
-        providersConfig,
+        providersConfig: config,
       });
       if (explicit) {
         return explicit;
@@ -138,7 +150,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
 
     return getHigherContextCompactionSuggestion({
       currentModel: compactionTargetModel,
-      providersConfig,
+      providersConfig: config,
     });
   }, [
     compactionTargetModel,
@@ -148,78 +160,26 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
     preferredCompactionModel,
   ]);
 
-  const retryWithCompaction = useCallback(async (): Promise<void> => {
-    const insertIntoChatInput = (text: string, imageParts?: ImagePart[]): void => {
-      window.dispatchEvent(
-        createCustomEvent(CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT, {
-          text,
-          mode: "replace",
-          imageParts,
-        })
-      );
-    };
+  /**
+   * Insert text into the chat input (for manual fallback on failure).
+   * Uses a global event since the user is viewing this workspace when they click retry.
+   */
+  const insertIntoChatInput = useCallback((text: string, imageParts?: ImagePart[]): void => {
+    window.dispatchEvent(
+      createCustomEvent(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, {
+        text,
+        mode: "replace",
+        imageParts,
+      })
+    );
+  }, []);
 
-    if (!compactionSuggestion) {
-      insertIntoChatInput("/compact\n");
-      return;
-    }
-
-    const suggestedCommandLine = formatCompactionCommandLine({
-      model: compactionSuggestion.modelArg,
-    });
-
-    if (!api) {
-      insertIntoChatInput(suggestedCommandLine + "\n");
-      return;
-    }
-
-    if (isMountedRef.current) {
-      setIsRetryingWithCompaction(true);
-    }
-    try {
-      const sendMessageOptions = buildSendMessageOptions(props.workspaceId);
-      const source = triggerUserMessage;
-
-      if (!source) {
-        insertIntoChatInput(suggestedCommandLine + "\n");
-        return;
-      }
-
-      if (source.compactionRequest) {
-        const maxOutputTokens = source.compactionRequest.parsed.maxOutputTokens;
-        const continueMessage = source.compactionRequest.parsed.continueMessage;
-        const result = await executeCompaction({
-          api,
-          workspaceId: props.workspaceId,
-          sendMessageOptions,
-          model: compactionSuggestion.modelId,
-          maxOutputTokens,
-          continueMessage,
-          editMessageId: source.id,
-        });
-
-        if (!result.success) {
-          console.error("Failed to retry compaction:", result.error);
-
-          const slashCommand = formatCompactionCommandLine({
-            model: compactionSuggestion.modelArg,
-            maxOutputTokens,
-          });
-
-          const continueText = getCompactionContinueText(continueMessage);
-          const fallbackText = continueText ? `${slashCommand}\n${continueText}` : slashCommand;
-          const shouldAppendNewline = !continueText;
-
-          insertIntoChatInput(
-            fallbackText + (shouldAppendNewline ? "\n" : ""),
-            continueMessage?.imageParts
-          );
-        }
-
-        return;
-      }
-
-      // Preserve skill invocation metadata through compaction so retry re-invokes the skill
+  /**
+   * Build continue message from the trigger user message.
+   * Preserves skill invocation metadata so retry re-invokes the skill.
+   */
+  const buildContinueFromSource = useCallback(
+    (source: Extract<DisplayedMessage, { type: "user" }>, model: string, agentId: string) => {
       const muxMetadata: MuxFrontendMetadata | undefined = source.agentSkill
         ? {
             type: "agent-skill",
@@ -229,14 +189,79 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
           }
         : undefined;
 
-      const continueMessage = buildContinueMessage({
+      return buildContinueMessage({
         text: source.content,
         imageParts: source.imageParts,
         reviews: source.reviews,
         muxMetadata,
-        model: sendMessageOptions.model,
-        agentId: sendMessageOptions.agentId ?? "exec",
+        model,
+        agentId,
       });
+    },
+    []
+  );
+
+  /**
+   * Manual retry: user clicked "Compact & retry" button.
+   * On failure, falls back to inserting the command into chat input.
+   */
+  const retryWithCompaction = useCallback(async (): Promise<void> => {
+    const suggestedCommandLine = formatCompactionCommandLine({
+      model: compactionSuggestion?.modelArg,
+    });
+
+    if (!api || !triggerUserMessage) {
+      insertIntoChatInput(suggestedCommandLine + "\n");
+      return;
+    }
+
+    if (isMountedRef.current) {
+      setIsRetryingWithCompaction(true);
+    }
+
+    try {
+      const sendMessageOptions = buildSendMessageOptions(props.workspaceId);
+
+      // Handle retry of a failed compaction request
+      if (triggerUserMessage.compactionRequest) {
+        if (!compactionSuggestion) {
+          insertIntoChatInput(suggestedCommandLine + "\n");
+          return;
+        }
+
+        const { maxOutputTokens, continueMessage } = triggerUserMessage.compactionRequest.parsed;
+        const result = await executeCompaction({
+          api,
+          workspaceId: props.workspaceId,
+          sendMessageOptions,
+          model: compactionSuggestion.modelId,
+          maxOutputTokens,
+          continueMessage,
+          editMessageId: triggerUserMessage.id,
+        });
+
+        if (!result.success) {
+          console.error("Failed to retry compaction:", result.error);
+          const slashCommand = formatCompactionCommandLine({
+            model: compactionSuggestion.modelArg,
+            maxOutputTokens,
+          });
+          const continueText = getCompactionContinueText(continueMessage);
+          const fallbackText = continueText ? `${slashCommand}\n${continueText}` : slashCommand;
+          insertIntoChatInput(
+            fallbackText + (continueText ? "" : "\n"),
+            continueMessage?.imageParts
+          );
+        }
+        return;
+      }
+
+      // Handle compaction of a regular user message
+      const continueMessage = buildContinueFromSource(
+        triggerUserMessage,
+        sendMessageOptions.model,
+        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.mode
+      );
 
       if (!continueMessage) {
         insertIntoChatInput(suggestedCommandLine + "\n");
@@ -247,24 +272,106 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         api,
         workspaceId: props.workspaceId,
         sendMessageOptions,
-        model: compactionSuggestion.modelId,
+        model: compactionSuggestion?.modelId,
         continueMessage,
-        editMessageId: source.id,
+        editMessageId: triggerUserMessage.id,
       });
 
       if (!result.success) {
         console.error("Failed to start compaction:", result.error);
-        insertIntoChatInput(suggestedCommandLine + "\n" + source.content, source.imageParts);
+        insertIntoChatInput(
+          suggestedCommandLine + "\n" + triggerUserMessage.content,
+          triggerUserMessage.imageParts
+        );
       }
     } catch (error) {
-      console.error("Failed to retry with compaction", error);
+      console.error("Failed to retry with compaction:", error);
       insertIntoChatInput(suggestedCommandLine + "\n");
     } finally {
       if (isMountedRef.current) {
         setIsRetryingWithCompaction(false);
       }
     }
-  }, [api, compactionSuggestion, props.workspaceId, triggerUserMessage]);
+  }, [
+    api,
+    compactionSuggestion,
+    props.workspaceId,
+    triggerUserMessage,
+    insertIntoChatInput,
+    buildContinueFromSource,
+  ]);
+
+  /**
+   * Auto-compact on context_exceeded. Runs silently - never touches chat input.
+   * Returns true if compaction was attempted, false if preconditions not met.
+   */
+  const autoCompact = useCallback(async (): Promise<boolean> => {
+    if (!api || !triggerUserMessage || triggerUserMessage.compactionRequest) {
+      return false;
+    }
+
+    if (isMountedRef.current) {
+      setIsRetryingWithCompaction(true);
+    }
+
+    try {
+      const sendMessageOptions = buildSendMessageOptions(props.workspaceId);
+      const continueMessage = buildContinueFromSource(
+        triggerUserMessage,
+        sendMessageOptions.model,
+        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.mode
+      );
+
+      if (!continueMessage) {
+        return false;
+      }
+
+      const result = await executeCompaction({
+        api,
+        workspaceId: props.workspaceId,
+        sendMessageOptions,
+        model: compactionSuggestion?.modelId,
+        continueMessage,
+        editMessageId: triggerUserMessage.id,
+      });
+
+      if (!result.success) {
+        console.error("Auto-compaction failed:", result.error);
+      }
+      return result.success;
+    } catch (error) {
+      console.error("Auto-compaction error:", error);
+      return false;
+    } finally {
+      if (isMountedRef.current) {
+        setIsRetryingWithCompaction(false);
+      }
+    }
+  }, [
+    api,
+    compactionSuggestion?.modelId,
+    props.workspaceId,
+    triggerUserMessage,
+    buildContinueFromSource,
+  ]);
+
+  // Auto-trigger compaction on context_exceeded for seamless recovery.
+  const shouldAutoCompact =
+    api &&
+    isContextExceeded &&
+    providersConfig !== undefined &&
+    triggerUserMessage &&
+    !triggerUserMessage.compactionRequest &&
+    lastMessage?.type === "stream-error" &&
+    !isRetryingWithCompaction;
+
+  useEffect(() => {
+    if (!shouldAutoCompact || !lastMessage) return;
+    if (autoCompactionAttemptRef.current === lastMessage.id) return;
+
+    autoCompactionAttemptRef.current = lastMessage.id;
+    autoCompact().catch(() => undefined);
+  }, [shouldAutoCompact, lastMessage, autoCompact]);
 
   return {
     showCompactionUI,

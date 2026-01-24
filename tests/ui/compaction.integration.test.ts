@@ -74,6 +74,29 @@ describe("Compaction UI (mock AI router)", () => {
     }
   }, 60_000);
 
+  test("auto-compacts after context_exceeded and resumes", async () => {
+    const app = await createAppHarness({ branchPrefix: "compaction-ui" });
+
+    try {
+      const triggerMessage = "Trigger context error";
+      const userDraft = "My draft message that should be preserved";
+
+      await app.chat.send(triggerMessage);
+
+      // User starts typing while auto-compaction is in progress
+      await app.chat.typeWithoutSending(userDraft);
+
+      await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
+      await app.chat.expectTranscriptContains(`Continue with: ${triggerMessage}`, 60_000);
+      await app.chat.expectTranscriptContains(`Mock response: ${triggerMessage}`, 60_000);
+
+      // Verify user's draft was NOT overwritten by auto-compaction
+      await app.chat.expectInputValue(userDraft);
+    } finally {
+      await app.dispose();
+    }
+  }, 60_000);
+
   test("force compaction triggers during streaming and resumes with Continue", async () => {
     const app = await createAppHarness({ branchPrefix: "compaction-ui" });
 

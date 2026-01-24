@@ -104,4 +104,47 @@ export class ChatHarness {
       { timeout: timeoutMs }
     );
   }
+
+  /**
+   * Type text into the chat input without sending.
+   * Used to simulate a user draft that should be preserved during operations.
+   */
+  async typeWithoutSending(text: string): Promise<void> {
+    const textarea = await this.getActiveTextarea();
+    textarea.focus();
+
+    act(() => {
+      updatePersistedState(getInputKey(this.workspaceId), text);
+    });
+
+    await waitFor(
+      () => {
+        if (textarea.value !== text) {
+          throw new Error(`Textarea value mismatch: "${textarea.value}"`);
+        }
+      },
+      { timeout: 5_000 }
+    );
+  }
+
+  /**
+   * Get the current value of the chat input.
+   */
+  async getInputValue(): Promise<string> {
+    const textarea = await this.getActiveTextarea();
+    return textarea.value;
+  }
+
+  /**
+   * Assert the chat input contains the expected text.
+   */
+  async expectInputValue(expected: string, timeoutMs: number = 5_000): Promise<void> {
+    await waitFor(
+      async () => {
+        const value = await this.getInputValue();
+        expect(value).toBe(expected);
+      },
+      { timeout: timeoutMs }
+    );
+  }
 }

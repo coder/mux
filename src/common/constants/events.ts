@@ -16,10 +16,12 @@ export const CUSTOM_EVENTS = {
   THINKING_LEVEL_TOAST: "mux:thinkingLevelToast",
 
   /**
-   * Event to insert text into the chat input
+   * Event to update the chat input text
+   * - mode "append": inserts text at cursor (default)
+   * - mode "replace": overwrites entire input (ignored if user is editing a message)
    * Detail: { text: string, mode?: "replace" | "append", imageParts?: ImagePart[] }
    */
-  INSERT_TO_CHAT_INPUT: "mux:insertToChatInput",
+  UPDATE_CHAT_INPUT: "mux:updateChatInput",
 
   /**
    * Event to open the model selector
@@ -91,7 +93,7 @@ export interface CustomEventPayloads {
     workspaceId: string;
     level: ThinkingLevel;
   };
-  [CUSTOM_EVENTS.INSERT_TO_CHAT_INPUT]: {
+  [CUSTOM_EVENTS.UPDATE_CHAT_INPUT]: {
     text: string;
     mode?: "replace" | "append";
     imageParts?: ImagePart[];
