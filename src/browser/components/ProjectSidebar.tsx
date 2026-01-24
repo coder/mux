@@ -39,9 +39,10 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
+import { ChevronRight, CircleHelp, KeyRound, Trash2 } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useRouter } from "@/browser/contexts/RouterContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
 import { SectionHeader } from "./SectionHeader";
@@ -184,6 +185,7 @@ interface DraftWorkspaceListItemProps {
   draftNumber: number;
   isSelected: boolean;
   onOpen: () => void;
+  onDelete: () => void;
 }
 
 function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
@@ -191,7 +193,7 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
     <div
       className={cn(
         "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
-        "cursor-pointer hover:bg-hover",
+        "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
         props.isSelected && "bg-hover border-l-blue-400"
       )}
       style={{ paddingLeft: 9 }}
@@ -209,6 +211,24 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
       data-project-path={props.projectPath}
       data-draft-id={props.draftId}
     >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            className="text-muted hover:text-foreground inline-flex shrink-0 cursor-pointer items-center self-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+            onClick={(e) => {
+              e.stopPropagation();
+              props.onDelete();
+            }}
+            aria-label={`Delete workspace draft ${props.draftNumber}`}
+            data-project-path={props.projectPath}
+            data-draft-id={props.draftId}
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent align="start">Delete draft</TooltipContent>
+      </Tooltip>
+
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="text-foreground block truncate text-left text-[14px]">New workspace</span>
         <span className="text-muted block truncate text-left text-[11px]">
@@ -305,7 +325,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     workspaceDraftsByProject,
     createWorkspaceDraft,
     openWorkspaceDraft,
+    deleteWorkspaceDraft,
   } = useWorkspaceContext();
+  const { navigateToProject } = useRouter();
 
   // Get project state and operations from context
   const {
@@ -868,6 +890,36 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         draft.sectionId
                                       )
                                     }
+                                    onDelete={() => {
+                                      if (isSelected) {
+                                        const currentIndex = sortedDrafts.findIndex(
+                                          (d) => d.draftId === draft.draftId
+                                        );
+                                        const fallback =
+                                          currentIndex >= 0
+                                            ? (sortedDrafts[currentIndex + 1] ??
+                                              sortedDrafts[currentIndex - 1])
+                                            : undefined;
+
+                                        if (fallback) {
+                                          openWorkspaceDraft(
+                                            projectPath,
+                                            fallback.draftId,
+                                            fallback.sectionId
+                                          );
+                                        } else {
+                                          navigateToProject(
+                                            projectPath,
+                                            typeof draft.sectionId === "string" &&
+                                              draft.sectionId.trim().length > 0
+                                              ? draft.sectionId
+                                              : undefined
+                                          );
+                                        }
+                                      }
+
+                                      deleteWorkspaceDraft(projectPath, draft.draftId);
+                                    }}
                                   />
                                 );
                               };
