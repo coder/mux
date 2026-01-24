@@ -958,6 +958,7 @@ export const config = {
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
         bashOutputCompactionTimeoutMs: z.number().int().optional(),
+        bashOutputCompactionHeuristicFallback: z.boolean().optional(),
       }),
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
@@ -976,6 +977,7 @@ export const config = {
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
         bashOutputCompactionTimeoutMs: z.number().int().optional(),
+        bashOutputCompactionHeuristicFallback: z.boolean().optional(),
       }),
       agentAiDefaults: AgentAiDefaultsSchema.optional(),
       // Legacy field (downgrade compatibility)
