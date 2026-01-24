@@ -1,4 +1,4 @@
-import { fireEvent, waitFor } from "@testing-library/react";
+import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
 import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
