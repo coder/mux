@@ -1,10 +1,11 @@
 /**
  * Integration test: when the backend emits a context_exceeded stream error,
- * the frontend should opportunistically suggest compacting with a larger-context model
- * (if the user has one configured).
+ * the frontend should:
+ * 1. Auto-compact if a compaction model suggestion is available
+ * 2. Show manual "Compact & retry" UI if no suggestion is available
  */
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -32,13 +33,12 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("offers compaction in the Stream interrupted banner when a higher-context model is available", async () => {
+  test("auto-compacts when a higher-context model is available", async () => {
     await withSharedWorkspace("openai", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
       await setupProviders(env, { xai: { apiKey: "dummy" } });
       const expectedCompactionCommand = "/compact -m xai:grok-4-1-fast";
-      const suggestedModel = "Grok";
 
       const apiClient = env.orpc as unknown as APIClient;
       const view = renderApp({ apiClient, metadata });
@@ -68,56 +68,16 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           },
         });
 
-        // Wait for the context_exceeded error to appear.
-        await waitFor(
-          () => {
-            if (!view.container.textContent?.includes("context_exceeded")) {
-              throw new Error("Expected context_exceeded stream error to be visible");
-            }
-          },
-          { timeout: 30_000 }
-        );
-
-        // And we should render an action button for one-click compaction + retry.
-        await waitFor(
-          () => {
-            const buttons = view.queryAllByRole("button", { name: "Compact & retry" });
-            if (buttons.length === 0) {
-              throw new Error("Expected Compact & retry button");
-            }
-          },
-          { timeout: 10_000 }
-        );
-
-        // Banner text should clarify that we're not switching the workspace model,
-        // just compacting with a higher-context model to unblock.
-        await waitFor(
-          () => {
-            if (!view.container.textContent?.includes("workspace model stays the same")) {
-              throw new Error("Expected compaction banner to clarify model is unchanged");
-            }
-            if (!view.container.textContent?.includes(suggestedModel)) {
-              throw new Error(`Expected compaction banner to mention ${suggestedModel}`);
-            }
-          },
-          { timeout: 10_000 }
-        );
-
-        // Clicking the CTA should actually send a compaction request message.
+        // Auto-compaction should trigger automatically when context_exceeded occurs
+        // and a higher-context model suggestion is available.
         // We assert on the rendered /compact command (from muxMetadata.rawCommand).
-        const [button] = view.getAllByRole("button", { name: "Compact & retry" });
-        if (view.container.textContent?.includes(expectedCompactionCommand)) {
-          throw new Error("Compaction command should not be present before clicking");
-        }
-        fireEvent.click(button);
-
         await waitFor(
           () => {
             if (!view.container.textContent?.includes(expectedCompactionCommand)) {
-              throw new Error(`Expected compaction command: ${expectedCompactionCommand}`);
+              throw new Error(`Expected auto-compaction command: ${expectedCompactionCommand}`);
             }
           },
-          { timeout: 10_000 }
+          { timeout: 30_000 }
         );
       } finally {
         await cleanupView(view, cleanupDom);
@@ -125,7 +85,7 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
     });
   }, 45_000);
 
-  test("prefers the configured compaction model when context is exceeded", async () => {
+  test("auto-compacts with the configured compaction model when context is exceeded", async () => {
     await withSharedWorkspace("openai", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
@@ -133,7 +93,6 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
       updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, KNOWN_MODELS.HAIKU.id);
 
       const expectedCompactionCommand = `/compact -m ${KNOWN_MODELS.HAIKU.id}`;
-      const suggestedModel = "Haiku";
 
       const apiClient = env.orpc as unknown as APIClient;
       const view = renderApp({ apiClient, metadata });
@@ -163,57 +122,17 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           },
         });
 
-        // Wait for the context_exceeded error to appear.
-        await waitFor(
-          () => {
-            if (!view.container.textContent?.includes("context_exceeded")) {
-              throw new Error("Expected context_exceeded stream error to be visible");
-            }
-          },
-          { timeout: 30_000 }
-        );
-
-        // And we should render an action button for one-click compaction + retry.
-        await waitFor(
-          () => {
-            const buttons = view.queryAllByRole("button", { name: "Compact & retry" });
-            if (buttons.length === 0) {
-              throw new Error("Expected Compact & retry button");
-            }
-          },
-          { timeout: 10_000 }
-        );
-
-        await waitFor(
-          () => {
-            if (!view.container.textContent?.includes("configured compaction model")) {
-              throw new Error("Expected compaction banner to mention configured compaction model");
-            }
-            if (!view.container.textContent?.includes("workspace model stays the same")) {
-              throw new Error("Expected compaction banner to clarify model is unchanged");
-            }
-            if (!view.container.textContent?.includes(suggestedModel)) {
-              throw new Error(`Expected compaction banner to mention ${suggestedModel}`);
-            }
-          },
-          { timeout: 10_000 }
-        );
-
-        // Clicking the CTA should actually send a compaction request message.
+        // Auto-compaction should use the configured compaction model preference.
         // We assert on the rendered /compact command (from muxMetadata.rawCommand).
-        const [button] = view.getAllByRole("button", { name: "Compact & retry" });
-        if (view.container.textContent?.includes(expectedCompactionCommand)) {
-          throw new Error("Compaction command should not be present before clicking");
-        }
-        fireEvent.click(button);
-
         await waitFor(
           () => {
             if (!view.container.textContent?.includes(expectedCompactionCommand)) {
-              throw new Error(`Expected compaction command: ${expectedCompactionCommand}`);
+              throw new Error(
+                `Expected auto-compaction with configured model: ${expectedCompactionCommand}`
+              );
             }
           },
-          { timeout: 10_000 }
+          { timeout: 30_000 }
         );
       } finally {
         await cleanupView(view, cleanupDom);

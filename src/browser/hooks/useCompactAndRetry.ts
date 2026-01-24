@@ -356,10 +356,12 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
   ]);
 
   // Auto-trigger compaction on context_exceeded for seamless recovery.
+  // Only auto-compact if we have a compaction suggestion; otherwise show manual UI.
   const shouldAutoCompact =
     api &&
     isContextExceeded &&
     providersConfig !== undefined &&
+    compactionSuggestion &&
     triggerUserMessage &&
     !triggerUserMessage.compactionRequest &&
     lastMessage?.type === "stream-error" &&
