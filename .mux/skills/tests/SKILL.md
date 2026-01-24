@@ -12,54 +12,87 @@ Two types of tests are preferred:
 1. **True integration tests** — use real runtimes, real filesystems, real network calls. No mocks, stubs, or fakes. These prove the system works end-to-end.
 2. **Unit tests on pure/isolated logic** — test pure functions or well-isolated modules where inputs and outputs are clear. No mocks needed because the code has no external dependencies.
 
-Avoid mock-heavy tests that verify implementation details rather than behavior. If you need mocks to test something, consider whether the code should be restructured to be more testable.
 
-## Documentation
+Unit tests are located colocated with the source they test as ".test.ts[x]" files.
 
-- Developer/test notes belong inline as comments.
-- Test documentation stays inside the relevant test file as commentary explaining setup/edge cases.
+Integration tests are located in `tests/`, with these primary harnesses:
+- `tests/ipc` — tests that rely on the IPC and are focussed on ensuring backend behavior.
+- `tests/ui` — frontend integration tests that use the real IPC and happy-dom Full App rendering.
+- `tests/e2e` - end-to-end tests using Playwright which are needed to verify browser behavior that
+can't be easily tested with happy-dom.
+
+Additionally, we have stories in `src/browser/stories` that are primarily used for human visual
+verification of UI changes.
+
+## Mocking
+
+Avoid mock-heavy tests that verify implementation details rather than behavior.
+
+If you need mocks to test something, consider whether the code should be restructured to be more testable.
+
+There is at least one exception to this rule: we have a `mockAiRouter` that can be used to simulate
+LLM responses. Often times it's better for tests to reach out to a real LLM, but some tests rely on
+the mockAiRouter for performance and reliability.
+
+Avoid tautological tests (simple mappings, identical copies of implementation); focus on invariants and boundary failures.
+
+## When To Test
+
+Ideally, all new features and bug are well tested. Do not implement a feature or fix without a
+robust testing strategy.
+
+When fixing bugs, always start with the test (practice TDD). Reproduce the bug in the test, then fix
+the production code, then verify the test passes.
+
+## Test Runtime
+
+All tests in `tests/` are run under `bun x jest` with `TEST_INTEGRATION=1` set.
+
+Otherwise, tests that live in `src/` run under `bun test` (generally these are unit tests).
 
 ## Runtime & Checks
 
-- Never kill the running Mux process; rely on `make typecheck` + targeted `bun test path/to/file.test.ts` for validation (run `make test` only when necessary; it can be slow).
-- Always run `make typecheck` after changes (covers main + renderer).
-- **Before committing, run `make static-check`** (includes typecheck, lint, fmt-check, and docs link validation).
-- Place unit tests beside implementation (`*.test.ts`). Reserve `tests/` for heavy integration/E2E cases.
-- Run unit suites with `bun test path/to/file.test.ts`.
-- Skip tautological tests (simple mappings, identical copies of implementation); focus on invariants and boundary failures.
+- Never kill the running Mux process; rely on the following for local validation:
+  - `make typecheck`
+  - `make static-check` (includes typecheck, lint, fmt-check, and docs link validation)
+  - targeted test invocations (e.g. `bun x jest tests/ipc/sendMessage.test.ts -t "pattern"`)
+- Only wait on CI to pass when local, targetted checks pass. 
+- Prefer surgical test invocations over running full suites.
 - Keep utils pure or parameterize external effects for easier testing.
 
 ## Coverage Expectations
 
 - Prefer fixes that simplify existing code; such simplifications often do not need new tests.
 - When adding complexity, add or extend tests. If coverage requires new infrastructure, propose the harness and then add the tests there.
-
-## TDD Expectations
-
 - When asked for TDD, write real repo tests (no `/tmp` scripts) and commit them.
 - Pull complex logic into easily tested utils. Target broad coverage with minimal cases that prove the feature matters.
 
 ## Storybook
 
-- **Settings UI coverage:** if you add a new Settings modal section (or materially change an existing one), add/update an `App.settings.*.stories.tsx` story that navigates to that section so Chromatic catches regressions.
-- **Only** add full-app stories (`App.*.stories.tsx`). Do not add isolated component stories, even for small UI changes (they are not used/accepted in this repo).
+- Ensure all UI changes are captured by at least one story.
+  - Many changes will already be captured by an existing story.
+- Only use full-app stories (`App.*.stories.tsx`). Do not add isolated component stories, even for small UI changes (they are not used/accepted in this repo).
 - Use play functions with `@storybook/test` utilities (`within`, `userEvent`, `waitFor`) to interact with the UI and set up the desired visual state. Do not add props to production components solely for storybook convenience.
 - Keep story data deterministic: avoid `Math.random()`, `Date.now()`, or other non-deterministic values in story setup. Pass explicit values when ordering or timing matters for visual stability.
-- **Scroll stabilization:** After async operations that change element sizes (Shiki highlighting, Mermaid rendering, tool expansion), wait for `useAutoScroll`'s ResizeObserver RAF to complete. Use double-RAF: `await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`.
+- Scroll stabilization: After async operations that change element sizes (Shiki highlighting, Mermaid rendering, tool expansion), wait for `useAutoScroll`'s ResizeObserver RAF to complete. Use double-RAF: `await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))`.
 
 ## UI Tests (`tests/ui`)
 
 - Tests in `tests/ui` must render the **full app** via `AppLoader` and drive interactions from the **user's perspective** (clicking, typing, navigating).
 - Use `renderReviewPanel()` helper or similar patterns that render `<AppLoader client={apiClient} />`.
 - Never test isolated components or utility functions here—those belong as unit tests beside implementation (`*.test.ts`).
-- **Never call backend APIs directly** (e.g., `env.orpc.workspace.remove()`) to trigger actions that you're testing—always simulate the user action (click the delete button, etc.). Calling the API bypasses frontend logic like navigation, state updates, and error handling, which is often where bugs hide. Backend API calls are fine for setup/teardown or to avoid expensive operations.
+- **Never call backend APIs directly** (e.g., `env.orpc.workspace.remove()`) to trigger actions that you're testing—always simulate the user action (click the delete button, etc.). Calling the API bypasses frontend logic like navigation, state updates, and error handling, which is often where bugs hide.
+  - Backend API calls are fine for setup/teardown or to avoid expensive operations.
+  - Consider moving the test to `tests/ipc` if backend logic needs granular testing.
+- Never bypass the UI in these tests; e.g. do not call `updatePersistedState` to change UI state—go through the UI to trigger the desired behavior.
 - These tests require `TEST_INTEGRATION=1` and real API keys; use `shouldRunIntegrationTests()` guard.
 
-## Integration Testing
+## IPC Tests (`tests/ipc`)
 
-- Use `bun x jest` (optionally `TEST_INTEGRATION=1`). Examples:
-  - `TEST_INTEGRATION=1 bun x jest tests/integration/sendMessage.test.ts -t "pattern"`
-  - `TEST_INTEGRATION=1 bun x jest tests`
-- `tests/integration` is slow; filter with `-t` when possible. Tests use `test.concurrent()`.
-- Never bypass IPC: do not call `env.config.saveConfig`, `env.historyService`, etc., directly. Use `env.mockIpcRenderer.invoke(IPC_CHANNELS.CONFIG_SAVE|HISTORY_GET|WORKSPACE_CREATE, ...)` instead.
-- Acceptable exceptions: reading config to craft IPC args, verifying filesystem after IPC completes, or loading existing data to avoid redundant API calls.
+Strive to test the backend entirely via IPC interactions. Avoid directly asserting or modifying
+backend state here.
+
+Exceptions include:
+- Building a large history to test otherwise expensive operations (e.g. long-context handling)
+- Testing logic where an observable side-effect is a part of the API contract, e.g. createProject creating
+  a project directory if it doesn't already exist.
