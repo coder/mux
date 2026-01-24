@@ -1350,19 +1350,6 @@ export class WorkspaceService extends EventEmitter {
       [normalizedAgentId]: aiSettings,
     };
 
-    if (normalizedAgentId === "plan" || normalizedAgentId === "exec") {
-      workspaceEntryWithFallback.aiSettingsByMode = {
-        ...(workspaceEntryWithFallback.aiSettingsByMode ?? {}),
-        [normalizedAgentId]: aiSettings,
-      };
-
-      // Keep the legacy field in sync for older clients (prefer exec).
-      workspaceEntryWithFallback.aiSettings =
-        workspaceEntryWithFallback.aiSettingsByMode.exec ??
-        workspaceEntryWithFallback.aiSettingsByMode.plan ??
-        aiSettings;
-    }
-
     await this.config.saveConfig(config);
 
     if (options?.emitMetadata !== false) {
@@ -1414,17 +1401,9 @@ export class WorkspaceService extends EventEmitter {
       return Err("Workspace not found");
     }
 
-    const prevLegacy = workspaceEntryWithFallback.aiSettings;
-    const prevByMode = workspaceEntryWithFallback.aiSettingsByMode;
     const prevByAgent = workspaceEntryWithFallback.aiSettingsByAgent;
 
     const changed =
-      prevLegacy?.model !== aiSettings.model ||
-      prevLegacy?.thinkingLevel !== aiSettings.thinkingLevel ||
-      prevByMode?.plan?.model !== aiSettings.model ||
-      prevByMode?.plan?.thinkingLevel !== aiSettings.thinkingLevel ||
-      prevByMode?.exec?.model !== aiSettings.model ||
-      prevByMode?.exec?.thinkingLevel !== aiSettings.thinkingLevel ||
       prevByAgent?.plan?.model !== aiSettings.model ||
       prevByAgent?.plan?.thinkingLevel !== aiSettings.thinkingLevel ||
       prevByAgent?.exec?.model !== aiSettings.model ||
@@ -1433,8 +1412,6 @@ export class WorkspaceService extends EventEmitter {
       return Ok(false);
     }
 
-    workspaceEntryWithFallback.aiSettings = aiSettings;
-    workspaceEntryWithFallback.aiSettingsByMode = { plan: aiSettings, exec: aiSettings };
     workspaceEntryWithFallback.aiSettingsByAgent = {
       ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
       plan: aiSettings,
