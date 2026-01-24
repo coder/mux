@@ -103,7 +103,9 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - Frontend must never synthesize workspace IDs (e.g., `${project}-${branch}` is forbidden). Backend operations that change IDs must return the value; always consume that response.
 
-## IPC Type Boundary
+## IPC
+
+### Typing
 
 1. IPC methods return backend types (`WorkspaceMetadata`, etc.), not ad-hoc objects.
 2. Frontend may extend backend types with UI context (projectPath, branch, etc.).
@@ -111,6 +113,11 @@ description: Agent instructions for AI assistants working on the Mux codebase
 4. Never duplicate type definitions around the boundary—import shared types instead.
 
 **Why:** single source of truth, clean separation, automatic propagation of backend changes, and no duplicate schemas.
+
+### Compatibility
+
+It is safe to assume that the frontend and backend of the IPC are always in sync.
+Freely make breaking changes, and reorganize / cleanup IPC as needed.
 
 ## Debugging & Diagnostics
 
