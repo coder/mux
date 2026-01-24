@@ -137,7 +137,7 @@ exit 1
     expect(result.hook_output).toContain("Lint failed: syntax error");
   });
 
-  test("appends hook_output when hook succeeds with output", async () => {
+  test("appends hook_output and hook_path when hook succeeds with output", async () => {
     const hookDir = path.join(tempDir, ".mux");
     const hookPath = path.join(hookDir, "tool_hook");
     await fs.mkdir(hookDir, { recursive: true });
@@ -164,9 +164,11 @@ exit 0
     const result = (await wrappedTool.execute!({ input: "test" }, {} as never)) as {
       output: string;
       hook_output?: string;
+      hook_path?: string;
     };
     expect(result.output).toBe("edit complete");
     expect(result.hook_output).toContain("Formatted: test.ts");
+    expect(result.hook_path).toBe(hookPath);
   });
 
   test("passes env to hook", async () => {

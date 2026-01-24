@@ -361,6 +361,8 @@ export interface WithHookOutput {
   hook_output?: string;
   /** Total hook execution time (pre + post) in milliseconds */
   hook_duration_ms?: number;
+  /** Path to the hook file that produced this output (helps the model investigate/modify) */
+  hook_path?: string;
 }
 
 /**

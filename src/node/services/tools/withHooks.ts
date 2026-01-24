@@ -159,7 +159,8 @@ export function withHooks<TParameters, TResult>(
         return appendHookOutput(
           result,
           truncateHookOutput(postResult.output),
-          hookDurationMs
+          hookDurationMs,
+          postHookPath
         ) as TResult;
       }
     }
@@ -227,7 +228,7 @@ async function executeWithNewHooks<TResult>(
         success: postResult.success,
         output: hookOutput,
       });
-      return appendHookOutput(result, hookOutput, hookDurationMs) as TResult;
+      return appendHookOutput(result, hookOutput, hookDurationMs, postHookPath) as TResult;
     }
   }
 
@@ -295,7 +296,7 @@ async function executeWithLegacyHook<TResult>(
       success: hook.success,
       output: hookOutput,
     });
-    return appendHookOutput(result, hookOutput, hookDurationMs) as TResult;
+    return appendHookOutput(result, hookOutput, hookDurationMs, hookPath) as TResult;
   }
 
   // Note: result could be TResult or AsyncIterable<TResult>
@@ -321,13 +322,15 @@ function isAsyncIterable<T>(value: unknown): value is AsyncIterable<T> {
 function appendHookOutput<T>(
   result: T | AsyncIterable<T> | undefined,
   output: string,
-  durationMs?: number
+  durationMs?: number,
+  hookPath?: string
 ): MayHaveHookOutput<T> | AsyncIterable<T> {
   if (result === undefined) {
     const errorResult: WithHookOutput & { error: string } = {
       error: output,
       hook_output: output,
       hook_duration_ms: durationMs,
+      hook_path: hookPath,
     };
     return errorResult as unknown as MayHaveHookOutput<T>;
   }
@@ -339,6 +342,7 @@ function appendHookOutput<T>(
     const wrappedIterable: AsyncIterable<T> & WithHookOutput = {
       hook_output: output,
       hook_duration_ms: durationMs,
+      hook_path: hookPath,
       [Symbol.asyncIterator]: iteratorFn,
     };
     return wrappedIterable;
@@ -350,6 +354,7 @@ function appendHookOutput<T>(
       ...(result as T),
       hook_output: output,
       hook_duration_ms: durationMs,
+      hook_path: hookPath,
     };
     return withOutput;
   }
@@ -359,6 +364,7 @@ function appendHookOutput<T>(
     result,
     hook_output: output,
     hook_duration_ms: durationMs,
+    hook_path: hookPath,
   };
   return wrapped as unknown as MayHaveHookOutput<T>;
 }
