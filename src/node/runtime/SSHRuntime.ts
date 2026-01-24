@@ -1190,21 +1190,21 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      // Clone the repo from the source workspace on the remote host.
-      // NOTE: This intentionally does not attempt to copy uncommitted changes.
-      initLogger.logStep("Cloning workspace on remote...");
-      const cloneResult = await execBuffered(
+      // Copy the source workspace on the remote host so we preserve working tree state.
+      // This keeps uncommitted changes and local-only files intact for the fork.
+      initLogger.logStep("Copying workspace on remote...");
+      const copyResult = await execBuffered(
         this,
-        `git clone --quiet ${sourceWorkspacePathArg} ${newWorkspacePathArg}`,
+        `cp -a ${sourceWorkspacePathArg} ${newWorkspacePathArg}`,
         {
           cwd: "/tmp",
           timeout: 300,
         }
       );
-      if (cloneResult.exitCode !== 0) {
+      if (copyResult.exitCode !== 0) {
         return {
           success: false,
-          error: `Failed to clone workspace: ${cloneResult.stderr || cloneResult.stdout}`,
+          error: `Failed to copy workspace: ${copyResult.stderr || copyResult.stdout}`,
         };
       }
 

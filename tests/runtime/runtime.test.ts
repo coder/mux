@@ -1052,6 +1052,8 @@ describeIntegration("Runtime integration tests", () => {
             `echo "feature" > feature.txt`,
             `git add feature.txt`,
             `git commit -m "feature"`,
+            `echo "untracked" > untracked.txt`,
+            `echo "local-change" >> feature.txt`,
           ].join(" && "),
           { cwd: "/home/testuser", timeout: 30 }
         );
@@ -1097,7 +1099,23 @@ describeIntegration("Runtime integration tests", () => {
           `test -f "${newWorkspacePath}/feature.txt" && echo "exists" || echo "missing"`,
           { cwd: "/home/testuser", timeout: 30 }
         );
+
         expect(fileCheck.stdout.trim()).toBe("exists");
+
+        // Fork should preserve uncommitted working tree changes from the source workspace.
+        const untrackedCheck = await execBuffered(
+          runtime,
+          `test -f "${newWorkspacePath}/untracked.txt" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(untrackedCheck.stdout.trim()).toBe("exists");
+
+        const modifiedCheck = await execBuffered(
+          runtime,
+          `grep -q "local-change" "${newWorkspacePath}/feature.txt" && echo "present" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(modifiedCheck.stdout.trim()).toBe("present");
 
         // runFullInit (and thus initWorkspace) should be able to run on a forked repo
         // without trying to re-sync. (The absence of a .mux/init hook means it will

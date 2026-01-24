@@ -14,8 +14,16 @@ import {
   configureTestRetries,
   modelString,
   resolveOrpcClient,
+  createWorkspaceWithInit,
+  TEST_TIMEOUT_SSH_MS,
 } from "./helpers";
-import { detectDefaultTrunkBranch } from "../../src/node/git";
+import {
+  isDockerAvailable,
+  startSSHServer,
+  stopSSHServer,
+  type SSHServerConfig,
+} from "../runtime/test-fixtures/ssh-fixture";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
 
@@ -27,340 +35,427 @@ if (shouldRunIntegrationTests()) {
   validateApiKeys(["ANTHROPIC_API_KEY"]);
 }
 
+// SSH server config (shared across SSH runtime tests)
+let sshConfig: SSHServerConfig | undefined;
 // Retry flaky tests in CI (API latency / rate limiting)
 configureTestRetries(3);
 
 describeIntegration("Workspace fork", () => {
-  test.concurrent(
-    "should fail to fork workspace with invalid name",
-    async () => {
-      const env = await createTestEnvironment();
-      const tempGitRepo = await createTempGitRepo();
+  beforeAll(async () => {
+    // Check if Docker is available (required for SSH tests)
+    if (!(await isDockerAvailable())) {
+      throw new Error(
+        "Docker is required for SSH runtime tests. Please install Docker or skip tests by unsetting TEST_INTEGRATION."
+      );
+    }
 
-      try {
-        // Create source workspace
-        const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
-        const client = resolveOrpcClient(env);
-        const createResult = await client.workspace.create({
-          projectPath: tempGitRepo,
-          branchName: "source-workspace",
-          trunkBranch,
-        });
-        expect(createResult.success).toBe(true);
-        if (!createResult.success) return;
-        const sourceWorkspaceId = createResult.metadata.id;
+    // Start SSH server (shared across all tests for speed)
+    console.log("Starting SSH server container for forkWorkspace tests...");
+    sshConfig = await startSSHServer();
+    console.log(`SSH server ready on port ${sshConfig.port}`);
+  }, 60000); // 60s timeout for Docker operations
 
-        // Test various invalid names
-        const invalidNames = [
-          { name: "", expectedError: "empty" },
-          { name: "Invalid-Name", expectedError: "lowercase" },
-          { name: "name with spaces", expectedError: "lowercase" },
-          { name: "name@special", expectedError: "lowercase" },
-          { name: "a".repeat(65), expectedError: "64 characters" },
-        ];
+  afterAll(async () => {
+    if (sshConfig) {
+      console.log("Stopping SSH server container...");
+      await stopSSHServer(sshConfig);
+    }
+  }, 30000);
 
-        for (const { name, expectedError } of invalidNames) {
-          const forkResult = await client.workspace.fork({
-            sourceWorkspaceId,
-            newName: name,
+  describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
+    "Runtime: $type",
+    ({ type }) => {
+      const isSSH = type === "ssh";
+
+      const getRuntimeConfig = (): RuntimeConfig | undefined => {
+        if (type === "ssh") {
+          if (!sshConfig) {
+            throw new Error("SSH test server was not initialized");
+          }
+          return {
+            type: "ssh",
+            host: "testuser@localhost",
+            srcBaseDir: sshConfig.workdir,
+            identityFile: sshConfig.privateKeyPath,
+            port: sshConfig.port,
+          };
+        }
+        return undefined;
+      };
+
+      const getTimeout = (baseMs: number) =>
+        isSSH ? Math.max(baseMs, TEST_TIMEOUT_SSH_MS) : baseMs;
+      test.concurrent(
+        "should fail to fork workspace with invalid name",
+        async () => {
+          const env = await createTestEnvironment();
+          const tempGitRepo = await createTempGitRepo();
+
+          try {
+            const runtimeConfig = getRuntimeConfig();
+            const { workspaceId: sourceWorkspaceId } = await createWorkspaceWithInit(
+              env,
+              tempGitRepo,
+              "source-workspace",
+              runtimeConfig,
+              isSSH,
+              isSSH
+            );
+            const client = resolveOrpcClient(env);
+
+            // Test various invalid names
+            const invalidNames = [
+              { name: "", expectedError: "empty" },
+              { name: "Invalid-Name", expectedError: "lowercase" },
+              { name: "name with spaces", expectedError: "lowercase" },
+              { name: "name@special", expectedError: "lowercase" },
+              { name: "a".repeat(65), expectedError: "64 characters" },
+            ];
+
+            for (const { name, expectedError } of invalidNames) {
+              const forkResult = await client.workspace.fork({
+                sourceWorkspaceId,
+                newName: name,
+              });
+              expect(forkResult.success).toBe(false);
+              if (forkResult.success) continue;
+              expect(forkResult.error.toLowerCase()).toContain(expectedError.toLowerCase());
+            }
+
+            // Cleanup
+            await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+          } finally {
+            await cleanupTestEnvironment(env);
+            await cleanupTempGitRepo(tempGitRepo);
+          }
+        },
+        getTimeout(15000)
+      );
+
+      test.concurrent(
+        "should fork workspace and send message successfully",
+        async () => {
+          const runtimeConfig = getRuntimeConfig();
+          const {
+            env,
+            workspaceId: sourceWorkspaceId,
+            cleanup,
+          } = await setupWorkspace("anthropic", undefined, {
+            runtimeConfig,
+            waitForInit: isSSH,
+            isSSH,
           });
-          expect(forkResult.success).toBe(false);
-          if (forkResult.success) continue;
-          expect(forkResult.error.toLowerCase()).toContain(expectedError.toLowerCase());
-        }
 
-        // Cleanup
-        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
-      } finally {
-        await cleanupTestEnvironment(env);
-        await cleanupTempGitRepo(tempGitRepo);
-      }
-    },
-    15000
-  );
+          try {
+            // Fork the workspace
+            const client = resolveOrpcClient(env);
+            const forkResult = await client.workspace.fork({
+              sourceWorkspaceId,
+              newName: "forked-workspace",
+            });
+            expect(forkResult.success).toBe(true);
+            if (!forkResult.success) return;
+            const forkedWorkspaceId = forkResult.metadata.id;
 
-  test.concurrent(
-    "should fork workspace and send message successfully",
-    async () => {
-      const { env, workspaceId: sourceWorkspaceId, cleanup } = await setupWorkspace("anthropic");
+            // User expects: forked workspace is functional - can send messages to it
+            const collector = createStreamCollector(env.orpc, forkedWorkspaceId);
+            collector.start();
+            await collector.waitForSubscription();
+            const sendResult = await sendMessageWithModel(
+              env,
+              forkedWorkspaceId,
+              "What is 2+2? Answer with just the number.",
+              modelString("anthropic", "claude-sonnet-4-5")
+            );
+            expect(sendResult.success).toBe(true);
 
-      try {
-        // Fork the workspace
-        const client = resolveOrpcClient(env);
-        const forkResult = await client.workspace.fork({
-          sourceWorkspaceId,
-          newName: "forked-workspace",
-        });
-        expect(forkResult.success).toBe(true);
-        if (!forkResult.success) return;
-        const forkedWorkspaceId = forkResult.metadata.id;
+            // Verify stream completes successfully
+            await collector.waitForEvent("stream-end", 30000);
+            assertStreamSuccess(collector);
 
-        // User expects: forked workspace is functional - can send messages to it
-        const collector = createStreamCollector(env.orpc, forkedWorkspaceId);
-        collector.start();
-        await collector.waitForSubscription();
-        const sendResult = await sendMessageWithModel(
-          env,
-          forkedWorkspaceId,
-          "What is 2+2? Answer with just the number.",
-          modelString("anthropic", "claude-sonnet-4-5")
-        );
-        expect(sendResult.success).toBe(true);
+            const finalMessage = collector.getFinalMessage();
+            expect(finalMessage).toBeDefined();
+            collector.stop();
+          } finally {
+            await cleanup();
+          }
+        },
+        getTimeout(45000)
+      );
 
-        // Verify stream completes successfully
-        await collector.waitForEvent("stream-end", 30000);
-        assertStreamSuccess(collector);
-
-        const finalMessage = collector.getFinalMessage();
-        expect(finalMessage).toBeDefined();
-        collector.stop();
-      } finally {
-        await cleanup();
-      }
-    },
-    45000
-  );
-
-  test.concurrent(
-    "should preserve chat history when forking workspace",
-    async () => {
-      const { env, workspaceId: sourceWorkspaceId, cleanup } = await setupWorkspace("anthropic");
-
-      try {
-        // Add history to source workspace
-        const historyService = new HistoryService(env.config);
-        const uniqueWord = `testword-${Date.now()}`;
-        const historyMessages = [
-          createMuxMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
-          createMuxMessage("msg-2", "assistant", `I will remember the word "${uniqueWord}".`, {}),
-        ];
-
-        for (const msg of historyMessages) {
-          const result = await historyService.appendToHistory(sourceWorkspaceId, msg);
-          expect(result.success).toBe(true);
-        }
-
-        // Fork the workspace
-        const client = resolveOrpcClient(env);
-        const forkResult = await client.workspace.fork({
-          sourceWorkspaceId,
-          newName: "forked-with-history",
-        });
-        expect(forkResult.success).toBe(true);
-        if (!forkResult.success) return;
-        const forkedWorkspaceId = forkResult.metadata.id;
-
-        // User expects: forked workspace has access to history
-        // Send a message that requires the historical context
-        const collector = createStreamCollector(env.orpc, forkedWorkspaceId);
-        collector.start();
-        await collector.waitForSubscription();
-        const sendResult = await sendMessageWithModel(
-          env,
-          forkedWorkspaceId,
-          "What word did I ask you to remember? Reply with just the word.",
-          modelString("anthropic", "claude-sonnet-4-5")
-        );
-        expect(sendResult.success).toBe(true);
-
-        // Verify stream completes successfully
-        await collector.waitForEvent("stream-end", 30000);
-        assertStreamSuccess(collector);
-
-        const finalMessage = collector.getFinalMessage();
-        expect(finalMessage).toBeDefined();
-
-        // Verify the response contains the word from history
-        if (finalMessage && "parts" in finalMessage && Array.isArray(finalMessage.parts)) {
-          const content = finalMessage.parts
-            .filter((part) => part.type === "text")
-            .map((part) => (part as { text: string }).text)
-            .join("");
-          expect(content.toLowerCase()).toContain(uniqueWord.toLowerCase());
-        }
-        collector.stop();
-      } finally {
-        await cleanup();
-      }
-    },
-    45000
-  );
-
-  test.concurrent(
-    "should create independent workspaces that can send messages concurrently",
-    async () => {
-      const { env, workspaceId: sourceWorkspaceId, cleanup } = await setupWorkspace("anthropic");
-
-      try {
-        // Fork the workspace
-        const client = resolveOrpcClient(env);
-        const forkResult = await client.workspace.fork({
-          sourceWorkspaceId,
-          newName: "forked-independent",
-        });
-        expect(forkResult.success).toBe(true);
-        if (!forkResult.success) return;
-        const forkedWorkspaceId = forkResult.metadata.id;
-
-        // User expects: both workspaces work independently
-        // Start collectors before sending messages
-        const sourceCollector = createStreamCollector(env.orpc, sourceWorkspaceId);
-        const forkedCollector = createStreamCollector(env.orpc, forkedWorkspaceId);
-        sourceCollector.start();
-        forkedCollector.start();
-        await Promise.all([
-          sourceCollector.waitForSubscription(),
-          forkedCollector.waitForSubscription(),
-        ]);
-
-        // Send different messages to both concurrently
-        const [sourceResult, forkedResult] = await Promise.all([
-          sendMessageWithModel(
+      test.concurrent(
+        "should preserve chat history when forking workspace",
+        async () => {
+          const runtimeConfig = getRuntimeConfig();
+          const {
             env,
-            sourceWorkspaceId,
-            "What is 5+5? Answer with just the number.",
-            modelString("anthropic", "claude-sonnet-4-5")
-          ),
-          sendMessageWithModel(
+            workspaceId: sourceWorkspaceId,
+            cleanup,
+          } = await setupWorkspace("anthropic", undefined, {
+            runtimeConfig,
+            waitForInit: isSSH,
+            isSSH,
+          });
+
+          try {
+            // Add history to source workspace
+            const historyService = new HistoryService(env.config);
+            const uniqueWord = `testword-${Date.now()}`;
+            const historyMessages = [
+              createMuxMessage("msg-1", "user", `Remember this word: ${uniqueWord}`, {}),
+              createMuxMessage(
+                "msg-2",
+                "assistant",
+                `I will remember the word "${uniqueWord}".`,
+                {}
+              ),
+            ];
+
+            for (const msg of historyMessages) {
+              const result = await historyService.appendToHistory(sourceWorkspaceId, msg);
+              expect(result.success).toBe(true);
+            }
+
+            // Fork the workspace
+            const client = resolveOrpcClient(env);
+            const forkResult = await client.workspace.fork({
+              sourceWorkspaceId,
+              newName: "forked-with-history",
+            });
+            expect(forkResult.success).toBe(true);
+            if (!forkResult.success) return;
+            const forkedWorkspaceId = forkResult.metadata.id;
+
+            // User expects: forked workspace has access to history
+            // Send a message that requires the historical context
+            const collector = createStreamCollector(env.orpc, forkedWorkspaceId);
+            collector.start();
+            await collector.waitForSubscription();
+            const sendResult = await sendMessageWithModel(
+              env,
+              forkedWorkspaceId,
+              "What word did I ask you to remember? Reply with just the word.",
+              modelString("anthropic", "claude-sonnet-4-5")
+            );
+            expect(sendResult.success).toBe(true);
+
+            // Verify stream completes successfully
+            await collector.waitForEvent("stream-end", 30000);
+            assertStreamSuccess(collector);
+
+            const finalMessage = collector.getFinalMessage();
+            expect(finalMessage).toBeDefined();
+
+            // Verify the response contains the word from history
+            if (finalMessage && "parts" in finalMessage && Array.isArray(finalMessage.parts)) {
+              const content = finalMessage.parts
+                .filter((part) => part.type === "text")
+                .map((part) => (part as { text: string }).text)
+                .join("");
+              expect(content.toLowerCase()).toContain(uniqueWord.toLowerCase());
+            }
+            collector.stop();
+          } finally {
+            await cleanup();
+          }
+        },
+        getTimeout(45000)
+      );
+
+      test.concurrent(
+        "should create independent workspaces that can send messages concurrently",
+        async () => {
+          const runtimeConfig = getRuntimeConfig();
+          const {
             env,
-            forkedWorkspaceId,
-            "What is 3+3? Answer with just the number.",
-            modelString("anthropic", "claude-sonnet-4-5")
-          ),
-        ]);
+            workspaceId: sourceWorkspaceId,
+            cleanup,
+          } = await setupWorkspace("anthropic", undefined, {
+            runtimeConfig,
+            waitForInit: isSSH,
+            isSSH,
+          });
 
-        expect(sourceResult.success).toBe(true);
-        expect(forkedResult.success).toBe(true);
+          try {
+            // Fork the workspace
+            const client = resolveOrpcClient(env);
+            const forkResult = await client.workspace.fork({
+              sourceWorkspaceId,
+              newName: "forked-independent",
+            });
+            expect(forkResult.success).toBe(true);
+            if (!forkResult.success) return;
+            const forkedWorkspaceId = forkResult.metadata.id;
 
-        // Verify both streams complete successfully
-        await Promise.all([
-          sourceCollector.waitForEvent("stream-end", 30000),
-          forkedCollector.waitForEvent("stream-end", 30000),
-        ]);
+            // User expects: both workspaces work independently
+            // Start collectors before sending messages
+            const sourceCollector = createStreamCollector(env.orpc, sourceWorkspaceId);
+            const forkedCollector = createStreamCollector(env.orpc, forkedWorkspaceId);
+            sourceCollector.start();
+            forkedCollector.start();
+            await Promise.all([
+              sourceCollector.waitForSubscription(),
+              forkedCollector.waitForSubscription(),
+            ]);
 
-        assertStreamSuccess(sourceCollector);
-        assertStreamSuccess(forkedCollector);
+            // Send different messages to both concurrently
+            const [sourceResult, forkedResult] = await Promise.all([
+              sendMessageWithModel(
+                env,
+                sourceWorkspaceId,
+                "What is 5+5? Answer with just the number.",
+                modelString("anthropic", "claude-sonnet-4-5")
+              ),
+              sendMessageWithModel(
+                env,
+                forkedWorkspaceId,
+                "What is 3+3? Answer with just the number.",
+                modelString("anthropic", "claude-sonnet-4-5")
+              ),
+            ]);
 
-        expect(sourceCollector.getFinalMessage()).toBeDefined();
-        expect(forkedCollector.getFinalMessage()).toBeDefined();
-        sourceCollector.stop();
-        forkedCollector.stop();
-      } finally {
-        await cleanup();
-      }
-    },
-    45000
-  );
+            expect(sourceResult.success).toBe(true);
+            expect(forkedResult.success).toBe(true);
 
-  test.concurrent(
-    "should preserve partial streaming response when forking mid-stream",
-    async () => {
-      const { env, workspaceId: sourceWorkspaceId, cleanup } = await setupWorkspace("anthropic");
+            // Verify both streams complete successfully
+            await Promise.all([
+              sourceCollector.waitForEvent("stream-end", 30000),
+              forkedCollector.waitForEvent("stream-end", 30000),
+            ]);
 
-      try {
-        // Start collector before starting stream
-        const sourceCollector = createStreamCollector(env.orpc, sourceWorkspaceId);
-        sourceCollector.start();
-        await sourceCollector.waitForSubscription();
+            assertStreamSuccess(sourceCollector);
+            assertStreamSuccess(forkedCollector);
 
-        // Start a stream in the source workspace (don't await)
-        void sendMessageWithModel(
-          env,
-          sourceWorkspaceId,
-          "Count from 1 to 10, one number per line. Then say 'Done counting.'",
-          modelString("anthropic", "claude-sonnet-4-5")
-        );
+            expect(sourceCollector.getFinalMessage()).toBeDefined();
+            expect(forkedCollector.getFinalMessage()).toBeDefined();
+            sourceCollector.stop();
+            forkedCollector.stop();
+          } finally {
+            await cleanup();
+          }
+        },
+        getTimeout(45000)
+      );
 
-        // Wait for stream to start
-        await sourceCollector.waitForEvent("stream-start", 5000);
+      test.concurrent(
+        "should preserve partial streaming response when forking mid-stream",
+        async () => {
+          const runtimeConfig = getRuntimeConfig();
+          const {
+            env,
+            workspaceId: sourceWorkspaceId,
+            cleanup,
+          } = await setupWorkspace("anthropic", undefined, {
+            runtimeConfig,
+            waitForInit: isSSH,
+            isSSH,
+          });
 
-        // Wait for some deltas to ensure we have partial content
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+          try {
+            // Start collector before starting stream
+            const sourceCollector = createStreamCollector(env.orpc, sourceWorkspaceId);
+            sourceCollector.start();
+            await sourceCollector.waitForSubscription();
 
-        // Fork while stream is active (this should commit partial to history)
-        const client = resolveOrpcClient(env);
-        const forkResult = await client.workspace.fork({
-          sourceWorkspaceId,
-          newName: "forked-mid-stream",
-        });
-        expect(forkResult.success).toBe(true);
-        if (!forkResult.success) return;
-        const forkedWorkspaceId = forkResult.metadata.id;
+            // Start a stream in the source workspace (don't await)
+            void sendMessageWithModel(
+              env,
+              sourceWorkspaceId,
+              "Count from 1 to 10, one number per line. Then say 'Done counting.'",
+              modelString("anthropic", "claude-sonnet-4-5")
+            );
 
-        // Wait for source stream to complete
-        await sourceCollector.waitForEvent("stream-end", 30000);
-        sourceCollector.stop();
+            // Wait for stream to start
+            await sourceCollector.waitForEvent("stream-start", 5000);
 
-        // User expects: forked workspace is functional despite being forked mid-stream
-        // Send a message to the forked workspace
-        const forkedCollector = createStreamCollector(env.orpc, forkedWorkspaceId);
-        forkedCollector.start();
-        // Wait for subscription before sending to avoid race condition where stream-end
-        // is emitted before collector is ready to receive it
-        await forkedCollector.waitForSubscription();
-        const forkedSendResult = await sendMessageWithModel(
-          env,
-          forkedWorkspaceId,
-          "What is 7+3? Answer with just the number.",
-          modelString("anthropic", "claude-sonnet-4-5")
-        );
-        expect(forkedSendResult.success).toBe(true);
+            // Wait for some deltas to ensure we have partial content
+            await new Promise((resolve) => setTimeout(resolve, 2000));
 
-        // Verify forked workspace stream completes successfully
-        await forkedCollector.waitForEvent("stream-end", 30000);
-        assertStreamSuccess(forkedCollector);
+            // Fork while stream is active (this should commit partial to history)
+            const client = resolveOrpcClient(env);
+            const forkResult = await client.workspace.fork({
+              sourceWorkspaceId,
+              newName: "forked-mid-stream",
+            });
+            expect(forkResult.success).toBe(true);
+            if (!forkResult.success) return;
+            const forkedWorkspaceId = forkResult.metadata.id;
 
-        expect(forkedCollector.getFinalMessage()).toBeDefined();
-        forkedCollector.stop();
-      } finally {
-        await cleanup();
-      }
-    },
-    60000
-  );
+            // Wait for source stream to complete
+            await sourceCollector.waitForEvent("stream-end", 30000);
+            sourceCollector.stop();
 
-  test.concurrent(
-    "should make forked workspace available in workspace list",
-    async () => {
-      const env = await createTestEnvironment();
-      const tempGitRepo = await createTempGitRepo();
+            // User expects: forked workspace is functional despite being forked mid-stream
+            // Send a message to the forked workspace
+            const forkedCollector = createStreamCollector(env.orpc, forkedWorkspaceId);
+            forkedCollector.start();
+            // Wait for subscription before sending to avoid race condition where stream-end
+            // is emitted before collector is ready to receive it
+            await forkedCollector.waitForSubscription();
+            const forkedSendResult = await sendMessageWithModel(
+              env,
+              forkedWorkspaceId,
+              "What is 7+3? Answer with just the number.",
+              modelString("anthropic", "claude-sonnet-4-5")
+            );
+            expect(forkedSendResult.success).toBe(true);
 
-      try {
-        // Create source workspace
-        const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
-        const client = resolveOrpcClient(env);
-        const createResult = await client.workspace.create({
-          projectPath: tempGitRepo,
-          branchName: "source-workspace",
-          trunkBranch,
-        });
-        expect(createResult.success).toBe(true);
-        if (!createResult.success) return;
-        const sourceWorkspaceId = createResult.metadata.id;
+            // Verify forked workspace stream completes successfully
+            await forkedCollector.waitForEvent("stream-end", 30000);
+            assertStreamSuccess(forkedCollector);
 
-        // Fork the workspace
-        const forkResult = await client.workspace.fork({
-          sourceWorkspaceId,
-          newName: "forked-workspace",
-        });
-        expect(forkResult.success).toBe(true);
-        if (!forkResult.success) return;
+            expect(forkedCollector.getFinalMessage()).toBeDefined();
+            forkedCollector.stop();
+          } finally {
+            await cleanup();
+          }
+        },
+        getTimeout(60000)
+      );
 
-        // User expects: both workspaces appear in workspace list
-        const workspaces = await client.workspace.list();
-        const workspaceIds = workspaces.map((w: { id: string }) => w.id);
-        expect(workspaceIds).toContain(sourceWorkspaceId);
-        expect(workspaceIds).toContain(forkResult.metadata.id);
+      test.concurrent(
+        "should make forked workspace available in workspace list",
+        async () => {
+          const env = await createTestEnvironment();
+          const tempGitRepo = await createTempGitRepo();
 
-        // Cleanup
-        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
-        await client.workspace.remove({ workspaceId: forkResult.metadata.id });
-      } finally {
-        await cleanupTestEnvironment(env);
-        await cleanupTempGitRepo(tempGitRepo);
-      }
-    },
-    15000
+          try {
+            const runtimeConfig = getRuntimeConfig();
+            const { workspaceId: sourceWorkspaceId } = await createWorkspaceWithInit(
+              env,
+              tempGitRepo,
+              "source-workspace",
+              runtimeConfig,
+              isSSH,
+              isSSH
+            );
+            const client = resolveOrpcClient(env);
+
+            // Fork the workspace
+            const forkResult = await client.workspace.fork({
+              sourceWorkspaceId,
+              newName: "forked-workspace",
+            });
+            expect(forkResult.success).toBe(true);
+            if (!forkResult.success) return;
+
+            // User expects: both workspaces appear in workspace list
+            const workspaces = await client.workspace.list();
+            const workspaceIds = workspaces.map((w: { id: string }) => w.id);
+            expect(workspaceIds).toContain(sourceWorkspaceId);
+            expect(workspaceIds).toContain(forkResult.metadata.id);
+
+            // Cleanup
+            await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+            await client.workspace.remove({ workspaceId: forkResult.metadata.id });
+          } finally {
+            await cleanupTestEnvironment(env);
+            await cleanupTempGitRepo(tempGitRepo);
+          }
+        },
+        getTimeout(15000)
+      );
+    }
   );
 
   test.concurrent(

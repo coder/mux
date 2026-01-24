@@ -7,12 +7,14 @@ import { ServiceContainer } from "../../src/node/services/serviceContainer";
 import {
   generateBranchName,
   createWorkspace,
+  createWorkspaceWithInit,
   resolveOrpcClient,
   createTempGitRepo,
   cleanupTempGitRepo,
 } from "./helpers";
 import type { OrpcSource } from "./helpers";
 import type { ORPCContext } from "../../src/node/orpc/context";
+import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { createOrpcTestClient, type OrpcTestClient } from "./orpcTestClient";
 import { shouldRunIntegrationTests, validateApiKeys, getApiKey } from "../testUtils";
 
@@ -194,7 +196,12 @@ export async function preloadTestModules(): Promise<void> {
  */
 export async function setupWorkspace(
   provider: string,
-  branchPrefix?: string
+  branchPrefix?: string,
+  options?: {
+    runtimeConfig?: RuntimeConfig;
+    waitForInit?: boolean;
+    isSSH?: boolean;
+  }
 ): Promise<{
   env: TestEnvironment;
   workspaceId: string;
@@ -224,28 +231,54 @@ export async function setupWorkspace(
   }
 
   const branchName = generateBranchName(branchPrefix || provider);
-  const createResult = await createWorkspace(env, tempGitRepo, branchName);
+  const runtimeConfig = options?.runtimeConfig;
+  const waitForInit = options?.waitForInit ?? false;
+  const isSSH = options?.isSSH ?? false;
 
-  if (!createResult.success) {
+  let workspaceId: string;
+  let workspacePath: string;
+
+  try {
+    if (waitForInit) {
+      const initResult = await createWorkspaceWithInit(
+        env,
+        tempGitRepo,
+        branchName,
+        runtimeConfig,
+        true,
+        isSSH
+      );
+      workspaceId = initResult.workspaceId;
+      workspacePath = initResult.workspacePath;
+    } else {
+      const createResult = await createWorkspace(
+        env,
+        tempGitRepo,
+        branchName,
+        undefined,
+        runtimeConfig
+      );
+
+      if (!createResult.success) {
+        throw new Error(`Workspace creation failed: ${createResult.error}`);
+      }
+
+      if (!createResult.metadata.id) {
+        throw new Error("Workspace ID not returned from creation");
+      }
+
+      if (!createResult.metadata.namedWorkspacePath) {
+        throw new Error("Workspace path not returned from creation");
+      }
+
+      workspaceId = createResult.metadata.id;
+      workspacePath = createResult.metadata.namedWorkspacePath;
+    }
+  } catch (error) {
     await cleanupTestEnvironment(env);
     await cleanupTempGitRepo(tempGitRepo);
-    throw new Error(`Workspace creation failed: ${createResult.error}`);
+    throw error;
   }
-
-  if (!createResult.metadata.id) {
-    await cleanupTestEnvironment(env);
-    await cleanupTempGitRepo(tempGitRepo);
-    throw new Error("Workspace ID not returned from creation");
-  }
-
-  if (!createResult.metadata.namedWorkspacePath) {
-    await cleanupTestEnvironment(env);
-    await cleanupTempGitRepo(tempGitRepo);
-    throw new Error("Workspace path not returned from creation");
-  }
-
-  const workspaceId = createResult.metadata.id;
-  const workspacePath = createResult.metadata.namedWorkspacePath;
 
   const cleanup = async () => {
     // Best-effort: remove workspace to stop MCP servers and clean up worktrees/sessions.
