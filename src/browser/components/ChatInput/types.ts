@@ -1,4 +1,4 @@
-import type { ImagePart } from "@/common/orpc/types";
+import type { FilePart } from "@/common/orpc/types";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { TelemetryRuntimeType } from "@/common/telemetry/payload";
 import type { AutoCompactionCheckResult } from "@/browser/utils/compaction/autoCompactionCheck";
@@ -10,7 +10,7 @@ export interface ChatInputAPI {
   restoreText: (text: string) => void;
   appendText: (text: string) => void;
   prependText: (text: string) => void;
-  restoreImages: (images: ImagePart[]) => void;
+  restoreAttachments: (fileParts: FilePart[]) => void;
 }
 
 // Workspace variant: full functionality for existing workspaces
@@ -25,7 +25,7 @@ export interface ChatInputWorkspaceVariant {
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;
   isStreamStarting?: boolean;
-  editingMessage?: { id: string; content: string; imageParts?: ImagePart[] };
+  editingMessage?: { id: string; content: string; fileParts?: FilePart[] };
   onCancelEdit?: () => void;
   onEditLastUserMessage?: () => void;
   canInterrupt?: boolean;

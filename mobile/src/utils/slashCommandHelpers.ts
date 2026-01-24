@@ -1,4 +1,4 @@
-import type { MuxFrontendMetadata } from "@/common/types/message";
+import { buildContinueMessage, type MuxFrontendMetadata } from "@/common/types/message";
 import type { ParsedCommand, SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import type { InferClientInputs } from "@orpc/client";
 import type { ORPCClient } from "../orpc/client";
@@ -63,11 +63,12 @@ export function buildMobileCompactionPayload(
       model: parsed.model,
       maxOutputTokens: parsed.maxOutputTokens,
       continueMessage: parsed.continueMessage
-        ? {
+        ? buildContinueMessage({
             text: parsed.continueMessage,
-            imageParts: [],
+            fileParts: [],
             model: baseOptions.model,
-          }
+            agentId: baseOptions.agentId ?? "exec",
+          })
         : undefined,
     },
   };

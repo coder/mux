@@ -38,7 +38,7 @@ import {
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
-import type { ImagePart } from "@/common/orpc/types";
+import type { FilePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -81,7 +81,7 @@ interface ChatPaneProps {
 
 type ReviewsState = ReturnType<typeof useReviews>;
 
-type EditingMessageState = { id: string; content: string; imageParts?: ImagePart[] } | undefined;
+type EditingMessageState = { id: string; content: string; fileParts?: FilePart[] } | undefined;
 
 export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const {
@@ -294,8 +294,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   // Handlers for editing messages
   const handleEditUserMessage = useCallback(
-    (messageId: string, content: string, imageParts?: ImagePart[]) => {
-      setEditingMessage({ id: messageId, content, imageParts });
+    (messageId: string, content: string, fileParts?: FilePart[]) => {
+      setEditingMessage({ id: messageId, content, fileParts });
     },
     [setEditingMessage]
   );
@@ -308,8 +308,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     chatInputAPI.current?.restoreText(queuedMessage.content);
 
     // Restore images if present
-    if (queuedMessage.imageParts && queuedMessage.imageParts.length > 0) {
-      chatInputAPI.current?.restoreImages(queuedMessage.imageParts);
+    if (queuedMessage.fileParts && queuedMessage.fileParts.length > 0) {
+      chatInputAPI.current?.restoreAttachments(queuedMessage.fileParts);
     }
   }, [api, workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
 
@@ -335,8 +335,8 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       chatInputAPI.current?.restoreText(queuedMessage.content);
 
       // Restore images if present
-      if (queuedMessage.imageParts && queuedMessage.imageParts.length > 0) {
-        chatInputAPI.current?.restoreImages(queuedMessage.imageParts);
+      if (queuedMessage.fileParts && queuedMessage.fileParts.length > 0) {
+        chatInputAPI.current?.restoreAttachments(queuedMessage.fileParts);
       }
       return;
     }
@@ -354,7 +354,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     setEditingMessage({
       id: lastUserMessage.historyId,
       content: getEditableUserMessageText(lastUserMessage),
-      imageParts: lastUserMessage.imageParts,
+      fileParts: lastUserMessage.fileParts,
     });
     setAutoScroll(false); // Show jump-to-bottom indicator
 

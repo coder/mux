@@ -38,17 +38,17 @@ describe("buildContinueMessage", () => {
     expect(result?.text).toBe("hello");
     expect(result?.model).toBe("test-model");
     expect(result?.agentId).toBe("exec");
-    expect(result?.imageParts).toBeUndefined();
+    expect(result?.fileParts).toBeUndefined();
     expect(result?.reviews).toBeUndefined();
   });
 
   test("returns message when only images provided", () => {
     const result = buildContinueMessage({
-      imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
+      fileParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
       model: "test-model",
       agentId: "plan",
     });
-    expect(result?.imageParts?.length).toBe(1);
+    expect(result?.fileParts?.length).toBe(1);
     expect(result?.text).toBe("");
     expect(result?.agentId).toBe("plan");
   });
@@ -152,14 +152,14 @@ describe("rebuildContinueMessage", () => {
     expect(result?.reviews?.[0].filePath).toBe("a.ts");
   });
 
-  test("preserves imageParts from persisted data", () => {
+  test("preserves fileParts from persisted data", () => {
     const result = rebuildContinueMessage(
       {
         text: "with image",
-        imageParts: [{ url: "data:image/png;base64,xyz", mediaType: "image/png" }],
+        fileParts: [{ url: "data:image/png;base64,xyz", mediaType: "image/png" }],
       },
       { model: "m", agentId: "exec" }
     );
-    expect(result?.imageParts?.length).toBe(1);
+    expect(result?.fileParts?.length).toBe(1);
   });
 });

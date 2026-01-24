@@ -15,7 +15,7 @@ import {
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
-import type { ImagePart, ProvidersConfigMap } from "@/common/orpc/types";
+import type { FilePart, ProvidersConfigMap } from "@/common/orpc/types";
 import {
   buildAgentSkillMetadata,
   type CompactionFollowUpInput,
@@ -54,7 +54,7 @@ function buildFollowUpFromSource(
 ): CompactionFollowUpInput {
   return {
     text: source.content,
-    imageParts: source.imageParts,
+    fileParts: source.fileParts,
     reviews: source.reviews,
     muxMetadata: source.agentSkill
       ? buildAgentSkillMetadata({
@@ -176,12 +176,12 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
    * On failure, falls back to inserting the command into chat input.
    */
   const retryWithCompaction = useCallback(async (): Promise<void> => {
-    const insertIntoChatInput = (text: string, imageParts?: ImagePart[]): void => {
+    const insertIntoChatInput = (text: string, fileParts?: FilePart[]): void => {
       window.dispatchEvent(
         createCustomEvent(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, {
           text,
           mode: "replace",
-          imageParts,
+          fileParts,
         })
       );
     };
@@ -246,7 +246,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
 
           insertIntoChatInput(
             fallbackText + (shouldAppendNewline ? "\n" : ""),
-            nestedFollowUp?.imageParts
+            nestedFollowUp?.fileParts
           );
         }
 
@@ -266,7 +266,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
 
       if (!result.success) {
         console.error("Failed to start compaction:", result.error);
-        insertIntoChatInput(suggestedCommandLine + "\n" + source.content, source.imageParts);
+        insertIntoChatInput(suggestedCommandLine + "\n" + source.content, source.fileParts);
       }
     } catch (error) {
       console.error("Failed to retry with compaction:", error);

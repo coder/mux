@@ -1,5 +1,5 @@
 import React from "react";
-import type { ImagePart } from "@/common/orpc/types";
+import type { FilePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
@@ -16,7 +16,7 @@ import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
   className?: string;
-  onEdit?: (messageId: string, content: string, imageParts?: ImagePart[]) => void;
+  onEdit?: (messageId: string, content: string, fileParts?: FilePart[]) => void;
   isCompacting?: boolean;
   clipboardWriteText?: (data: string) => Promise<void>;
 }
@@ -52,7 +52,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const handleEdit = () => {
     if (onEdit && !isLocalCommandOutput && !isSynthetic) {
       const editText = getEditableUserMessageText(message);
-      onEdit(message.historyId, editText, message.imageParts);
+      onEdit(message.historyId, editText, message.fileParts);
     }
   };
 
@@ -112,7 +112,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
         content={content}
         commandPrefix={message.commandPrefix}
         reviews={message.reviews}
-        imageParts={message.imageParts}
+        fileParts={message.fileParts}
         variant="sent"
       />
     </MessageWindow>

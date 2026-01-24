@@ -354,14 +354,14 @@ describeIntegration("Queued messages", () => {
         // Queue message with image
         await sendMessage(env, workspaceId, "Describe this image", {
           model: "anthropic:claude-sonnet-4-5",
-          imageParts: [TEST_IMAGES.RED_PIXEL],
+          fileParts: [TEST_IMAGES.RED_PIXEL],
         });
 
         // Verify queued with image
         const queuedEvent = await waitForQueuedMessageEvent(collector1);
         expect(queuedEvent?.queuedMessages).toEqual(["Describe this image"]);
-        expect(queuedEvent?.imageParts).toHaveLength(1);
-        expect(queuedEvent?.imageParts?.[0]).toMatchObject(TEST_IMAGES.RED_PIXEL);
+        expect(queuedEvent?.fileParts).toHaveLength(1);
+        expect(queuedEvent?.fileParts?.[0]).toMatchObject(TEST_IMAGES.RED_PIXEL);
 
         // Wait for first stream to complete (this triggers auto-send)
         await collector1.waitForEvent("stream-end", 15000);
@@ -405,14 +405,14 @@ describeIntegration("Queued messages", () => {
         // Queue image-only message (empty text)
         await sendMessage(env, workspaceId, "", {
           model: "anthropic:claude-sonnet-4-5",
-          imageParts: [TEST_IMAGES.RED_PIXEL],
+          fileParts: [TEST_IMAGES.RED_PIXEL],
         });
 
         // Verify queued (no text messages, but has image)
         const queuedEvent = await waitForQueuedMessageEvent(collector1);
         expect(queuedEvent?.queuedMessages).toEqual([]);
         expect(queuedEvent?.displayText).toBe("");
-        expect(queuedEvent?.imageParts).toHaveLength(1);
+        expect(queuedEvent?.fileParts).toHaveLength(1);
 
         // Wait for first stream to complete (this triggers auto-send)
         await collector1.waitForEvent("stream-end", 15000);

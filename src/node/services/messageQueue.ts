@@ -1,4 +1,4 @@
-import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
+import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { ReviewNoteData } from "@/common/types/review";
 
 // Type guard for compaction request metadata (for display text)
@@ -65,7 +65,7 @@ export class MessageQueue {
   private messages: string[] = [];
   private firstMuxMetadata?: unknown;
   private latestOptions?: SendMessageOptions;
-  private accumulatedImages: ImagePart[] = [];
+  private accumulatedFileParts: FilePart[] = [];
   private dedupeKeys: Set<string> = new Set<string>();
 
   /**
@@ -82,7 +82,7 @@ export class MessageQueue {
    *
    * @throws Error if trying to add a compaction request when queue already has messages
    */
-  add(message: string, options?: SendMessageOptions & { imageParts?: ImagePart[] }): void {
+  add(message: string, options?: SendMessageOptions & { fileParts?: FilePart[] }): void {
     this.addInternal(message, options);
   }
 
@@ -92,7 +92,7 @@ export class MessageQueue {
    */
   addOnce(
     message: string,
-    options?: SendMessageOptions & { imageParts?: ImagePart[] },
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
     dedupeKey?: string
   ): boolean {
     if (dedupeKey !== undefined && this.dedupeKeys.has(dedupeKey)) {
@@ -108,13 +108,13 @@ export class MessageQueue {
 
   private addInternal(
     message: string,
-    options?: SendMessageOptions & { imageParts?: ImagePart[] }
+    options?: SendMessageOptions & { fileParts?: FilePart[] }
   ): boolean {
     const trimmedMessage = message.trim();
-    const hasImages = options?.imageParts && options.imageParts.length > 0;
+    const hasFiles = options?.fileParts && options.fileParts.length > 0;
 
     // Reject if both text and images are empty
-    if (trimmedMessage.length === 0 && !hasImages) {
+    if (trimmedMessage.length === 0 && !hasFiles) {
       return false;
     }
 
@@ -155,7 +155,7 @@ export class MessageQueue {
     }
 
     if (options) {
-      const { imageParts, ...restOptions } = options;
+      const { fileParts, ...restOptions } = options;
 
       // Preserve first muxMetadata (see class docblock for rationale)
       if (options.muxMetadata !== undefined && this.firstMuxMetadata === undefined) {
@@ -163,8 +163,8 @@ export class MessageQueue {
       }
       this.latestOptions = restOptions;
 
-      if (imageParts && imageParts.length > 0) {
-        this.accumulatedImages.push(...imageParts);
+      if (fileParts && fileParts.length > 0) {
+        this.accumulatedFileParts.push(...fileParts);
       }
     }
 
@@ -202,8 +202,8 @@ export class MessageQueue {
   /**
    * Get accumulated image parts for display.
    */
-  getImageParts(): ImagePart[] {
-    return [...this.accumulatedImages];
+  getFileParts(): FilePart[] {
+    return [...this.accumulatedFileParts];
   }
 
   /**
@@ -221,7 +221,7 @@ export class MessageQueue {
    */
   produceMessage(): {
     message: string;
-    options?: SendMessageOptions & { imageParts?: ImagePart[] };
+    options?: SendMessageOptions & { fileParts?: FilePart[] };
   } {
     const joinedMessages = this.messages.join("\n");
     // First metadata takes precedence (preserves compaction + agent-skill invocations)
@@ -233,7 +233,7 @@ export class MessageQueue {
       ? {
           ...this.latestOptions,
           muxMetadata,
-          imageParts: this.accumulatedImages.length > 0 ? this.accumulatedImages : undefined,
+          fileParts: this.accumulatedFileParts.length > 0 ? this.accumulatedFileParts : undefined,
         }
       : undefined;
 
@@ -247,7 +247,7 @@ export class MessageQueue {
     this.messages = [];
     this.firstMuxMetadata = undefined;
     this.latestOptions = undefined;
-    this.accumulatedImages = [];
+    this.accumulatedFileParts = [];
     this.dedupeKeys.clear();
   }
 
@@ -255,6 +255,6 @@ export class MessageQueue {
    * Check if queue is empty (no messages AND no images).
    */
   isEmpty(): boolean {
-    return this.messages.length === 0 && this.accumulatedImages.length === 0;
+    return this.messages.length === 0 && this.accumulatedFileParts.length === 0;
   }
 }

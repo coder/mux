@@ -92,7 +92,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
     expect(streamMessage.mock.calls).toHaveLength(1);
   });
 
-  it("clears image parts when editing with explicit empty imageParts", async () => {
+  it("clears image parts when editing with explicit empty fileParts", async () => {
     const workspaceId = "ws-test";
 
     const config = {
@@ -170,7 +170,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
       model: "anthropic:claude-3-5-sonnet-latest",
       agentId: "exec",
       editMessageId: originalMessageId,
-      imageParts: [],
+      fileParts: [],
     });
 
     expect(result.success).toBe(true);
@@ -184,7 +184,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
 
     expect(appendedFileParts).toHaveLength(0);
   });
-  it("preserves image parts when editing and imageParts are omitted", async () => {
+  it("preserves image parts when editing and fileParts are omitted", async () => {
     const workspaceId = "ws-test";
 
     const config = {

@@ -14,7 +14,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import type { WorkspaceChatMessage, SendMessageOptions, ImagePart } from "@/common/orpc/types";
+import type { WorkspaceChatMessage, SendMessageOptions, FilePart } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
@@ -42,7 +42,7 @@ import {
   prepareUserMessageForSend,
   type CompactionFollowUpRequest,
   type MuxFrontendMetadata,
-  type MuxImagePart,
+  type MuxFilePart,
   type MuxMessage,
   type ReviewNoteDataForDisplay,
 } from "@/common/types/message";
@@ -59,6 +59,7 @@ import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
+import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
@@ -89,6 +90,25 @@ interface CompactionRequestMetadata {
   };
 }
 
+const PDF_MEDIA_TYPE = "application/pdf";
+
+function normalizeMediaType(mediaType: string): string {
+  return mediaType.toLowerCase().trim().split(";")[0];
+}
+
+function estimateBase64DataUrlBytes(dataUrl: string): number | null {
+  if (!dataUrl.startsWith("data:")) return null;
+
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) return null;
+
+  const header = dataUrl.slice("data:".length, commaIndex);
+  if (!header.includes(";base64")) return null;
+
+  const base64 = dataUrl.slice(commaIndex + 1);
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+}
 function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMetadata {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
@@ -417,35 +437,35 @@ export class AgentSession {
 
   async sendMessage(
     message: string,
-    options?: SendMessageOptions & { imageParts?: ImagePart[] }
+    options?: SendMessageOptions & { fileParts?: FilePart[] }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
     const trimmedMessage = message.trim();
-    const imageParts = options?.imageParts;
+    const fileParts = options?.fileParts;
 
-    // Edits are implemented as truncate+replace. If the frontend omits imageParts,
+    // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
-    let preservedEditImageParts: MuxImagePart[] | undefined;
-    if (options?.editMessageId && imageParts === undefined) {
+    let preservedEditFileParts: MuxFilePart[] | undefined;
+    if (options?.editMessageId && fileParts === undefined) {
       const historyResult = await this.historyService.getHistory(this.workspaceId);
       if (historyResult.success) {
         const targetMessage: MuxMessage | undefined = historyResult.data.find(
           (msg) => msg.id === options.editMessageId
         );
         const fileParts = targetMessage?.parts.filter(
-          (part): part is MuxImagePart => part.type === "file"
+          (part): part is MuxFilePart => part.type === "file"
         );
         if (fileParts && fileParts.length > 0) {
-          preservedEditImageParts = fileParts;
+          preservedEditFileParts = fileParts;
         }
       }
     }
 
-    const hasImages = (imageParts?.length ?? 0) > 0 || (preservedEditImageParts?.length ?? 0) > 0;
+    const hasFiles = (fileParts?.length ?? 0) > 0 || (preservedEditFileParts?.length ?? 0) > 0;
 
-    if (trimmedMessage.length === 0 && !hasImages) {
+    if (trimmedMessage.length === 0 && !hasFiles) {
       return Err(
         createUnknownSendMessageError(
           "Empty message not allowed. Use interruptStream() to interrupt active streams."
@@ -509,26 +529,33 @@ export class AgentSession {
 
     const messageId = createUserMessageId();
     const additionalParts =
-      preservedEditImageParts && preservedEditImageParts.length > 0
-        ? preservedEditImageParts
-        : imageParts && imageParts.length > 0
-          ? imageParts.map((img, index) => {
+      preservedEditFileParts && preservedEditFileParts.length > 0
+        ? preservedEditFileParts
+        : fileParts && fileParts.length > 0
+          ? fileParts.map((part, index) => {
               assert(
-                typeof img.url === "string",
-                `image part [${index}] must include url string content (got ${typeof img.url}): ${JSON.stringify(img).slice(0, 200)}`
+                typeof part.url === "string",
+                `file part [${index}] must include url string content (got ${typeof part.url}): ${JSON.stringify(part).slice(0, 200)}`
               );
               assert(
-                img.url.startsWith("data:"),
-                `image part [${index}] url must be a data URL (got: ${img.url.slice(0, 50)}...)`
+                part.url.startsWith("data:"),
+                `file part [${index}] url must be a data URL (got: ${part.url.slice(0, 50)}...)`
               );
               assert(
-                typeof img.mediaType === "string" && img.mediaType.trim().length > 0,
-                `image part [${index}] must include a mediaType (got ${typeof img.mediaType}): ${JSON.stringify(img).slice(0, 200)}`
+                typeof part.mediaType === "string" && part.mediaType.trim().length > 0,
+                `file part [${index}] must include a mediaType (got ${typeof part.mediaType}): ${JSON.stringify(part).slice(0, 200)}`
               );
+              if (part.filename !== undefined) {
+                assert(
+                  typeof part.filename === "string",
+                  `file part [${index}] filename must be a string if present (got ${typeof part.filename}): ${JSON.stringify(part).slice(0, 200)}`
+                );
+              }
               return {
                 type: "file" as const,
-                url: img.url,
-                mediaType: img.mediaType,
+                url: part.url,
+                mediaType: part.mediaType,
+                filename: part.filename,
               };
             })
           : undefined;
@@ -546,6 +573,48 @@ export class AgentSession {
       );
     }
 
+    // Defense-in-depth: reject PDFs for models we know don't support them.
+    // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
+    const effectiveFileParts =
+      preservedEditFileParts && preservedEditFileParts.length > 0
+        ? preservedEditFileParts.map((part) => ({
+            url: part.url,
+            mediaType: part.mediaType,
+            filename: part.filename,
+          }))
+        : fileParts;
+
+    if (effectiveFileParts && effectiveFileParts.length > 0) {
+      const pdfParts = effectiveFileParts.filter(
+        (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
+      );
+
+      if (pdfParts.length > 0) {
+        const caps = getModelCapabilities(options.model);
+
+        if (caps && !caps.supportsPdfInput) {
+          return Err(
+            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
+          );
+        }
+
+        if (caps?.maxPdfSizeMb !== undefined) {
+          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
+          for (const part of pdfParts) {
+            const bytes = estimateBase64DataUrlBytes(part.url);
+            if (bytes !== null && bytes > maxBytes) {
+              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
+              const label = part.filename ?? "PDF";
+              return Err(
+                createUnknownSendMessageError(
+                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
+                )
+              );
+            }
+          }
+        }
+      }
+    }
     // Validate model string format (must be "provider:model-id")
     if (!isValidModelFormat(options.model)) {
       return Err({
@@ -1191,7 +1260,7 @@ export class AgentSession {
     return this.streamStarting;
   }
 
-  queueMessage(message: string, options?: SendMessageOptions & { imageParts?: ImagePart[] }): void {
+  queueMessage(message: string, options?: SendMessageOptions & { fileParts?: FilePart[] }): void {
     this.assertNotDisposed("queueMessage");
     this.messageQueue.add(message, options);
     this.emitQueuedMessageChanged();
@@ -1214,7 +1283,7 @@ export class AgentSession {
     this.assertNotDisposed("restoreQueueToInput");
     if (!this.messageQueue.isEmpty()) {
       const displayText = this.messageQueue.getDisplayText();
-      const imageParts = this.messageQueue.getImageParts();
+      const fileParts = this.messageQueue.getFileParts();
       this.messageQueue.clear();
       this.emitQueuedMessageChanged();
 
@@ -1222,7 +1291,7 @@ export class AgentSession {
         type: "restore-to-input",
         workspaceId: this.workspaceId,
         text: displayText,
-        imageParts: imageParts,
+        fileParts: fileParts,
       });
     }
   }
@@ -1233,7 +1302,7 @@ export class AgentSession {
       workspaceId: this.workspaceId,
       queuedMessages: this.messageQueue.getMessages(),
       displayText: this.messageQueue.getDisplayText(),
-      imageParts: this.messageQueue.getImageParts(),
+      fileParts: this.messageQueue.getFileParts(),
       reviews: this.messageQueue.getReviews(),
       hasCompactionRequest: this.messageQueue.hasCompactionRequest(),
     });

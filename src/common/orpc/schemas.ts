@@ -109,14 +109,14 @@ export {
   DynamicToolPartAvailableSchema,
   DynamicToolPartPendingSchema,
   DynamicToolPartSchema,
-  ImagePartSchema,
-  MuxImagePartSchema,
+  FilePartSchema,
+  MuxFilePartSchema,
   MuxMessageSchema,
   MuxReasoningPartSchema,
   MuxTextPartSchema,
   MuxToolPartSchema,
 } from "./schemas/message";
-export type { ImagePart, MuxImagePart } from "./schemas/message";
+export type { FilePart, MuxFilePart } from "./schemas/message";
 
 // Stream event schemas
 export {

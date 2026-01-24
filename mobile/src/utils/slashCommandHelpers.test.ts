@@ -58,13 +58,14 @@ describe("buildMobileCompactionPayload", () => {
     expect(payload.messageText).toContain(parsed.continueMessage);
     expect(payload.metadata.type).toBe("compaction-request");
     expect(payload.metadata.rawCommand).toContain("/compact -t 800 -m anthropic:claude-opus-4-1");
-    expect(payload.metadata.parsed).toEqual({
+    expect(payload.metadata.parsed).toMatchObject({
       model: "anthropic:claude-opus-4-1",
       maxOutputTokens: 800,
       continueMessage: {
         text: parsed.continueMessage,
-        imageParts: [],
+        fileParts: [],
         model: baseOptions.model,
+        agentId: "exec",
       },
     });
     expect(payload.sendOptions.model).toBe("anthropic:claude-opus-4-1");

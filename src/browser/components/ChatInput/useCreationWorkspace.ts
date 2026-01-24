@@ -14,7 +14,7 @@ import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions"
 import {
   getAgentIdKey,
   getInputKey,
-  getInputImagesKey,
+  getInputAttachmentsKey,
   getModelKey,
   getNotifyOnResponseAutoEnableKey,
   getNotifyOnResponseKey,
@@ -25,7 +25,7 @@ import {
 } from "@/common/constants/storage";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
-import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
+import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import {
   useWorkspaceName,
   type WorkspaceNameState,
@@ -115,7 +115,7 @@ interface UseCreationWorkspaceReturn {
   isSending: boolean;
   handleSend: (
     message: string,
-    imageParts?: ImagePart[],
+    fileParts?: FilePart[],
     optionsOverride?: Partial<SendMessageOptions>
   ) => Promise<boolean>;
   /** Workspace name/title generation state and actions (for CreationControls) */
@@ -236,7 +236,7 @@ export function useCreationWorkspace({
   const handleSend = useCallback(
     async (
       messageText: string,
-      imageParts?: ImagePart[],
+      fileParts?: FilePart[],
       optionsOverride?: Partial<SendMessageOptions>
     ): Promise<boolean> => {
       if (!messageText.trim() || isSending || !api) return false;
@@ -333,7 +333,7 @@ export function useCreationWorkspace({
         if (projectPath) {
           const pendingScopeId = getPendingScopeId(projectPath);
           updatePersistedState(getInputKey(pendingScopeId), "");
-          updatePersistedState(getInputImagesKey(pendingScopeId), undefined);
+          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
         }
 
         // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
@@ -360,7 +360,7 @@ export function useCreationWorkspace({
               additionalSystemInstructions: additionalSystemInstructions.length
                 ? additionalSystemInstructions
                 : undefined,
-              imageParts: imageParts && imageParts.length > 0 ? imageParts : undefined,
+              fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
             },
           })
           .catch(() => {

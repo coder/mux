@@ -4,7 +4,7 @@ import { AgentModeSchema } from "../../types/mode";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
-  ImagePartSchema,
+  FilePartSchema,
   MuxMessageSchema,
   MuxReasoningPartSchema,
   MuxTextPartSchema,
@@ -353,7 +353,7 @@ export const QueuedMessageChangedEventSchema = z.object({
   workspaceId: z.string(),
   queuedMessages: z.array(z.string()),
   displayText: z.string(),
-  imageParts: z.array(ImagePartSchema).optional(),
+  fileParts: z.array(FilePartSchema).optional(),
   reviews: z.array(ReviewNoteDataSchema).optional(),
   /** True when the queued message is a compaction request (/compact) */
   hasCompactionRequest: z.boolean().optional(),
@@ -363,7 +363,7 @@ export const RestoreToInputEventSchema = z.object({
   type: z.literal("restore-to-input"),
   workspaceId: z.string(),
   text: z.string(),
-  imageParts: z.array(ImagePartSchema).optional(),
+  fileParts: z.array(FilePartSchema).optional(),
 });
 
 // All streaming events now have a `type` field for O(1) discriminated union lookup.

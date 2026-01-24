@@ -114,14 +114,14 @@ export function getInputKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for the input image attachments for a workspace.
- * Format: "inputImages:{scopeId}"
+ * Get the localStorage key for the input attachments for a scope.
+ * Format: "inputAttachments:{scopeId}"
  *
  * Note: The input key functions accept any string scope ID. For normal workspaces
  * this is the workspaceId; for creation mode it's a pending scope ID.
  */
-export function getInputImagesKey(scopeId: string): string {
-  return `inputImages:${scopeId}`;
+export function getInputAttachmentsKey(scopeId: string): string {
+  return `inputAttachments:${scopeId}`;
 }
 
 /**
@@ -487,7 +487,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getWorkspaceAISettingsByAgentKey,
   getModelKey,
   getInputKey,
-  getInputImagesKey,
+  getInputAttachmentsKey,
   getAgentIdKey,
   getPinnedAgentIdKey,
   getThinkingLevelKey,

@@ -393,7 +393,16 @@ function UserMessageCard({
   buttons.push({ label: copied ? "Copied" : "Copy", onPress: handleCopy });
 
   const renderAttachments = () => {
-    if (!message.imageParts || message.imageParts.length === 0) {
+    const fileParts = message.fileParts;
+    if (!fileParts || fileParts.length === 0) {
+      return null;
+    }
+
+    // Mobile UI only renders image attachments (non-image attachments are ignored for now).
+    const imageParts = fileParts.filter((part) =>
+      part.mediaType.toLowerCase().startsWith("image/")
+    );
+    if (imageParts.length === 0) {
       return null;
     }
 
@@ -405,7 +414,7 @@ function UserMessageCard({
           marginTop: theme.spacing.md,
         }}
       >
-        {message.imageParts.map((image, index) => (
+        {imageParts.map((image, index) => (
           <Image
             key={`${message.id}-image-${index}`}
             source={{ uri: image.url }}

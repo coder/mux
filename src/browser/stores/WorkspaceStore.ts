@@ -565,13 +565,13 @@ export class WorkspaceStore {
       // Show queued message if there's text OR images OR reviews (support review-only queued messages)
       const hasContent =
         data.queuedMessages.length > 0 ||
-        (data.imageParts?.length ?? 0) > 0 ||
+        (data.fileParts?.length ?? 0) > 0 ||
         (data.reviews?.length ?? 0) > 0;
       const queuedMessage: QueuedMessage | null = hasContent
         ? {
             id: `queued-${workspaceId}`,
             content: data.displayText,
-            imageParts: data.imageParts,
+            fileParts: data.fileParts,
             reviews: data.reviews,
             hasCompactionRequest: data.hasCompactionRequest,
           }
@@ -588,7 +588,7 @@ export class WorkspaceStore {
         createCustomEvent(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, {
           text: data.text,
           mode: "replace",
-          imageParts: data.imageParts,
+          fileParts: data.fileParts,
         })
       );
     },

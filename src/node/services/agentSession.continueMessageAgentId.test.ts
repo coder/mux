@@ -1,6 +1,6 @@
 import { describe, expect, test, mock } from "bun:test";
 import { buildContinueMessage, type ContinueMessage } from "@/common/types/message";
-import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
+import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
 import type { AIService } from "./aiService";
@@ -12,7 +12,7 @@ import type { PartialService } from "./partialService";
 // NOTE: This test is intentionally narrow: it only validates the agentId chosen for queued
 // continue messages when compaction is requested.
 
-type SendOptions = SendMessageOptions & { imageParts?: ImagePart[] };
+type SendOptions = SendMessageOptions & { fileParts?: FilePart[] };
 
 interface SessionInternals {
   streamWithHistory: (

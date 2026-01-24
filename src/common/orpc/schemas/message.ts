@@ -3,9 +3,10 @@ import { AgentIdSchema } from "./agentDefinition";
 import { StreamErrorTypeSchema } from "./errors";
 import { AgentSkillScopeSchema, SkillNameSchema } from "./agentSkill";
 
-export const ImagePartSchema = z.object({
+export const FilePartSchema = z.object({
   url: z.string(),
   mediaType: z.string(),
+  filename: z.string().optional(),
 });
 
 export const MuxTextPartSchema = z.object({
@@ -70,16 +71,13 @@ export const DynamicToolPartSchema = z.discriminatedUnion("state", [
 // Alias for message schemas
 export const MuxToolPartSchema = DynamicToolPartSchema;
 
-export const MuxImagePartSchema = z.object({
+export const MuxFilePartSchema = FilePartSchema.extend({
   type: z.literal("file"),
-  mediaType: z.string(),
-  url: z.string(),
-  filename: z.string().optional(),
 });
 
 // Export types inferred from schemas for reuse across app/test code.
-export type ImagePart = z.infer<typeof ImagePartSchema>;
-export type MuxImagePart = z.infer<typeof MuxImagePartSchema>;
+export type FilePart = z.infer<typeof FilePartSchema>;
+export type MuxFilePart = z.infer<typeof MuxFilePartSchema>;
 
 // MuxMessage (simplified)
 export const MuxMessageSchema = z.object({
@@ -90,7 +88,7 @@ export const MuxMessageSchema = z.object({
       MuxTextPartSchema,
       MuxReasoningPartSchema,
       MuxToolPartSchema,
-      MuxImagePartSchema,
+      MuxFilePartSchema,
     ])
   ),
   createdAt: z.date().optional(),

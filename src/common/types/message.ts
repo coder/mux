@@ -2,7 +2,7 @@ import type { UIMessage } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
-import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
@@ -21,7 +21,7 @@ export type ReviewNoteDataForDisplay = ReviewNoteData;
  */
 export interface UserMessageContent {
   text: string;
-  imageParts?: ImagePart[];
+  fileParts?: FilePart[];
   /** Review data - formatted into message text AND stored in metadata for display */
   reviews?: ReviewNoteDataForDisplay[];
 }
@@ -79,7 +79,7 @@ export type ContinueMessage = UserMessageContent & {
  */
 export interface BuildContinueMessageOptions {
   text?: string;
-  imageParts?: ImagePart[];
+  fileParts?: FilePart[];
   reviews?: ReviewNoteDataForDisplay[];
   /** Optional frontend metadata to carry through to the queued follow-up user message */
   muxMetadata?: MuxFrontendMetadata;
@@ -97,15 +97,15 @@ export function buildContinueMessage(
   opts: BuildContinueMessageOptions
 ): ContinueMessage | undefined {
   const hasText = opts.text && opts.text.length > 0;
-  const hasImages = opts.imageParts && opts.imageParts.length > 0;
+  const hasFiles = opts.fileParts && opts.fileParts.length > 0;
   const hasReviews = opts.reviews && opts.reviews.length > 0;
-  if (!hasText && !hasImages && !hasReviews) return undefined;
+  if (!hasText && !hasFiles && !hasReviews) return undefined;
 
   // Type assertion is safe here - this is the only factory for ContinueMessage
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   const result: ContinueMessage = {
     text: opts.text ?? "",
-    imageParts: opts.imageParts,
+    fileParts: opts.fileParts,
     reviews: opts.reviews,
     muxMetadata: opts.muxMetadata,
     model: opts.model,
@@ -132,9 +132,9 @@ export type PersistedContinueMessage = Partial<
 export function isDefaultSourceContent(content?: Partial<UserMessageContent>): boolean {
   if (!content) return false;
   const text = typeof content.text === "string" ? content.text.trim() : "";
-  const hasImages = (content.imageParts?.length ?? 0) > 0;
+  const hasFiles = (content.fileParts?.length ?? 0) > 0;
   const hasReviews = (content.reviews?.length ?? 0) > 0;
-  return text === "Continue" && !hasImages && !hasReviews;
+  return text === "Continue" && !hasFiles && !hasReviews;
 }
 
 /** @deprecated Use isDefaultSourceContent. Legacy alias for backward compatibility. */
@@ -165,7 +165,7 @@ export function rebuildContinueMessage(
 
   return buildContinueMessage({
     text: persisted.text,
-    imageParts: persisted.imageParts,
+    fileParts: persisted.fileParts,
     reviews: persisted.reviews,
     muxMetadata: persisted.muxMetadata,
     model: persisted.model ?? defaults.model,
@@ -353,19 +353,18 @@ export interface MuxReasoningPart {
   };
 }
 
-// File/Image part type for multimodal messages (matches AI SDK FileUIPart)
-// Images are represented as files with image/* mediaType
-export interface MuxImagePart {
+// File part type for multimodal messages (matches AI SDK FileUIPart)
+export interface MuxFilePart {
   type: "file";
-  mediaType: string; // IANA media type, e.g., "image/png", "image/jpeg"
-  url: string; // Data URL (e.g., "data:image/png;base64,...") or hosted URL
+  mediaType: string; // IANA media type, e.g., "image/png", "application/pdf"
+  url: string; // Data URL (e.g., "data:application/pdf;base64,...") or hosted URL
   filename?: string; // Optional filename
 }
 
 // MuxMessage extends UIMessage with our metadata and custom parts
 // Supports text, reasoning, image, and tool parts (including interrupted tool calls)
 export type MuxMessage = Omit<UIMessage<MuxMetadata, never, never>, "parts"> & {
-  parts: Array<MuxTextPart | MuxReasoningPart | MuxImagePart | MuxToolPart>;
+  parts: Array<MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart>;
 };
 
 // DisplayedMessage represents a single UI message block
@@ -381,7 +380,7 @@ export type DisplayedMessage =
        * Only set when a slash command was processed.
        */
       commandPrefix?: string;
-      imageParts?: ImagePart[]; // Optional image attachments
+      fileParts?: FilePart[]; // Optional attachments
       historySequence: number; // Global ordering across all messages
       isSynthetic?: boolean;
       timestamp?: number;
@@ -497,7 +496,7 @@ export type DisplayedUserMessage = Extract<DisplayedMessage, { type: "user" }>;
 export interface QueuedMessage {
   id: string;
   content: string;
-  imageParts?: ImagePart[];
+  fileParts?: FilePart[];
   /** Structured review data for rich UI display (from muxMetadata) */
   reviews?: ReviewNoteDataForDisplay[];
   /** True when the queued message is a compaction request (/compact) */

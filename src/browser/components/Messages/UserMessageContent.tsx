@@ -1,6 +1,7 @@
 import React from "react";
+import { FileText } from "lucide-react";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
-import type { ImagePart } from "@/common/orpc/schemas";
+import type { FilePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
@@ -8,7 +9,7 @@ interface UserMessageContentProps {
   content: string;
   commandPrefix?: string;
   reviews?: ReviewNoteDataForDisplay[];
-  imageParts?: ImagePart[];
+  fileParts?: FilePart[];
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
   variant: "sent" | "queued";
 }
@@ -37,6 +38,15 @@ const imageContainerStyles = {
 
 const markdownClassName = "user-message-markdown";
 
+function getBaseMediaType(mediaType: string): string {
+  return mediaType.toLowerCase().trim().split(";")[0];
+}
+
+const fileAttachmentStyles = {
+  sent: "flex max-w-80 items-center gap-2 rounded-xl border border-[var(--color-attachment-border)] px-3 py-2 text-sm text-[var(--color-subtle)]",
+  queued:
+    "border-border-light flex max-w-80 items-center gap-2 rounded border px-2 py-1 text-xs text-[var(--color-subtle)]",
+} as const;
 const imageStyles = {
   sent: "max-h-[300px] max-w-72 rounded-xl border border-[var(--color-attachment-border)] object-cover",
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
@@ -57,7 +67,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
   content,
   commandPrefix,
   reviews,
-  imageParts,
+  fileParts,
   variant,
 }) => {
   const hasReviews = reviews && reviews.length > 0;
@@ -125,16 +135,40 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
       ) : (
         renderTextContent()
       )}
-      {imageParts && imageParts.length > 0 && (
+      {fileParts && fileParts.length > 0 && (
         <div className={imageContainerStyles[variant]}>
-          {imageParts.map((img, idx) => (
-            <img
-              key={idx}
-              src={img.url}
-              alt={`Attachment ${idx + 1}`}
-              className={imageStyles[variant]}
-            />
-          ))}
+          {fileParts.map((part, idx) => {
+            const baseMediaType = getBaseMediaType(part.mediaType);
+            if (baseMediaType.startsWith("image/")) {
+              return (
+                <img
+                  key={idx}
+                  src={part.url}
+                  alt={`Attachment ${idx + 1}`}
+                  className={imageStyles[variant]}
+                />
+              );
+            }
+
+            const label =
+              part.filename ??
+              (baseMediaType === "application/pdf"
+                ? "PDF attachment"
+                : `Attachment (${baseMediaType})`);
+
+            return (
+              <a
+                key={idx}
+                href={part.url}
+                target="_blank"
+                rel="noreferrer"
+                className={fileAttachmentStyles[variant]}
+              >
+                <FileText className="h-4 w-4 shrink-0" />
+                <span className="truncate">{label}</span>
+              </a>
+            );
+          })}
         </div>
       )}
     </>

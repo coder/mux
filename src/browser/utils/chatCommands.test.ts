@@ -202,13 +202,13 @@ describe("buildContinueMessage", () => {
 
   test("returns message when only images provided", () => {
     const result = buildContinueMessage({
-      imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
+      fileParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
       model: "anthropic:claude-3-5-sonnet",
       agentId: "plan",
     });
     expect(result).toBeDefined();
     expect(result?.text).toBe("");
-    expect(result?.imageParts).toHaveLength(1);
+    expect(result?.fileParts).toHaveLength(1);
     expect(result?.agentId).toBe("plan");
   });
 
@@ -236,11 +236,11 @@ describe("buildContinueMessage", () => {
     const reviews: ReviewNoteData[] = [
       { filePath: "src/a.ts", lineRange: "1", selectedCode: "x", userNote: "note" },
     ];
-    const imageParts = [{ url: "data:image/png;base64,abc", mediaType: "image/png" }];
+    const fileParts = [{ url: "data:image/png;base64,abc", mediaType: "image/png" }];
 
     const result = buildContinueMessage({
       text: "Check this",
-      imageParts,
+      fileParts,
       reviews,
       model: "anthropic:claude-3-5-sonnet",
       agentId: "plan",
@@ -248,7 +248,7 @@ describe("buildContinueMessage", () => {
 
     expect(result).toBeDefined();
     expect(result?.text).toBe("Check this");
-    expect(result?.imageParts).toHaveLength(1);
+    expect(result?.fileParts).toHaveLength(1);
     expect(result?.reviews).toHaveLength(1);
     expect(result?.model).toBe("anthropic:claude-3-5-sonnet");
     expect(result?.agentId).toBe("plan");
@@ -416,7 +416,7 @@ describe("prepareCompactionMessage", () => {
       workspaceId: "ws-1",
       followUpContent: {
         text: "",
-        imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
+        fileParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
       },
       sendMessageOptions,
     });
@@ -426,7 +426,7 @@ describe("prepareCompactionMessage", () => {
     }
 
     expect(metadata.parsed.followUpContent).toBeDefined();
-    expect(metadata.parsed.followUpContent?.imageParts).toHaveLength(1);
+    expect(metadata.parsed.followUpContent?.fileParts).toHaveLength(1);
   });
 
   test("creates followUpContent when reviews are provided without text", () => {
@@ -573,7 +573,7 @@ describe("handlePlanShowCommand", () => {
         toolPolicy: [],
         agentId: "exec",
       },
-      setImageAttachments: mock(() => undefined),
+      setAttachments: mock(() => undefined),
       setSendingState: mock(() => undefined),
     };
   };
@@ -642,7 +642,7 @@ describe("handlePlanOpenCommand", () => {
         toolPolicy: [],
         agentId: "exec",
       },
-      setImageAttachments: mock(() => undefined),
+      setAttachments: mock(() => undefined),
       setSendingState: mock(() => undefined),
     };
   };
@@ -699,7 +699,7 @@ describe("handleCompactCommand", () => {
   ): CommandHandlerContext => {
     const setInput = mock(() => undefined);
     const setToast = mock(() => undefined);
-    const setImageAttachments = mock(() => undefined);
+    const setAttachments = mock(() => undefined);
     const setSendingState = mock(() => undefined);
 
     // Track the options passed to sendMessage
@@ -709,7 +709,7 @@ describe("handleCompactCommand", () => {
       workspaceId: "test-workspace-id",
       setInput,
       setToast,
-      setImageAttachments,
+      setAttachments,
       setSendingState,
       reviews: options?.reviews,
       api: {

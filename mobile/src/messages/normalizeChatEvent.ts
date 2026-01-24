@@ -1,5 +1,5 @@
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
-import type { MuxMessage, MuxTextPart, MuxImagePart } from "@/common/types/message";
+import type { MuxMessage, MuxTextPart, MuxFilePart } from "@/common/types/message";
 import type { DynamicToolPart } from "@/common/types/toolParts";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { isMuxMessage } from "@/common/orpc/types";
@@ -70,11 +70,12 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
       .map((p) => p.text)
       .join("");
 
-    const imageParts = message.parts
-      .filter((p): p is MuxImagePart => p.type === "file")
+    const fileParts = message.parts
+      .filter((p): p is MuxFilePart => p.type === "file")
       .map((p) => ({
         url: p.url,
         mediaType: p.mediaType,
+        filename: p.filename,
       }));
 
     displayed.push({
@@ -82,7 +83,7 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
       id: message.id,
       historyId: message.id,
       content,
-      imageParts: imageParts.length > 0 ? imageParts : undefined,
+      fileParts: fileParts.length > 0 ? fileParts : undefined,
       historySequence,
       timestamp: baseTimestamp,
     });
