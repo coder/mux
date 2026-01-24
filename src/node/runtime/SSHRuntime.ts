@@ -1191,11 +1191,11 @@ export class SSHRuntime extends RemoteRuntime {
       }
 
       // Copy the source workspace on the remote host so we preserve working tree state.
-      // This keeps uncommitted changes and local-only files intact for the fork.
+      // Avoid preserving ownership to prevent fork failures when files are owned by another user.
       initLogger.logStep("Copying workspace on remote...");
       const copyResult = await execBuffered(
         this,
-        `cp -a ${sourceWorkspacePathArg} ${newWorkspacePathArg}`,
+        `cp -R -P ${sourceWorkspacePathArg} ${newWorkspacePathArg}`,
         {
           cwd: "/tmp",
           timeout: 300,
