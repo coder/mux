@@ -104,6 +104,14 @@ Exceptions include:
 - Testing logic where an observable side-effect is a part of the API contract, e.g. createProject creating
   a project directory if it doesn't already exist.
 
+## Determinism
+
+Strive to minimize raciness of tests. They run in a variety of environments, including bogged down CI runners.
+
+Prefer explicit synchronization over arbitrary sleeps.
+
+When explicit synchronization is not feasible, use patterns such as `waitFor` which can complete quickly in the common case.
+
 ## Exceptions
 
 In some cases due to infrastructure or performance constraints we may opt to diverge from these guidelines.
