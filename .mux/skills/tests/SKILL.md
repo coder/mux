@@ -103,3 +103,10 @@ Exceptions include:
 - Building a large history to test otherwise expensive operations (e.g. long-context handling)
 - Testing logic where an observable side-effect is a part of the API contract, e.g. createProject creating
   a project directory if it doesn't already exist.
+
+## Exceptions
+
+In some cases due to infrastructure or performance constraints we may opt to diverge from these guidelines.
+
+In such cases, ensure the test code (or production code which lacks tests) is well commented with the rationale
+behind the exception.
