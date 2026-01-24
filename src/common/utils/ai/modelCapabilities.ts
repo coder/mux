@@ -54,12 +54,16 @@ function generateLookupKeys(modelString: string): string[] {
 }
 
 function extractModelCapabilities(data: RawModelCapabilitiesData): ModelCapabilities {
+  const maxPdfSizeMb = typeof data.max_pdf_size_mb === "number" ? data.max_pdf_size_mb : undefined;
+
   return {
-    supportsPdfInput: data.supports_pdf_input === true,
+    // Some providers omit supports_pdf_input but still include a max_pdf_size_mb field.
+    // Treat maxPdfSizeMb as a strong signal that PDF input is supported.
+    supportsPdfInput: data.supports_pdf_input === true || maxPdfSizeMb !== undefined,
     supportsVision: data.supports_vision === true,
     supportsAudioInput: data.supports_audio_input === true,
     supportsVideoInput: data.supports_video_input === true,
-    maxPdfSizeMb: typeof data.max_pdf_size_mb === "number" ? data.max_pdf_size_mb : undefined,
+    maxPdfSizeMb,
   };
 }
 
