@@ -12,6 +12,7 @@ import { preloadTestModules, type TestEnvironment } from "../ipc/setup";
 
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
+import { fireEvent } from "@testing-library/react";
 import { createAppHarness } from "./harness";
 
 interface ServiceContainerPrivates {
@@ -203,6 +204,161 @@ describe("Compaction UI (mock AI router)", () => {
     } finally {
       unregister?.();
       await app.dispose();
+    }
+  }, 60_000);
+});
+
+describe("Compaction notification behavior (mock AI router)", () => {
+  const notifications: Array<{ title: string; body?: string }> = [];
+  let originalWindowNotification: unknown;
+
+  beforeAll(async () => {
+    await preloadTestModules();
+    originalWindowNotification = (globalThis as { Notification?: unknown }).Notification;
+  });
+
+  beforeEach(() => {
+    notifications.length = 0;
+
+    // Mock Notification constructor - must be on globalThis since happy-dom
+    // aliases window = globalThis in our test setup
+    class MockNotification {
+      onclick: (() => void) | null = null;
+      constructor(title: string, options?: { body?: string }) {
+        notifications.push({ title, body: options?.body });
+      }
+      close() {}
+    }
+
+    const mockWithPermission = Object.assign(MockNotification, {
+      permission: "granted",
+      requestPermission: () => Promise.resolve("granted" as NotificationPermission),
+    });
+    (globalThis as { Notification: unknown }).Notification = mockWithPermission;
+  });
+
+  afterEach(() => {
+    if (originalWindowNotification !== undefined) {
+      (globalThis as { Notification?: unknown }).Notification = originalWindowNotification;
+    } else {
+      delete (globalThis as { Notification?: unknown }).Notification;
+    }
+  });
+
+  /** Set up harness with notification mocks, send seed message, return cleanup + count */
+  async function setupNotificationTest(seedMessage: string) {
+    const app = await createAppHarness({ branchPrefix: "compact-notify" });
+
+    // Mock document.hasFocus AFTER harness creates the DOM window
+    // Happy-dom's hasFocus returns !!this.activeElement - clear it to return false
+    const originalActiveElement = Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(globalThis.document),
+      "activeElement"
+    );
+    Object.defineProperty(globalThis.document, "activeElement", {
+      get: () => null,
+      configurable: true,
+    });
+
+    // Set Notification on the happy-dom window
+    (window as { Notification: unknown }).Notification = (
+      globalThis as { Notification: unknown }
+    ).Notification;
+
+    // Enable notifications via UI (click bell button in workspace header)
+    const notifyButton = app.view.container.querySelector(
+      '[data-testid="notify-on-response-button"]'
+    );
+    if (!notifyButton) throw new Error("Notify button not found");
+    fireEvent.click(notifyButton);
+
+    // Send seed message and wait for notification
+    await app.chat.send(seedMessage);
+    await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
+    await waitFor(() => expect(notifications.length).toBeGreaterThanOrEqual(1), { timeout: 5_000 });
+
+    const countAfterSeed = notifications.length;
+    expect(countAfterSeed).toBe(1);
+
+    const cleanup = async () => {
+      if (originalActiveElement) {
+        Object.defineProperty(globalThis.document, "activeElement", originalActiveElement);
+      }
+      await app.dispose();
+    };
+
+    return { app, countAfterSeed, cleanup };
+  }
+
+  /** Wait for new notifications after seed, return count and last notification */
+  async function waitForNewNotifications(countAfterSeed: number) {
+    await waitFor(() => expect(notifications.length).toBeGreaterThanOrEqual(countAfterSeed + 1), {
+      timeout: 5_000,
+    });
+    return {
+      newCount: notifications.length - countAfterSeed,
+      last: notifications[notifications.length - 1],
+    };
+  }
+
+  test("compaction with continue message should fire only ONE notification (for continue response)", async () => {
+    const { app, countAfterSeed, cleanup } = await setupNotificationTest(
+      "Seed for notification test"
+    );
+    const continueText = "Continue after compaction";
+
+    try {
+      // Send /compact with continue - should NOT fire for compaction, only for continue
+      await app.chat.send(`/compact -t 500\n${continueText}`);
+      await app.chat.expectTranscriptContains("Mock compaction summary:");
+      await app.chat.expectTranscriptContains(`Mock response: ${continueText}`);
+
+      const { newCount, last } = await waitForNewNotifications(countAfterSeed);
+      expect(newCount).toBe(1);
+      expect(last.body).toContain(`Mock response: ${continueText}`);
+      expect(last.body).not.toBe("Compaction complete");
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  test("compaction without continue message should fire notification with 'Compaction complete'", async () => {
+    const { app, countAfterSeed, cleanup } = await setupNotificationTest(
+      "Seed for standalone compaction"
+    );
+
+    try {
+      await app.chat.send("/compact -t 500");
+      await app.chat.expectTranscriptContains("Mock compaction summary:");
+
+      const { newCount, last } = await waitForNewNotifications(countAfterSeed);
+      expect(newCount).toBe(1);
+      expect(last.body).toBe("Compaction complete");
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  // Note: Force compaction interrupts an active stream. In the real backend, this would send
+  // a stream-abort event and the interrupted stream would NOT trigger a notification.
+  // However, the mock AI completes streams normally (no mid-stream abort simulation),
+  // so the "interrupted" stream's completion still fires a notification.
+  test.skip("force compaction with auto-continue should fire only ONE notification", async () => {
+    const { app, countAfterSeed, cleanup } = await setupNotificationTest(
+      "Seed for force compaction"
+    );
+
+    try {
+      // Force compaction auto-generates a "Continue" message
+      await app.chat.send("[force] Trigger force compaction");
+      await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
+      await app.chat.expectTranscriptContains("Mock response: Continue", 60_000);
+
+      const { newCount, last } = await waitForNewNotifications(countAfterSeed);
+      expect(newCount).toBe(1);
+      expect(last.body).toBe("Mock response: Continue");
+    } finally {
+      await cleanup();
     }
   }, 60_000);
 });
