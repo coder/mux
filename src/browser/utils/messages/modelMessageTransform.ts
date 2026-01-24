@@ -212,7 +212,10 @@ export function injectAgentTransition(
   }
 
   // When transitioning from a plan-like agent to an exec-like agent, include the plan for context
-  if (planContent) {
+  // Only include plan content when moving FROM plan TO non-plan (not the other way)
+  const transitioningFromPlan = lastAgentId === "plan";
+  const transitioningToPlan = currentAgentId === "plan";
+  if (planContent && transitioningFromPlan && !transitioningToPlan) {
     const planFilePathText = planFilePath ? `Plan file path: ${planFilePath}\n\n` : "";
     transitionText += `
 

@@ -419,7 +419,12 @@ export const SendMessageOptionsSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
   maxOutputTokens: z.number().optional(),
-  agentId: z.string().optional().catch(undefined),
+  agentId: AgentIdSchema.meta({
+    description: "Agent id for this request",
+  }),
+  mode: AgentModeSchema.optional().catch(undefined).meta({
+    description: "Legacy base mode (plan/exec/compact) for backend fallback",
+  }),
   providerOptions: MuxProviderOptionsSchema.optional(),
   muxMetadata: z.any().optional(), // Black box
   experiments: ExperimentsSchema.optional(),

@@ -106,6 +106,7 @@ describe("WorkspaceService rename lock", () => {
 
     const result = await workspaceService.sendMessage(workspaceId, "test message", {
       model: "test-model",
+      agentId: "exec",
     });
 
     expect(result.success).toBe(false);
@@ -126,6 +127,7 @@ describe("WorkspaceService rename lock", () => {
 
     const result = await workspaceService.resumeStream(workspaceId, {
       model: "test-model",
+      agentId: "exec",
     });
 
     expect(result.success).toBe(false);

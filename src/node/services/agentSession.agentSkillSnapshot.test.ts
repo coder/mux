@@ -113,6 +113,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     const result = await session.sendMessage("do X", {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
       muxMetadata: {
         type: "agent-skill",
         rawCommand: "/test-skill do X",
@@ -225,6 +226,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     const result = await session.sendMessage("do X", {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
       disableWorkspaceAgents: true,
       muxMetadata: {
         type: "agent-skill",
@@ -325,6 +327,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     const baseOptions = {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
       muxMetadata: {
         type: "agent-skill",
         rawCommand: "/test-skill do X",
@@ -445,6 +448,7 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
 
     const result = await session.sendMessage("edited", {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
       editMessageId: userMessageId,
     });
 

@@ -27,6 +27,7 @@ describe("MessageQueue", () => {
 
       const options: SendMessageOptions = {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       };
 
@@ -46,6 +47,7 @@ describe("MessageQueue", () => {
 
       const options: SendMessageOptions = {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       };
 
@@ -63,6 +65,7 @@ describe("MessageQueue", () => {
 
       const options: SendMessageOptions = {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       };
 
@@ -84,6 +87,7 @@ describe("MessageQueue", () => {
 
       const options: SendMessageOptions = {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       };
 
@@ -105,6 +109,7 @@ describe("MessageQueue", () => {
 
       const options: SendMessageOptions = {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       };
 
@@ -123,7 +128,7 @@ describe("MessageQueue", () => {
     });
 
     it("should return false for normal messages", () => {
-      queue.add("Regular message", { model: "gpt-4" });
+      queue.add("Regular message", { model: "gpt-4", agentId: "exec" });
       expect(queue.hasCompactionRequest()).toBe(false);
     });
 
@@ -136,6 +141,7 @@ describe("MessageQueue", () => {
 
       queue.add("Summarize...", {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       });
 
@@ -151,6 +157,7 @@ describe("MessageQueue", () => {
 
       queue.add("Summarize...", {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       });
       queue.clear();
@@ -164,12 +171,12 @@ describe("MessageQueue", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       const addedFirst = queue.addOnce(
         "Follow up",
-        { model: "gpt-4", imageParts: [image] },
+        { model: "gpt-4", agentId: "exec", imageParts: [image] },
         "follow-up"
       );
       const addedSecond = queue.addOnce(
         "Follow up",
-        { model: "gpt-4", imageParts: [image] },
+        { model: "gpt-4", agentId: "exec", imageParts: [image] },
         "follow-up"
       );
 
@@ -199,6 +206,7 @@ describe("MessageQueue", () => {
 
       queue.add("Summarize...", {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       });
       queue.add("And then do this follow-up task");
@@ -231,6 +239,7 @@ describe("MessageQueue", () => {
 
       const options: SendMessageOptions = {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       };
 
@@ -249,6 +258,7 @@ describe("MessageQueue", () => {
 
       queue.add("Use skill init", {
         model: "claude-3-5-sonnet-20241022",
+        agentId: "exec",
         muxMetadata: metadata,
       });
 
@@ -260,7 +270,7 @@ describe("MessageQueue", () => {
     });
 
     it("should produce combined message for API call", () => {
-      queue.add("First message", { model: "gpt-4" });
+      queue.add("First message", { model: "gpt-4", agentId: "exec" });
       queue.add("Second message");
 
       const { message, options } = queue.produceMessage();
@@ -275,9 +285,9 @@ describe("MessageQueue", () => {
       const image1 = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       const image2 = { url: "data:image/jpeg;base64,def", mediaType: "image/jpeg" };
 
-      queue.add("Message with image", { model: "gpt-4", imageParts: [image1] });
+      queue.add("Message with image", { model: "gpt-4", agentId: "exec", imageParts: [image1] });
       queue.add("Follow-up without image");
-      queue.add("Another with image", { model: "gpt-4", imageParts: [image2] });
+      queue.add("Another with image", { model: "gpt-4", agentId: "exec", imageParts: [image2] });
 
       expect(queue.getMessages()).toEqual([
         "Message with image",
@@ -306,8 +316,12 @@ describe("MessageQueue", () => {
         mediaType: "image/gif",
       };
 
-      queue.add("First message", { model: "gpt-4", imageParts: [image1] });
-      queue.add("Second message", { model: "gpt-4", imageParts: [image2, image3] });
+      queue.add("First message", { model: "gpt-4", agentId: "exec", imageParts: [image1] });
+      queue.add("Second message", {
+        model: "gpt-4",
+        agentId: "exec",
+        imageParts: [image2, image3],
+      });
 
       const images = queue.getImageParts();
       expect(images).toEqual([image1, image2, image3]);
@@ -324,7 +338,7 @@ describe("MessageQueue", () => {
         url: "data:image/png;base64,abc",
         mediaType: "image/png",
       };
-      queue.add("Message", { model: "gpt-4", imageParts: [image] });
+      queue.add("Message", { model: "gpt-4", agentId: "exec", imageParts: [image] });
 
       const images1 = queue.getImageParts();
       const images2 = queue.getImageParts();
@@ -338,7 +352,7 @@ describe("MessageQueue", () => {
         url: "data:image/png;base64,abc",
         mediaType: "image/png",
       };
-      queue.add("Message", { model: "gpt-4", imageParts: [image] });
+      queue.add("Message", { model: "gpt-4", agentId: "exec", imageParts: [image] });
 
       expect(queue.getImageParts()).toHaveLength(1);
 
@@ -350,7 +364,7 @@ describe("MessageQueue", () => {
   describe("image-only messages", () => {
     it("should accept image-only messages (empty text with images)", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
 
       expect(queue.getMessages()).toEqual([]);
       expect(queue.getImageParts()).toEqual([image]);
@@ -358,7 +372,7 @@ describe("MessageQueue", () => {
     });
 
     it("should reject messages with empty text and no images", () => {
-      queue.add("", { model: "gpt-4" });
+      queue.add("", { model: "gpt-4", agentId: "exec" });
 
       expect(queue.isEmpty()).toBe(true);
       expect(queue.getMessages()).toEqual([]);
@@ -369,8 +383,8 @@ describe("MessageQueue", () => {
       const image1 = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       const image2 = { url: "data:image/jpeg;base64,def", mediaType: "image/jpeg" };
 
-      queue.add("Text message", { model: "gpt-4", imageParts: [image1] });
-      queue.add("", { model: "gpt-4", imageParts: [image2] }); // Image-only
+      queue.add("Text message", { model: "gpt-4", agentId: "exec", imageParts: [image1] });
+      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image2] }); // Image-only
 
       expect(queue.getMessages()).toEqual(["Text message"]);
       expect(queue.getImageParts()).toEqual([image1, image2]);
@@ -379,14 +393,14 @@ describe("MessageQueue", () => {
 
     it("should consider queue non-empty when only images present", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
 
       expect(queue.isEmpty()).toBe(false);
     });
 
     it("should produce correct message for image-only queue", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
 
       const { message, options } = queue.produceMessage();
 
@@ -397,7 +411,7 @@ describe("MessageQueue", () => {
 
     it("should return empty string for getDisplayText with image-only", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
 
       expect(queue.getDisplayText()).toBe("");
     });

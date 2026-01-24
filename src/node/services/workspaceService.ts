@@ -61,6 +61,7 @@ import {
   isDockerRuntime,
 } from "@/common/types/runtime";
 import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
@@ -1236,6 +1237,37 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
+  private normalizeSendMessageAgentId(
+    options: SendMessageOptions | undefined
+  ): SendMessageOptions | undefined {
+    if (!options) {
+      return options;
+    }
+
+    const rawAgentId = options.agentId;
+    const normalizedAgentId =
+      typeof rawAgentId === "string" && rawAgentId.trim().length > 0
+        ? rawAgentId.trim().toLowerCase()
+        : null;
+    if (normalizedAgentId) {
+      return options;
+    }
+
+    const legacyMode =
+      typeof options === "object" && options !== null && "mode" in options
+        ? (options as { mode?: string }).mode
+        : undefined;
+    const legacyAgentId =
+      legacyMode === "plan" || legacyMode === "exec" || legacyMode === "compact"
+        ? legacyMode
+        : null;
+
+    return {
+      ...options,
+      agentId: legacyAgentId ?? WORKSPACE_DEFAULTS.agentId,
+    };
+  }
+
   private extractWorkspaceAISettingsFromSendOptions(
     options: SendMessageOptions | undefined
   ): WorkspaceAISettings | null {
@@ -1417,6 +1449,9 @@ export class WorkspaceService extends EventEmitter {
       plan: aiSettings,
       exec: aiSettings,
     };
+    // Also update the deprecated aiSettings field for backward compatibility with
+    // tests and any code that reads workspace.aiSettings directly.
+    workspaceEntryWithFallback.aiSettings = aiSettings;
     await this.config.saveConfig(config);
 
     if (options?.emitMetadata !== false) {
@@ -1688,7 +1723,7 @@ export class WorkspaceService extends EventEmitter {
       | (SendMessageOptions & {
           imageParts?: ImagePart[];
         })
-      | undefined = { model: defaultModel },
+      | undefined = { model: defaultModel, agentId: WORKSPACE_DEFAULTS.agentId },
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
@@ -1812,18 +1847,20 @@ export class WorkspaceService extends EventEmitter {
         Object.keys(resolvedExperiments).length === 0
           ? options
           : {
-              ...(options ?? { model: defaultModel }),
+              ...(options ?? { model: defaultModel, agentId: WORKSPACE_DEFAULTS.agentId }),
               experiments: {
                 ...(options?.experiments ?? {}),
                 ...resolvedExperiments,
               },
             };
 
+      const normalizedOptions = this.normalizeSendMessageAgentId(resolvedOptions);
+
       // Persist last-used model + thinking level for cross-device consistency.
-      await this.maybePersistAISettingsFromOptions(workspaceId, resolvedOptions, "send");
+      await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "send");
 
       const shouldQueue =
-        !resolvedOptions?.editMessageId &&
+        !normalizedOptions?.editMessageId &&
         (this.aiService.isStreaming(workspaceId) || session.isStreamStarting());
 
       if (shouldQueue) {
@@ -1844,11 +1881,11 @@ export class WorkspaceService extends EventEmitter {
           }
         }
 
-        session.queueMessage(message, resolvedOptions);
+        session.queueMessage(message, normalizedOptions);
         return Ok(undefined);
       }
 
-      const result = await session.sendMessage(message, resolvedOptions);
+      const result = await session.sendMessage(message, normalizedOptions);
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
           workspaceId,
@@ -1879,7 +1916,10 @@ export class WorkspaceService extends EventEmitter {
 
   async resumeStream(
     workspaceId: string,
-    options: SendMessageOptions | undefined = { model: "claude-3-5-sonnet-latest" },
+    options: SendMessageOptions | undefined = {
+      model: "claude-3-5-sonnet-latest",
+      agentId: WORKSPACE_DEFAULTS.agentId,
+    },
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     try {
@@ -1937,10 +1977,14 @@ export class WorkspaceService extends EventEmitter {
 
       const session = this.getOrCreateSession(workspaceId);
 
-      // Persist last-used model + thinking level for cross-device consistency.
-      await this.maybePersistAISettingsFromOptions(workspaceId, options, "resume");
+      const normalizedOptions =
+        this.normalizeSendMessageAgentId(options) ??
+        ({ model: defaultModel, agentId: WORKSPACE_DEFAULTS.agentId } as const);
 
-      const result = await session.resumeStream(options);
+      // Persist last-used model + thinking level for cross-device consistency.
+      await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "resume");
+
+      const result = await session.resumeStream(normalizedOptions);
       if (!result.success) {
         log.error("resumeStream handler: session returned error", {
           workspaceId,

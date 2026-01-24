@@ -549,6 +549,7 @@ exit 1
               message: "Read the README.md file and tell me what it says.",
               options: {
                 model: "anthropic:claude-haiku-4-5",
+                agentId: "exec",
               },
             });
 
@@ -579,6 +580,7 @@ exit 1
               message: "What is 2 + 2?",
               options: {
                 model: "anthropic:claude-haiku-4-5",
+                agentId: "exec",
               },
             });
 

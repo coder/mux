@@ -32,6 +32,7 @@ import type { OrpcTestClient } from "./orpcTestClient";
 import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 import type { WorkspaceSendMessageOutput } from "@/common/orpc/schemas";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
 
@@ -92,7 +93,11 @@ export function modelString(provider: string, model: string): string {
 /**
  * Send a message via IPC
  */
-type SendMessageWithModelOptions = Omit<SendMessageOptions, "model"> & {
+type SendMessageOptionsWithAgentFallback = Omit<SendMessageOptions, "agentId"> & {
+  agentId?: SendMessageOptions["agentId"];
+};
+
+type SendMessageWithModelOptions = Omit<SendMessageOptionsWithAgentFallback, "model"> & {
   imageParts?: Array<{ url: string; mediaType: string }>;
 };
 
@@ -103,13 +108,21 @@ export async function sendMessage(
   source: OrpcSource,
   workspaceId: string,
   message: string,
-  options?: SendMessageOptions & { imageParts?: ImagePart[] }
+  options?: SendMessageOptionsWithAgentFallback & { imageParts?: ImagePart[] }
 ): Promise<Result<void, SendMessageError>> {
   const client = resolveOrpcClient(source);
 
+  const resolvedOptions: (SendMessageOptions & { imageParts?: ImagePart[] }) | undefined = options
+    ? { ...options, agentId: options.agentId ?? WORKSPACE_DEFAULTS.agentId }
+    : undefined;
+
   let result: WorkspaceSendMessageOutput;
   try {
-    result = await client.workspace.sendMessage({ workspaceId, message, options });
+    result = await client.workspace.sendMessage({
+      workspaceId,
+      message,
+      options: resolvedOptions,
+    });
   } catch (error) {
     // Normalize ORPC input validation or transport errors into Result shape expected by tests.
     let raw: string = "";

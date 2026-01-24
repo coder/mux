@@ -15,6 +15,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceChatMessage, SendMessageOptions, ImagePart } from "@/common/orpc/types";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import {
@@ -929,6 +930,7 @@ export class AgentSession {
 
     return {
       model: modelString,
+      agentId: WORKSPACE_DEFAULTS.agentId,
       providerOptions: {
         anthropic: {
           use1MContext: true,

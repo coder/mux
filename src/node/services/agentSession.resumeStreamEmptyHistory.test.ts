@@ -52,7 +52,10 @@ describe("AgentSession.resumeStream", () => {
       backgroundProcessManager,
     });
 
-    const result = await session.resumeStream({ model: "anthropic:claude-sonnet-4-5" });
+    const result = await session.resumeStream({
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    });
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(result.error.type).toBe("unknown");

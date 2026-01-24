@@ -111,6 +111,8 @@ export const MuxMessageSchema = z.object({
       compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
       toolPolicy: z.any().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
+      /** @deprecated Legacy base mode derived from agent definition. */
+      mode: z.enum(["plan", "exec", "compact"]).optional(),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
 

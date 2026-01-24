@@ -7,7 +7,7 @@ import { getSendOptionsFromStorage } from "mux/browser/utils/messages/sendOption
 
 import { matchesKeybind, formatKeybind, KEYBINDS } from "mux/browser/utils/ui/keybinds";
 import { useAPI } from "mux/browser/contexts/API";
-import { ModeProvider, useMode } from "mux/browser/contexts/ModeContext";
+import { AgentProvider, useAgent } from "mux/browser/contexts/AgentContext";
 import { ThinkingProvider } from "mux/browser/contexts/ThinkingContext";
 import { useThinkingLevel } from "mux/browser/hooks/useThinkingLevel";
 import { usePersistedState } from "mux/browser/hooks/usePersistedState";
@@ -22,7 +22,7 @@ import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider";
 import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "mux/browser/components/ui/tooltip";
 
-import type { UIMode } from "mux/common/types/mode";
+import type { AgentId } from "mux/common/orpc/schemas";
 
 import { calculateTokenMeterData } from "mux/common/utils/tokens/tokenMeterUtils";
 import { createDisplayUsage } from "mux/common/utils/tokens/displayUsage";
@@ -34,29 +34,29 @@ import { VIM_ENABLED_KEY, getInputKey, getModelKey } from "mux/common/constants/
 const SEND_MESSAGE_TIMEOUT_MS = 30_000;
 
 /**
- * Simple mode toggle for VS Code extension (no agent discovery).
- * Just toggles between Exec and Plan modes.
+ * Simple agent toggle for VS Code extension (no agent discovery).
+ * Just toggles between Exec and Plan agents.
  */
-function SimpleModeToggle(props: { mode: UIMode; onChange: (mode: UIMode) => void }) {
+function SimpleAgentToggle(props: { agentId: AgentId; onChange: (agentId: AgentId) => void }) {
+  const isPlan = props.agentId === "plan";
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           type="button"
-          onClick={() => props.onChange(props.mode === "exec" ? "plan" : "exec")}
+          onClick={() => props.onChange(isPlan ? "exec" : "plan")}
           className={cn(
             "rounded-sm px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
-            props.mode === "exec"
-              ? "bg-exec-mode text-white hover:bg-exec-mode-hover"
-              : "bg-plan-mode text-white hover:bg-plan-mode-hover"
+            isPlan
+              ? "bg-plan-mode text-white hover:bg-plan-mode-hover"
+              : "bg-exec-mode text-white hover:bg-exec-mode-hover"
           )}
         >
-          {props.mode === "exec" ? "Exec" : "Plan"}
+          {isPlan ? "Plan" : "Exec"}
         </button>
       </TooltipTrigger>
       <TooltipContent align="center">
-        Click to switch to {props.mode === "exec" ? "Plan" : "Exec"} mode (
-        {formatKeybind(KEYBINDS.TOGGLE_MODE)})
+        Click to switch to {isPlan ? "Exec" : "Plan"} agent ({formatKeybind(KEYBINDS.TOGGLE_MODE)})
       </TooltipContent>
     </Tooltip>
   );
@@ -84,7 +84,8 @@ function getLastContextUsage(
       continue;
     }
 
-    const providerMetadata = msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;
+    const providerMetadata =
+      msg.metadata?.contextProviderMetadata ?? msg.metadata?.providerMetadata;
     const model = msg.metadata?.model ?? fallbackModel ?? "unknown";
 
     return createDisplayUsage(rawUsage, model, providerMetadata);
@@ -104,7 +105,7 @@ function ChatComposerInner(props: {
   const apiState = useAPI();
   const api = apiState.api;
 
-  const [mode, setMode] = useMode();
+  const { agentId, setAgentId } = useAgent();
   const [thinkingLevel] = useThinkingLevel();
 
   const { options: providerOptions } = useProviderOptions();
@@ -130,7 +131,6 @@ function ChatComposerInner(props: {
 
   const inputKey = getInputKey(props.workspaceId);
   const [input, setInput] = usePersistedState<string>(inputKey, "", { listener: true });
-
 
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
     listener: true,
@@ -207,7 +207,6 @@ function ChatComposerInner(props: {
         // Best-effort only.
       });
   };
-
 
   const cycleModels = customModels.length > 0 ? customModels : models;
 
@@ -296,7 +295,6 @@ function ChatComposerInner(props: {
     }
   };
 
-
   const placeholder = (() => {
     if (props.disabled) {
       const disabledReason = props.disabledReason;
@@ -306,17 +304,23 @@ function ChatComposerInner(props: {
     }
 
     if (isCompactingStream) {
-      const interruptKeybind = vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+      const interruptKeybind = vimEnabled
+        ? KEYBINDS.INTERRUPT_STREAM_VIM
+        : KEYBINDS.INTERRUPT_STREAM_NORMAL;
       return `Compacting... (${formatKeybind(interruptKeybind)} cancel | ${formatKeybind(KEYBINDS.SEND_MESSAGE)} to queue)`;
     }
 
     const hints: string[] = [];
     if (canInterruptStream) {
-      const interruptKeybind = vimEnabled ? KEYBINDS.INTERRUPT_STREAM_VIM : KEYBINDS.INTERRUPT_STREAM_NORMAL;
+      const interruptKeybind = vimEnabled
+        ? KEYBINDS.INTERRUPT_STREAM_VIM
+        : KEYBINDS.INTERRUPT_STREAM_NORMAL;
       hints.push(`${formatKeybind(interruptKeybind)} to interrupt`);
     }
 
-    hints.push(`${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterruptStream ? "queue" : "send"}`);
+    hints.push(
+      `${formatKeybind(KEYBINDS.SEND_MESSAGE)} to ${canInterruptStream ? "queue" : "send"}`
+    );
     hints.push(`Click model to choose, ${formatKeybind(KEYBINDS.CYCLE_MODEL)} to cycle`);
     hints.push(`/vim to toggle Vim mode (${vimEnabled ? "on" : "off"})`);
 
@@ -328,7 +332,6 @@ function ChatComposerInner(props: {
       <VimTextArea
         value={input}
         onChange={setInput}
-        mode={mode}
         placeholder={placeholder}
         disabled={props.disabled}
         onKeyDown={(e) => {
@@ -366,8 +369,11 @@ function ChatComposerInner(props: {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5">
-            <ContextUsageIndicatorButton data={contextUsageData} autoCompaction={autoCompactionSettings} />
-            <SimpleModeToggle mode={mode} onChange={setMode} />
+            <ContextUsageIndicatorButton
+              data={contextUsageData}
+              autoCompaction={autoCompactionSettings}
+            />
+            <SimpleAgentToggle agentId={agentId} onChange={setAgentId} />
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -378,7 +384,7 @@ function ChatComposerInner(props: {
                   aria-label="Send message"
                   className={cn(
                     "inline-flex items-center gap-1 rounded-sm border border-border-light px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
-                    mode === "plan"
+                    agentId === "plan"
                       ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
                       : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
                   )}
@@ -393,7 +399,6 @@ function ChatComposerInner(props: {
           </div>
         </div>
       </div>
-
     </div>
   );
 }
@@ -407,7 +412,7 @@ export function ChatComposer(props: {
   onNotice: (notice: { level: "info" | "error"; message: string }) => void;
 }): JSX.Element {
   return (
-    <ModeProvider workspaceId={props.workspaceId}>
+    <AgentProvider workspaceId={props.workspaceId}>
       <ThinkingProvider workspaceId={props.workspaceId}>
         <ChatComposerInner
           workspaceId={props.workspaceId}
@@ -418,6 +423,6 @@ export function ChatComposer(props: {
           onNotice={props.onNotice}
         />
       </ThinkingProvider>
-    </ModeProvider>
+    </AgentProvider>
   );
 }

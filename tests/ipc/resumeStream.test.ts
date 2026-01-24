@@ -83,7 +83,7 @@ describeIntegration("resumeStream", () => {
         // Resume the stream (no new user message)
         const resumeResult = await client.workspace.resumeStream({
           workspaceId,
-          options: { model: "anthropic:claude-sonnet-4-5" },
+          options: { model: "anthropic:claude-sonnet-4-5", agentId: "exec" },
         });
         expect(resumeResult.success).toBe(true);
 
@@ -166,7 +166,7 @@ describeIntegration("resumeStream", () => {
         const client = resolveOrpcClient(env);
         const resumeResult = await client.workspace.resumeStream({
           workspaceId,
-          options: { model: "anthropic:claude-sonnet-4-5" },
+          options: { model: "anthropic:claude-sonnet-4-5", agentId: "exec" },
         });
         expect(resumeResult.success).toBe(true);
 

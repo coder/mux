@@ -260,7 +260,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       const continueMessage = buildContinueFromSource(
         triggerUserMessage,
         sendMessageOptions.model,
-        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.mode
+        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.agentId
       );
 
       if (!continueMessage) {
@@ -319,7 +319,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       const continueMessage = buildContinueFromSource(
         triggerUserMessage,
         sendMessageOptions.model,
-        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.mode
+        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.agentId
       );
 
       if (!continueMessage) {
