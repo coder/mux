@@ -9,6 +9,10 @@ import "disposablestack/auto";
 assert.equal(typeof Symbol.dispose, "symbol");
 // Use fast approximate token counting in Jest to avoid 10s WASM cold starts
 // Individual tests can override with MUX_FORCE_REAL_TOKENIZER=1
+
+// Many renderer components gate test-only behavior on `import.meta.env.MODE === "test"`.
+// In Jest, `import.meta.env` is rewritten to `process.env` by our Babel plugin.
+process.env.MODE ??= "test";
 if (process.env.MUX_FORCE_REAL_TOKENIZER !== "1") {
   process.env.MUX_APPROX_TOKENIZER ??= "1";
 }

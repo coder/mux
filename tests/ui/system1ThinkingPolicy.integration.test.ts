@@ -3,7 +3,7 @@
  * supported by the selected System 1 model.
  */
 
-import { waitFor, within } from "@testing-library/react";
+import { fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
@@ -33,26 +33,34 @@ const GEMINI_FLASH_PREVIEW = "google:gemini-3-flash-preview";
  */
 describeIntegration("System 1 reasoning policy", () => {
   test("clamps and filters unsupported thinking levels for the selected model", async () => {
-    const harness = await createAppHarness({ branchPrefix: "system1" });
+    const harness = await createAppHarness({
+      branchPrefix: "system1",
+      beforeRender() {
+        updatePersistedState(getExperimentKey(EXPERIMENT_IDS.SYSTEM_1), true);
+        updatePersistedState(PREFERRED_SYSTEM_1_MODEL_KEY, GEMINI_FLASH_PREVIEW);
+        updatePersistedState(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, "xhigh");
+      },
+    });
 
     try {
-      updatePersistedState(getExperimentKey(EXPERIMENT_IDS.SYSTEM_1), true);
-      updatePersistedState(PREFERRED_SYSTEM_1_MODEL_KEY, GEMINI_FLASH_PREVIEW);
-      updatePersistedState(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, "xhigh");
-
-      const user = userEvent.setup();
+      const doc = harness.view.container.ownerDocument;
+      const user = userEvent.setup({ document: doc });
 
       const canvas = within(harness.view.container);
       const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10_000 });
-      await user.click(settingsButton);
+      settingsButton.click();
 
       const body = within(harness.view.container.ownerDocument.body);
-      const dialog = await body.findByRole("dialog");
+      const dialog = await body.findByRole("dialog", {}, { timeout: 10_000 });
       const dialogCanvas = within(dialog);
 
-      const system1TabButton = await dialogCanvas.findByRole("button", {
-        name: /system 1/i,
-      });
+      const system1TabButton = await dialogCanvas.findByRole(
+        "button",
+        {
+          name: /system 1/i,
+        },
+        { timeout: 10_000 }
+      );
       await user.click(system1TabButton);
 
       await dialogCanvas.findByText(/System 1 Reasoning/i);
@@ -72,8 +80,8 @@ describeIntegration("System 1 reasoning policy", () => {
         }
       });
 
-      // Open dropdown and assert options are filtered.
-      await user.click(reasoningSelect);
+      // Radix Select opens on keyboard interactions (ArrowDown/Enter) reliably in tests.
+      fireEvent.keyDown(reasoningSelect, { key: "ArrowDown" });
 
       await body.findByRole("option", { name: "high" });
 
