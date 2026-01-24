@@ -50,7 +50,8 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     disabled: startHereDisabled,
     modal: startHereModal,
   } = useStartHere(workspaceId, content, isCompacted, {
-    sourceAgentId: message.agentId,
+    // Preserve legacy plan/exec markers so Start Here keeps plan→exec handoff for old history.
+    sourceAgentId: message.agentId ?? message.mode,
   });
 
   // Copy to clipboard with feedback

@@ -361,6 +361,8 @@ export type DisplayedMessage =
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       model?: string;
       agentId?: string; // Agent id active when this message was sent (assistant messages only)
+      /** @deprecated Legacy base mode derived from agent definition. */
+      mode?: AgentMode;
       timestamp?: number;
       tokens?: number;
     }
