@@ -277,6 +277,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         uiSelectable: true,
         subagentRunnable: false,
         base: "plan",
+        uiColor: "var(--color-plan-mode)",
       },
       {
         id: "exec",
@@ -285,6 +286,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         description: "Implement changes in the repository",
         uiSelectable: true,
         subagentRunnable: true,
+        uiColor: "var(--color-exec-mode)",
       },
       {
         id: "compact",

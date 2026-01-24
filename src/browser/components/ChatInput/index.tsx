@@ -2495,11 +2495,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       onClick={() => void handleSend()}
                       disabled={!canSend}
                       aria-label="Send message"
+                      style={{ backgroundColor: focusBorderColor }}
                       className={cn(
-                        "inline-flex items-center gap-1 rounded-sm border border-border-light px-1.5 py-0.5 text-[11px] font-medium text-white transition-colors duration-200 disabled:opacity-50",
-                        mode === "plan"
-                          ? "bg-plan-mode hover:bg-plan-mode-hover disabled:hover:bg-plan-mode"
-                          : "bg-exec-mode hover:bg-exec-mode-hover disabled:hover:bg-exec-mode"
+                        "border-border-light inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
+                        currentAgent?.uiColor ? "text-white" : "text-text"
                       )}
                     >
                       <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
