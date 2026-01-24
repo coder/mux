@@ -679,11 +679,13 @@ function AppInner() {
     // Callback for "notify on response" feature - fires when any assistant response completes.
     // Only notify when isFinal=true (assistant done with all work, no more active streams).
     // finalText is extracted by the aggregator (text after tool calls).
+    // isCompaction is true when this was a compaction stream (for special notification text).
     const handleResponseComplete = (
       workspaceId: string,
       _messageId: string,
       isFinal: boolean,
-      finalText: string
+      finalText: string,
+      isCompaction: boolean
     ) => {
       // Only notify on final message (when assistant is done with all work)
       if (!isFinal) return;
@@ -700,11 +702,14 @@ function AppInner() {
       const metadata = workspaceMetadataRef.current.get(workspaceId);
       const title = metadata?.title ?? metadata?.name ?? "Response complete";
 
-      const body = finalText
-        ? finalText.length > 200
-          ? `${finalText.slice(0, 197)}…`
-          : finalText
-        : "Response complete";
+      // For compaction completions, use a specific message instead of the summary text
+      const body = isCompaction
+        ? "Compaction complete"
+        : finalText
+          ? finalText.length > 200
+            ? `${finalText.slice(0, 197)}…`
+            : finalText
+          : "Response complete";
 
       // Send browser notification
       if ("Notification" in window) {

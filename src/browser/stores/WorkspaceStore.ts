@@ -342,8 +342,15 @@ export class WorkspaceStore {
   // Global callback when a response completes (for "notify on response" feature)
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (for notification body)
+  // isCompaction is true when this was a compaction stream (for special notification text)
   private responseCompleteCallback:
-    | ((workspaceId: string, messageId: string, isFinal: boolean, finalText: string) => void)
+    | ((
+        workspaceId: string,
+        messageId: string,
+        isFinal: boolean,
+        finalText: string,
+        isCompaction: boolean
+      ) => void)
     | null = null;
 
   // Tracks when a file-modifying tool (file_edit_*, bash) last completed per workspace.
@@ -643,9 +650,16 @@ export class WorkspaceStore {
    * Set the callback for when a response completes (used for "notify on response" feature).
    * isFinal is true when no more active streams remain (assistant done with all work).
    * finalText is the text content after any tool calls (for notification body).
+   * isCompaction is true when this was a compaction stream (for special notification text).
    */
   setOnResponseComplete(
-    callback: (workspaceId: string, messageId: string, isFinal: boolean, finalText: string) => void
+    callback: (
+      workspaceId: string,
+      messageId: string,
+      isFinal: boolean,
+      finalText: string,
+      isCompaction: boolean
+    ) => void
   ): void {
     this.responseCompleteCallback = callback;
     // Update existing aggregators with the callback

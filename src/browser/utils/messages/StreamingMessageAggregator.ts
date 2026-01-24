@@ -292,11 +292,13 @@ export class StreamingMessageAggregator {
   // Optional callback when an assistant response completes (used for "notify on response" feature)
   // isFinal is true when no more active streams remain (assistant done with all work)
   // finalText is the text content after any tool calls (the final response to show in notification)
+  // isCompaction is true when this was a compaction stream (for special notification text)
   onResponseComplete?: (
     workspaceId: string,
     messageId: string,
     isFinal: boolean,
-    finalText: string
+    finalText: string,
+    isCompaction: boolean
   ) => void;
 
   constructor(createdAt: string, workspaceId?: string, unarchivedAt?: string) {
@@ -1233,6 +1235,9 @@ export class StreamingMessageAggregator {
         this.compactMessageParts(message);
       }
 
+      // Capture isCompacting before cleanup (cleanup removes the stream context)
+      const wasCompacting = activeStream.isCompacting;
+
       // Clean up stream-scoped state (active stream tracking, TODOs)
       this.cleanupStreamState(data.messageId);
 
@@ -1241,7 +1246,13 @@ export class StreamingMessageAggregator {
       if (this.workspaceId && this.onResponseComplete) {
         const isFinal = this.activeStreams.size === 0;
         const finalText = this.extractFinalResponseText(message);
-        this.onResponseComplete(this.workspaceId, data.messageId, isFinal, finalText);
+        this.onResponseComplete(
+          this.workspaceId,
+          data.messageId,
+          isFinal,
+          finalText,
+          wasCompacting
+        );
       }
     } else {
       // Reconnection case: user reconnected after stream completed
