@@ -438,16 +438,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
         className="font-primary w-[min(720px,92vw)] overflow-hidden rounded-lg border border-[var(--color-command-border)] bg-[var(--color-command-surface)] text-[var(--color-command-foreground)] shadow-[0_10px_40px_rgba(0,0,0,0.4)]"
         onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
         shouldFilter={shouldUseCmdkFilter}
-        filter={(value, search) => {
+        filter={(value, search, keywords) => {
+          // Build searchable text from value + keywords
+          const searchableText = keywords
+            ? `${value} ${keywords.join(" ")}`.toLowerCase()
+            : value.toLowerCase();
           // When using ">" prefix, filter using the text after ">"
           if (isCommandQuery && search.startsWith(">")) {
             const actualSearch = search.slice(1).trim().toLowerCase();
             if (!actualSearch) return 1;
-            if (value.toLowerCase().includes(actualSearch)) return 1;
+            if (searchableText.includes(actualSearch)) return 1;
             return 0;
           }
-          // Default cmdk filtering for other cases
-          if (value.toLowerCase().includes(search.toLowerCase())) return 1;
+          // Default filtering: match against value + keywords
+          if (searchableText.includes(search.toLowerCase())) return 1;
           return 0;
         }}
       >
@@ -492,47 +496,58 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
               }
               className="px-1.5 py-2"
             >
-              {group.items.map((item) => (
-                <Command.Item
-                  key={item.id}
-                  className="hover:bg-hover aria-selected:bg-hover mx-1 my-0.5 grid cursor-pointer grid-cols-[1fr_auto] items-center gap-2 rounded-md px-3 py-2 text-[13px] aria-selected:text-[var(--color-command-foreground)]"
-                  onSelect={() => {
-                    if ("prompt" in item && item.prompt) {
+              {group.items.map((item) => {
+                // Include subtitle in keywords for filtering if not already provided
+                const itemKeywords =
+                  "keywords" in item && item.keywords
+                    ? item.keywords
+                    : "subtitle" in item && item.subtitle
+                      ? [item.subtitle]
+                      : undefined;
+                return (
+                  <Command.Item
+                    key={item.id}
+                    value={item.title}
+                    keywords={itemKeywords}
+                    className="hover:bg-hover aria-selected:bg-hover mx-1 my-0.5 grid cursor-pointer grid-cols-[1fr_auto] items-center gap-2 rounded-md px-3 py-2 text-[13px] aria-selected:text-[var(--color-command-foreground)]"
+                    onSelect={() => {
+                      if ("prompt" in item && item.prompt) {
+                        addRecent(item.id);
+                        startPrompt(item);
+                        return;
+                      }
+
+                      if (currentField) {
+                        void item.run();
+                        return;
+                      }
+
                       addRecent(item.id);
-                      startPrompt(item);
-                      return;
-                    }
-
-                    if (currentField) {
-                      void item.run();
-                      return;
-                    }
-
-                    addRecent(item.id);
-                    close();
-                    setTimeout(() => {
-                      void item.run();
-                    }, 0);
-                  }}
-                >
-                  <div>
-                    {item.title}
-                    {"subtitle" in item && item.subtitle && (
-                      <>
-                        <br />
-                        <span className="text-xs text-[var(--color-command-subdued)]">
-                          {item.subtitle}
-                        </span>
-                      </>
+                      close();
+                      setTimeout(() => {
+                        void item.run();
+                      }, 0);
+                    }}
+                  >
+                    <div>
+                      {item.title}
+                      {"subtitle" in item && item.subtitle && (
+                        <>
+                          <br />
+                          <span className="text-xs text-[var(--color-command-subdued)]">
+                            {item.subtitle}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {"shortcutHint" in item && item.shortcutHint && (
+                      <span className="font-monospace text-[11px] text-[var(--color-command-subdued)]">
+                        {item.shortcutHint}
+                      </span>
                     )}
-                  </div>
-                  {"shortcutHint" in item && item.shortcutHint && (
-                    <span className="font-monospace text-[11px] text-[var(--color-command-subdued)]">
-                      {item.shortcutHint}
-                    </span>
-                  )}
-                </Command.Item>
-              ))}
+                  </Command.Item>
+                );
+              })}
             </Command.Group>
           ))}
           {!hasAnyItems && (

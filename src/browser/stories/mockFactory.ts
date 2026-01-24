@@ -44,6 +44,7 @@ export interface WorkspaceFixture {
   projectName: string;
   runtimeConfig?: RuntimeConfig;
   createdAt?: string;
+  title?: string;
 }
 
 /** Create a workspace with sensible defaults */
@@ -61,6 +62,7 @@ export function createWorkspace(
     runtimeConfig: opts.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
     // Default to current time so workspaces aren't filtered as "old" by age-based UI
     createdAt: opts.createdAt ?? new Date().toISOString(),
+    title: opts.title,
   };
 }
 

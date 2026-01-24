@@ -72,7 +72,8 @@ test("buildCoreSources includes create/switch workspace actions", () => {
   const actions = sources.flatMap((s) => s());
   const titles = actions.map((a) => a.title);
   expect(titles.some((t) => t.startsWith("Create New Workspace"))).toBe(true);
-  expect(titles.some((t) => t.includes("Switch to "))).toBe(true);
+  // Workspace switcher shows workspace name (or title) as primary label
+  expect(titles.some((t) => t.includes("feat-x") || t.includes("feat-y"))).toBe(true);
   expect(titles.includes("Right Sidebar: Split Horizontally")).toBe(true);
   expect(titles.includes("Right Sidebar: Split Vertically")).toBe(true);
   expect(titles.includes("Right Sidebar: Add Tool…")).toBe(true);
@@ -88,6 +89,50 @@ test("buildCoreSources adds thinking effort command", () => {
 
   expect(thinkingAction).toBeDefined();
   expect(thinkingAction?.subtitle).toContain("Medium");
+});
+
+test("workspace switch commands include keywords for filtering", () => {
+  const sources = mk();
+  const actions = sources.flatMap((s) => s());
+  const switchAction = actions.find((a) => a.id.startsWith("ws:switch:"));
+
+  expect(switchAction).toBeDefined();
+  expect(switchAction?.keywords).toBeDefined();
+  // Keywords should include name, projectName for matching
+  expect(switchAction?.keywords).toContain("feat-x");
+  expect(switchAction?.keywords).toContain("a"); // projectName from mk()
+});
+
+test("workspace switch with title shows title as primary label", () => {
+  const workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>([
+    [
+      "w-titled",
+      {
+        id: "w-titled",
+        name: "feature-branch",
+        projectPath: "/proj",
+        projectName: "my-project",
+        namedWorkspacePath: "/proj/feature-branch",
+        createdAt: "2024-01-01T00:00:00Z",
+        runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+        title: "Fix login button styling",
+      },
+    ],
+  ]);
+  const sources = mk({ workspaceMetadata });
+  const actions = sources.flatMap((s) => s());
+  const switchAction = actions.find((a) => a.id === "ws:switch:w-titled");
+
+  expect(switchAction).toBeDefined();
+  // Title should be primary label
+  expect(switchAction?.title).toContain("Fix login button styling");
+  // Subtitle should include name and project
+  expect(switchAction?.subtitle).toContain("feature-branch");
+  expect(switchAction?.subtitle).toContain("my-project");
+  // Keywords should include both title and name for filtering
+  expect(switchAction?.keywords).toContain("feature-branch");
+  expect(switchAction?.keywords).toContain("my-project");
+  expect(switchAction?.keywords).toContain("Fix login button styling");
 });
 
 test("thinking effort command submits selected level", async () => {

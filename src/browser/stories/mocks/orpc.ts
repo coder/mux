@@ -489,6 +489,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         return Promise.resolve(agentPackage);
       },
     },
+    agentSkills: {
+      list: () => Promise.resolve([]),
+      get: () =>
+        Promise.resolve({
+          scope: "built-in" as const,
+          directoryName: "mock-skill",
+          frontmatter: { name: "mock-skill", description: "Mock skill" },
+          body: "",
+        }),
+    },
     providers: {
       list: () => Promise.resolve(providersList),
       getConfig: () => Promise.resolve(providersConfig),

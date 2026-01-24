@@ -176,10 +176,14 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     for (const meta of p.workspaceMetadata.values()) {
       const isCurrent = selected?.workspaceId === meta.id;
       const isStreaming = p.streamingModels?.has(meta.id) ?? false;
+      // Title is primary (if set), name is secondary identifier
+      const primaryLabel = meta.title ?? meta.name;
+      const secondaryParts = [meta.name, meta.projectName];
+      if (isStreaming) secondaryParts.push("streaming");
       list.push({
         id: CommandIds.workspaceSwitch(meta.id),
-        title: `${isCurrent ? "• " : ""}Switch to ${meta.name}`,
-        subtitle: `${meta.projectName}${isStreaming ? " • streaming" : ""}`,
+        title: `${isCurrent ? "• " : ""}${primaryLabel}`,
+        subtitle: secondaryParts.join(" · "),
         section: section.workspaces,
         keywords: [meta.name, meta.projectName, meta.namedWorkspacePath, meta.title].filter(
           (k): k is string => !!k
