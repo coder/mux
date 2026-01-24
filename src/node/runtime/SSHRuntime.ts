@@ -1202,6 +1202,14 @@ export class SSHRuntime extends RemoteRuntime {
         }
       );
       if (copyResult.exitCode !== 0) {
+        try {
+          await execBuffered(this, `rm -rf ${newWorkspacePathArg}`, {
+            cwd: "/tmp",
+            timeout: 30,
+          });
+        } catch {
+          // Best-effort cleanup of partially copied workspace.
+        }
         return {
           success: false,
           error: `Failed to copy workspace: ${copyResult.stderr || copyResult.stdout}`,

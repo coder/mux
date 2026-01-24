@@ -1697,6 +1697,17 @@ export class WorkspaceService extends EventEmitter {
         forkResult
       );
 
+      if (forkResult.sourceRuntimeConfig) {
+        const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
+        const updatedMetadata = allMetadataUpdated.find((m) => m.id === sourceWorkspaceId) ?? null;
+        const sourceSession = this.sessions.get(sourceWorkspaceId);
+        if (sourceSession) {
+          sourceSession.emitMetadata(updatedMetadata);
+        } else {
+          this.emit("metadata", { workspaceId: sourceWorkspaceId, metadata: updatedMetadata });
+        }
+      }
+
       // Compute namedWorkspacePath for frontend metadata
       const namedWorkspacePath = runtime.getWorkspacePath(foundProjectPath, newName);
 
