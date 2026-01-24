@@ -484,6 +484,139 @@ describe("SessionTimingService", () => {
     expect(file.session?.byModel[key]?.responseCount).toBe(1);
   });
 
+  it("ignores replayed events so timing stats aren't double-counted", async () => {
+    const telemetry = createMockTelemetryService();
+    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+    service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+    const workspaceId = "test-workspace";
+    const messageId = "m1";
+    const model = "openai:gpt-4o";
+    const startTime = 4_000_000;
+
+    // Normal completed stream
+    service.handleStreamStart({
+      type: "stream-start",
+      workspaceId,
+      messageId,
+      model,
+      historySequence: 1,
+      startTime,
+      mode: "exec",
+    });
+
+    service.handleStreamDelta({
+      type: "stream-delta",
+      workspaceId,
+      messageId,
+      delta: "hi",
+      tokens: 5,
+      timestamp: startTime + 1000,
+    });
+
+    service.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId,
+      messageId,
+      toolCallId: "t1",
+      toolName: "bash",
+      args: { cmd: "echo hi" },
+      tokens: 3,
+      timestamp: startTime + 2000,
+    });
+
+    service.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId,
+      messageId,
+      toolCallId: "t1",
+      toolName: "bash",
+      result: { ok: true },
+      timestamp: startTime + 3000,
+    });
+
+    service.handleStreamEnd({
+      type: "stream-end",
+      workspaceId,
+      messageId,
+      metadata: {
+        model,
+        duration: 5000,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 10,
+          totalTokens: 11,
+        },
+      },
+      parts: [],
+    });
+
+    await service.waitForIdle(workspaceId);
+
+    const timingFilePath = path.join(config.getSessionDir(workspaceId), "session-timing.json");
+    const beforeRaw = await fs.readFile(timingFilePath, "utf-8");
+    const beforeSnapshot = await service.getSnapshot(workspaceId);
+
+    expect(beforeSnapshot.active).toBeUndefined();
+    expect(beforeSnapshot.lastRequest?.messageId).toBe(messageId);
+
+    // Replay the same events (e.g., reconnect)
+    service.handleStreamStart({
+      type: "stream-start",
+      workspaceId,
+      messageId,
+      replay: true,
+      model,
+      historySequence: 1,
+      startTime,
+      mode: "exec",
+    });
+
+    service.handleStreamDelta({
+      type: "stream-delta",
+      workspaceId,
+      messageId,
+      replay: true,
+      delta: "hi",
+      tokens: 5,
+      timestamp: startTime + 1000,
+    });
+
+    service.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId,
+      messageId,
+      replay: true,
+      toolCallId: "t1",
+      toolName: "bash",
+      args: { cmd: "echo hi" },
+      tokens: 3,
+      timestamp: startTime + 2000,
+    });
+
+    service.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId,
+      messageId,
+      replay: true,
+      toolCallId: "t1",
+      toolName: "bash",
+      result: { ok: true },
+      timestamp: startTime + 3000,
+    });
+
+    await service.waitForIdle(workspaceId);
+
+    const afterRaw = await fs.readFile(timingFilePath, "utf-8");
+    const afterSnapshot = await service.getSnapshot(workspaceId);
+
+    expect(afterRaw).toBe(beforeRaw);
+
+    expect(afterSnapshot.active).toBeUndefined();
+    expect(afterSnapshot.lastRequest).toEqual(beforeSnapshot.lastRequest);
+    expect(afterSnapshot.session).toEqual(beforeSnapshot.session);
+  });
+
   it("does not double-count overlapping tool calls", async () => {
     const telemetry = createMockTelemetryService();
     const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);

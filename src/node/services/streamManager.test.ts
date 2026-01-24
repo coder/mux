@@ -838,10 +838,16 @@ describe("StreamManager - replayStream", () => {
     // Suppress error events from bubbling up as uncaught exceptions during tests
     streamManager.on("error", () => undefined);
 
+    let sawStreamStart = false;
+    streamManager.on("stream-start", (event: { replay?: boolean | undefined }) => {
+      sawStreamStart = true;
+      expect(event.replay).toBe(true);
+    });
     const workspaceId = "ws-replay-snapshot";
 
     const deltas: string[] = [];
-    streamManager.on("stream-delta", (event: { delta: string }) => {
+    streamManager.on("stream-delta", (event: { delta: string; replay?: boolean | undefined }) => {
+      expect(event.replay).toBe(true);
       deltas.push(event.delta);
     });
 
@@ -890,6 +896,7 @@ describe("StreamManager - replayStream", () => {
     };
 
     await streamManager.replayStream(workspaceId);
+    expect(sawStreamStart).toBe(true);
 
     // If replayStream iterates the live array, it would also emit "b".
     expect(deltas).toEqual(["a"]);

@@ -580,9 +580,11 @@ export class StreamManager extends EventEmitter {
   private async emitPartAsEvent(
     workspaceId: WorkspaceId,
     messageId: string,
-    part: CompletedMessagePart
+    part: CompletedMessagePart,
+    options?: { replay?: boolean }
   ): Promise<void> {
     const timestamp = part.timestamp ?? Date.now();
+    const isReplay = options?.replay === true;
 
     if (part.type === "text") {
       const tokens = await this.tokenTracker.countTokens(part.text);
@@ -590,6 +592,7 @@ export class StreamManager extends EventEmitter {
         type: "stream-delta",
         workspaceId: workspaceId as string,
         messageId,
+        ...(isReplay ? { replay: true } : {}),
         delta: part.text,
         tokens,
         timestamp,
@@ -600,6 +603,7 @@ export class StreamManager extends EventEmitter {
         type: "reasoning-delta",
         workspaceId: workspaceId as string,
         messageId,
+        ...(isReplay ? { replay: true } : {}),
         delta: part.text,
         tokens,
         timestamp,
@@ -612,6 +616,7 @@ export class StreamManager extends EventEmitter {
         type: "tool-call-start",
         workspaceId: workspaceId as string,
         messageId,
+        ...(isReplay ? { replay: true } : {}),
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         args: part.input,
@@ -625,6 +630,7 @@ export class StreamManager extends EventEmitter {
           type: "tool-call-end",
           workspaceId: workspaceId as string,
           messageId,
+          ...(isReplay ? { replay: true } : {}),
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           result: part.output,
@@ -1165,13 +1171,15 @@ export class StreamManager extends EventEmitter {
   private emitStreamStart(
     workspaceId: WorkspaceId,
     streamInfo: WorkspaceStreamInfo,
-    historySequence: number
+    historySequence: number,
+    options?: { replay?: boolean }
   ): void {
     const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
     this.emit("stream-start", {
       type: "stream-start",
       workspaceId: workspaceId as string,
       messageId: streamInfo.messageId,
+      ...(options?.replay && { replay: true }),
       model: streamInfo.model,
       historySequence,
       startTime: streamInfo.startTime,
@@ -2510,7 +2518,9 @@ export class StreamManager extends EventEmitter {
     await this.tokenTracker.setModel(streamInfo.model);
 
     // Emit stream-start event (include mode from initialMetadata if available)
-    this.emitStreamStart(typedWorkspaceId, streamInfo, streamInfo.historySequence);
+    this.emitStreamStart(typedWorkspaceId, streamInfo, streamInfo.historySequence, {
+      replay: true,
+    });
 
     // Replay accumulated parts as events using shared emission logic.
     // IMPORTANT: Snapshot the parts array up-front.
@@ -2524,7 +2534,7 @@ export class StreamManager extends EventEmitter {
     const replayParts = streamInfo.parts.slice();
     const replayMessageId = streamInfo.messageId;
     for (const part of replayParts) {
-      await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part);
+      await this.emitPartAsEvent(typedWorkspaceId, replayMessageId, part, { replay: true });
     }
   }
 

@@ -52,6 +52,10 @@ export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
   model: z.string(),
   historySequence: z.number().meta({
     description: "Backend assigns global message ordering",
@@ -68,6 +72,10 @@ export const StreamDeltaEventSchema = z.object({
   type: z.literal("stream-delta"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
   delta: z.string(),
   tokens: z.number().meta({
     description: "Token count for this delta",
@@ -169,6 +177,10 @@ export const ToolCallStartEventSchema = z.object({
   type: z.literal("tool-call-start"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
   toolCallId: z.string(),
   toolName: z.string(),
   args: z.unknown(),
@@ -181,6 +193,10 @@ export const ToolCallDeltaEventSchema = z.object({
   type: z.literal("tool-call-delta"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
   toolCallId: z.string(),
   toolName: z.string(),
   delta: z.unknown(),
@@ -210,6 +226,10 @@ export const ToolCallEndEventSchema = z.object({
   type: z.literal("tool-call-end"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
   toolCallId: z.string(),
   toolName: z.string(),
   result: z.unknown(),
@@ -221,6 +241,10 @@ export const ReasoningDeltaEventSchema = z.object({
   type: z.literal("reasoning-delta"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
   delta: z.string(),
   tokens: z.number().meta({ description: "Token count for this delta" }),
   timestamp: z.number().meta({ description: "When delta was received (Date.now())" }),
@@ -234,6 +258,10 @@ export const ReasoningEndEventSchema = z.object({
   type: z.literal("reasoning-end"),
   workspaceId: z.string(),
   messageId: z.string(),
+  replay: z
+    .boolean()
+    .optional()
+    .meta({ description: "True when this event is emitted during stream replay" }),
 });
 
 export const ErrorEventSchema = z.object({
