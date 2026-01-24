@@ -690,6 +690,10 @@ function AppInner() {
       // Only notify on final message (when assistant is done with all work)
       if (!isFinal) return;
 
+      // Skip notification if compaction completed but a continue message is queued.
+      // The continue will trigger its own stream and notify when that completes.
+      if (isCompaction && workspaceStore.hasQueuedMessage(workspaceId)) return;
+
       // Skip notification if workspace is focused (like Slack behavior)
       const isWorkspaceFocused =
         document.hasFocus() && selectedWorkspaceRef.current?.workspaceId === workspaceId;
