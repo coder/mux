@@ -129,6 +129,14 @@ type CreationRuntimeValidationError =
   | { mode: "ssh"; kind: "missingCoderTemplate" }
   | { mode: "ssh"; kind: "missingCoderPreset" };
 
+/**
+ * Format user message text for skill invocation.
+ * Makes it explicit to the model that a skill was invoked.
+ */
+function formatSkillInvocationText(skillName: string, userMessage: string): string {
+  return userMessage ? `Using skill ${skillName}: ${userMessage}` : `Use skill ${skillName}`;
+}
+
 function validateCreationRuntime(
   runtime: ParsedRuntime,
   coderPresetCount: number
@@ -1434,7 +1442,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             }
 
             if (skill) {
-              const userText = afterPrefix.trimStart() || `Run the "${skill.name}" skill.`;
+              const userText = formatSkillInvocationText(skill.name, afterPrefix.trimStart());
 
               if (!api) {
                 pushToast({ type: "error", message: "Not connected to server" });
@@ -1527,7 +1535,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           }
 
           if (skill) {
-            const userText = afterPrefix.trimStart() || `Run the "${skill.name}" skill.`;
+            const userText = formatSkillInvocationText(skill.name, afterPrefix.trimStart());
 
             skillInvocation = { descriptor: skill, userText };
             parsed = null;

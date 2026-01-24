@@ -234,7 +234,7 @@ describe("MessageQueue", () => {
         muxMetadata: metadata,
       };
 
-      expect(() => queue.add('Run the "init" skill.', options)).toThrow(
+      expect(() => queue.add("Using skill init", options)).toThrow(
         /Cannot queue agent skill invocation/
       );
     });
@@ -247,7 +247,7 @@ describe("MessageQueue", () => {
         scope: "built-in",
       };
 
-      queue.add('Run the "init" skill.', {
+      queue.add("Use skill init", {
         model: "claude-3-5-sonnet-20241022",
         muxMetadata: metadata,
       });
