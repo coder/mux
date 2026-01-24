@@ -7,7 +7,7 @@ import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
-import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
+import { EXPANDED_PROJECTS_KEY, getDraftScopeId, getInputKey } from "@/common/constants/storage";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
 import { useDrag, useDrop, useDragLayer } from "react-dnd";
@@ -189,6 +189,12 @@ interface DraftWorkspaceListItemProps {
 }
 
 function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
+  const scopeId = getDraftScopeId(props.projectPath, props.draftId);
+  const [draftPrompt] = usePersistedState<string>(getInputKey(scopeId), "", {
+    listener: true,
+  });
+  const promptPreview = typeof draftPrompt === "string" ? draftPrompt.trim() : "";
+
   return (
     <div
       className={cn(
@@ -230,10 +236,10 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
       </Tooltip>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-foreground block truncate text-left text-[14px]">New workspace</span>
-        <span className="text-muted block truncate text-left text-[11px]">
-          Draft {props.draftNumber}
+        <span className="text-foreground block truncate text-left text-[14px]">
+          Draft workspace
         </span>
+        <span className="text-muted block truncate text-left text-[11px]">{promptPreview}</span>
       </div>
     </div>
   );
