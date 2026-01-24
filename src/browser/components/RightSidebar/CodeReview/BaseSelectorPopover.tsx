@@ -23,6 +23,7 @@ interface BaseSelectorPopoverProps {
   onChange: (value: string) => void;
   onOpenChange?: (open: boolean) => void;
   className?: string;
+  "data-testid"?: string;
 }
 
 export function BaseSelectorPopover({
@@ -30,6 +31,7 @@ export function BaseSelectorPopover({
   onChange,
   onOpenChange,
   className,
+  "data-testid": testId,
 }: BaseSelectorPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -93,6 +95,7 @@ export function BaseSelectorPopover({
             "text-muted-light hover:bg-hover hover:text-foreground flex items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-[11px] transition-colors",
             className
           )}
+          data-testid={testId}
         >
           <span className="truncate">{value}</span>
         </button>

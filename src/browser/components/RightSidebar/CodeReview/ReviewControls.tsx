@@ -18,7 +18,7 @@ const SORT_OPTIONS: Array<{ value: ReviewSortOrder; label: string }> = [
 interface ReviewControlsProps {
   filters: ReviewFilters;
   stats: ReviewStats;
-  onFiltersChange: (filters: ReviewFilters) => void;
+  onFiltersChange: (filters: ReviewFilters | ((prev: ReviewFilters) => ReviewFilters)) => void;
   onRefresh?: () => void;
   isLoading?: boolean;
   /** Whether refresh is blocked (e.g., user composing review note) */
@@ -45,20 +45,24 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
     { listener: true }
   );
 
+  // Use callback form to avoid stale closure issues with filters prop
   const handleBaseChange = (value: string) => {
-    onFiltersChange({ ...filters, diffBase: value });
+    onFiltersChange((prev) => ({ ...prev, diffBase: value }));
   };
 
   const handleUncommittedToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFiltersChange({ ...filters, includeUncommitted: e.target.checked });
+    const checked = e.target.checked;
+    onFiltersChange((prev) => ({ ...prev, includeUncommitted: checked }));
   };
 
   const handleShowReadToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
-    onFiltersChange({ ...filters, showReadHunks: e.target.checked });
+    const checked = e.target.checked;
+    onFiltersChange((prev) => ({ ...prev, showReadHunks: checked }));
   };
 
   const handleSortChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    onFiltersChange({ ...filters, sortOrder: e.target.value as ReviewSortOrder });
+    const sortOrder = e.target.value as ReviewSortOrder;
+    onFiltersChange((prev) => ({ ...prev, sortOrder }));
   };
 
   const handleSetDefault = () => {
@@ -79,9 +83,16 @@ export const ReviewControls: React.FC<ReviewControlsProps> = ({
         />
       )}
 
-      <div className="text-muted flex items-center gap-1 whitespace-nowrap">
+      <div
+        className="text-muted flex items-center gap-1 whitespace-nowrap"
+        data-testid="review-base-selector"
+      >
         <span>Base:</span>
-        <BaseSelectorPopover value={filters.diffBase} onChange={handleBaseChange} />
+        <BaseSelectorPopover
+          value={filters.diffBase}
+          onChange={handleBaseChange}
+          data-testid="review-base-value"
+        />
         {showSetDefault && (
           <button
             onClick={handleSetDefault}
