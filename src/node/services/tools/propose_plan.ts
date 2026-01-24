@@ -29,7 +29,7 @@ export const createProposePlanTool: ToolFactory = (config) => {
       if (!planPath) {
         return {
           success: false as const,
-          error: "No plan file path configured. Are you in plan mode?",
+          error: "No plan file path configured. Are you in the plan agent?",
         };
       }
 

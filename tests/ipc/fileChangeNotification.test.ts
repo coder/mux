@@ -137,7 +137,7 @@ describeIntegration("File Change Notification Integration", () => {
         message: "Continue with the plan",
         options: {
           model: HAIKU_MODEL,
-          mode: "exec",
+          agentId: "exec",
           thinkingLevel: "off",
         },
       });
@@ -243,7 +243,7 @@ describeIntegration("File Change Notification Integration", () => {
         message: "Hello",
         options: {
           model: HAIKU_MODEL,
-          mode: "exec",
+          agentId: "exec",
           thinkingLevel: "off",
         },
       });

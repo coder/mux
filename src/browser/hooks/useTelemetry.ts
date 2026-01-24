@@ -11,7 +11,6 @@ import {
   trackErrorOccurred,
   trackExperimentOverridden,
 } from "@/common/telemetry";
-import type { AgentMode } from "@/common/types/mode";
 import type {
   ErrorContext,
   TelemetryRuntimeType,
@@ -32,7 +31,7 @@ import type {
  *
  * telemetry.workspaceSwitched(fromId, toId);
  * telemetry.workspaceCreated(workspaceId, runtimeType);
- * telemetry.messageSent(workspaceId, model, mode, messageLength, runtimeType, thinkingLevel);
+ * telemetry.messageSent(workspaceId, model, agentId, messageLength, runtimeType, thinkingLevel);
  * telemetry.streamCompleted(model, wasInterrupted, durationSecs, outputTokens);
  * telemetry.providerConfigured(provider, keyType);
  * telemetry.commandUsed(commandType);
@@ -54,12 +53,12 @@ export function useTelemetry() {
     (
       workspaceId: string,
       model: string,
-      mode: AgentMode,
+      agentId: string,
       messageLength: number,
       runtimeType: TelemetryRuntimeType,
       thinkingLevel: TelemetryThinkingLevel
     ) => {
-      trackMessageSent(workspaceId, model, mode, messageLength, runtimeType, thinkingLevel);
+      trackMessageSent(workspaceId, model, agentId, messageLength, runtimeType, thinkingLevel);
     },
     []
   );

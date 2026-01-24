@@ -247,7 +247,7 @@ export function extractToolInstructions(
   modelString: string,
   options?: { enableAgentReport?: boolean; agentInstructions?: string }
 ): Record<string, string> {
-  const availableTools = getAvailableTools(modelString, undefined, options);
+  const availableTools = getAvailableTools(modelString, options);
   const toolInstructions: Record<string, string> = {};
   const sources = {
     agent: options?.agentInstructions,

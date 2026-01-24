@@ -137,29 +137,29 @@ export function addInterruptedSentinel(messages: MuxMessage[]): MuxMessage[] {
 }
 
 /**
- * Inject mode transition context when mode changes mid-conversation.
- * Inserts a synthetic user message before the final user message to signal the mode switch.
- * This provides temporal context that helps models understand they should follow new mode instructions.
+ * Inject agent transition context when the active agent changes mid-conversation.
+ * Inserts a synthetic user message before the final user message to signal the agent switch.
+ * This provides temporal context that helps models understand they should follow new agent instructions.
  *
- * When transitioning from plan → exec mode with plan content, includes the plan so the model
+ * When transitioning from plan → exec with plan content, includes the plan so the model
  * can evaluate its relevance to the current request.
  *
  * @param messages The conversation history
- * @param currentMode The mode for the upcoming assistant response (e.g., "plan", "exec")
+ * @param currentAgentId The agent id for the upcoming assistant response
  * @param toolNames Optional list of available tool names to include in transition message
  * @param planContent Optional plan content to include when transitioning plan → exec
  * @param planFilePath Optional plan file path to include when transitioning plan → exec
- * @returns Messages with mode transition context injected if needed
+ * @returns Messages with agent transition context injected if needed
  */
-export function injectModeTransition(
+export function injectAgentTransition(
   messages: MuxMessage[],
-  currentMode?: string,
+  currentAgentId?: string,
   toolNames?: string[],
   planContent?: string,
   planFilePath?: string
 ): MuxMessage[] {
-  // No mode specified, nothing to do
-  if (!currentMode) {
+  // No agent specified, nothing to do
+  if (!currentAgentId) {
     return messages;
   }
 
@@ -168,17 +168,17 @@ export function injectModeTransition(
     return messages;
   }
 
-  // Find the last assistant message to check its mode
+  // Find the last assistant message to check its agent
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === "assistant");
-  const lastMode = lastAssistantMessage?.metadata?.mode;
+  const lastAgentId = lastAssistantMessage?.metadata?.agentId;
 
-  // No mode transition if no previous mode or same mode
-  if (!lastMode || lastMode === currentMode) {
+  // No agent transition if no previous agent or same agent
+  if (!lastAgentId || lastAgentId === currentAgentId) {
     return messages;
   }
 
-  // Mode transition detected! Inject a synthetic user message before the last user message
-  // This provides temporal context: user says "switch modes" before their actual request
+  // Agent transition detected! Inject a synthetic user message before the last user message
+  // This provides temporal context: user says "switch agents" before their actual request
 
   // Find the index of the last user message
   let lastUserIndex = -1;
@@ -201,8 +201,8 @@ export function injectModeTransition(
     result.push(messages[i]);
   }
 
-  // Inject mode transition message right before the last user message
-  let transitionText = `[Mode switched from ${lastMode} to ${currentMode}. Follow ${currentMode} mode instructions.`;
+  // Inject agent transition message right before the last user message
+  let transitionText = `[Agent switched from ${lastAgentId} to ${currentAgentId}. Follow ${currentAgentId} agent instructions.`;
 
   // Append tool availability if provided
   if (toolNames && toolNames.length > 0) {
@@ -211,12 +211,12 @@ export function injectModeTransition(
     transitionText += "]";
   }
 
-  // When transitioning plan → exec with plan content, include the plan for context
-  if (lastMode === "plan" && currentMode === "exec" && planContent) {
+  // When transitioning from a plan-like agent to an exec-like agent, include the plan for context
+  if (planContent) {
     const planFilePathText = planFilePath ? `Plan file path: ${planFilePath}\n\n` : "";
     transitionText += `
 
-${planFilePathText}The following plan was developed in plan mode. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
+${planFilePathText}The following plan was developed in the plan agent. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
 
 <plan>
 ${planContent}
@@ -224,7 +224,7 @@ ${planContent}
   }
 
   const transitionMessage: MuxMessage = {
-    id: `mode-transition-${Date.now()}`,
+    id: `agent-transition-${Date.now()}`,
     role: "user",
     parts: [
       {

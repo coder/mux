@@ -468,7 +468,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   }, [configuredProviders.length, hasConfiguredProvidersAtStart, providersLoading]);
 
   const commandPaletteShortcut = formatKeybind(KEYBINDS.OPEN_COMMAND_PALETTE);
-  const agentPickerShortcut = formatKeybind(KEYBINDS.TOGGLE_MODE);
+  const agentPickerShortcut = formatKeybind(KEYBINDS.TOGGLE_AGENT);
   const cycleAgentShortcut = formatKeybind(KEYBINDS.CYCLE_AGENT);
 
   const steps = useMemo((): WizardStep[] => {

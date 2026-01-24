@@ -616,6 +616,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         });
       },
       remove: () => Promise.resolve({ success: true }),
+      updateAgentAISettings: () => Promise.resolve({ success: true, data: undefined }),
+      updateModeAISettings: () => Promise.resolve({ success: true, data: undefined }),
+      updateAISettings: () => Promise.resolve({ success: true, data: undefined }),
+      updateTitle: () => Promise.resolve({ success: true, data: undefined }),
       rename: (input: { workspaceId: string }) =>
         Promise.resolve({
           success: true,

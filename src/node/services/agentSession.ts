@@ -816,7 +816,6 @@ export class AgentSession {
       options?.additionalSystemInstructions,
       options?.maxOutputTokens,
       options?.providerOptions,
-      options?.mode,
       options?.agentId,
       recordFileState,
       changedFileAttachments.length > 0 ? changedFileAttachments : undefined,

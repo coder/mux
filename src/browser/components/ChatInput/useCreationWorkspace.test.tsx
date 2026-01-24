@@ -621,7 +621,7 @@ function createDraftSettingsHarness(
       const settings: DraftWorkspaceSettings = {
         model: "gpt-4",
         thinkingLevel: "medium",
-        mode: "exec",
+        agentId: "exec",
         selectedRuntime: state.selectedRuntime,
         defaultRuntimeMode: state.defaultRuntimeMode,
         trunkBranch: state.trunkBranch,

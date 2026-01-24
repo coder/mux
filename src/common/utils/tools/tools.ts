@@ -33,7 +33,6 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { TaskService } from "@/node/services/taskService";
-import type { UIMode } from "@/common/types/mode";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
 
@@ -55,9 +54,9 @@ export interface ToolConfiguration {
   overflow_policy?: "truncate" | "tmpfile";
   /** Background process manager for bash tool (optional, AI-only) */
   backgroundProcessManager?: BackgroundProcessManager;
-  /** Current UI mode (plan or exec) - used for plan file path enforcement */
-  mode?: UIMode;
-  /** Plan file path - only this file can be edited in plan mode */
+  /** When true, restrict edits to the plan file (plan agent behavior). */
+  planFileOnly?: boolean;
+  /** Plan file path - only this file can be edited when planFileOnly is true. */
   planFilePath?: string;
   /**
    * Optional callback for emitting UI-only workspace chat events.
@@ -369,7 +368,7 @@ export async function getToolsForModel(
   // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
   // Include MCP tools even if they're not in getAvailableTools().
   const allowlistedToolNames = new Set(
-    getAvailableTools(modelString, config.mode, { enableAgentReport: config.enableAgentReport })
+    getAvailableTools(modelString, { enableAgentReport: config.enableAgentReport })
   );
   for (const toolName of Object.keys(mcpTools ?? {})) {
     allowlistedToolNames.add(toolName);

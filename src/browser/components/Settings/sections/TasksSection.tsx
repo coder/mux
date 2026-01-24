@@ -14,7 +14,7 @@ import {
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { AGENT_AI_DEFAULTS_KEY, MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY, LEGACY_MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
   normalizeAgentAiDefaults,
@@ -277,7 +277,7 @@ export function TasksSection() {
 
         // Keep a local cache for non-react readers (compaction handler, etc.)
         updatePersistedState(
-          MODE_AI_DEFAULTS_KEY,
+          LEGACY_MODE_AI_DEFAULTS_KEY,
           normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
         );
 
@@ -358,7 +358,7 @@ export function TasksSection() {
 
     // Keep mode defaults cache up-to-date for non-react readers.
     updatePersistedState(
-      MODE_AI_DEFAULTS_KEY,
+      LEGACY_MODE_AI_DEFAULTS_KEY,
       normalizeModeAiDefaults({
         plan: agentAiDefaults.plan,
         exec: agentAiDefaults.exec,

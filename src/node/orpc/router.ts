@@ -1165,6 +1165,16 @@ export const router = (authToken?: string) => {
           }
           return { success: true };
         }),
+      updateAgentAISettings: t
+        .input(schemas.workspace.updateAgentAISettings.input)
+        .output(schemas.workspace.updateAgentAISettings.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateAgentAISettings(
+            input.workspaceId,
+            input.agentId,
+            input.aiSettings
+          );
+        }),
       rename: t
         .input(schemas.workspace.rename.input)
         .output(schemas.workspace.rename.output)

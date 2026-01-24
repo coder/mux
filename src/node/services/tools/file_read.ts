@@ -45,8 +45,8 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
           if (pathValidation) {
             // In plan mode, hint about the plan file path to help model recover
             const hint =
-              config.mode === "plan" && config.planFilePath
-                ? ` In plan mode, use the exact plan file path string as provided: ${config.planFilePath}`
+              config.planFileOnly && config.planFilePath
+                ? ` In the plan agent, use the exact plan file path string as provided: ${config.planFilePath}`
                 : "";
             return {
               success: false,

@@ -251,9 +251,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     disabled: startHereDisabled,
     modal,
   } = useStartHere(workspaceId, startHereContent, false, {
-    // Preserve the source mode so exec mode can detect a plan→exec transition
+    // Preserve the source agent so exec can detect a plan→exec transition
     // even after replacing chat history.
-    sourceMode: "plan",
+    sourceAgentId: "plan",
   });
 
   const handleImplement = () => {

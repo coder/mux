@@ -5,7 +5,7 @@ import {
   validateAnthropicCompliance,
   getAnthropicThinkingDisableReason,
   addInterruptedSentinel,
-  injectModeTransition,
+  injectAgentTransition,
   filterEmptyAssistantMessages,
   injectFileChangeNotifications,
   stripOrphanedToolCalls,
@@ -858,8 +858,8 @@ describe("stripOrphanedToolCalls", () => {
   });
 });
 
-describe("injectModeTransition", () => {
-  it("should inject transition message when mode changes", () => {
+describe("injectAgentTransition", () => {
+  it("should inject transition message when agent changes", () => {
     const messages: MuxMessage[] = [
       {
         id: "user-1",
@@ -871,7 +871,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Here's the plan..." }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -881,17 +881,17 @@ describe("injectModeTransition", () => {
       },
     ];
 
-    const result = injectModeTransition(messages, "exec");
+    const result = injectAgentTransition(messages, "exec");
 
-    // Should have 4 messages: user, assistant, mode-transition, user
+    // Should have 4 messages: user, assistant, agent-transition, user
     expect(result.length).toBe(4);
 
-    // Third message should be mode transition
+    // Third message should be agent transition
     expect(result[2].role).toBe("user");
     expect(result[2].metadata?.synthetic).toBe(true);
     expect(result[2].parts[0]).toMatchObject({
       type: "text",
-      text: "[Mode switched from plan to exec. Follow exec mode instructions.]",
+      text: "[Agent switched from plan to exec. Follow exec agent instructions.]",
     });
 
     // Original messages should be preserved
@@ -900,7 +900,7 @@ describe("injectModeTransition", () => {
     expect(result[3]).toEqual(messages[2]); // Last user message shifted
   });
 
-  it("should not inject transition when mode is the same", () => {
+  it("should not inject transition when agent is the same", () => {
     const messages: MuxMessage[] = [
       {
         id: "user-1",
@@ -912,7 +912,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Planning..." }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -922,14 +922,14 @@ describe("injectModeTransition", () => {
       },
     ];
 
-    const result = injectModeTransition(messages, "plan");
+    const result = injectAgentTransition(messages, "plan");
 
     // Should be unchanged
     expect(result.length).toBe(3);
     expect(result).toEqual(messages);
   });
 
-  it("should not inject transition when no previous mode exists", () => {
+  it("should not inject transition when no previous agent exists", () => {
     const messages: MuxMessage[] = [
       {
         id: "user-1",
@@ -939,14 +939,14 @@ describe("injectModeTransition", () => {
       },
     ];
 
-    const result = injectModeTransition(messages, "exec");
+    const result = injectAgentTransition(messages, "exec");
 
     // Should be unchanged (no assistant message to compare)
     expect(result.length).toBe(1);
     expect(result).toEqual(messages);
   });
 
-  it("should not inject transition when no mode specified", () => {
+  it("should not inject transition when no agent specified", () => {
     const messages: MuxMessage[] = [
       {
         id: "user-1",
@@ -958,7 +958,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Hi" }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -968,7 +968,7 @@ describe("injectModeTransition", () => {
       },
     ];
 
-    const result = injectModeTransition(messages, undefined);
+    const result = injectAgentTransition(messages, undefined);
 
     // Should be unchanged
     expect(result.length).toBe(3);
@@ -981,11 +981,11 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Hi" }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
     ];
 
-    const result = injectModeTransition(messages, "exec");
+    const result = injectAgentTransition(messages, "exec");
 
     // Should be unchanged (no user message to inject before)
     expect(result.length).toBe(1);
@@ -1004,7 +1004,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Here's the plan..." }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -1015,21 +1015,21 @@ describe("injectModeTransition", () => {
     ];
 
     const toolNames = ["file_read", "bash", "file_edit_replace_string", "web_search"];
-    const result = injectModeTransition(messages, "exec", toolNames);
+    const result = injectAgentTransition(messages, "exec", toolNames);
 
-    // Should have 4 messages: user, assistant, mode-transition, user
+    // Should have 4 messages: user, assistant, agent-transition, user
     expect(result.length).toBe(4);
 
-    // Third message should be mode transition with tool names
+    // Third message should be agent transition with tool names
     expect(result[2].role).toBe("user");
     expect(result[2].metadata?.synthetic).toBe(true);
     expect(result[2].parts[0]).toMatchObject({
       type: "text",
-      text: "[Mode switched from plan to exec. Follow exec mode instructions. Available tools: file_read, bash, file_edit_replace_string, web_search.]",
+      text: "[Agent switched from plan to exec. Follow exec agent instructions. Available tools: file_read, bash, file_edit_replace_string, web_search.]",
     });
   });
 
-  it("should handle mode transition without tools parameter (backward compatibility)", () => {
+  it("should handle agent transition without tools parameter (backward compatibility)", () => {
     const messages: MuxMessage[] = [
       {
         id: "user-1",
@@ -1041,7 +1041,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Planning..." }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -1051,17 +1051,17 @@ describe("injectModeTransition", () => {
       },
     ];
 
-    const result = injectModeTransition(messages, "exec");
+    const result = injectAgentTransition(messages, "exec");
 
     // Should have 4 messages with transition, but no tool info
     expect(result.length).toBe(4);
     expect(result[2].parts[0]).toMatchObject({
       type: "text",
-      text: "[Mode switched from plan to exec. Follow exec mode instructions.]",
+      text: "[Agent switched from plan to exec. Follow exec agent instructions.]",
     });
   });
 
-  it("should handle mode transition with empty tool list", () => {
+  it("should handle agent transition with empty tool list", () => {
     const messages: MuxMessage[] = [
       {
         id: "user-1",
@@ -1073,7 +1073,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Planning..." }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -1083,13 +1083,13 @@ describe("injectModeTransition", () => {
       },
     ];
 
-    const result = injectModeTransition(messages, "exec", []);
+    const result = injectAgentTransition(messages, "exec", []);
 
     // Should have 4 messages with transition, but no tool info (empty array handled gracefully)
     expect(result.length).toBe(4);
     expect(result[2].parts[0]).toMatchObject({
       type: "text",
-      text: "[Mode switched from plan to exec. Follow exec mode instructions.]",
+      text: "[Agent switched from plan to exec. Follow exec agent instructions.]",
     });
   });
 
@@ -1105,7 +1105,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Here's the plan..." }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -1117,7 +1117,7 @@ describe("injectModeTransition", () => {
 
     const planContent = "# My Plan\n\n## Step 1\nDo something\n\n## Step 2\nDo more";
     const planFilePath = "~/.mux/plans/demo/ws-123.md";
-    const result = injectModeTransition(messages, "exec", undefined, planContent, planFilePath);
+    const result = injectAgentTransition(messages, "exec", undefined, planContent, planFilePath);
 
     expect(result.length).toBe(4);
     const transitionMessage = result[2];
@@ -1128,10 +1128,10 @@ describe("injectModeTransition", () => {
     expect(textPart.type).toBe("text");
     if (textPart.type === "text") {
       expect(textPart.text).toContain(
-        "[Mode switched from plan to exec. Follow exec mode instructions.]"
+        "[Agent switched from plan to exec. Follow exec agent instructions.]"
       );
       expect(textPart.text).toContain(`Plan file path: ${planFilePath}`);
-      expect(textPart.text).toContain("The following plan was developed in plan mode");
+      expect(textPart.text).toContain("The following plan was developed in the plan agent");
       expect(textPart.text).toContain("<plan>");
       expect(textPart.text).toContain(planContent);
       expect(textPart.text).toContain("</plan>");
@@ -1150,7 +1150,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Feature complete" }],
-        metadata: { timestamp: 2000, mode: "exec" },
+        metadata: { timestamp: 2000, agentId: "exec" },
       },
       {
         id: "user-2",
@@ -1161,14 +1161,14 @@ describe("injectModeTransition", () => {
     ];
 
     const planContent = "# Old Plan\n\nSome content";
-    const result = injectModeTransition(messages, "plan", undefined, planContent);
+    const result = injectAgentTransition(messages, "plan", undefined, planContent);
 
     expect(result.length).toBe(4);
     const transitionMessage = result[2];
     const textPart = transitionMessage.parts[0];
     if (textPart.type === "text") {
       expect(textPart.text).toBe(
-        "[Mode switched from exec to plan. Follow plan mode instructions.]"
+        "[Agent switched from exec to plan. Follow plan agent instructions.]"
       );
       expect(textPart.text).not.toContain("<plan>");
     }
@@ -1186,7 +1186,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Planning..." }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -1196,14 +1196,14 @@ describe("injectModeTransition", () => {
       },
     ];
 
-    const result = injectModeTransition(messages, "exec", undefined, undefined);
+    const result = injectAgentTransition(messages, "exec", undefined, undefined);
 
     expect(result.length).toBe(4);
     const transitionMessage = result[2];
     const textPart = transitionMessage.parts[0];
     if (textPart.type === "text") {
       expect(textPart.text).toBe(
-        "[Mode switched from plan to exec. Follow exec mode instructions.]"
+        "[Agent switched from plan to exec. Follow exec agent instructions.]"
       );
       expect(textPart.text).not.toContain("<plan>");
     }
@@ -1221,7 +1221,7 @@ describe("injectModeTransition", () => {
         id: "assistant-1",
         role: "assistant",
         parts: [{ type: "text", text: "Plan ready" }],
-        metadata: { timestamp: 2000, mode: "plan" },
+        metadata: { timestamp: 2000, agentId: "plan" },
       },
       {
         id: "user-2",
@@ -1233,7 +1233,7 @@ describe("injectModeTransition", () => {
 
     const toolNames = ["file_read", "bash"];
     const planContent = "# Plan\n\nDo stuff";
-    const result = injectModeTransition(messages, "exec", toolNames, planContent);
+    const result = injectAgentTransition(messages, "exec", toolNames, planContent);
 
     expect(result.length).toBe(4);
     const textPart = result[2].parts[0];

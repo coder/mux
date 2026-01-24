@@ -18,9 +18,9 @@ import {
   getAgentIdKey,
   getModelKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByModeKey,
+  getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
-  MODE_AI_DEFAULTS_KEY,
+  LEGACY_MODE_AI_DEFAULTS_KEY,
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
   SELECTED_WORKSPACE_KEY,
@@ -42,7 +42,7 @@ import { useRouter } from "@/browser/contexts/RouterContext";
  */
 function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadata): void {
   // Cache keyed by agentId (string) - includes exec, plan, and custom agents
-  type WorkspaceAISettingsByModeCache = Partial<
+  type WorkspaceAISettingsByAgentCache = Partial<
     Record<string, { model: string; thinkingLevel: ThinkingLevel }>
   >;
 
@@ -60,7 +60,8 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     }
   }
 
-  const aiByMode =
+  const aiByAgent =
+    metadata.aiSettingsByAgent ??
     metadata.aiSettingsByMode ??
     (metadata.aiSettings
       ? {
@@ -69,33 +70,32 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
         }
       : undefined);
 
-  if (!aiByMode) {
+  if (!aiByAgent) {
     return;
   }
 
-  // Merge backend values into a per-workspace per-mode cache.
-  const byModeKey = getWorkspaceAISettingsByModeKey(workspaceId);
-  const existingByMode = readPersistedState<WorkspaceAISettingsByModeCache>(byModeKey, {});
-  const nextByMode: WorkspaceAISettingsByModeCache = { ...existingByMode };
+  // Merge backend values into a per-workspace per-agent cache.
+  const byAgentKey = getWorkspaceAISettingsByAgentKey(workspaceId);
+  const existingByAgent = readPersistedState<WorkspaceAISettingsByAgentCache>(byAgentKey, {});
+  const nextByAgent: WorkspaceAISettingsByAgentCache = { ...existingByAgent };
 
-  for (const mode of ["plan", "exec"] as const) {
-    const entry = aiByMode[mode];
+  for (const [agentKey, entry] of Object.entries(aiByAgent)) {
     if (!entry) continue;
     if (typeof entry.model !== "string" || entry.model.length === 0) continue;
 
-    nextByMode[mode] = {
+    nextByAgent[agentKey] = {
       model: entry.model,
       thinkingLevel: entry.thinkingLevel,
     };
   }
 
-  if (JSON.stringify(existingByMode) !== JSON.stringify(nextByMode)) {
-    updatePersistedState(byModeKey, nextByMode);
+  if (JSON.stringify(existingByAgent) !== JSON.stringify(nextByAgent)) {
+    updatePersistedState(byAgentKey, nextByAgent);
   }
 
   // Seed the active agent into the existing keys to avoid UI flash.
   const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
-  const active = nextByMode[activeAgentId] ?? nextByMode.exec ?? nextByMode.plan;
+  const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
   if (!active) {
     return;
   }
@@ -191,7 +191,7 @@ interface WorkspaceProviderProps {
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const { api } = useAPI();
 
-  // Cache global mode defaults so non-react code paths (compaction, etc.) can read them.
+  // Cache global agent defaults (plus legacy mode defaults) so non-react code paths can read them.
   useEffect(() => {
     if (!api?.config?.getConfig) return;
 
@@ -204,7 +204,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         );
 
         updatePersistedState(
-          MODE_AI_DEFAULTS_KEY,
+          LEGACY_MODE_AI_DEFAULTS_KEY,
           normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
         );
 

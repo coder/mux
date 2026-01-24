@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { usePersistedState } from "./usePersistedState";
 import { useThinkingLevel } from "./useThinkingLevel";
-import { useMode } from "@/browser/contexts/ModeContext";
 import { getDefaultModel } from "./useModelsFromSettings";
 import {
   type RuntimeMode,
@@ -13,14 +12,15 @@ import {
   CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
 import {
+  getAgentIdKey,
   getModelKey,
   getRuntimeKey,
   getTrunkBranchKey,
   getLastRuntimeConfigKey,
   getProjectScopeId,
 } from "@/common/constants/storage";
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 /**
  * Centralized draft workspace settings for project-level persistence
@@ -30,7 +30,7 @@ export interface DraftWorkspaceSettings {
   // Model & AI settings (synced with global state)
   model: string;
   thinkingLevel: ThinkingLevel;
-  mode: UIMode;
+  agentId: string;
 
   // Workspace creation settings (project-specific)
   /**
@@ -67,14 +67,19 @@ export function useDraftWorkspaceSettings(
 } {
   // Global AI settings (read-only from global state)
   const [thinkingLevel] = useThinkingLevel();
-  const [mode] = useMode();
 
-  // Project-scoped model preference (persisted per project)
-  const [model] = usePersistedState<string>(
-    getModelKey(getProjectScopeId(projectPath)),
-    getDefaultModel(),
+  const projectScopeId = getProjectScopeId(projectPath);
+
+  const [agentId] = usePersistedState<string>(
+    getAgentIdKey(projectScopeId),
+    WORKSPACE_DEFAULTS.agentId,
     { listener: true }
   );
+
+  // Project-scoped model preference (persisted per project)
+  const [model] = usePersistedState<string>(getModelKey(projectScopeId), getDefaultModel(), {
+    listener: true,
+  });
 
   // Project-scoped default runtime (worktree by default, only changed via checkbox)
   const [defaultRuntimeString, setDefaultRuntimeString] = usePersistedState<string | undefined>(
@@ -425,7 +430,7 @@ export function useDraftWorkspaceSettings(
     settings: {
       model,
       thinkingLevel,
-      mode,
+      agentId,
       selectedRuntime,
       defaultRuntimeMode,
       trunkBranch,

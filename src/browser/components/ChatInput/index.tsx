@@ -19,7 +19,6 @@ import {
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { useMode } from "@/browser/contexts/ModeContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
@@ -30,10 +29,10 @@ import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   getModelKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByModeKey,
+  getWorkspaceAISettingsByAgentKey,
   getInputKey,
   getInputImagesKey,
-  MODE_AI_DEFAULTS_KEY,
+  AGENT_AI_DEFAULTS_KEY,
   VIM_ENABLED_KEY,
   getProjectScopeId,
   getPendingScopeId,
@@ -85,7 +84,7 @@ import {
 } from "@/browser/utils/imageHandling";
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
-import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { MuxFrontendMetadata } from "@/common/types/message";
@@ -344,7 +343,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
-  const [mode] = useMode();
   const { agentId, currentAgent } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
@@ -359,8 +357,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setDefaultModel,
   } = useModelsFromSettings();
 
-  const [modeAiDefaults] = usePersistedState<ModeAiDefaults>(
-    MODE_AI_DEFAULTS_KEY,
+  const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
+    AGENT_AI_DEFAULTS_KEY,
     {},
     {
       listener: true,
@@ -449,7 +447,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const setPreferredModel = useCallback(
     (model: string) => {
-      type WorkspaceAISettingsByModeCache = Partial<
+      type WorkspaceAISettingsByAgentCache = Partial<
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
@@ -464,12 +462,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const normalizedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0
           ? agentId.trim().toLowerCase()
-          : mode;
+          : "exec";
 
-      updatePersistedState<WorkspaceAISettingsByModeCache>(
-        getWorkspaceAISettingsByModeKey(workspaceId),
+      updatePersistedState<WorkspaceAISettingsByAgentCache>(
+        getWorkspaceAISettingsByAgentKey(workspaceId),
         (prev) => {
-          const record: WorkspaceAISettingsByModeCache =
+          const record: WorkspaceAISettingsByAgentCache =
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
@@ -480,32 +478,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       );
 
       // Workspace variant: persist to backend for cross-device consistency.
-      // Only persist when the active agent matches the base mode so custom-agent overrides
-      // don't clobber exec/plan defaults that other agents inherit.
-      if (!api || normalizedAgentId !== mode) {
+      if (!api) {
         return;
       }
 
       api.workspace
-        .updateModeAISettings({
+        .updateAgentAISettings({
           workspaceId,
-          mode,
+          agentId: normalizedAgentId,
           aiSettings: { model: canonicalModel, thinkingLevel },
         })
         .catch(() => {
           // Best-effort only. If offline or backend is old, sendMessage will persist.
         });
     },
-    [
-      api,
-      agentId,
-      mode,
-      storageKeys.modelKey,
-      ensureModelInSettings,
-      thinkingLevel,
-      variant,
-      workspaceId,
-    ]
+    [api, agentId, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
   );
 
   // Model cycling candidates: all visible models (custom + built-in, minus hidden).
@@ -670,8 +657,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
 
-  // Creation variant: keep the project-scoped model/thinking in sync with global per-mode defaults
-  // so switching Plan/Exec uses the configured defaults (and respects "inherit" semantics).
+  // Creation variant: keep the project-scoped model/thinking in sync with global agent defaults
+  // so switching agents uses the configured defaults (and respects "inherit" semantics).
   useEffect(() => {
     if (variant !== "creation") {
       return;
@@ -683,15 +670,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     const fallbackModel = defaultModel;
 
+    const normalizedAgentId =
+      typeof agentId === "string" && agentId.trim().length > 0
+        ? agentId.trim().toLowerCase()
+        : "exec";
+
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
-    const candidateModel = modeAiDefaults[mode]?.modelString ?? existingModel;
+    const candidateModel = agentAiDefaults[normalizedAgentId]?.modelString ?? existingModel;
     const resolvedModel =
       typeof candidateModel === "string" && candidateModel.trim().length > 0
         ? candidateModel
         : fallbackModel;
 
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
-    const candidateThinking = modeAiDefaults[mode]?.thinkingLevel ?? existingThinking ?? "off";
+    const candidateThinking =
+      agentAiDefaults[normalizedAgentId]?.thinkingLevel ?? existingThinking ?? "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
     if (existingModel !== resolvedModel) {
@@ -701,7 +694,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [creationProjectPath, defaultModel, mode, modeAiDefaults, variant]);
+  }, [agentAiDefaults, agentId, creationProjectPath, defaultModel, variant]);
 
   // Expose ChatInput auto-focus completion for Storybook/tests.
   const chatInputSectionRef = useRef<HTMLDivElement | null>(null);
@@ -2043,7 +2036,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           telemetry.messageSent(
             props.workspaceId,
             sendMessageOptions.model,
-            mode,
+            sendMessageOptions.agentId ?? agentId ?? "exec",
             finalMessageText.length,
             runtimeType,
             sendMessageOptions.thinkingLevel ?? "off"

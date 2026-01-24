@@ -2,7 +2,7 @@ import React, { useRef, useCallback, useState, useEffect } from "react";
 import { Menu } from "lucide-react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { cn } from "@/common/lib/utils";
-import { ModeProvider } from "@/browser/contexts/ModeContext";
+import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { ChatInput } from "./ChatInput/index";
@@ -240,7 +240,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   }, []);
 
   return (
-    <ModeProvider projectPath={projectPath}>
+    <AgentProvider projectPath={projectPath}>
       <ProviderOptionsProvider>
         <ThinkingProvider projectPath={projectPath}>
           {/* Flex container to fill parent space */}
@@ -337,6 +337,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
           </div>
         </ThinkingProvider>
       </ProviderOptionsProvider>
-    </ModeProvider>
+    </AgentProvider>
   );
 };

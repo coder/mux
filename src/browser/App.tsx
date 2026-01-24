@@ -30,7 +30,6 @@ import { CommandPalette } from "./components/CommandPalette";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
-import type { UIMode } from "@/common/types/mode";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
@@ -40,7 +39,7 @@ import {
   getNotifyOnResponseKey,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByModeKey,
+  getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -328,35 +327,33 @@ function AppInner() {
       // ThinkingProvider will pick this up via its listener
       updatePersistedState(key, normalized);
 
-      type WorkspaceAISettingsByModeCache = Partial<
+      type WorkspaceAISettingsByAgentCache = Partial<
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
-      const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
-      // Derive mode from agentId (plan agent → plan mode, everything else → exec mode)
-      const mode: UIMode = agentId === "plan" ? "plan" : "exec";
+      const normalizedAgentId =
+        readPersistedState<string>(getAgentIdKey(workspaceId), "exec").trim().toLowerCase() ||
+        "exec";
 
-      updatePersistedState<WorkspaceAISettingsByModeCache>(
-        getWorkspaceAISettingsByModeKey(workspaceId),
+      updatePersistedState<WorkspaceAISettingsByAgentCache>(
+        getWorkspaceAISettingsByAgentKey(workspaceId),
         (prev) => {
-          const record: WorkspaceAISettingsByModeCache =
+          const record: WorkspaceAISettingsByAgentCache =
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [agentId]: { model, thinkingLevel: normalized },
+            [normalizedAgentId]: { model, thinkingLevel: normalized },
           };
         },
         {}
       );
 
       // Persist to backend so the palette change follows the workspace across devices.
-      // Only persist when the active agent matches the base mode so custom-agent overrides
-      // don't clobber exec/plan defaults that other agents inherit.
-      if (api && agentId === mode) {
+      if (api) {
         api.workspace
-          .updateModeAISettings({
+          .updateAgentAISettings({
             workspaceId,
-            mode,
+            agentId: normalizedAgentId,
             aiSettings: { model, thinkingLevel: normalized },
           })
           .catch(() => {

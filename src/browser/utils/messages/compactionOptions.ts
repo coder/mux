@@ -7,10 +7,10 @@
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import { toGatewayModel } from "@/browser/hooks/useGatewayModels";
-import { MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
-import type { ModeAiDefaults } from "@/common/types/modeAiDefaults";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
@@ -32,8 +32,8 @@ export function applyCompactionOverrides(
   // Apply gateway transformation - compactData.model is raw, baseOptions.model is already transformed.
   const compactionModel = compactData.model ? toGatewayModel(compactData.model) : baseOptions.model;
 
-  const modeAiDefaults = readPersistedState<ModeAiDefaults>(MODE_AI_DEFAULTS_KEY, {});
-  const preferredThinking = modeAiDefaults.compact?.thinkingLevel;
+  const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
+  const preferredThinking = agentAiDefaults.compact?.thinkingLevel;
 
   const requestedThinking =
     coerceThinkingLevel(preferredThinking ?? baseOptions.thinkingLevel) ?? "off";
@@ -45,7 +45,6 @@ export function applyCompactionOverrides(
     model: compactionModel,
     thinkingLevel,
     maxOutputTokens: compactData.maxOutputTokens,
-    mode: "compact" as const,
     // Disable all tools during compaction - regex .* matches all tool names
     toolPolicy: [{ regex_match: ".*", action: "disable" }],
   };

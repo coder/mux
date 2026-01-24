@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceMCPOverridesSchema } from "./mcp";
-import { WorkspaceAISettingsByModeSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import {
+  WorkspaceAISettingsByAgentSchema,
+  WorkspaceAISettingsByModeSchema,
+  WorkspaceAISettingsSchema,
+} from "./workspaceAiSettings";
 
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
 
@@ -42,6 +46,9 @@ export const WorkspaceConfigSchema = z.object({
     .string()
     .optional()
     .meta({ description: "ISO 8601 creation timestamp - optional for legacy" }),
+  aiSettingsByAgent: WorkspaceAISettingsByAgentSchema.optional().meta({
+    description: "Per-agent workspace-scoped AI settings",
+  }),
   runtimeConfig: RuntimeConfigSchema.optional().meta({
     description: "Runtime configuration (local vs SSH) - optional, defaults to local",
   }),

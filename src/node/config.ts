@@ -590,6 +590,15 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              aiSettingsByAgent:
+                workspace.aiSettingsByAgent ??
+                workspace.aiSettingsByMode ??
+                (workspace.aiSettings
+                  ? {
+                      plan: workspace.aiSettings,
+                      exec: workspace.aiSettings,
+                    }
+                  : undefined),
               aiSettingsByMode: workspace.aiSettingsByMode,
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
@@ -611,6 +620,21 @@ export class Config {
             }
 
             // Migrate missing runtimeConfig to config for next load
+            if (!workspace.aiSettingsByAgent) {
+              const derived =
+                workspace.aiSettingsByMode ??
+                (workspace.aiSettings
+                  ? {
+                      plan: workspace.aiSettings,
+                      exec: workspace.aiSettings,
+                    }
+                  : undefined);
+              if (derived) {
+                workspace.aiSettingsByAgent = derived;
+                configModified = true;
+              }
+            }
+
             if (!workspace.runtimeConfig) {
               workspace.runtimeConfig = metadata.runtimeConfig;
               configModified = true;
@@ -653,6 +677,15 @@ export class Config {
             metadata.runtimeConfig ??= DEFAULT_RUNTIME_CONFIG;
 
             // Preserve any config-only fields that may not exist in legacy metadata.json
+            metadata.aiSettingsByAgent ??=
+              workspace.aiSettingsByAgent ??
+              workspace.aiSettingsByMode ??
+              (workspace.aiSettings
+                ? {
+                    plan: workspace.aiSettings,
+                    exec: workspace.aiSettings,
+                  }
+                : undefined);
             metadata.aiSettingsByMode ??= workspace.aiSettingsByMode;
             metadata.aiSettings ??= workspace.aiSettings;
 
@@ -670,6 +703,11 @@ export class Config {
             metadata.unarchivedAt ??= workspace.unarchivedAt;
             // Preserve section assignment from config
             metadata.sectionId ??= workspace.sectionId;
+            if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
+              workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
+              configModified = true;
+            }
+
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -694,6 +732,15 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
+              aiSettingsByAgent:
+                workspace.aiSettingsByAgent ??
+                workspace.aiSettingsByMode ??
+                (workspace.aiSettings
+                  ? {
+                      plan: workspace.aiSettings,
+                      exec: workspace.aiSettings,
+                    }
+                  : undefined),
               aiSettingsByMode: workspace.aiSettingsByMode,
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
@@ -731,6 +778,15 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
+            aiSettingsByAgent:
+              workspace.aiSettingsByAgent ??
+              workspace.aiSettingsByMode ??
+              (workspace.aiSettings
+                ? {
+                    plan: workspace.aiSettings,
+                    exec: workspace.aiSettings,
+                  }
+                : undefined),
             aiSettingsByMode: workspace.aiSettingsByMode,
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,

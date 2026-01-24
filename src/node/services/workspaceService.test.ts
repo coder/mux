@@ -345,7 +345,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     );
   });
 
-  test("skips persisting base mode AI settings when agentId differs", async () => {
+  test("persists agent AI settings for custom agent", async () => {
     const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
 
     interface WorkspaceServiceTestAccess {
@@ -354,16 +354,15 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
         options: unknown,
         context: "send" | "resume"
       ) => Promise<void>;
-      persistWorkspaceAISettingsForMode: (...args: unknown[]) => unknown;
+      persistWorkspaceAISettingsForAgent: (...args: unknown[]) => unknown;
     }
 
     const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
-    svc.persistWorkspaceAISettingsForMode = persistSpy;
+    svc.persistWorkspaceAISettingsForAgent = persistSpy;
 
     await svc.maybePersistAISettingsFromOptions(
       "ws",
       {
-        mode: "exec",
         agentId: "reviewer",
         model: "openai:gpt-4o-mini",
         thinkingLevel: "off",
@@ -371,10 +370,10 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       "send"
     );
 
-    expect(persistSpy).not.toHaveBeenCalled();
+    expect(persistSpy).toHaveBeenCalledTimes(1);
   });
 
-  test("persists base mode AI settings when agentId matches", async () => {
+  test("persists agent AI settings when agentId matches", async () => {
     const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
 
     interface WorkspaceServiceTestAccess {
@@ -383,16 +382,15 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
         options: unknown,
         context: "send" | "resume"
       ) => Promise<void>;
-      persistWorkspaceAISettingsForMode: (...args: unknown[]) => unknown;
+      persistWorkspaceAISettingsForAgent: (...args: unknown[]) => unknown;
     }
 
     const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
-    svc.persistWorkspaceAISettingsForMode = persistSpy;
+    svc.persistWorkspaceAISettingsForAgent = persistSpy;
 
     await svc.maybePersistAISettingsFromOptions(
       "ws",
       {
-        mode: "exec",
         agentId: "exec",
         model: "openai:gpt-4o-mini",
         thinkingLevel: "off",

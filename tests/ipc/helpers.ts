@@ -286,7 +286,7 @@ export async function sendMessageAndWait(
         model,
         toolPolicy,
         thinkingLevel: "off", // Disable reasoning for fast test execution
-        mode: "exec", // Execute commands directly, don't propose plans
+        agentId: "exec", // Execute commands directly, don't propose plans
       },
     });
 

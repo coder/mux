@@ -80,7 +80,7 @@ describe("workspace.updateAISettings", () => {
         options: {
           model: "openai:gpt-4.1-mini", // Different model for compaction
           thinkingLevel: "off",
-          mode: "compact",
+          agentId: "compact",
           muxMetadata: {
             type: "compaction-request",
             rawCommand: "/compact",

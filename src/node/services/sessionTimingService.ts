@@ -51,6 +51,7 @@ interface ActiveStreamState {
   messageId: string;
   model: string;
   mode?: AgentMode;
+  agentId?: string;
 
   startTimeMs: number;
   firstTokenTimeMs: number | null;
@@ -333,7 +334,11 @@ export class SessionTimingService {
     file.session.byModel[key] = base;
   }
 
-  private queuePersistCompletedStream(workspaceId: string, completed: CompletedStreamStats): void {
+  private queuePersistCompletedStream(
+    workspaceId: string,
+    completed: CompletedStreamStats,
+    agentId?: string
+  ): void {
     const epoch = this.writeEpoch.get(workspaceId) ?? 0;
 
     const previous = this.pendingWrites.get(workspaceId) ?? Promise.resolve();
@@ -368,11 +373,13 @@ export class SessionTimingService {
               )
             : 0;
 
+        const telemetryAgentId = agentId ?? completed.mode ?? "exec";
+
         this.telemetryService.capture({
           event: "stream_timing_computed",
           properties: {
             model: completed.model,
-            mode: completed.mode ?? "exec",
+            agentId: telemetryAgentId,
             duration_b2: roundToBase2(durationSecs),
             ttft_ms_b2: completed.ttftMs !== null ? roundToBase2(completed.ttftMs) : 0,
             tool_ms_b2: roundToBase2(completed.toolExecutionMs),
@@ -611,12 +618,15 @@ export class SessionTimingService {
     // Validate mode: stats schema only accepts "plan" | "exec" for now.
     // Custom modes will need schema updates when supported.
     const mode = data.mode === "plan" || data.mode === "exec" ? data.mode : undefined;
+    const agentId =
+      typeof data.agentId === "string" && data.agentId.trim().length > 0 ? data.agentId : undefined;
 
     const state: ActiveStreamState = {
       workspaceId: data.workspaceId,
       messageId: data.messageId,
       model,
       mode,
+      agentId,
       startTimeMs: data.startTime,
       firstTokenTimeMs: null,
       toolWallMs: 0,
@@ -869,7 +879,7 @@ export class SessionTimingService {
       this.applyCompletedStreamToFile(cached, completedValidated);
     }
 
-    this.queuePersistCompletedStream(data.workspaceId, completedValidated);
+    this.queuePersistCompletedStream(data.workspaceId, completedValidated, state.agentId);
 
     this.emitChange(data.workspaceId);
   }
@@ -902,7 +912,7 @@ export class SessionTimingService {
       this.applyCompletedStreamToFile(cached, completedValidated);
     }
 
-    this.queuePersistCompletedStream(data.workspaceId, completedValidated);
+    this.queuePersistCompletedStream(data.workspaceId, completedValidated, state.agentId);
 
     this.emitChange(data.workspaceId);
   }

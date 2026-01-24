@@ -3,7 +3,6 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import React from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
-import { ModeProvider } from "@/browser/contexts/ModeContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getLastRuntimeConfigKey } from "@/common/constants/storage";
@@ -43,9 +42,7 @@ describe("useDraftWorkspaceSettings", () => {
 
     const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
       <APIProvider client={createStubApiClient()}>
-        <ModeProvider projectPath={projectPath}>
-          <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
-        </ModeProvider>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
       </APIProvider>
     );
 
@@ -71,9 +68,7 @@ describe("useDraftWorkspaceSettings", () => {
 
     const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
       <APIProvider client={createStubApiClient()}>
-        <ModeProvider projectPath={projectPath}>
-          <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
-        </ModeProvider>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
       </APIProvider>
     );
 
@@ -103,9 +98,7 @@ describe("useDraftWorkspaceSettings", () => {
 
     const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
       <APIProvider client={createStubApiClient()}>
-        <ModeProvider projectPath={projectPath}>
-          <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
-        </ModeProvider>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
       </APIProvider>
     );
 

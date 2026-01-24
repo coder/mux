@@ -661,7 +661,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         id: CommandIds.modeToggle(),
         title: "Open Agent Picker",
         section: section.mode,
-        shortcutHint: formatKeybind(KEYBINDS.TOGGLE_MODE),
+        shortcutHint: formatKeybind(KEYBINDS.TOGGLE_AGENT),
         run: () => {
           window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_AGENT_PICKER));
         },

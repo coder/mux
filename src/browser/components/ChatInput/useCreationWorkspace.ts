@@ -19,7 +19,7 @@ import {
   getNotifyOnResponseAutoEnableKey,
   getNotifyOnResponseKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByModeKey,
+  getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
@@ -75,7 +75,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
 
     updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(
-      getWorkspaceAISettingsByModeKey(workspaceId),
+      getWorkspaceAISettingsByAgentKey(workspaceId),
       (prev) => {
         const record = prev && typeof prev === "object" ? prev : {};
         return {
@@ -318,13 +318,34 @@ export function useCreationWorkspace({
         // is portable across devices even before the first stream starts.
         try {
           api.workspace
-            .updateModeAISettings({
+            .updateAgentAISettings({
               workspaceId: metadata.id,
-              mode: settings.mode,
+              agentId: settings.agentId,
               aiSettings: {
                 model: settings.model,
                 thinkingLevel: settings.thinkingLevel,
               },
+            })
+            .catch(() => {
+              const legacyMode = settings.agentId === "plan" ? "plan" : "exec";
+              return api.workspace
+                .updateModeAISettings({
+                  workspaceId: metadata.id,
+                  mode: legacyMode,
+                  aiSettings: {
+                    model: settings.model,
+                    thinkingLevel: settings.thinkingLevel,
+                  },
+                })
+                .catch(() => {
+                  return api.workspace.updateAISettings({
+                    workspaceId: metadata.id,
+                    aiSettings: {
+                      model: settings.model,
+                      thinkingLevel: settings.thinkingLevel,
+                    },
+                  });
+                });
             })
             .catch(() => {
               // Ignore (offline / older backend). sendMessage will persist as a fallback.
@@ -402,7 +423,7 @@ export function useCreationWorkspace({
       settings.selectedRuntime,
       runtimeAvailabilityState,
       setSelectedRuntime,
-      settings.mode,
+      settings.agentId,
       settings.model,
       settings.thinkingLevel,
       settings.trunkBranch,

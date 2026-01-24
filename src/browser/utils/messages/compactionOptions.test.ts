@@ -12,7 +12,7 @@ describe("applyCompactionOverrides", () => {
     model: KNOWN_MODELS.SONNET.id,
     thinkingLevel: "medium",
     toolPolicy: [],
-    mode: "exec",
+    agentId: "exec",
   };
 
   it("uses workspace model when no override specified", () => {
@@ -20,7 +20,7 @@ describe("applyCompactionOverrides", () => {
     const result = applyCompactionOverrides(baseOptions, compactData);
 
     expect(result.model).toBe(KNOWN_MODELS.SONNET.id);
-    expect(result.mode).toBe("compact");
+    expect(result.agentId).toBe("compact");
   });
 
   it("applies custom model override", () => {
@@ -61,7 +61,7 @@ describe("applyCompactionOverrides", () => {
     const compactData: CompactionRequestData = {};
     const result = applyCompactionOverrides(baseOptions, compactData);
 
-    expect(result.mode).toBe("compact");
+    expect(result.agentId).toBe("compact");
     expect(result.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
   });
 
@@ -73,7 +73,7 @@ describe("applyCompactionOverrides", () => {
     const compactData: CompactionRequestData = {};
     const result = applyCompactionOverrides(baseWithTools, compactData);
 
-    expect(result.mode).toBe("compact");
+    expect(result.agentId).toBe("compact");
     expect(result.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]); // Tools always disabled for compaction
   });
 
@@ -86,7 +86,7 @@ describe("applyCompactionOverrides", () => {
 
     expect(result.model).toBe(KNOWN_MODELS.GPT.id);
     expect(result.maxOutputTokens).toBe(5000);
-    expect(result.mode).toBe("compact");
+    expect(result.agentId).toBe("compact");
     expect(result.thinkingLevel).toBe("medium"); // Non-Anthropic preserves original
   });
 });

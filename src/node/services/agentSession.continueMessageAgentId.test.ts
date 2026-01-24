@@ -92,7 +92,6 @@ describe("AgentSession continue-message agentId fallback", () => {
     const result = await session.sendMessage("/compact", {
       model: "openai:gpt-4o",
       agentId: "compact",
-      mode: "compact",
       disableWorkspaceAgents: true,
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
       muxMetadata: {

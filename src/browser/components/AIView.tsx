@@ -4,7 +4,7 @@ import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { WorkspaceModeAISync } from "@/browser/components/WorkspaceModeAISync";
-import { ModeProvider } from "@/browser/contexts/ModeContext";
+import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
 import { WorkspaceShell } from "./WorkspaceShell";
@@ -49,7 +49,7 @@ const IncompatibleWorkspaceView: React.FC<{ message: string; className?: string 
   </div>
 );
 
-// Wrapper component that provides the mode and thinking contexts
+// Wrapper component that provides the agent and thinking contexts
 export const AIView: React.FC<AIViewProps> = (props) => {
   // Early return for incompatible workspaces - no hooks called in this path
   if (props.incompatibleRuntime) {
@@ -59,7 +59,7 @@ export const AIView: React.FC<AIViewProps> = (props) => {
   }
 
   return (
-    <ModeProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
+    <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
       <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ProviderOptionsProvider>
         <ThinkingProvider workspaceId={props.workspaceId}>
@@ -68,6 +68,6 @@ export const AIView: React.FC<AIViewProps> = (props) => {
           </BackgroundBashProvider>
         </ThinkingProvider>
       </ProviderOptionsProvider>
-    </ModeProvider>
+    </AgentProvider>
   );
 };

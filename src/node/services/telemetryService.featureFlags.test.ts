@@ -59,7 +59,7 @@ describe("TelemetryService feature flag properties", () => {
         properties: {
           workspaceId: "workspace-id",
           model: "test-model",
-          mode: "exec",
+          agentId: "exec",
           message_length_b2: 128,
           runtimeType: "local",
           frontendPlatform: {

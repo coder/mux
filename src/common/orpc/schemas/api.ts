@@ -401,6 +401,14 @@ export const workspace = {
     input: z.object({ workspaceId: z.string(), title: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  updateAgentAISettings: {
+    input: z.object({
+      workspaceId: z.string(),
+      agentId: AgentIdSchema,
+      aiSettings: WorkspaceAISettingsSchema,
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
   updateModeAISettings: {
     input: z.object({
       workspaceId: z.string(),

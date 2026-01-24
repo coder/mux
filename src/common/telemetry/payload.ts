@@ -20,7 +20,6 @@
  * code only needs to provide event-specific properties.
  */
 
-import type { AgentMode } from "@/common/types/mode";
 import type { RuntimeMode } from "@/common/types/runtime";
 
 /**
@@ -99,8 +98,8 @@ export interface MessageSentPayload {
   workspaceId: string;
   /** Full model identifier (e.g., 'anthropic/claude-3-5-sonnet-20241022') */
   model: string;
-  /** UI mode (e.g., 'plan', 'exec', 'edit') */
-  mode: AgentMode;
+  /** Agent id (e.g., 'plan', 'exec', 'explore'). Optional for legacy clients. */
+  agentId?: string;
   /** Message length rounded to nearest power of 2 (e.g., 128, 256, 512, 1024) */
   message_length_b2: number;
   /** Runtime type for the workspace */
@@ -121,8 +120,6 @@ export interface MCPContextInjectedPayload {
   workspaceId: string;
   /** Full model identifier */
   model: string;
-  /** UI mode (plan|exec|compact) derived from the selected agent definition */
-  mode: AgentMode;
   /** Active agent definition id (e.g. "plan", "exec", "explore"). Optional for backwards compatibility. */
   agentId?: string;
   /** Runtime type for the workspace */
@@ -201,7 +198,7 @@ export interface StatsTabOpenedPayload {
  */
 export interface StreamTimingComputedPayload {
   model: string;
-  mode: AgentMode;
+  agentId?: string;
   duration_b2: number;
   ttft_ms_b2: number;
   tool_ms_b2: number;

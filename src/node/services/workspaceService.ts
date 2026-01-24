@@ -1270,30 +1270,30 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions | undefined,
     context: "send" | "resume"
   ): Promise<void> {
-    // Skip for compaction - it may use a different model and shouldn't override user preference.
-    const isCompaction = options?.mode === "compact";
-    if (isCompaction) return;
-
     const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
     if (!extractedSettings) return;
 
-    const mode: UIMode = options?.mode === "plan" ? "plan" : "exec";
-
-    // With user-defined agents, the frontend always sends a base plan/exec `mode` to the backend,
-    // even if a custom agent is active. Persisting in that case would overwrite the base
-    // plan/exec defaults (which other agents may inherit), so only persist when agentId matches.
     const rawAgentId = options?.agentId;
     const normalizedAgentId =
       typeof rawAgentId === "string" && rawAgentId.trim().length > 0
         ? rawAgentId.trim().toLowerCase()
         : null;
-    if (normalizedAgentId && normalizedAgentId !== mode) {
-      return;
-    }
+    const legacyMode =
+      typeof options === "object" && options !== null && "mode" in options
+        ? (options as { mode?: string }).mode
+        : undefined;
+    const legacyAgentId =
+      legacyMode === "plan" || legacyMode === "exec" || legacyMode === "compact"
+        ? legacyMode
+        : null;
+    const effectiveAgentId = normalizedAgentId ?? legacyAgentId ?? "exec";
 
-    const persistResult = await this.persistWorkspaceAISettingsForMode(
+    // Skip compaction - it may use a different model and shouldn't override user preference.
+    if (effectiveAgentId === "compact") return;
+
+    const persistResult = await this.persistWorkspaceAISettingsForAgent(
       workspaceId,
-      mode,
+      effectiveAgentId,
       extractedSettings,
       {
         emitMetadata: false,
@@ -1307,9 +1307,9 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async persistWorkspaceAISettingsForMode(
+  private async persistWorkspaceAISettingsForAgent(
     workspaceId: string,
-    mode: UIMode,
+    agentId: string,
     aiSettings: WorkspaceAISettings,
     options?: { emitMetadata?: boolean }
   ): Promise<Result<boolean, string>> {
@@ -1333,23 +1333,35 @@ export class WorkspaceService extends EventEmitter {
       return Err("Workspace not found");
     }
 
-    const prev = workspaceEntryWithFallback.aiSettingsByMode?.[mode];
+    const normalizedAgentId = agentId.trim().toLowerCase();
+    if (!normalizedAgentId) {
+      return Err("Agent ID is required");
+    }
+
+    const prev = workspaceEntryWithFallback.aiSettingsByAgent?.[normalizedAgentId];
     const changed =
       prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
     if (!changed) {
       return Ok(false);
     }
 
-    workspaceEntryWithFallback.aiSettingsByMode = {
-      ...(workspaceEntryWithFallback.aiSettingsByMode ?? {}),
-      [mode]: aiSettings,
+    workspaceEntryWithFallback.aiSettingsByAgent = {
+      ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
+      [normalizedAgentId]: aiSettings,
     };
 
-    // Keep the legacy field in sync for older clients (prefer exec).
-    workspaceEntryWithFallback.aiSettings =
-      workspaceEntryWithFallback.aiSettingsByMode.exec ??
-      workspaceEntryWithFallback.aiSettingsByMode.plan ??
-      aiSettings;
+    if (normalizedAgentId === "plan" || normalizedAgentId === "exec") {
+      workspaceEntryWithFallback.aiSettingsByMode = {
+        ...(workspaceEntryWithFallback.aiSettingsByMode ?? {}),
+        [normalizedAgentId]: aiSettings,
+      };
+
+      // Keep the legacy field in sync for older clients (prefer exec).
+      workspaceEntryWithFallback.aiSettings =
+        workspaceEntryWithFallback.aiSettingsByMode.exec ??
+        workspaceEntryWithFallback.aiSettingsByMode.plan ??
+        aiSettings;
+    }
 
     await this.config.saveConfig(config);
 
@@ -1366,6 +1378,15 @@ export class WorkspaceService extends EventEmitter {
     }
 
     return Ok(true);
+  }
+
+  private async persistWorkspaceAISettingsForMode(
+    workspaceId: string,
+    mode: UIMode,
+    aiSettings: WorkspaceAISettings,
+    options?: { emitMetadata?: boolean }
+  ): Promise<Result<boolean, string>> {
+    return this.persistWorkspaceAISettingsForAgent(workspaceId, mode, aiSettings, options);
   }
 
   private async persistWorkspaceAISettings(
@@ -1395,6 +1416,7 @@ export class WorkspaceService extends EventEmitter {
 
     const prevLegacy = workspaceEntryWithFallback.aiSettings;
     const prevByMode = workspaceEntryWithFallback.aiSettingsByMode;
+    const prevByAgent = workspaceEntryWithFallback.aiSettingsByAgent;
 
     const changed =
       prevLegacy?.model !== aiSettings.model ||
@@ -1402,13 +1424,22 @@ export class WorkspaceService extends EventEmitter {
       prevByMode?.plan?.model !== aiSettings.model ||
       prevByMode?.plan?.thinkingLevel !== aiSettings.thinkingLevel ||
       prevByMode?.exec?.model !== aiSettings.model ||
-      prevByMode?.exec?.thinkingLevel !== aiSettings.thinkingLevel;
+      prevByMode?.exec?.thinkingLevel !== aiSettings.thinkingLevel ||
+      prevByAgent?.plan?.model !== aiSettings.model ||
+      prevByAgent?.plan?.thinkingLevel !== aiSettings.thinkingLevel ||
+      prevByAgent?.exec?.model !== aiSettings.model ||
+      prevByAgent?.exec?.thinkingLevel !== aiSettings.thinkingLevel;
     if (!changed) {
       return Ok(false);
     }
 
     workspaceEntryWithFallback.aiSettings = aiSettings;
     workspaceEntryWithFallback.aiSettingsByMode = { plan: aiSettings, exec: aiSettings };
+    workspaceEntryWithFallback.aiSettingsByAgent = {
+      ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
+      plan: aiSettings,
+      exec: aiSettings,
+    };
     await this.config.saveConfig(config);
 
     if (options?.emitMetadata !== false) {
@@ -1464,6 +1495,36 @@ export class WorkspaceService extends EventEmitter {
       const persistResult = await this.persistWorkspaceAISettingsForMode(
         workspaceId,
         mode,
+        normalized.data,
+        {
+          emitMetadata: true,
+        }
+      );
+      if (!persistResult.success) {
+        return Err(persistResult.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to update workspace AI settings: ${message}`);
+    }
+  }
+
+  async updateAgentAISettings(
+    workspaceId: string,
+    agentId: string,
+    aiSettings: WorkspaceAISettings
+  ): Promise<Result<void, string>> {
+    try {
+      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
+      if (!normalized.success) {
+        return Err(normalized.error);
+      }
+
+      const persistResult = await this.persistWorkspaceAISettingsForAgent(
+        workspaceId,
+        agentId,
         normalized.data,
         {
           emitMetadata: true,
@@ -1656,7 +1717,7 @@ export class WorkspaceService extends EventEmitter {
     log.debug("sendMessage handler: Received", {
       workspaceId,
       messagePreview: message.substring(0, 50),
-      mode: options?.mode,
+      agentId: options?.agentId,
       options,
     });
 

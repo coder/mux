@@ -50,10 +50,7 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
     disabled: startHereDisabled,
     modal: startHereModal,
   } = useStartHere(workspaceId, content, isCompacted, {
-    sourceMode:
-      message.mode === "exec" || message.mode === "plan" || message.mode === "compact"
-        ? message.mode
-        : undefined,
+    sourceAgentId: message.agentId,
   });
 
   // Copy to clipboard with feedback
