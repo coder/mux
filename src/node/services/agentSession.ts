@@ -127,6 +127,7 @@ export class AgentSession {
   private readonly initListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> =
     [];
   private disposed = false;
+  private streamStarting = false;
   private readonly messageQueue = new MessageQueue();
   private readonly compactionHandler: CompactionHandler;
 
@@ -523,6 +524,7 @@ export class AgentSession {
     const typedToolPolicy = options?.toolPolicy;
     // muxMetadata is z.any() in schema - cast to proper type
     const typedMuxMetadata = options?.muxMetadata as MuxFrontendMetadata | undefined;
+    const isCompactionRequest = isCompactionRequestMetadata(typedMuxMetadata);
 
     // Validate model BEFORE persisting message to prevent orphaned messages on invalid model
     if (!options?.model || options.model.trim().length === 0) {
@@ -616,83 +618,90 @@ export class AgentSession {
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
     this.emitChatEvent({ ...userMessage, type: "message" });
 
-    // If this is a compaction request, terminate background processes first
-    // They won't be included in the summary, so continuing with orphaned processes would be confusing
-    if (isCompactionRequestMetadata(typedMuxMetadata)) {
-      await this.backgroundProcessManager.cleanup(this.workspaceId);
+    this.streamStarting = true;
+
+    try {
+      // If this is a compaction request, terminate background processes first
+      // They won't be included in the summary, so continuing with orphaned processes would be confusing
+      if (isCompactionRequest) {
+        await this.backgroundProcessManager.cleanup(this.workspaceId);
+
+        if (this.disposed) {
+          return Ok(undefined);
+        }
+      }
+
+      // If this is a compaction request with a continue message, queue it for auto-send after compaction
+      if (isCompactionRequest && typedMuxMetadata.parsed.continueMessage && options) {
+        const continueMessage = typedMuxMetadata.parsed.continueMessage;
+
+        // Process the continue message content (handles reviews -> text formatting + metadata)
+        const { finalText, metadata } = prepareUserMessageForSend(
+          continueMessage,
+          continueMessage.muxMetadata
+        );
+
+        // Legacy compatibility: older clients stored `continueMessage.mode` (exec/plan) and compaction
+        // requests run with agentId="compact". Avoid falling back to the compact agent for the
+        // post-compaction follow-up.
+        const legacyMode = (continueMessage as { mode?: unknown }).mode;
+        const legacyAgentId =
+          legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
+
+        const fallbackAgentId =
+          continueMessage.agentId ??
+          legacyAgentId ??
+          (options.agentId && options.agentId !== "compact" ? options.agentId : undefined) ??
+          "exec";
+        // Build options for the queued message (strip compaction-specific fields)
+        // agentId determines tool policy via resolveToolPolicyForAgent in aiService
+
+        const sanitizedOptions: Omit<
+          SendMessageOptions,
+          "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
+        > & { imageParts?: typeof continueMessage.imageParts; muxMetadata?: typeof metadata } = {
+          model: continueMessage.model ?? options.model,
+          agentId: fallbackAgentId,
+          thinkingLevel: options.thinkingLevel,
+          additionalSystemInstructions: options.additionalSystemInstructions,
+          providerOptions: options.providerOptions,
+          experiments: options.experiments,
+          disableWorkspaceAgents: options.disableWorkspaceAgents,
+        };
+
+        // Add image parts if present
+        const continueImageParts = continueMessage.imageParts;
+        if (continueImageParts && continueImageParts.length > 0) {
+          sanitizedOptions.imageParts = continueImageParts;
+        }
+
+        // Add metadata with reviews if present
+        if (metadata) {
+          sanitizedOptions.muxMetadata = metadata;
+        }
+
+        const dedupeKey = JSON.stringify({
+          text: finalText.trim(),
+          images: (continueImageParts ?? []).map((image) => `${image.mediaType}:${image.url}`),
+        });
+
+        if (this.messageQueue.addOnce(finalText, sanitizedOptions, dedupeKey)) {
+          this.emitQueuedMessageChanged();
+        }
+      }
 
       if (this.disposed) {
         return Ok(undefined);
       }
+
+      // Must await here so the finally block runs after streaming completes,
+      // not immediately when the Promise is returned. This keeps streamStarting=true
+      // for the entire duration of streaming, allowing follow-up messages to be queued.
+      const result = await this.streamWithHistory(options.model, options);
+      return result;
+    } finally {
+      this.streamStarting = false;
     }
-
-    // If this is a compaction request with a continue message, queue it for auto-send after compaction
-    if (
-      isCompactionRequestMetadata(typedMuxMetadata) &&
-      typedMuxMetadata.parsed.continueMessage &&
-      options
-    ) {
-      const continueMessage = typedMuxMetadata.parsed.continueMessage;
-
-      // Process the continue message content (handles reviews -> text formatting + metadata)
-      const { finalText, metadata } = prepareUserMessageForSend(
-        continueMessage,
-        continueMessage.muxMetadata
-      );
-
-      // Legacy compatibility: older clients stored `continueMessage.mode` (exec/plan) and compaction
-      // requests run with agentId="compact". Avoid falling back to the compact agent for the
-      // post-compaction follow-up.
-      const legacyMode = (continueMessage as { mode?: unknown }).mode;
-      const legacyAgentId = legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
-
-      const fallbackAgentId =
-        continueMessage.agentId ??
-        legacyAgentId ??
-        (options.agentId && options.agentId !== "compact" ? options.agentId : undefined) ??
-        "exec";
-      // Build options for the queued message (strip compaction-specific fields)
-      // agentId determines tool policy via resolveToolPolicyForAgent in aiService
-
-      const sanitizedOptions: Omit<
-        SendMessageOptions,
-        "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
-      > & { imageParts?: typeof continueMessage.imageParts; muxMetadata?: typeof metadata } = {
-        model: continueMessage.model ?? options.model,
-        agentId: fallbackAgentId,
-        thinkingLevel: options.thinkingLevel,
-        additionalSystemInstructions: options.additionalSystemInstructions,
-        providerOptions: options.providerOptions,
-        experiments: options.experiments,
-        disableWorkspaceAgents: options.disableWorkspaceAgents,
-      };
-
-      // Add image parts if present
-      const continueImageParts = continueMessage.imageParts;
-      if (continueImageParts && continueImageParts.length > 0) {
-        sanitizedOptions.imageParts = continueImageParts;
-      }
-
-      // Add metadata with reviews if present
-      if (metadata) {
-        sanitizedOptions.muxMetadata = metadata;
-      }
-
-      const dedupeKey = JSON.stringify({
-        text: finalText.trim(),
-        images: (continueImageParts ?? []).map((image) => `${image.mediaType}:${image.url}`),
-      });
-
-      if (this.messageQueue.addOnce(finalText, sanitizedOptions, dedupeKey)) {
-        this.emitQueuedMessageChanged();
-      }
-    }
-
-    if (this.disposed) {
-      return Ok(undefined);
-    }
-
-    return this.streamWithHistory(options.model, options);
   }
 
   async resumeStream(options: SendMessageOptions): Promise<Result<void, SendMessageError>> {
@@ -706,7 +715,15 @@ export class AgentSession {
       return Ok(undefined);
     }
 
-    return this.streamWithHistory(model, options);
+    this.streamStarting = true;
+    try {
+      // Must await here so the finally block runs after streaming completes,
+      // not immediately when the Promise is returned.
+      const result = await this.streamWithHistory(model, options);
+      return result;
+    } finally {
+      this.streamStarting = false;
+    }
   }
 
   async interruptStream(options?: {
@@ -970,11 +987,17 @@ export class AgentSession {
     const retryOptions = isSonnet45
       ? this.withAnthropic1MContext(context.modelString, context.options)
       : context.options;
-    const retryResult = await this.streamWithHistory(
-      context.modelString,
-      retryOptions,
-      isGptClass ? "auto" : undefined
-    );
+    this.streamStarting = true;
+    let retryResult: Result<void, SendMessageError>;
+    try {
+      retryResult = await this.streamWithHistory(
+        context.modelString,
+        retryOptions,
+        isGptClass ? "auto" : undefined
+      );
+    } finally {
+      this.streamStarting = false;
+    }
     if (!retryResult.success) {
       log.error("Compaction retry failed to start", {
         workspaceId: this.workspaceId,
@@ -1136,6 +1159,10 @@ export class AgentSession {
       workspaceId: this.workspaceId,
       message,
     } satisfies AgentSessionChatEvent);
+  }
+
+  isStreamStarting(): boolean {
+    return this.streamStarting;
   }
 
   queueMessage(message: string, options?: SendMessageOptions & { imageParts?: ImagePart[] }): void {

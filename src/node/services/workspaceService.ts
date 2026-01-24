@@ -1761,7 +1761,11 @@ export class WorkspaceService extends EventEmitter {
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, resolvedOptions, "send");
 
-      if (this.aiService.isStreaming(workspaceId) && !resolvedOptions?.editMessageId) {
+      const shouldQueue =
+        !resolvedOptions?.editMessageId &&
+        (this.aiService.isStreaming(workspaceId) || session.isStreamStarting());
+
+      if (shouldQueue) {
         const pendingAskUserQuestion = askUserQuestionManager.getLatestPending(workspaceId);
         if (pendingAskUserQuestion) {
           try {

@@ -800,6 +800,7 @@ export class StreamingMessageAggregator {
    * Note: This returns the *override* model from the /compact command. If the user didn't
    * specify a model, compaction uses the workspace default model and we intentionally return null.
    */
+
   getPendingCompactionModel(): string | null {
     if (this.pendingStreamStartTime === null) return null;
     return this.pendingCompactionRequest?.model ?? null;

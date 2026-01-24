@@ -19,6 +19,8 @@ export interface MockAiRouterReply {
   assistantText: string;
   /** Optional: stream-start mode (exec/plan/compact). */
   mode?: "plan" | "exec" | "compact";
+  /** Optional: hold stream-start until released by the mock controller. */
+  waitForStreamStart?: boolean;
   /** Optional: if present, the mock adapter will emit a usage-delta early in the stream. */
   usage?: LanguageModelV2Usage;
 
@@ -42,12 +44,34 @@ export interface MockAiRouterHandler {
 
 const DEFAULT_FORCE_COMPACTION_INPUT_TOKENS = 160_000;
 const FORCE_MARKER = "[force]";
+const STREAM_START_WAIT_PATTERN = /\[mock:wait-start(?:=|:)?([a-z0-9_-]+)?\]/i;
 const MOCK_MARKER_PREFIX = "[mock:";
+
+/** Marker to trigger the mock stream-start gate (holds stream until released). */
+export const MOCK_STREAM_START_GATE_MARKER = "[mock:wait-start]";
+
+/** Build a message that triggers the mock stream-start gate. */
+export function buildMockStreamStartGateMessage(text: string): string {
+  return `${MOCK_STREAM_START_GATE_MARKER} ${text}`.trim();
+}
 
 function normalizeText(text: string): string {
   return text.trim().toLowerCase();
 }
 
+function shouldWaitForStreamStart(text: string): boolean {
+  return STREAM_START_WAIT_PATTERN.test(text);
+}
+
+function applyStreamStartGate(reply: MockAiRouterReply, latestUserText: string): MockAiRouterReply {
+  if (reply.waitForStreamStart !== undefined) {
+    return reply;
+  }
+  if (!shouldWaitForStreamStart(latestUserText)) {
+    return reply;
+  }
+  return { ...reply, waitForStreamStart: true };
+}
 function hasMockMarker(text: string, marker: string): boolean {
   const normalized = normalizeText(text);
   return normalized.includes(`${MOCK_MARKER_PREFIX}${marker.toLowerCase()}`);
@@ -505,10 +529,10 @@ export class MockAiRouter {
   route(request: MockAiRouterRequest): MockAiRouterReply {
     for (const handler of this.handlers) {
       if (handler.match(request)) {
-        return handler.respond(request);
+        return applyStreamStartGate(handler.respond(request), request.latestUserText);
       }
     }
 
-    return buildDefaultReply(request.latestUserText);
+    return applyStreamStartGate(buildDefaultReply(request.latestUserText), request.latestUserText);
   }
 }

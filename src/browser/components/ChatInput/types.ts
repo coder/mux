@@ -24,6 +24,7 @@ export interface ChatInputWorkspaceVariant {
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;
+  isStreamStarting?: boolean;
   editingMessage?: { id: string; content: string; imageParts?: ImagePart[] };
   onCancelEdit?: () => void;
   onEditLastUserMessage?: () => void;

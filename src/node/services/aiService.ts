@@ -557,6 +557,10 @@ export class AIService extends EventEmitter {
     return this.mockModeEnabled;
   }
 
+  releaseMockStreamStartGate(workspaceId: string): void {
+    this.mockAiStreamPlayer?.releaseStreamStartGate(workspaceId);
+  }
+
   enableMockMode(): void {
     this.mockModeEnabled = true;
 
@@ -1102,6 +1106,10 @@ export class AIService extends EventEmitter {
 
     try {
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
+        await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
+        if (combinedAbortSignal.aborted) {
+          return Ok(undefined);
+        }
         return await this.mockAiStreamPlayer.play(messages, workspaceId, {
           model: modelString,
           abortSignal: combinedAbortSignal,
@@ -2117,6 +2125,18 @@ export class AIService extends EventEmitter {
       return;
     }
     await this.streamManager.replayStream(workspaceId);
+  }
+
+  debugGetLastMockPrompt(workspaceId: string): Result<MuxMessage[] | null> {
+    if (typeof workspaceId !== "string" || workspaceId.trim().length === 0) {
+      return Err("debugGetLastMockPrompt: workspaceId is required");
+    }
+
+    if (!this.mockModeEnabled || !this.mockAiStreamPlayer) {
+      return Ok(null);
+    }
+
+    return Ok(this.mockAiStreamPlayer.debugGetLastPrompt(workspaceId));
   }
 
   debugGetLastLlmRequest(workspaceId: string): Result<DebugLlmRequestSnapshot | null> {

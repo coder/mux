@@ -521,7 +521,7 @@ describe("handlePlanShowCommand", () => {
         agentId: "exec",
       },
       setImageAttachments: mock(() => undefined),
-      setIsSending: mock(() => undefined),
+      setSendingState: mock(() => undefined),
     };
   };
 
@@ -590,7 +590,7 @@ describe("handlePlanOpenCommand", () => {
         agentId: "exec",
       },
       setImageAttachments: mock(() => undefined),
-      setIsSending: mock(() => undefined),
+      setSendingState: mock(() => undefined),
     };
   };
 
@@ -647,7 +647,7 @@ describe("handleCompactCommand", () => {
     const setInput = mock(() => undefined);
     const setToast = mock(() => undefined);
     const setImageAttachments = mock(() => undefined);
-    const setIsSending = mock(() => undefined);
+    const setSendingState = mock(() => undefined);
 
     // Track the options passed to sendMessage
     const sendMessageMock = mock(() => Promise.resolve(sendMessageResult));
@@ -657,7 +657,7 @@ describe("handleCompactCommand", () => {
       setInput,
       setToast,
       setImageAttachments,
-      setIsSending,
+      setSendingState,
       reviews: options?.reviews,
       api: {
         workspace: {

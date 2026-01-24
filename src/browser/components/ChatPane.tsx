@@ -151,7 +151,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   useEffect(() => {
     workspaceStateRef.current = workspaceState;
   }, [workspaceState]);
-  const { messages, canInterrupt, isCompacting, loading } = workspaceState;
+  const { messages, canInterrupt, isCompacting, isStreamStarting, loading } = workspaceState;
 
   // Apply message transformations:
   // 1. Merge consecutive identical stream errors
@@ -691,6 +691,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         workspaceId={workspaceId}
         projectName={projectName}
         workspaceName={workspaceName}
+        isStreamStarting={isStreamStarting}
         runtimeConfig={runtimeConfig}
         isQueuedAgentTask={isQueuedAgentTask}
         isCompacting={isCompacting}
@@ -720,6 +721,7 @@ interface ChatInputPaneProps {
   runtimeConfig?: RuntimeConfig;
   isQueuedAgentTask: boolean;
   isCompacting: boolean;
+  isStreamStarting: boolean;
   canInterrupt: boolean;
   autoCompactionResult: ReturnType<typeof checkAutoCompaction>;
   shouldShowCompactionWarning: boolean;
@@ -770,6 +772,7 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
             ? "Queued — waiting for an available parallel task slot. This will start automatically."
             : undefined
         }
+        isStreamStarting={props.isStreamStarting}
         isCompacting={props.isCompacting}
         editingMessage={props.editingMessage}
         onCancelEdit={props.onCancelEdit}

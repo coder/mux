@@ -51,6 +51,7 @@ export interface WorkspaceState {
   queuedMessage: QueuedMessage | null;
   canInterrupt: boolean;
   isCompacting: boolean;
+  isStreamStarting: boolean;
   awaitingUserQuestion: boolean;
   loading: boolean;
   muxMessages: MuxMessage[];
@@ -895,6 +896,9 @@ export class WorkspaceStore {
       const activeStreams = aggregator.getActiveStreams();
       const messages = aggregator.getAllMessages();
       const metadata = this.workspaceMetadata.get(workspaceId);
+      const pendingStreamStartTime = aggregator.getPendingStreamStartTime();
+      const canInterrupt = activeStreams.length > 0;
+      const isStreamStarting = pendingStreamStartTime !== null && !canInterrupt;
 
       // Live streaming stats
       const activeStreamMessageId = aggregator.getActiveStreamMessageId();
@@ -909,8 +913,9 @@ export class WorkspaceStore {
         name: metadata?.name ?? workspaceId, // Fall back to ID if metadata missing
         messages: aggregator.getDisplayedMessages(),
         queuedMessage: transient.queuedMessage,
-        canInterrupt: activeStreams.length > 0,
+        canInterrupt,
         isCompacting: aggregator.isCompacting(),
+        isStreamStarting,
         awaitingUserQuestion: aggregator.hasAwaitingUserQuestion(),
         loading: !hasMessages && !transient.caughtUp,
         muxMessages: messages,
@@ -919,7 +924,7 @@ export class WorkspaceStore {
         todos: aggregator.getCurrentTodos(),
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus: aggregator.getAgentStatus(),
-        pendingStreamStartTime: aggregator.getPendingStreamStartTime(),
+        pendingStreamStartTime,
         pendingCompactionModel: aggregator.getPendingCompactionModel(),
         runtimeStatus: aggregator.getRuntimeStatus(),
         streamingTokenCount,

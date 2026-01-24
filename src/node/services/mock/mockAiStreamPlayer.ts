@@ -111,6 +111,11 @@ interface MockPlayerDeps {
   historyService: HistoryService;
 }
 
+interface StreamStartGate {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
 interface ActiveStream {
   timers: Array<ReturnType<typeof setTimeout>>;
   messageId: string;
@@ -120,16 +125,92 @@ interface ActiveStream {
 }
 
 export class MockAiStreamPlayer {
+  private readonly streamStartGates = new Map<string, StreamStartGate>();
+  private readonly releasedStreamStartGates = new Set<string>();
   private readonly router = new MockAiRouter();
+  private readonly lastPromptByWorkspace = new Map<string, MuxMessage[]>();
   private readonly activeStreams = new Map<string, ActiveStream>();
   private nextMockMessageId = 0;
 
   constructor(private readonly deps: MockPlayerDeps) {}
 
+  debugGetLastPrompt(workspaceId: string): MuxMessage[] | null {
+    return this.lastPromptByWorkspace.get(workspaceId) ?? null;
+  }
+
+  private recordLastPrompt(workspaceId: string, messages: MuxMessage[]): void {
+    try {
+      const cloned =
+        typeof structuredClone === "function"
+          ? structuredClone(messages)
+          : (JSON.parse(JSON.stringify(messages)) as MuxMessage[]);
+      this.lastPromptByWorkspace.set(workspaceId, cloned);
+    } catch {
+      this.lastPromptByWorkspace.set(workspaceId, messages);
+    }
+  }
+
   isStreaming(workspaceId: string): boolean {
     return this.activeStreams.has(workspaceId);
   }
 
+  releaseStreamStartGate(workspaceId: string): void {
+    const gate = this.streamStartGates.get(workspaceId);
+    if (!gate) {
+      this.releasedStreamStartGates.add(workspaceId);
+      return;
+    }
+    gate.resolve();
+  }
+
+  private getStreamStartGate(workspaceId: string): StreamStartGate {
+    const existing = this.streamStartGates.get(workspaceId);
+    if (existing) {
+      return existing;
+    }
+
+    let resolve!: () => void;
+    const promise = new Promise<void>((res) => {
+      resolve = res;
+    });
+    const gate = { promise, resolve };
+    this.streamStartGates.set(workspaceId, gate);
+    return gate;
+  }
+
+  private async waitForStreamStartGate(
+    workspaceId: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (this.releasedStreamStartGates.delete(workspaceId)) {
+      return;
+    }
+
+    const gate = this.getStreamStartGate(workspaceId);
+    let resolved = false;
+
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        if (resolved) return;
+        resolved = true;
+        this.streamStartGates.delete(workspaceId);
+        if (abortSignal) {
+          abortSignal.removeEventListener("abort", finish);
+        }
+        resolve();
+      };
+
+      void gate.promise.then(finish);
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          finish();
+          return;
+        }
+        abortSignal.addEventListener("abort", finish, { once: true });
+      }
+    });
+  }
   stop(workspaceId: string): void {
     const active = this.activeStreams.get(workspaceId);
     if (!active) return;
@@ -167,6 +248,7 @@ export class MockAiStreamPlayer {
 
     const latestText = this.extractText(latest);
 
+    this.recordLastPrompt(workspaceId, messages);
     const reply = this.router.route({
       messages,
       latestUserMessage: latest,
@@ -174,6 +256,13 @@ export class MockAiStreamPlayer {
     });
 
     const messageId = `msg-mock-${this.nextMockMessageId++}`;
+    if (reply.waitForStreamStart) {
+      await this.waitForStreamStartGate(workspaceId, abortSignal);
+      if (abortSignal?.aborted) {
+        return Ok(undefined);
+      }
+    }
+
     const events = buildMockStreamEventsFromReply(reply, {
       messageId,
       model: options?.model,
@@ -185,6 +274,38 @@ export class MockAiStreamPlayer {
     if (!streamStart) {
       return Err({ type: "unknown", raw: "Mock AI turn missing stream-start" });
     }
+
+    const streamStartTimeoutMs = 5000;
+    const streamStartPromise = new Promise<void>((resolve) => {
+      let resolved = false;
+      // eslint-disable-next-line prefer-const -- assigned once but after cleanup() is defined
+      let timeoutId: ReturnType<typeof setTimeout>;
+      const onStreamStart = (event: StreamStartEvent) => {
+        if (event.workspaceId !== workspaceId || event.messageId !== messageId) {
+          return;
+        }
+        cleanup();
+      };
+      const cleanup = () => {
+        if (resolved) return;
+        resolved = true;
+        this.deps.aiService.off("stream-start", onStreamStart as never);
+        clearTimeout(timeoutId);
+        resolve();
+      };
+
+      this.deps.aiService.on("stream-start", onStreamStart as never);
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          cleanup();
+          return;
+        }
+        abortSignal.addEventListener("abort", cleanup, { once: true });
+      }
+
+      timeoutId = setTimeout(cleanup, streamStartTimeoutMs);
+    });
 
     let historySequence = this.computeNextHistorySequence(messages);
 
@@ -223,6 +344,11 @@ export class MockAiStreamPlayer {
     }
 
     this.scheduleEvents(workspaceId, events, messageId, historySequence);
+
+    await streamStartPromise;
+    if (abortSignal?.aborted) {
+      return Ok(undefined);
+    }
 
     return Ok(undefined);
   }

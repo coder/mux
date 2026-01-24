@@ -151,7 +151,7 @@ export async function processSlashCommand(
   const {
     api: client,
     setInput,
-    setIsSending,
+    setSendingState,
     setToast,
     variant,
     setVimEnabled,
@@ -162,7 +162,7 @@ export async function processSlashCommand(
   // 1. Global Commands
   if (parsed.type === "providers-set") {
     if (context.onProviderConfig) {
-      setIsSending(true);
+      setSendingState(true);
       setInput(""); // Clear input immediately
 
       try {
@@ -188,7 +188,7 @@ export async function processSlashCommand(
         // The caller (ChatInput) pattern is: if (!result.clearInput) setInput(original).
         // So we should return clearInput: false on error.
       } finally {
-        setIsSending(false);
+        setSendingState(false);
       }
       return { clearInput: true, toastShown: true };
     }
@@ -391,12 +391,12 @@ async function handleForkCommand(
     workspaceId,
     sendMessageOptions,
     setInput,
-    setIsSending,
+    setSendingState,
     setToast,
   } = context;
 
   setInput(""); // Clear input immediately
-  setIsSending(true);
+  setSendingState(true);
 
   try {
     // Note: workspaceId is required for fork, but SlashCommandContext allows undefined workspaceId.
@@ -442,7 +442,7 @@ async function handleForkCommand(
     });
     return { clearInput: false, toastShown: true };
   } finally {
-    setIsSending(false);
+    setSendingState(false);
   }
 }
 
@@ -761,7 +761,8 @@ export interface CommandHandlerContext {
   editMessageId?: string;
   setInput: (value: string) => void;
   setImageAttachments: (images: ImageAttachment[]) => void;
-  setIsSending: (value: boolean) => void;
+  /** Increment/decrement the sending counter. Pass true to increment, false to decrement. */
+  setSendingState: (increment: boolean) => void;
   setToast: (toast: Toast) => void;
   onCancelEdit?: () => void;
 }
@@ -785,7 +786,7 @@ export async function handleNewCommand(
     workspaceId,
     sendMessageOptions,
     setInput,
-    setIsSending,
+    setSendingState,
     setToast,
   } = context;
 
@@ -818,7 +819,7 @@ export async function handleNewCommand(
   }
 
   setInput("");
-  setIsSending(true);
+  setSendingState(true);
 
   try {
     // Get workspace info to extract projectPath
@@ -867,7 +868,7 @@ export async function handleNewCommand(
     });
     return { clearInput: false, toastShown: true };
   } finally {
-    setIsSending(false);
+    setSendingState(false);
   }
 }
 
@@ -885,7 +886,7 @@ export async function handleCompactCommand(
     editMessageId,
     setInput,
     setImageAttachments,
-    setIsSending,
+    setSendingState,
     setToast,
     onCancelEdit,
   } = context;
@@ -898,7 +899,7 @@ export async function handleCompactCommand(
 
   setInput("");
   setImageAttachments([]);
-  setIsSending(true);
+  setSendingState(true);
 
   try {
     const result = await executeCompaction({
@@ -952,7 +953,7 @@ export async function handleCompactCommand(
     });
     return { clearInput: false, toastShown: true };
   } finally {
-    setIsSending(false);
+    setSendingState(false);
   }
 }
 

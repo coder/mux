@@ -190,6 +190,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Extract workspace-specific props with defaults
   const disabled = props.disabled ?? false;
   const editingMessage = variant === "workspace" ? props.editingMessage : undefined;
+  const isStreamStarting = variant === "workspace" ? (props.isStreamStarting ?? false) : false;
   const isCompacting = variant === "workspace" ? (props.isCompacting ?? false) : false;
   const canInterrupt = variant === "workspace" ? (props.canInterrupt ?? false) : false;
   const hasQueuedCompaction =
@@ -215,7 +216,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   })();
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
-  const [isSending, setIsSending] = useState(false);
+  // Track concurrent sends with a counter (not boolean) to handle queued follow-ups correctly.
+  // When a follow-up is queued during stream-start, it resolves immediately but shouldn't
+  // clear the "in flight" state until all sends complete.
+  const [sendingCount, setSendingCount] = useState(0);
+  const isSending = sendingCount > 0;
   const [hideReviewsDuringSend, setHideReviewsDuringSend] = useState(false);
   const [showAtMentionSuggestions, setShowAtMentionSuggestions] = useState(false);
   const [atMentionSuggestions, setAtMentionSuggestions] = useState<SlashSuggestion[]>([]);
@@ -579,6 +584,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
 
   const isSendInFlight = variant === "creation" ? creationState.isSending : isSending;
+  const sendInFlightBlocksInput =
+    variant === "workspace" ? isSendInFlight && !isStreamStarting : isSendInFlight;
 
   // Coder workspace state - config is owned by selectedRuntime.coder, this hook manages async data
   const currentRuntime = creationState.selectedRuntime;
@@ -657,7 +664,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const canSend =
     (hasTypedText || hasImages || hasReviews) &&
     !disabled &&
-    !isSendInFlight &&
+    !sendInFlightBlocksInput &&
     !coderPresetsLoading;
 
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
@@ -1558,7 +1565,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // Handle /providers set command
         if (parsed.type === "providers-set" && props.onProviderConfig) {
-          setIsSending(true);
+          setSendingCount((c) => c + 1);
           setInput(""); // Clear input immediately
 
           try {
@@ -1576,7 +1583,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             });
             setInput(messageText); // Restore input on error
           } finally {
-            setIsSending(false);
+            setSendingCount((c) => c - 1);
           }
           return;
         }
@@ -1626,7 +1633,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           sendMessageOptions,
           setInput,
           setImageAttachments,
-          setIsSending,
+          setSendingState: (increment: boolean) =>
+            increment ? setSendingCount((c) => c + 1) : setSendingCount((c) => c - 1),
           setToast,
         };
 
@@ -1640,7 +1648,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             return;
           }
 
-          setIsSending(true);
+          setSendingCount((c) => c + 1);
           setInput("");
           try {
             const projectPath = selectedWorkspace.projectPath;
@@ -1676,7 +1684,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             });
             setInput(messageText);
           } finally {
-            setIsSending(false);
+            setSendingCount((c) => c - 1);
           }
 
           return;
@@ -1712,7 +1720,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Handle /fork command
         if (parsed.type === "fork") {
           setInput(""); // Clear input immediately
-          setIsSending(true);
+          setSendingCount((c) => c + 1);
 
           try {
             const forkResult = await forkWorkspace({
@@ -1741,7 +1749,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             setInput(messageText); // Restore input on error
           }
 
-          setIsSending(false);
+          setSendingCount((c) => c - 1);
           return;
         }
 
@@ -1829,7 +1837,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         pushToast({ type: "error", message: "Not connected to server" });
         return;
       }
-      setIsSending(true);
+      setSendingCount((c) => c + 1);
 
       // Save current draft state for restoration on error
       const preSendDraft = getDraft();
@@ -1841,7 +1849,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         variant === "workspace" &&
         shouldTriggerAutoCompaction(
           props.autoCompactionCheck,
-          isCompacting,
+          isCompacting || isStreamStarting,
           !!editingMessage,
           hasQueuedCompaction
         )
@@ -1921,7 +1929,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               error instanceof Error ? error.message : "Unexpected error during auto-compaction",
           });
         } finally {
-          setIsSending(false);
+          setSendingCount((c) => c - 1);
           setHideReviewsDuringSend(false);
         }
 
@@ -2063,7 +2071,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Restore draft on error
         setDraft(preSendDraft);
       } finally {
-        setIsSending(false);
+        setSendingCount((c) => c - 1);
         setHideReviewsDuringSend(false);
       }
     } finally {
@@ -2372,7 +2380,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         : undefined
                   }
                   placeholder={placeholder}
-                  disabled={!editingMessage && (disabled || isSendInFlight)}
+                  disabled={!editingMessage && (disabled || sendInFlightBlocksInput)}
                   aria-label={editingMessage ? "Edit your last message" : "Message Claude"}
                   aria-autocomplete="list"
                   aria-controls={
@@ -2396,7 +2404,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     shouldShowUI={voiceInput.shouldShowUI}
                     requiresSecureContext={voiceInput.requiresSecureContext}
                     onToggle={voiceInput.toggle}
-                    disabled={disabled || isSendInFlight}
+                    disabled={disabled || sendInFlightBlocksInput}
                     agentColor={focusBorderColor}
                   />
                 </div>
