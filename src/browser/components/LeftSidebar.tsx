@@ -6,7 +6,6 @@ import { TitleBar } from "./TitleBar";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface LeftSidebarProps {
-  onToggleUnread: (workspaceId: string, isUnread: boolean) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;

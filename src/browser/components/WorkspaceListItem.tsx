@@ -36,7 +36,6 @@ export interface WorkspaceListItemProps {
   // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
-  onToggleUnread: (workspaceId: string, isUnread: boolean) => void;
 }
 
 const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
@@ -49,7 +48,6 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   sectionId,
   onSelectWorkspace,
   onArchiveWorkspace,
-  onToggleUnread,
 }) => {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
@@ -115,10 +113,26 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     useWorkspaceSidebarState(workspaceId);
 
   const isUnread = recencyTimestamp !== null && recencyTimestamp > lastReadTimestamp;
-  const showUnreadIndicator = !isCreating && !isEditing && isUnread;
+  const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
+  const barColorClass =
+    isSelected && !isDisabled
+      ? "bg-blue-400"
+      : showUnreadBar
+        ? "bg-border-medium"
+        : "bg-transparent";
+  const unreadBar = (
+    <span
+      className={cn(
+        "absolute left-0 top-0 bottom-0 w-[3px] transition-colors duration-150",
+        barColorClass,
+        showUnreadBar ? "pointer-events-auto" : "pointer-events-none"
+      )}
+      aria-hidden={!showUnreadBar}
+    />
+  );
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  const paddingLeft = 9 + Math.min(32, safeDepth) * 12;
+  const paddingLeft = 12 + Math.min(32, safeDepth) * 12;
 
   // Drag handle for moving workspace between sections
   const [{ isDragging }, drag, dragPreview] = useDrag(
@@ -151,12 +165,12 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
       <div
         ref={drag}
         className={cn(
-          "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
+          "py-1.5 pr-2 transition-all duration-150 text-[13px] relative flex gap-2",
           isDragging && "opacity-50",
           isDisabled
             ? "cursor-default opacity-70"
             : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
-          isSelected && !isDisabled && "bg-hover border-l-blue-400",
+          isSelected && !isDisabled && "bg-hover",
           isArchiving && "pointer-events-none"
         )}
         style={{ paddingLeft }}
@@ -197,7 +211,16 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        {/* Archive button with unread badge overlay - vertically centered against entire item */}
+        {/* Workspace indicator bar (selected/unread) */}
+        {showUnreadBar ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{unreadBar}</TooltipTrigger>
+            <TooltipContent align="start">Unread messages</TooltipContent>
+          </Tooltip>
+        ) : (
+          unreadBar
+        )}
+        {/* Archive button - vertically centered against entire item */}
         {!isCreating && !isEditing && (
           <div className="relative inline-flex h-4 w-4 shrink-0 items-center self-center">
             <Tooltip>
@@ -216,24 +239,6 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
               </TooltipTrigger>
               <TooltipContent align="start">Archive workspace</TooltipContent>
             </Tooltip>
-            {showUnreadIndicator && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    className="absolute -top-0.5 -right-0.5 inline-flex h-3 w-3 cursor-pointer items-center justify-center border-none bg-transparent p-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onToggleUnread(workspaceId, isUnread);
-                    }}
-                    aria-label={`Mark workspace ${displayTitle} as read`}
-                    data-workspace-id={workspaceId}
-                  >
-                    <span className="h-2 w-2 rounded-full bg-gray-300" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="start">Unread messages</TooltipContent>
-              </Tooltip>
-            )}
           </div>
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">

@@ -45,19 +45,4 @@ export function useUnreadTracking(selectedWorkspace: WorkspaceSelection | null) 
       markAsRead(selectedWorkspace.workspaceId);
     }
   }, [selectedWorkspace, markAsRead]);
-
-  // Manual toggle function for clicking the indicator
-  const onToggleUnread = useCallback((workspaceId: string, isUnread: boolean) => {
-    const key = getWorkspaceLastReadKey(workspaceId);
-    if (isUnread) {
-      updatePersistedState(key, Date.now());
-      return;
-    }
-
-    updatePersistedState(key, 0);
-  }, []);
-
-  return {
-    onToggleUnread,
-  };
 }
