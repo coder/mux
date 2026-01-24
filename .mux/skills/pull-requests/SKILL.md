@@ -60,12 +60,19 @@ gh pr comment <pr_number> --body-file - <<'EOF'
 EOF
 ```
 
-If Codex left review comments and you addressed them:
+### Handling Codex Comments
+
+Use these scripts to check and resolve Codex review comments:
+
+- `./scripts/check_codex_comments.sh <pr_number>` — Lists unresolved Codex comments (both regular comments and review threads). Outputs thread IDs needed for resolution.
+- `./scripts/resolve_pr_comment.sh <thread_id>` — Resolves a review thread by its ID (e.g., `PRRT_abc123`).
+
+When Codex leaves review comments, you **must** address them before the PR can merge:
 
 1. Push your fixes
-2. Resolve the PR comment
+2. Resolve each review thread: `./scripts/resolve_pr_comment.sh <thread_id>`
 3. Comment `@codex review` to re-request review
-4. Re-run `./scripts/wait_pr_checks.sh <pr_number>` and `./scripts/check_codex_comments.sh <pr_number>`
+4. Re-run `./scripts/check_codex_comments.sh <pr_number>` to verify all comments resolved
 
 ## PR Title Conventions
 
