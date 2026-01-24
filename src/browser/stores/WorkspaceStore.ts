@@ -1946,6 +1946,12 @@ export const workspaceStore = {
    */
   simulateFileModifyingToolEnd: (workspaceId: string) =>
     getStoreInstance().simulateFileModifyingToolEnd(workspaceId),
+  /**
+   * Get sidebar-specific state for a workspace.
+   * Useful in tests for checking recencyTimestamp without hooks.
+   */
+  getWorkspaceSidebarState: (workspaceId: string) =>
+    getStoreInstance().getWorkspaceSidebarState(workspaceId),
 };
 
 /**
