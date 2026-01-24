@@ -12,14 +12,14 @@ Two types of tests are preferred:
 1. **True integration tests** — use real runtimes, real filesystems, real network calls. No mocks, stubs, or fakes. These prove the system works end-to-end.
 2. **Unit tests on pure/isolated logic** — test pure functions or well-isolated modules where inputs and outputs are clear. No mocks needed because the code has no external dependencies.
 
-
 Unit tests are located colocated with the source they test as ".test.ts[x]" files.
 
 Integration tests are located in `tests/`, with these primary harnesses:
+
 - `tests/ipc` — tests that rely on the IPC and are focussed on ensuring backend behavior.
 - `tests/ui` — frontend integration tests that use the real IPC and happy-dom Full App rendering.
 - `tests/e2e` - end-to-end tests using Playwright which are needed to verify browser behavior that
-can't be easily tested with happy-dom.
+  can't be easily tested with happy-dom.
 
 Additionally, we have stories in `src/browser/stories` that are primarily used for human visual
 verification of UI changes.
@@ -31,14 +31,20 @@ Avoid mock-heavy tests that verify implementation details rather than behavior.
 If you need mocks to test something, consider whether the code should be restructured to be more testable.
 
 There is at least one exception to this rule: we have a `mockAiRouter` that can be used to simulate
-LLM responses. Often times it's better for tests to reach out to a real LLM, but some tests rely on
-the mockAiRouter for performance and reliability.
+LLM responses. Broadly the use of LLMs in tests follow these rules:
+
+- Use real LLM for tests that verify our integration with the LLM provider
+  - E.g., asserting that we correctly identify a context exceeded error
+- Use a mockAiRouter for tests that verify behavior around the LLM logic
+  - E.g., asserting that messages queue correctly following an LLM response
+- Do not use a real LLM or mockAiRouter for logic that in no way touches agentic behavior.
+  - E.g., a test that shows that opening a Terminal window works
 
 Avoid tautological tests (simple mappings, identical copies of implementation); focus on invariants and boundary failures.
 
 ## When To Test
 
-Ideally, all new features and bug are well tested. Do not implement a feature or fix without a
+Ideally, all new features and bugs are well tested. Do not implement a feature or fix without a
 robust testing strategy.
 
 When fixing bugs, always start with the test (practice TDD). Reproduce the bug in the test, then fix
@@ -56,7 +62,7 @@ Otherwise, tests that live in `src/` run under `bun test` (generally these are u
   - `make typecheck`
   - `make static-check` (includes typecheck, lint, fmt-check, and docs link validation)
   - targeted test invocations (e.g. `bun x jest tests/ipc/sendMessage.test.ts -t "pattern"`)
-- Only wait on CI to pass when local, targetted checks pass. 
+- Only wait on CI to pass when local, targeted checks pass.
 - Prefer surgical test invocations over running full suites.
 - Keep utils pure or parameterize external effects for easier testing.
 
@@ -93,6 +99,7 @@ Strive to test the backend entirely via IPC interactions. Avoid directly asserti
 backend state here.
 
 Exceptions include:
+
 - Building a large history to test otherwise expensive operations (e.g. long-context handling)
 - Testing logic where an observable side-effect is a part of the API contract, e.g. createProject creating
   a project directory if it doesn't already exist.
