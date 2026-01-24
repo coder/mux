@@ -132,7 +132,7 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.floor((base64.length * 3) / 4) - padding;
 }
-const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
+const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
 // Unknown slash commands are used for agent-skill invocations (/{skillName} ...).
 type UnknownSlashCommand = Extract<ParsedCommand, { type: "unknown-command" }>;
@@ -383,8 +383,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       const estimatedChars = estimatePersistedChatAttachmentsChars(nextAttachments);
-      if (estimatedChars > MAX_PERSISTED_IMAGE_DRAFT_CHARS) {
-        // Clear persisted value to avoid restoring stale images on restart.
+      if (estimatedChars > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS) {
+        // Clear persisted value to avoid restoring stale attachments on restart.
         updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
 
         if (attachmentDraftTooLargeToastKeyRef.current !== storageKeys.attachmentsKey) {
@@ -408,7 +408,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [storageKeys.attachmentsKey, pushToast]
   );
 
-  // Keep image drafts in sync when the storage scope changes (e.g. switching creation projects).
+  // Keep attachment drafts in sync when the storage scope changes (e.g. switching creation projects).
   useEffect(() => {
     attachmentDraftTooLargeToastKeyRef.current = null;
     setAttachmentsState(readPersistedChatAttachments(storageKeys.attachmentsKey));

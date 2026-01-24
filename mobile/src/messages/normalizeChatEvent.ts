@@ -250,18 +250,25 @@ export function createChatEventExpander(): ChatEventExpander {
     const displayed = transformMuxToDisplayed(message);
 
     return displayed.map((msg, index) => {
-      if ("isStreaming" in msg) {
-        (msg as any).isStreaming = options.isStreaming;
-      }
-      if ("isPartial" in msg) {
-        (msg as any).isPartial = options.isStreaming;
-      }
-      (msg as any).isLastPartOfMessage = index === displayed.length - 1;
+      const isLastPartOfMessage = index === displayed.length - 1;
 
-      // Fix: Running tools show as "interrupted" because they are partial.
-      // If the stream is active, they should be "executing".
-      if (msg.type === "tool" && msg.status === "interrupted" && options.isStreaming) {
-        (msg as any).status = "executing";
+      if (msg.type === "assistant" || msg.type === "reasoning") {
+        msg.isStreaming = options.isStreaming;
+        msg.isPartial = options.isStreaming;
+        msg.isLastPartOfMessage = isLastPartOfMessage;
+        return msg;
+      }
+
+      if (msg.type === "tool") {
+        msg.isPartial = options.isStreaming;
+        msg.isLastPartOfMessage = isLastPartOfMessage;
+
+        // Fix: Running tools show as "interrupted" because they are partial.
+        // If the stream is active, they should be "executing".
+        if (msg.status === "interrupted" && options.isStreaming) {
+          msg.status = "executing";
+        }
+        return msg;
       }
 
       return msg;

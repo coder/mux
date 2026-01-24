@@ -53,33 +53,32 @@ const imageStyles = {
 } as const;
 
 /** Styled command prefix (e.g., "/compact" or "/skill-name") */
-const CommandPrefixBadge: React.FC<{ prefix: string }> = ({ prefix }) => (
+const CommandPrefixBadge: React.FC<{ prefix: string }> = (props) => (
   <span className="font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]">
-    {prefix}
+    {props.prefix}
   </span>
 );
 
 /**
  * Shared content renderer for user messages (sent and queued).
- * Handles reviews, text content, and image attachments.
+ * Handles reviews, text content, and attachments.
  */
-export const UserMessageContent: React.FC<UserMessageContentProps> = ({
-  content,
-  commandPrefix,
-  reviews,
-  fileParts,
-  variant,
-}) => {
-  const hasReviews = reviews && reviews.length > 0;
+export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => {
+  const reviews = props.reviews ?? [];
+  const fileParts = props.fileParts ?? [];
+
+  const hasReviews = reviews.length > 0;
 
   // Strip review tags from text when displaying alongside review blocks
   const textContent = hasReviews
-    ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
-    : content;
+    ? props.content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
+    : props.content;
 
   // Check if content starts with the command prefix
   const shouldHighlightPrefix =
-    commandPrefix && textContent.startsWith(commandPrefix) ? commandPrefix : undefined;
+    props.commandPrefix && textContent.startsWith(props.commandPrefix)
+      ? props.commandPrefix
+      : undefined;
 
   // Content after the prefix (if highlighting)
   const remainingContent = shouldHighlightPrefix
@@ -96,7 +95,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
         <MarkdownRenderer
           content={textContent}
           className={markdownClassName}
-          style={markdownStyles[variant]}
+          style={markdownStyles[props.variant]}
         />
       );
     }
@@ -116,7 +115,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
           <MarkdownRenderer
             content={remainingContent.trim()}
             className={markdownClassName}
-            style={markdownStyles[variant]}
+            style={markdownStyles[props.variant]}
           />
         )}
       </div>
@@ -135,8 +134,8 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
       ) : (
         renderTextContent()
       )}
-      {fileParts && fileParts.length > 0 && (
-        <div className={imageContainerStyles[variant]}>
+      {fileParts.length > 0 && (
+        <div className={imageContainerStyles[props.variant]}>
           {fileParts.map((part, idx) => {
             const baseMediaType = getBaseMediaType(part.mediaType);
             if (baseMediaType.startsWith("image/")) {
@@ -145,7 +144,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
                   key={idx}
                   src={part.url}
                   alt={`Attachment ${idx + 1}`}
-                  className={imageStyles[variant]}
+                  className={imageStyles[props.variant]}
                 />
               );
             }
@@ -162,7 +161,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
                 href={part.url}
                 target="_blank"
                 rel="noreferrer"
-                className={fileAttachmentStyles[variant]}
+                className={fileAttachmentStyles[props.variant]}
               >
                 <FileText className="h-4 w-4 shrink-0" />
                 <span className="truncate">{label}</span>

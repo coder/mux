@@ -18,14 +18,14 @@ function getBaseMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
 }
 
-export const ChatAttachments: React.FC<ChatAttachmentsProps> = ({ attachments, onRemove }) => {
-  if (attachments.length === 0) return null;
+export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
+  if (props.attachments.length === 0) return null;
 
-  const handleRemove = onRemove;
+  const handleRemove = props.onRemove;
 
   return (
     <div className="flex flex-wrap gap-2 py-2">
-      {attachments.map((attachment) => {
+      {props.attachments.map((attachment) => {
         const baseMediaType = getBaseMediaType(attachment.mediaType);
         const isImage = baseMediaType.startsWith("image/");
 

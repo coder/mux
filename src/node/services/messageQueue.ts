@@ -49,7 +49,7 @@ function hasReviews(meta: unknown): meta is MetadataWithReviews {
  * - Message texts (accumulated)
  * - First muxMetadata (preserved - never overwritten by subsequent adds)
  * - Latest options (model, etc. - updated on each add)
- * - Image parts (accumulated across all messages)
+ * - File parts (accumulated across all messages)
  *
  * IMPORTANT:
  * - Compaction requests must preserve their muxMetadata even when follow-up messages are queued.
@@ -78,7 +78,7 @@ export class MessageQueue {
   /**
    * Add a message to the queue.
    * Preserves muxMetadata from first message, updates other options.
-   * Accumulates image parts.
+   * Accumulates file parts.
    *
    * @throws Error if trying to add a compaction request when queue already has messages
    */
@@ -113,7 +113,7 @@ export class MessageQueue {
     const trimmedMessage = message.trim();
     const hasFiles = options?.fileParts && options.fileParts.length > 0;
 
-    // Reject if both text and images are empty
+    // Reject if both text and file parts are empty
     if (trimmedMessage.length === 0 && !hasFiles) {
       return false;
     }
@@ -200,7 +200,7 @@ export class MessageQueue {
   }
 
   /**
-   * Get accumulated image parts for display.
+   * Get accumulated file parts for display.
    */
   getFileParts(): FilePart[] {
     return [...this.accumulatedFileParts];

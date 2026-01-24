@@ -27,9 +27,9 @@ export class HistoryService {
   // Shared file operation lock across all workspace file services
   // This prevents deadlocks when services call each other (e.g., PartialService → HistoryService)
   private readonly fileLocks = workspaceFileLocks;
-  private readonly config: Config;
+  private readonly config: Pick<Config, "getSessionDir">;
 
-  constructor(config: Config) {
+  constructor(config: Pick<Config, "getSessionDir">) {
     this.config = config;
   }
 

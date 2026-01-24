@@ -28,7 +28,9 @@ describe("draftAttachmentsStorage", () => {
   });
 
   test("estimatePersistedChatAttachmentsChars matches JSON length", () => {
-    const images = [{ id: "img-1", url: "data:image/png;base64,AAA", mediaType: "image/png" }];
-    expect(estimatePersistedChatAttachmentsChars(images)).toBe(JSON.stringify(images).length);
+    const attachments = [{ id: "img-1", url: "data:image/png;base64,AAA", mediaType: "image/png" }];
+    expect(estimatePersistedChatAttachmentsChars(attachments)).toBe(
+      JSON.stringify(attachments).length
+    );
   });
 });

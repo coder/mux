@@ -17,7 +17,7 @@ export type ReviewNoteDataForDisplay = ReviewNoteData;
 /**
  * Content that a user wants to send in a message.
  * Shared between normal send and continue-after-compaction to ensure
- * both paths handle the same fields (text, images, reviews).
+ * both paths handle the same fields (text, attachments, reviews).
  */
 export interface UserMessageContent {
   text: string;
@@ -185,7 +185,7 @@ export interface CompactionRequestData {
  * Process UserMessageContent into final message text and metadata.
  * Used by both normal send path and backend continue message processing.
  *
- * @param content - The user message content (text, images, reviews)
+ * @param content - The user message content (text, attachments, reviews)
  * @param existingMetadata - Optional existing metadata to merge with (e.g., for compaction messages)
  * @returns Object with finalText (reviews prepended) and metadata (reviews for display)
  */
@@ -362,7 +362,7 @@ export interface MuxFilePart {
 }
 
 // MuxMessage extends UIMessage with our metadata and custom parts
-// Supports text, reasoning, image, and tool parts (including interrupted tool calls)
+// Supports text, reasoning, file, and tool parts (including interrupted tool calls)
 export type MuxMessage = Omit<UIMessage<MuxMetadata, never, never>, "parts"> & {
   parts: Array<MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart>;
 };

@@ -535,7 +535,7 @@ const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> 
 
 /**
  * Copy all workspace-specific localStorage keys from source to destination workspace.
- * Includes keys listed in PERSISTENT_WORKSPACE_KEY_FUNCTIONS (model, draft input text/images, etc).
+ * Includes keys listed in PERSISTENT_WORKSPACE_KEY_FUNCTIONS (model, draft input text/attachments, etc).
  */
 export function copyWorkspaceStorage(sourceWorkspaceId: string, destWorkspaceId: string): void {
   for (const getKey of PERSISTENT_WORKSPACE_KEY_FUNCTIONS) {

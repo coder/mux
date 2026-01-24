@@ -644,8 +644,8 @@ export async function buildLargeHistory(
     textPrefix?: string;
   } = {}
 ): Promise<void> {
-  // HistoryService only needs getSessionDir, so we can cast the partial config
-  const historyService = new HistoryService(config as any);
+  // HistoryService only needs getSessionDir.
+  const historyService = new HistoryService(config);
 
   const messageSize = options.messageSize ?? 50_000;
   const messageCount = options.messageCount ?? 80;
