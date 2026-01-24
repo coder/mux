@@ -118,7 +118,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     isSelected && !isDisabled
       ? "bg-blue-400"
       : showUnreadBar
-        ? "bg-border-medium"
+        ? "bg-muted-foreground"
         : "bg-transparent";
   const unreadBar = (
     <span
