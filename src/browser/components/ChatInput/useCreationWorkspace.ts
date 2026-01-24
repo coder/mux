@@ -321,6 +321,14 @@ export function useCreationWorkspace({
         // Set the confirmed identity for splash UI display
         setCreatingWithIdentity(identity);
 
+        const isWorkspaceDraft = typeof draftId === "string" && draftId.trim().length > 0;
+        const normalizedTitle = typeof identity.title === "string" ? identity.title.trim() : "";
+        const createTitle = isWorkspaceDraft
+          ? normalizedTitle
+            ? `[Draft] ${normalizedTitle}`
+            : "[Draft]"
+          : normalizedTitle || undefined;
+
         // Read send options fresh from localStorage at send time to avoid
         // race conditions with React state updates (requestAnimationFrame batching
         // in usePersistedState can delay state updates after model selection)
@@ -381,7 +389,7 @@ export function useCreationWorkspace({
           projectPath,
           branchName: identity.name,
           trunkBranch: settings.trunkBranch,
-          title: identity.title,
+          title: createTitle,
           runtimeConfig,
           sectionId: sectionId ?? undefined,
         });
