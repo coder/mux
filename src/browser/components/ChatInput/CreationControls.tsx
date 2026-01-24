@@ -164,11 +164,10 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const state = props.runtimeAvailabilityState;
   const availabilityMap = state?.status === "loaded" ? state.data : null;
 
-  // Hide only during loading (prevents flash), show on failed (allows fallback selection)
+  // Hide devcontainer only when confirmed missing (not during loading - would cause layout flash)
   const hideDevcontainer =
-    state?.status === "loading" ||
-    (availabilityMap?.devcontainer?.available === false &&
-      availabilityMap.devcontainer.reason === "No devcontainer.json found");
+    availabilityMap?.devcontainer?.available === false &&
+    availabilityMap.devcontainer.reason === "No devcontainer.json found";
 
   const runtimeOptions = hideDevcontainer
     ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
@@ -254,6 +253,8 @@ export function CreationControls(props: CreationControlsProps) {
   const availabilityMap =
     runtimeAvailabilityState.status === "loaded" ? runtimeAvailabilityState.data : null;
   const showTrunkBranchSelector = props.branches.length > 0 && runtimeMode !== RUNTIME_MODE.LOCAL;
+  // Show loading skeleton while branches are loading to avoid layout flash
+  const showBranchLoadingPlaceholder = !props.branchesLoaded && runtimeMode !== RUNTIME_MODE.LOCAL;
 
   // Centralized devcontainer selection logic
   const devcontainerSelection = resolveDevcontainerSelection({
@@ -493,24 +494,34 @@ export function CreationControls(props: CreationControlsProps) {
               />
             </div>
           )}
-
-          {/* SSH Host Input - hidden when Coder is enabled */}
-          {selectedRuntime.mode === "ssh" && !props.coderProps?.enabled && (
+          {/* Loading placeholder - reserves space while branches load to avoid layout flash */}
+          {showBranchLoadingPlaceholder && (
             <div className="flex items-center gap-2">
-              <label className="text-muted-foreground text-xs">host</label>
-              <input
-                type="text"
-                value={selectedRuntime.host}
-                onChange={(e) => onSelectedRuntimeChange({ mode: "ssh", host: e.target.value })}
-                placeholder="user@host"
-                disabled={props.disabled}
-                className={cn(
-                  "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
-                  props.runtimeFieldError === "ssh" && "border-red-500"
-                )}
-              />
+              <span className="text-muted-foreground text-xs">from</span>
+              <div className="bg-bg-dark/50 h-7 w-24 animate-pulse rounded-md" />
             </div>
           )}
+
+          {/* SSH Host Input - hidden when Coder is enabled or will be enabled after checking */}
+          {selectedRuntime.mode === "ssh" &&
+            !props.coderProps?.enabled &&
+            // Also hide when Coder is still checking but has saved config (will enable after check)
+            !(props.coderProps?.coderInfo === null && props.coderProps?.coderConfig) && (
+              <div className="flex items-center gap-2">
+                <label className="text-muted-foreground text-xs">host</label>
+                <input
+                  type="text"
+                  value={selectedRuntime.host}
+                  onChange={(e) => onSelectedRuntimeChange({ mode: "ssh", host: e.target.value })}
+                  placeholder="user@host"
+                  disabled={props.disabled}
+                  className={cn(
+                    "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+                    props.runtimeFieldError === "ssh" && "border-red-500"
+                  )}
+                />
+              </div>
+            )}
 
           {/* Runtime-specific config inputs */}
 

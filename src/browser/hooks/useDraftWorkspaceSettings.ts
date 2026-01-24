@@ -300,10 +300,11 @@ export function useDraftWorkspaceSettings(
 
   // When the user switches into SSH/Docker/Devcontainer mode, seed the field with the remembered config.
   // This avoids clearing the last values when the UI switches modes with an empty field.
+  // Skip on initial mount (prevMode === null) since useState initializer handles that case.
   const prevSelectedRuntimeModeRef = useRef<RuntimeMode | null>(null);
   useEffect(() => {
     const prevMode = prevSelectedRuntimeModeRef.current;
-    if (prevMode !== selectedRuntime.mode) {
+    if (prevMode !== null && prevMode !== selectedRuntime.mode) {
       if (selectedRuntime.mode === RUNTIME_MODE.SSH) {
         const needsHostRestore = !selectedRuntime.host.trim() && lastSshHost.trim();
         const needsCoderRestore =

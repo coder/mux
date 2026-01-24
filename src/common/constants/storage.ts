@@ -94,6 +94,24 @@ export function getMCPTestResultsKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for cached archived workspaces per project
+ * Format: "archivedWorkspaces:{projectPath}"
+ * Stores: Array of workspace metadata objects (optimistic cache)
+ */
+export function getArchivedWorkspacesKey(projectPath: string): string {
+  return `archivedWorkspaces:${projectPath}`;
+}
+
+/**
+ * Get the localStorage key for cached MCP servers per project
+ * Format: "mcpServers:{projectPath}"
+ * Stores: Record<serverName, MCPServerInfo> (optimistic cache)
+ */
+export function getMCPServersKey(projectPath: string): string {
+  return `mcpServers:${projectPath}`;
+}
+
+/**
  * Get the localStorage key for thinking level preference per scope (workspace/project).
  * Format: "thinkingLevel:{scopeId}"
  */

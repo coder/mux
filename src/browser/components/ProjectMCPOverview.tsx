@@ -4,6 +4,8 @@ import type { MCPServerInfo } from "@/common/types/mcp";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Button } from "@/browser/components/ui/button";
+import { getMCPServersKey } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 interface ProjectMCPOverviewProps {
   projectPath: string;
@@ -16,7 +18,10 @@ export const ProjectMCPOverview: React.FC<ProjectMCPOverviewProps> = (props) => 
 
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [servers, setServers] = React.useState<Record<string, MCPServerInfo>>({});
+  // Initialize from localStorage cache to avoid flash
+  const [servers, setServers] = React.useState<Record<string, MCPServerInfo>>(() =>
+    readPersistedState<Record<string, MCPServerInfo>>(getMCPServersKey(projectPath), {})
+  );
 
   React.useEffect(() => {
     if (!api || settings.isOpen) return;
@@ -27,7 +32,10 @@ export const ProjectMCPOverview: React.FC<ProjectMCPOverviewProps> = (props) => 
       .list({ projectPath })
       .then((result) => {
         if (cancelled) return;
-        setServers(result ?? {});
+        const newServers = result ?? {};
+        setServers(newServers);
+        // Cache for next load
+        updatePersistedState(getMCPServersKey(projectPath), newServers);
         setError(null);
       })
       .catch((err) => {

@@ -17,10 +17,15 @@ import { ConfigureProvidersPrompt } from "./ConfigureProvidersPrompt";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { AgentsInitBanner } from "./AgentsInitBanner";
-import { usePersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  usePersistedState,
+  updatePersistedState,
+  readPersistedState,
+} from "@/browser/hooks/usePersistedState";
 import {
   getAgentIdKey,
   getAgentsInitNudgeKey,
+  getArchivedWorkspacesKey,
   getDraftScopeId,
   getInputKey,
   getPendingScopeId,
@@ -76,7 +81,10 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const { api } = useAPI();
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const pendingAgentsInitSendRef = useRef(false);
-  const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>([]);
+  // Initialize from localStorage cache to avoid flash when archived workspaces appear
+  const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>(() =>
+    readPersistedState<FrontendWorkspaceMetadata[]>(getArchivedWorkspacesKey(projectPath), [])
+  );
   const [showAgentsInitNudge, setShowAgentsInitNudge] = usePersistedState<boolean>(
     getAgentsInitNudgeKey(projectPath),
     false,
@@ -132,8 +140,13 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
 
   const syncArchivedState = useCallback(() => {
     const next = Array.from(archivedMapRef.current.values());
-    setArchivedWorkspaces((prev) => (archivedListsEqual(prev, next) ? prev : next));
-  }, []);
+    setArchivedWorkspaces((prev) => {
+      if (archivedListsEqual(prev, next)) return prev;
+      // Persist to localStorage for optimistic cache on next load
+      updatePersistedState(getArchivedWorkspacesKey(projectPath), next);
+      return next;
+    });
+  }, [projectPath]);
 
   // Fetch archived workspaces for this project on mount
   useEffect(() => {
@@ -296,8 +309,16 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                         />
                       )}
                       {/* Configured providers bar - compact icon carousel */}
-                      {providersConfig && hasProviders && (
-                        <ConfiguredProvidersBar providersConfig={providersConfig} />
+                      {providersLoading ? (
+                        // Skeleton placeholder matching ConfiguredProvidersBar height
+                        <div className="flex items-center justify-center gap-2 py-1.5">
+                          <div className="bg-bg-dark/50 h-7 w-32 animate-pulse rounded" />
+                        </div>
+                      ) : (
+                        hasProviders &&
+                        providersConfig && (
+                          <ConfiguredProvidersBar providersConfig={providersConfig} />
+                        )
                       )}
                       {/* ChatInput for workspace creation - includes section selector */}
                       <ChatInput
