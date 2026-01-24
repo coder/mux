@@ -16,6 +16,7 @@ import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -237,7 +238,9 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                   <ArchiveIcon className="h-3 w-3" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent align="start">Archive workspace</TooltipContent>
+              <TooltipContent align="start">
+                Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+              </TooltipContent>
             </Tooltip>
           </div>
         )}
