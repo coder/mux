@@ -1027,7 +1027,6 @@ html,
 body,
 #root,
 #storybook-root {
-  height: 100dvh;
   overflow: hidden;
 }
 
@@ -1145,6 +1144,8 @@ body,
    mobile browser chrome and keyboard accessory bars. Using @supports ensures
    dvh takes precedence over the vh fallback above. */
 @supports (height: 100dvh) {
+  html,
+  body,
   #root,
   #storybook-root {
     min-height: 100dvh;

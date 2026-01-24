@@ -32,7 +32,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
       {/* Sidebar */}
       <div
         className={cn(
-          "h-screen bg-sidebar border-r border-border flex flex-col shrink-0",
+          "h-full bg-sidebar border-r border-border flex flex-col shrink-0",
           "transition-all duration-200 overflow-hidden relative z-20",
           collapsed ? "w-5" : "w-72",
           "mobile-sidebar",
