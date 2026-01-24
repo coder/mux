@@ -805,6 +805,25 @@ export class StreamingMessageAggregator {
     return this.pendingCompactionRequest?.model ?? null;
   }
 
+  private getLatestCompactionRequest(): CompactionRequestData | null {
+    if (this.pendingCompactionRequest) {
+      return this.pendingCompactionRequest;
+    }
+
+    const messages = this.getAllMessages();
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role !== "user") continue;
+      const muxMetadata = message.metadata?.muxMetadata;
+      if (muxMetadata?.type === "compaction-request") {
+        return muxMetadata.parsed;
+      }
+      return null;
+    }
+
+    return null;
+  }
+
   private setPendingStreamStartTime(time: number | null): void {
     this.pendingStreamStartTime = time;
     if (time === null) {
@@ -1097,54 +1116,13 @@ export class StreamingMessageAggregator {
   // Unified event handlers that encapsulate all complex logic
   handleStreamStart(data: StreamStartEvent): void {
     // Detect compaction via stream mode (most authoritative).
-    // For backwards compat (older stream-start events without mode), fall back to:
-    // - pending /compact metadata captured from the triggering user message, or
-    // - last user message metadata (reconnect scenario).
-    const isCompacting = (() => {
-      // If the backend explicitly labels the stream as compact, that's authoritative.
-      // Note: Today the backend may send mode="exec" even for compaction streams
-      // (AIService derives mode from the agent/toolchain), so a non-compact mode is
-      // not sufficient to conclude "not compacting".
-      if (data.mode === "compact") {
-        return true;
-      }
-
-      if (this.pendingCompactionRequest !== null) {
-        return true;
-      }
-
-      const messages = this.getAllMessages();
-      for (let i = messages.length - 1; i >= 0; i--) {
-        const message = messages[i];
-        if (message.role === "user") {
-          return message.metadata?.muxMetadata?.type === "compaction-request";
-        }
-      }
-
-      return false;
-    })();
+    // For backwards compat (older stream-start events without mode), fall back to the
+    // triggering compaction request metadata (pending or last user message).
+    const compactionRequest = this.getLatestCompactionRequest();
+    const isCompacting = data.mode === "compact" || compactionRequest !== null;
 
     // Capture compaction-continue metadata before clearing pending request state.
-    const hasCompactionContinue = isCompacting
-      ? (() => {
-          if (this.pendingCompactionRequest?.continueMessage) {
-            return true;
-          }
-
-          const messages = this.getAllMessages();
-          for (let i = messages.length - 1; i >= 0; i--) {
-            const message = messages[i];
-            if (message.role !== "user") continue;
-            const muxMetadata = message.metadata?.muxMetadata;
-            if (muxMetadata?.type === "compaction-request") {
-              return Boolean(muxMetadata.parsed.continueMessage);
-            }
-            return false;
-          }
-
-          return false;
-        })()
-      : false;
+    const hasCompactionContinue = Boolean(compactionRequest?.continueMessage);
 
     // Clear pending stream start timestamp - stream has started
     this.setPendingStreamStartTime(null);
