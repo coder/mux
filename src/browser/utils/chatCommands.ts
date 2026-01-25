@@ -690,13 +690,32 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Convert CompactionFollowUpInput to CompactionFollowUpRequest by adding model/agentId.
   // Compaction uses its own agentId ("compact") and potentially a different model for
   // summarization, so we capture the user's original settings for the follow-up message.
-  const fc: CompactionFollowUpRequest | undefined = options.followUpContent
-    ? {
-        ...options.followUpContent,
-        model: options.sendMessageOptions.model,
-        agentId: options.sendMessageOptions.agentId ?? "exec",
-      }
-    : undefined;
+  //
+  // In compaction recovery (retrying a failed /compact), followUpContent may already be
+  // a CompactionFollowUpRequest with preserved model/agentId. Only fill in missing fields
+  // to avoid overwriting the original settings when the user changes model/agent before retry.
+  let fc: CompactionFollowUpRequest | undefined;
+  if (options.followUpContent) {
+    // Check if already a CompactionFollowUpRequest (has model/agentId from previous compaction)
+    const existingModel =
+      "model" in options.followUpContent &&
+      typeof options.followUpContent.model === "string" &&
+      options.followUpContent.model
+        ? options.followUpContent.model
+        : undefined;
+    const existingAgentId =
+      "agentId" in options.followUpContent &&
+      typeof options.followUpContent.agentId === "string" &&
+      options.followUpContent.agentId
+        ? options.followUpContent.agentId
+        : undefined;
+
+    fc = {
+      ...options.followUpContent,
+      model: existingModel ?? options.sendMessageOptions.model,
+      agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? "exec",
+    };
+  }
   const isDefaultResume = isDefaultSourceContent(fc);
 
   if (fc && !isDefaultResume) {
