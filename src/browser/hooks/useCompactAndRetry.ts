@@ -19,6 +19,7 @@ import type { ImagePart, ProvidersConfigMap } from "@/common/orpc/types";
 import {
   buildAgentSkillMetadata,
   type CompactionFollowUpInput,
+  type CompactionFollowUpRequest,
   type DisplayedMessage,
 } from "@/common/types/message";
 
@@ -213,9 +214,14 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
 
       // For compaction recovery (retrying a failed /compact), preserve the original settings.
       // The nested follow-up content is already in the correct format.
+      // Support both new `followUpContent` and legacy `continueMessage` for backwards compatibility
       if (source.compactionRequest) {
         const maxOutputTokens = source.compactionRequest.parsed.maxOutputTokens;
-        const nestedFollowUp = source.compactionRequest.parsed.followUpContent;
+        const parsedCompaction = source.compactionRequest.parsed as {
+          followUpContent?: CompactionFollowUpRequest;
+          continueMessage?: CompactionFollowUpRequest;
+        };
+        const nestedFollowUp = parsedCompaction.followUpContent ?? parsedCompaction.continueMessage;
         const result = await executeCompaction({
           api,
           workspaceId: props.workspaceId,

@@ -325,12 +325,12 @@ describe("prepareCompactionMessage", () => {
     expect(metadata.parsed.followUpContent?.agentId).toBe("code");
   });
 
-  test("defaults agentId to 'exec' when sendMessageOptions has no agentId", () => {
+  test("uses agentId from sendMessageOptions in followUpContent", () => {
     const sendMessageOptions: SendMessageOptions = {
       model: "openai:gpt-4o",
       thinkingLevel: "medium",
       toolPolicy: [],
-      // No agentId
+      agentId: "exec",
     };
 
     const { metadata } = prepareCompactionMessage({

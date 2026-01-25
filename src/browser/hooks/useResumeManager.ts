@@ -11,6 +11,7 @@ import {
 } from "@/browser/utils/messages/retryEligibility";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import type { SendMessageError } from "@/common/types/errors";
+import type { CompactionFollowUpRequest } from "@/common/types/message";
 import {
   createFailedRetryState,
   calculateBackoffDelay,
@@ -184,10 +185,17 @@ export function useResumeManager() {
         if (lastUserMsg?.compactionRequest) {
           // Apply compaction overrides using shared function (same as ChatInput)
           // This ensures custom model/tokens are preserved across resume
+          // Support both new `followUpContent` and legacy `continueMessage` for backwards compatibility
+          const parsedCompaction = lastUserMsg.compactionRequest.parsed as {
+            model?: string;
+            maxOutputTokens?: number;
+            followUpContent?: CompactionFollowUpRequest;
+            continueMessage?: CompactionFollowUpRequest;
+          };
           options = applyCompactionOverrides(options, {
-            model: lastUserMsg.compactionRequest.parsed.model,
-            maxOutputTokens: lastUserMsg.compactionRequest.parsed.maxOutputTokens,
-            followUpContent: lastUserMsg.compactionRequest.parsed.followUpContent,
+            model: parsedCompaction.model,
+            maxOutputTokens: parsedCompaction.maxOutputTokens,
+            followUpContent: parsedCompaction.followUpContent ?? parsedCompaction.continueMessage,
           });
         }
       }
