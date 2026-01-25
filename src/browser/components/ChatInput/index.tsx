@@ -46,7 +46,6 @@ import {
   forkWorkspace,
   prepareCompactionMessage,
   executeCompaction,
-  buildContinueMessage,
   type CommandHandlerContext,
 } from "@/browser/utils/chatCommands";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
@@ -87,8 +86,11 @@ import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
-import type { MuxFrontendMetadata } from "@/common/types/message";
-import { prepareUserMessageForSend } from "@/common/types/message";
+import {
+  buildAgentSkillMetadata,
+  type MuxFrontendMetadata,
+  prepareUserMessageForSend,
+} from "@/common/types/message";
 import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
@@ -1452,13 +1454,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
               creationMessageTextForSend = userText;
               creationOptionsOverride = {
-                muxMetadata: {
-                  type: "agent-skill",
+                muxMetadata: buildAgentSkillMetadata({
                   rawCommand: messageText,
                   commandPrefix: `/${skill.name}`,
                   skillName: skill.name,
                   scope: skill.scope,
-                },
+                }),
                 // In the creation flow, skills are discovered from the project path. If the skill is
                 // project-scoped (often untracked in git), it may not exist in the new worktree.
                 // Force project-path discovery for this send so resolution matches suggestions.
@@ -1875,22 +1876,19 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           const result = await executeCompaction({
             api,
             workspaceId: props.workspaceId,
-            continueMessage: buildContinueMessage({
+            followUpContent: {
               text: messageTextForSend,
               imageParts,
               reviews: reviewsData,
               muxMetadata: skillInvocation
-                ? {
-                    type: "agent-skill",
+                ? buildAgentSkillMetadata({
                     rawCommand: messageText,
                     commandPrefix: `/${skillInvocation.descriptor.name}`,
                     skillName: skillInvocation.descriptor.name,
                     scope: skillInvocation.descriptor.scope,
-                  }
+                  })
                 : undefined,
-              model: sendMessageOptions.model,
-              agentId: sendMessageOptions.agentId ?? "exec",
-            }),
+            },
             sendMessageOptions: compactionSendMessageOptions,
           });
 
@@ -1946,13 +1944,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
         let muxMetadata: MuxFrontendMetadata | undefined = skillInvocation
-          ? {
-              type: "agent-skill",
+          ? buildAgentSkillMetadata({
               rawCommand: messageText,
               commandPrefix: `/${skillInvocation.descriptor.name}`,
               skillName: skillInvocation.descriptor.name,
               scope: skillInvocation.descriptor.scope,
-            }
+            })
           : undefined;
         let compactionOptions: Partial<SendMessageOptions> = {};
 
@@ -1967,15 +1964,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               api,
               workspaceId: props.workspaceId,
               maxOutputTokens: parsed.maxOutputTokens,
-              // Include current attachments (images, reviews) in continueMessage so they're
-              // queued after compaction completes, not just attached to the compaction request
-              continueMessage: buildContinueMessage({
-                text: parsed.continueMessage,
-                imageParts,
-                reviews: reviewsData,
-                model: sendMessageOptions.model,
-                agentId: sendMessageOptions.agentId ?? "exec",
-              }),
+              // Include current attachments (images, reviews) in followUpContent so they're
+              // queued after compaction completes, not just attached to the compaction request.
+              followUpContent:
+                parsed.continueMessage || imageParts?.length || reviewsData?.length
+                  ? {
+                      text: parsed.continueMessage ?? "",
+                      imageParts,
+                      reviews: reviewsData,
+                    }
+                  : undefined,
               model: parsed.model,
               sendMessageOptions,
             });

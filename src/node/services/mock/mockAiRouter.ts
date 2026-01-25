@@ -1,4 +1,4 @@
-import type { ContinueMessage, MuxMessage } from "@/common/types/message";
+import type { CompactionFollowUpRequest, MuxMessage } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
@@ -87,12 +87,12 @@ function hasCompactionHistory(messages: MuxMessage[]): boolean {
 }
 function readCompactionRequest(
   message: MuxMessage
-): { continueMessage?: ContinueMessage } | undefined {
+): { followUpContent?: CompactionFollowUpRequest } | undefined {
   const muxMeta = message.metadata?.muxMetadata;
   if (!muxMeta || muxMeta.type !== "compaction-request") {
     return undefined;
   }
-  return { continueMessage: muxMeta.parsed.continueMessage };
+  return { followUpContent: muxMeta.parsed.followUpContent };
 }
 
 function buildUsage(inputTokens: number, outputTokens: number): LanguageModelV2Usage {
@@ -105,18 +105,18 @@ function buildUsage(inputTokens: number, outputTokens: number): LanguageModelV2U
 
 function buildMockCompactionSummary(options: {
   preCompactionMessages: MuxMessage[];
-  continueMessage?: ContinueMessage;
+  followUpContent?: CompactionFollowUpRequest;
 }): string {
   const userCount = options.preCompactionMessages.filter((m) => m.role === "user").length;
   const assistantCount = options.preCompactionMessages.filter((m) => m.role === "assistant").length;
   const totalCount = options.preCompactionMessages.length;
 
-  const continueText = options.continueMessage?.text?.trim();
+  const followUpText = options.followUpContent?.text?.trim();
 
   return [
     "Mock compaction summary:",
     `Messages: ${totalCount} (user: ${userCount}, assistant: ${assistantCount})`,
-    ...(continueText ? [`Continue with: ${continueText}`] : []),
+    ...(followUpText ? [`Continue with: ${followUpText}`] : []),
   ].join("\n");
 }
 
@@ -409,7 +409,7 @@ const defaultHandlers: MockAiRouterHandler[] = [
       return {
         assistantText: buildMockCompactionSummary({
           preCompactionMessages,
-          continueMessage: compactionRequest?.continueMessage,
+          followUpContent: compactionRequest?.followUpContent,
         }),
         mode: "compact",
       };

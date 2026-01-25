@@ -12,9 +12,9 @@ import type { SendMessageOptions, ImagePart } from "@/common/orpc/types";
 import {
   type MuxFrontendMetadata,
   type CompactionRequestData,
-  type ContinueMessage,
-  buildContinueMessage,
-  isDefaultContinueMessage,
+  type CompactionFollowUpRequest,
+  type CompactionFollowUpInput,
+  isDefaultSourceContent,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -26,7 +26,7 @@ import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import {
   formatCompactionCommandLine,
-  getCompactionContinueText,
+  getFollowUpContentText,
 } from "@/browser/utils/compaction/format";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
 import {
@@ -647,7 +647,12 @@ export interface CompactionOptions {
   api?: RouterClient<AppRouter>;
   workspaceId: string;
   maxOutputTokens?: number;
-  continueMessage?: ContinueMessage;
+  /**
+   * Content to continue with after compaction.
+   * Accepts CompactionFollowUpInput (without model/agentId) - prepareCompactionMessage
+   * will add model/agentId from sendMessageOptions to produce CompactionFollowUpRequest.
+   */
+  followUpContent?: CompactionFollowUpInput;
   model?: string;
   sendMessageOptions: SendMessageOptions;
   editMessageId?: string;
@@ -676,30 +681,39 @@ export function prepareCompactionMessage(options: CompactionOptions): {
   // Build compaction message with optional continue context
   let messageText = buildCompactionPrompt(targetWords);
 
-  // continueMessage is a follow-up user message that will be auto-sent after compaction.
+  // followUpContent is the content that will be auto-sent after compaction.
   // For forced compaction (no explicit follow-up), we inject a short resume sentinel ("Continue").
   // Keep that sentinel out of the *compaction prompt* (summarization request), otherwise the model can
   // misread it as a competing instruction. We still keep it in metadata so the backend resumes.
   // Only treat it as the default resume when there's no other queued content (images/reviews).
-  const cm = options.continueMessage;
-  const isDefaultResume = isDefaultContinueMessage(cm);
+  //
+  // Convert CompactionFollowUpInput to CompactionFollowUpRequest by adding model/agentId.
+  // Compaction uses its own agentId ("compact") and potentially a different model for
+  // summarization, so we capture the user's original settings for the follow-up message.
+  const fc: CompactionFollowUpRequest | undefined = options.followUpContent
+    ? {
+        ...options.followUpContent,
+        model: options.sendMessageOptions.model,
+        agentId: options.sendMessageOptions.agentId ?? "exec",
+      }
+    : undefined;
+  const isDefaultResume = isDefaultSourceContent(fc);
 
-  if (cm && !isDefaultResume) {
-    messageText += `\n\nThe user wants to continue with: ${cm.text}`;
+  if (fc && !isDefaultResume) {
+    messageText += `\n\nThe user wants to continue with: ${fc.text}`;
   }
 
   // Handle model preference (sticky globally)
   const effectiveModel = resolveCompactionModel(options.model);
 
-  // continueMessage is already built by caller via buildContinueMessage() - just pass it through
   const commandLine = formatCompactionCommandLine(options);
-  const continueText = getCompactionContinueText(cm);
+  const continueText = getFollowUpContentText(fc);
   const fullRawCommand = continueText ? `${commandLine}\n${continueText}` : commandLine;
 
   const compactData: CompactionRequestData = {
     model: effectiveModel,
     maxOutputTokens: options.maxOutputTokens,
-    continueMessage: cm,
+    followUpContent: fc,
   };
 
   const metadata: MuxFrontendMetadata = {
@@ -907,17 +921,22 @@ export async function handleCompactCommand(
   setSendingState(true);
 
   try {
+    // Build followUpContent directly from parsed command + context
+    const hasContent =
+      parsed.continueMessage ?? context.imageParts?.length ?? context.reviews?.length;
+    const followUpContent: CompactionFollowUpInput | undefined = hasContent
+      ? {
+          text: parsed.continueMessage ?? "",
+          imageParts: context.imageParts,
+          reviews: context.reviews,
+        }
+      : undefined;
+
     const result = await executeCompaction({
       api,
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
-      continueMessage: buildContinueMessage({
-        text: parsed.continueMessage,
-        imageParts: context.imageParts,
-        reviews: context.reviews,
-        model: sendMessageOptions.model,
-        agentId: sendMessageOptions.agentId ?? "exec",
-      }),
+      followUpContent,
       model: parsed.model,
       sendMessageOptions,
       editMessageId,

@@ -48,7 +48,7 @@ import { CompactionWarning } from "./CompactionWarning";
 import { ConcurrentLocalWarning } from "./ConcurrentLocalWarning";
 import { BackgroundProcessesBanner } from "./BackgroundProcessesBanner";
 import { checkAutoCompaction } from "@/browser/utils/compaction/autoCompactionCheck";
-import { executeCompaction, buildContinueMessage } from "@/browser/utils/chatCommands";
+import { executeCompaction } from "@/browser/utils/chatCommands";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
@@ -209,11 +209,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       api,
       workspaceId,
       sendMessageOptions: pendingSendOptions,
-      continueMessage: buildContinueMessage({
-        text: "Continue",
-        model: pendingSendOptions.model,
-        agentId: pendingSendOptions.agentId ?? "exec",
-      }),
+      followUpContent: { text: "Continue" },
     });
   }, [api, workspaceId, pendingSendOptions, autoBackgroundOnSend]);
 

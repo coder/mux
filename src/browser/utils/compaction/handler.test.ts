@@ -26,7 +26,7 @@ describe("cancelCompaction", () => {
             muxMetadata: {
               type: "compaction-request",
               rawCommand: "/compact -t 100",
-              parsed: { continueMessage: { text: "Do the thing" } },
+              parsed: { followUpContent: { text: "Do the thing" } },
             },
           },
         },

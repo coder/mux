@@ -263,18 +263,13 @@ describe("prepareCompactionMessage", () => {
     agentId: "exec",
   });
 
-  test("passes through continueMessage as-is (caller should use buildContinueMessage)", () => {
+  test("builds followUpContent from input", () => {
     const sendMessageOptions = createBaseOptions();
-    const continueMessage = buildContinueMessage({
-      text: "Keep building",
-      model: sendMessageOptions.model,
-      agentId: "exec",
-    });
 
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
       maxOutputTokens: 4096,
-      continueMessage,
+      followUpContent: { text: "Keep building" },
       model: "anthropic:claude-3-5-haiku",
       sendMessageOptions,
     });
@@ -284,12 +279,13 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    // Model should be exactly what was passed in continueMessage
-    expect(metadata.parsed.continueMessage?.model).toBe(sendMessageOptions.model);
-    expect(metadata.parsed.continueMessage?.agentId).toBe("exec");
+    // followUpContent includes model/agentId from sendMessageOptions (captured for follow-up)
+    expect(metadata.parsed.followUpContent?.text).toBe("Keep building");
+    expect(metadata.parsed.followUpContent?.model).toBe("anthropic:claude-3-5-sonnet");
+    expect(metadata.parsed.followUpContent?.agentId).toBe("exec");
   });
 
-  test("does not create continueMessage when no text or images provided", () => {
+  test("does not create followUpContent when no text or images provided", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
@@ -302,18 +298,21 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(metadata.parsed.continueMessage).toBeUndefined();
+    expect(metadata.parsed.followUpContent).toBeUndefined();
   });
 
-  test("creates continueMessage when text is provided", () => {
-    const sendMessageOptions = createBaseOptions();
+  test("captures model/agentId from sendMessageOptions for follow-up", () => {
+    // Use different model/agentId than base options to verify they're captured
+    const sendMessageOptions: SendMessageOptions = {
+      model: "openai:gpt-4o",
+      thinkingLevel: "medium",
+      toolPolicy: [],
+      agentId: "code",
+    };
+
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: buildContinueMessage({
-        text: "Continue with this",
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      followUpContent: { text: "Continue" },
       sendMessageOptions,
     });
 
@@ -321,8 +320,46 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(metadata.parsed.continueMessage).toBeDefined();
-    expect(metadata.parsed.continueMessage?.text).toBe("Continue with this");
+    // Follow-up should use the user's original model/agentId
+    expect(metadata.parsed.followUpContent?.model).toBe("openai:gpt-4o");
+    expect(metadata.parsed.followUpContent?.agentId).toBe("code");
+  });
+
+  test("defaults agentId to 'exec' when sendMessageOptions has no agentId", () => {
+    const sendMessageOptions: SendMessageOptions = {
+      model: "openai:gpt-4o",
+      thinkingLevel: "medium",
+      toolPolicy: [],
+      // No agentId
+    };
+
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      followUpContent: { text: "Continue" },
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.followUpContent?.agentId).toBe("exec");
+  });
+
+  test("creates followUpContent when text is provided", () => {
+    const sendMessageOptions = createBaseOptions();
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      followUpContent: { text: "Continue with this" },
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    expect(metadata.parsed.followUpContent).toBeDefined();
+    expect(metadata.parsed.followUpContent?.text).toBe("Continue with this");
   });
 
   test("rawCommand includes multiline continue payload", () => {
@@ -331,11 +368,7 @@ describe("prepareCompactionMessage", () => {
       workspaceId: "ws-1",
       maxOutputTokens: 2048,
       model: "anthropic:claude-3-5-haiku",
-      continueMessage: buildContinueMessage({
-        text: "Line 1\nLine 2",
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      followUpContent: { text: "Line 1\nLine 2" },
       sendMessageOptions,
     });
 
@@ -352,11 +385,7 @@ describe("prepareCompactionMessage", () => {
     const sendMessageOptions = createBaseOptions();
     const { messageText, metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: buildContinueMessage({
-        text: "Continue",
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      followUpContent: { text: "Continue" },
       sendMessageOptions,
     });
 
@@ -367,33 +396,28 @@ describe("prepareCompactionMessage", () => {
     }
 
     // Still queued for auto-send after compaction
-    expect(metadata.parsed.continueMessage?.text).toBe("Continue");
+    expect(metadata.parsed.followUpContent?.text).toBe("Continue");
   });
 
   test("includes non-default continue text in compaction prompt", () => {
     const sendMessageOptions = createBaseOptions();
     const { messageText } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: buildContinueMessage({
-        text: "fix tests",
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      followUpContent: { text: "fix tests" },
       sendMessageOptions,
     });
 
     expect(messageText).toContain("The user wants to continue with: fix tests");
   });
 
-  test("creates continueMessage when images are provided without text", () => {
+  test("creates followUpContent when images are provided without text", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: buildContinueMessage({
+      followUpContent: {
+        text: "",
         imageParts: [{ url: "data:image/png;base64,abc", mediaType: "image/png" }],
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      },
       sendMessageOptions,
     });
 
@@ -401,15 +425,16 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(metadata.parsed.continueMessage).toBeDefined();
-    expect(metadata.parsed.continueMessage?.imageParts).toHaveLength(1);
+    expect(metadata.parsed.followUpContent).toBeDefined();
+    expect(metadata.parsed.followUpContent?.imageParts).toHaveLength(1);
   });
 
-  test("creates continueMessage when reviews are provided without text", () => {
+  test("creates followUpContent when reviews are provided without text", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: buildContinueMessage({
+      followUpContent: {
+        text: "",
         reviews: [
           {
             filePath: "src/test.ts",
@@ -418,9 +443,7 @@ describe("prepareCompactionMessage", () => {
             userNote: "Please fix this",
           },
         ],
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      },
       sendMessageOptions,
     });
 
@@ -428,16 +451,16 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(metadata.parsed.continueMessage).toBeDefined();
-    expect(metadata.parsed.continueMessage?.reviews).toHaveLength(1);
-    expect(metadata.parsed.continueMessage?.reviews?.[0].userNote).toBe("Please fix this");
+    expect(metadata.parsed.followUpContent).toBeDefined();
+    expect(metadata.parsed.followUpContent?.reviews).toHaveLength(1);
+    expect(metadata.parsed.followUpContent?.reviews?.[0].userNote).toBe("Please fix this");
   });
 
-  test("creates continueMessage with reviews and text combined", () => {
+  test("creates followUpContent with reviews and text combined", () => {
     const sendMessageOptions = createBaseOptions();
     const { metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: buildContinueMessage({
+      followUpContent: {
         text: "Also check the tests",
         reviews: [
           {
@@ -447,9 +470,7 @@ describe("prepareCompactionMessage", () => {
             userNote: "Fix this bug",
           },
         ],
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      },
       sendMessageOptions,
     });
 
@@ -457,16 +478,50 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(metadata.parsed.continueMessage).toBeDefined();
-    expect(metadata.parsed.continueMessage?.text).toBe("Also check the tests");
-    expect(metadata.parsed.continueMessage?.reviews).toHaveLength(1);
+    expect(metadata.parsed.followUpContent).toBeDefined();
+    expect(metadata.parsed.followUpContent?.text).toBe("Also check the tests");
+    expect(metadata.parsed.followUpContent?.reviews).toHaveLength(1);
+  });
+
+  test("builds followUpContent from sourceContent with skill metadata", () => {
+    const sendMessageOptions = createBaseOptions();
+
+    const { metadata } = prepareCompactionMessage({
+      workspaceId: "ws-1",
+      followUpContent: {
+        text: "/tests run all tests",
+        muxMetadata: {
+          type: "agent-skill",
+          rawCommand: "/tests run all tests",
+          skillName: "tests",
+          scope: "project",
+        },
+      },
+      sendMessageOptions,
+    });
+
+    if (metadata.type !== "compaction-request") {
+      throw new Error("Expected compaction metadata");
+    }
+
+    // ContinueMessage should be built from sourceContent
+    expect(metadata.parsed.followUpContent).toBeDefined();
+    expect(metadata.parsed.followUpContent?.text).toBe("/tests run all tests");
+
+    // Skill metadata should be preserved in muxMetadata
+    expect(metadata.parsed.followUpContent?.muxMetadata).toEqual({
+      type: "agent-skill",
+      rawCommand: "/tests run all tests",
+      skillName: "tests",
+      scope: "project",
+    });
   });
 
   test("does not treat 'Continue' as default resume when reviews are present", () => {
     const sendMessageOptions = createBaseOptions();
     const { messageText, metadata } = prepareCompactionMessage({
       workspaceId: "ws-1",
-      continueMessage: buildContinueMessage({
+      followUpContent: {
         text: "Continue",
         reviews: [
           {
@@ -476,9 +531,7 @@ describe("prepareCompactionMessage", () => {
             userNote: "Check this",
           },
         ],
-        model: sendMessageOptions.model,
-        agentId: "exec",
-      }),
+      },
       sendMessageOptions,
     });
 
@@ -490,7 +543,7 @@ describe("prepareCompactionMessage", () => {
       throw new Error("Expected compaction metadata");
     }
 
-    expect(metadata.parsed.continueMessage?.reviews).toHaveLength(1);
+    expect(metadata.parsed.followUpContent?.reviews).toHaveLength(1);
   });
 });
 
@@ -673,7 +726,7 @@ describe("handleCompactCommand", () => {
     };
   };
 
-  test("passes reviews to continueMessage when reviews are attached", async () => {
+  test("passes reviews to followUpContent when reviews are attached", async () => {
     const reviews: ReviewNoteData[] = [
       {
         filePath: "src/test.ts",
@@ -692,16 +745,16 @@ describe("handleCompactCommand", () => {
     expect(sendMessageMock).toHaveBeenCalled();
 
     const callArgs = sendMessageMock.mock.calls[0][0] as {
-      options?: { muxMetadata?: { parsed?: { continueMessage?: { reviews?: ReviewNoteData[] } } } };
+      options?: { muxMetadata?: { parsed?: { followUpContent?: { reviews?: ReviewNoteData[] } } } };
     };
-    const continueMessage = callArgs?.options?.muxMetadata?.parsed?.continueMessage;
+    const followUpContent = callArgs?.options?.muxMetadata?.parsed?.followUpContent;
 
-    expect(continueMessage).toBeDefined();
-    expect(continueMessage?.reviews).toHaveLength(1);
-    expect(continueMessage?.reviews?.[0].userNote).toBe("Please fix this bug");
+    expect(followUpContent).toBeDefined();
+    expect(followUpContent?.reviews).toHaveLength(1);
+    expect(followUpContent?.reviews?.[0].userNote).toBe("Please fix this bug");
   });
 
-  test("creates continueMessage with only reviews (no text)", async () => {
+  test("creates followUpContent with only reviews (no text)", async () => {
     const reviews: ReviewNoteData[] = [
       {
         filePath: "src/test.ts",
@@ -713,19 +766,19 @@ describe("handleCompactCommand", () => {
 
     const context = createMockContext({ success: true }, { reviews });
 
-    // No continueMessage text, just reviews
+    // No followUpContent text, just reviews
     await handleCompactCommand({ type: "compact" }, context);
 
     const sendMessageMock = context.api.workspace.sendMessage as ReturnType<typeof mock>;
     expect(sendMessageMock).toHaveBeenCalled();
 
     const callArgs = sendMessageMock.mock.calls[0][0] as {
-      options?: { muxMetadata?: { parsed?: { continueMessage?: { reviews?: ReviewNoteData[] } } } };
+      options?: { muxMetadata?: { parsed?: { followUpContent?: { reviews?: ReviewNoteData[] } } } };
     };
-    const continueMessage = callArgs?.options?.muxMetadata?.parsed?.continueMessage;
+    const followUpContent = callArgs?.options?.muxMetadata?.parsed?.followUpContent;
 
-    // Should have continueMessage even without text, because reviews are present
-    expect(continueMessage).toBeDefined();
-    expect(continueMessage?.reviews).toHaveLength(1);
+    // Should have followUpContent even without text, because reviews are present
+    expect(followUpContent).toBeDefined();
+    expect(followUpContent?.reviews).toHaveLength(1);
   });
 });

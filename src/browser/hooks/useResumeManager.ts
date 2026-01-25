@@ -10,7 +10,6 @@ import {
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
-import { rebuildContinueMessage } from "@/common/types/message";
 import type { SendMessageError } from "@/common/types/errors";
 import {
   createFailedRetryState,
@@ -185,15 +184,10 @@ export function useResumeManager() {
         if (lastUserMsg?.compactionRequest) {
           // Apply compaction overrides using shared function (same as ChatInput)
           // This ensures custom model/tokens are preserved across resume
-          // Use rebuildContinueMessage to properly reconstruct from persisted data
-          // with defaults for any fields missing from older code versions
           options = applyCompactionOverrides(options, {
             model: lastUserMsg.compactionRequest.parsed.model,
             maxOutputTokens: lastUserMsg.compactionRequest.parsed.maxOutputTokens,
-            continueMessage: rebuildContinueMessage(
-              lastUserMsg.compactionRequest.parsed.continueMessage,
-              { model: options.model, agentId: options.agentId ?? "exec" }
-            ),
+            followUpContent: lastUserMsg.compactionRequest.parsed.followUpContent,
           });
         }
       }

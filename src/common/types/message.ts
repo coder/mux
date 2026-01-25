@@ -27,6 +27,33 @@ export interface UserMessageContent {
 }
 
 /**
+ * Input for follow-up content - what call sites provide when triggering compaction.
+ * Does not include model/agentId since those come from sendMessageOptions.
+ */
+export interface CompactionFollowUpInput extends UserMessageContent {
+  /** Frontend metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
+  muxMetadata?: MuxFrontendMetadata;
+}
+
+/**
+ * Content to send after compaction completes.
+ * Extends CompactionFollowUpInput with model/agentId for the follow-up message.
+ *
+ * These fields are required because compaction uses its own agentId ("compact")
+ * and potentially a different model for summarization. The follow-up message
+ * should use the user's original model and agentId, not the compaction settings.
+ *
+ * Call sites provide CompactionFollowUpInput; prepareCompactionMessage converts
+ * it to CompactionFollowUpRequest by adding model/agentId from sendMessageOptions.
+ */
+export interface CompactionFollowUpRequest extends CompactionFollowUpInput {
+  /** Model to use for the follow-up message (user's original model, not compaction model) */
+  model: string;
+  /** Agent ID for the follow-up message (user's original agentId, not "compact") */
+  agentId: string;
+}
+
+/**
  * Brand symbol for ContinueMessage - ensures it can only be created via factory functions.
  * This prevents bugs where code manually constructs { text: "..." } and forgets fields.
  */
@@ -99,16 +126,19 @@ export type PersistedContinueMessage = Partial<
 };
 
 /**
- * True when the continue message is the default resume sentinel ("Continue")
+ * True when the content is the default resume sentinel ("Continue")
  * with no attachments.
  */
-export function isDefaultContinueMessage(message?: Partial<UserMessageContent>): boolean {
-  if (!message) return false;
-  const text = typeof message.text === "string" ? message.text.trim() : "";
-  const hasImages = (message.imageParts?.length ?? 0) > 0;
-  const hasReviews = (message.reviews?.length ?? 0) > 0;
+export function isDefaultSourceContent(content?: Partial<UserMessageContent>): boolean {
+  if (!content) return false;
+  const text = typeof content.text === "string" ? content.text.trim() : "";
+  const hasImages = (content.imageParts?.length ?? 0) > 0;
+  const hasReviews = (content.reviews?.length ?? 0) > 0;
   return text === "Continue" && !hasImages && !hasReviews;
 }
+
+/** @deprecated Use isDefaultSourceContent. Legacy alias for backward compatibility. */
+export const isDefaultContinueMessage = isDefaultSourceContent;
 
 /**
  * Rebuild a ContinueMessage from persisted data.
@@ -147,7 +177,8 @@ export function rebuildContinueMessage(
 export interface CompactionRequestData {
   model?: string; // Custom model override for compaction
   maxOutputTokens?: number;
-  continueMessage?: ContinueMessage;
+  /** Content to send after compaction completes. Backend binds model/agentId at send time. */
+  followUpContent?: CompactionFollowUpRequest;
 }
 
 /**
@@ -178,6 +209,25 @@ export function prepareUserMessageForSend(
   }
 
   return { finalText, metadata };
+}
+
+export interface BuildAgentSkillMetadataOptions {
+  rawCommand: string;
+  skillName: string;
+  scope: AgentSkillScope;
+  commandPrefix?: string;
+}
+
+export function buildAgentSkillMetadata(
+  options: BuildAgentSkillMetadataOptions
+): MuxFrontendMetadata {
+  return {
+    type: "agent-skill",
+    rawCommand: options.rawCommand,
+    commandPrefix: options.commandPrefix,
+    skillName: options.skillName,
+    scope: options.scope,
+  };
 }
 
 /** Base fields common to all metadata types */
@@ -440,6 +490,9 @@ export type DisplayedMessage =
       path: string; // Path to the plan file
       historySequence: number; // Global ordering across all messages
     };
+
+/** Convenience type alias for user-role DisplayedMessage */
+export type DisplayedUserMessage = Extract<DisplayedMessage, { type: "user" }>;
 
 export interface QueuedMessage {
   id: string;

@@ -7,7 +7,7 @@
 
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import type { APIClient } from "@/browser/contexts/API";
-import { getCompactionContinueText } from "./format";
+import { getFollowUpContentText } from "./format";
 
 /**
  * Check if the workspace is currently in a compaction stream
@@ -42,9 +42,9 @@ export function getCompactionCommand(aggregator: StreamingMessageAggregator): st
   const muxMeta = compactionMsg.metadata?.muxMetadata;
   if (muxMeta?.type !== "compaction-request") return null;
 
-  const continueText = getCompactionContinueText(muxMeta.parsed.continueMessage);
-  if (continueText && !muxMeta.rawCommand.includes("\n")) {
-    return `${muxMeta.rawCommand}\n${continueText}`;
+  const followUpText = getFollowUpContentText(muxMeta.parsed.followUpContent);
+  if (followUpText && !muxMeta.rawCommand.includes("\n")) {
+    return `${muxMeta.rawCommand}\n${followUpText}`;
   }
   return muxMeta.rawCommand;
 }
