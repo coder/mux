@@ -238,6 +238,24 @@ export class TaskService {
     });
   }
 
+  // Prefer per-agent settings so tasks inherit the correct agent defaults;
+  // fall back to legacy workspace settings for older configs.
+  private resolveWorkspaceAISettings(
+    workspace: {
+      aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
+      aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+    },
+    agentId: string | undefined
+  ): { model: string; thinkingLevel?: ThinkingLevel } | undefined {
+    const normalizedAgentId =
+      typeof agentId === "string" && agentId.trim().length > 0
+        ? agentId.trim().toLowerCase()
+        : undefined;
+    return (
+      (normalizedAgentId ? workspace.aiSettingsByAgent?.[normalizedAgentId] : undefined) ??
+      workspace.aiSettings
+    );
+  }
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
 
@@ -422,12 +440,13 @@ export class TaskService {
       );
     }
 
+    const parentAiSettings = this.resolveWorkspaceAISettings(parentMeta, agentId);
     const inheritedModelString =
       typeof args.modelString === "string" && args.modelString.trim().length > 0
         ? args.modelString.trim()
-        : (parentMeta.aiSettings?.model ?? defaultModel);
+        : (parentAiSettings?.model ?? defaultModel);
     const inheritedThinkingLevel: ThinkingLevel =
-      args.thinkingLevel ?? parentMeta.aiSettings?.thinkingLevel ?? "off";
+      args.thinkingLevel ?? parentAiSettings?.thinkingLevel ?? "off";
 
     const subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
 
@@ -1745,12 +1764,14 @@ export class TaskService {
       }
 
       const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
-      const model = entry.workspace.aiSettings?.model ?? defaultModel;
+      const parentAgentId = entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId;
+      const parentAiSettings = this.resolveWorkspaceAISettings(entry.workspace, parentAgentId);
+      const model = parentAiSettings?.model ?? defaultModel;
 
       const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
         model,
-        agentId: entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId,
-        thinkingLevel: entry.workspace.aiSettings?.thinkingLevel,
+        agentId: parentAgentId,
+        thinkingLevel: parentAiSettings?.thinkingLevel,
         additionalSystemInstructions:
           `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
           "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +

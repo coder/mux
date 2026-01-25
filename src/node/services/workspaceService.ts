@@ -220,7 +220,9 @@ export class WorkspaceService extends EventEmitter {
     const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
     const isWorkspaceEvent = (v: unknown): v is { workspaceId: string } =>
       isObj(v) && "workspaceId" in v && typeof v.workspaceId === "string";
-    const isStreamStartEvent = (v: unknown): v is { workspaceId: string; model: string } =>
+    const isStreamStartEvent = (
+      v: unknown
+    ): v is { workspaceId: string; model: string; agentId?: string } =>
       isWorkspaceEvent(v) && "model" in v && typeof v.model === "string";
     const isStreamEndEvent = (v: unknown): v is StreamEndEvent =>
       isWorkspaceEvent(v) &&
@@ -234,7 +236,7 @@ export class WorkspaceService extends EventEmitter {
     // Update streaming status and recency on stream start
     this.aiService.on("stream-start", (data: unknown) => {
       if (isStreamStartEvent(data)) {
-        void this.updateStreamingStatus(data.workspaceId, true, data.model);
+        void this.updateStreamingStatus(data.workspaceId, true, data.model, data.agentId);
       }
     });
 
@@ -273,7 +275,8 @@ export class WorkspaceService extends EventEmitter {
   private async updateStreamingStatus(
     workspaceId: string,
     streaming: boolean,
-    model?: string
+    model?: string,
+    agentId?: string
   ): Promise<void> {
     try {
       let thinkingLevel: WorkspaceAISettings["thinkingLevel"] | undefined;
@@ -285,7 +288,13 @@ export class WorkspaceService extends EventEmitter {
           const workspace =
             project?.workspaces.find((w) => w.id === workspaceId) ??
             project?.workspaces.find((w) => w.path === found.workspacePath);
-          thinkingLevel = workspace?.aiSettings?.thinkingLevel;
+          const normalizedAgentId =
+            typeof agentId === "string" && agentId.trim().length > 0
+              ? agentId.trim().toLowerCase()
+              : WORKSPACE_DEFAULTS.agentId;
+          const aiSettings =
+            workspace?.aiSettingsByAgent?.[normalizedAgentId] ?? workspace?.aiSettings;
+          thinkingLevel = aiSettings?.thinkingLevel;
         }
       }
       const snapshot = await this.extensionMetadata.setStreaming(

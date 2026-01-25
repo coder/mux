@@ -210,6 +210,7 @@ function WorkspaceScreenInner({
   );
   const sendMessageOptions = useMemo(
     () => ({
+      agentId: mode,
       model,
       mode,
       thinkingLevel: effectiveThinkingLevel,
@@ -487,7 +488,6 @@ function WorkspaceScreenInner({
 
     const aiByAgent =
       metadata.aiSettingsByAgent ??
-      metadata.aiSettingsByMode ??
       (metadata.aiSettings
         ? {
             plan: metadata.aiSettings,
@@ -519,7 +519,6 @@ function WorkspaceScreenInner({
     workspaceId,
     mode,
     metadata?.aiSettingsByAgent,
-    metadata?.aiSettingsByMode,
     metadata?.aiSettings?.model,
     metadata?.aiSettings?.thinkingLevel,
     model,
