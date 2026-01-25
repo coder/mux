@@ -53,7 +53,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
     };
 
     // Execute
@@ -76,7 +76,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
       offset: 3, // Start from line 3
     };
 
@@ -99,7 +99,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
       limit: 2, // Read only first 2 lines
     };
 
@@ -122,7 +122,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
       offset: 2, // Start from line 2
       limit: 2, // Read 2 lines
     };
@@ -146,7 +146,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
     };
 
     // Execute
@@ -167,7 +167,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
     };
 
     // Execute
@@ -186,7 +186,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "nonexistent.txt", // Use relative path
+      file_path: "nonexistent.txt", // Use relative path
     };
 
     // Execute
@@ -207,7 +207,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
       offset: 10, // Beyond file length
     };
 
@@ -230,7 +230,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
     };
 
     // Execute
@@ -257,7 +257,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
     };
 
     // Execute
@@ -281,7 +281,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
     };
 
     // Execute
@@ -304,7 +304,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "test.txt", // Use relative path
+      file_path: "test.txt", // Use relative path
       limit: 500, // Read only 500 lines
     };
 
@@ -326,7 +326,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: testFilePath, // Absolute path containing cwd prefix
+      file_path: testFilePath, // Absolute path containing cwd prefix
     };
 
     // Execute
@@ -358,7 +358,7 @@ describe("file_read tool", () => {
       runtimeTempDir: testDir,
     });
     const args: FileReadToolArgs = {
-      filePath: "../test.txt", // This goes outside subDir back to testDir
+      file_path: "../test.txt", // This goes outside subDir back to testDir
     };
 
     // Execute
@@ -377,7 +377,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "/etc/passwd", // Absolute path outside cwd
+      file_path: "/etc/passwd", // Absolute path outside cwd
     };
 
     // Execute
@@ -407,7 +407,7 @@ describe("file_read tool", () => {
       });
 
       const result = (await tool.execute!(
-        { filePath: "/etc/passwd" },
+        { file_path: "/etc/passwd" },
         mockToolCallOptions
       )) as FileReadToolResult;
 
@@ -434,7 +434,7 @@ describe("file_read tool", () => {
     using testEnv = createTestFileReadTool({ cwd: testDir });
     const tool = testEnv.tool;
     const args: FileReadToolArgs = {
-      filePath: "subdir/test.txt",
+      file_path: "subdir/test.txt",
     };
 
     // Execute
@@ -464,7 +464,7 @@ describe("file_read tool", () => {
       });
 
       const result = (await tool.execute!(
-        { filePath: planPath },
+        { file_path: planPath },
         mockToolCallOptions
       )) as FileReadToolResult;
 

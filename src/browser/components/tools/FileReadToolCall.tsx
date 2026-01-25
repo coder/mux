@@ -70,8 +70,9 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
 }) => {
   const { expanded, toggleExpanded } = useToolExpansion();
 
-  // Use full file path for consistency with file_edit display
-  const filePath = args.filePath;
+  // Support both new (file_path) and legacy (filePath) property names for backwards compatibility
+  const filePath =
+    "file_path" in args ? args.file_path : ((args as { filePath?: string }).filePath ?? "");
 
   // Parse the file content to extract line numbers and actual content
   const parsedContent = result?.success && result.content ? parseFileContent(result.content) : null;
@@ -101,7 +102,7 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
             <div className="bg-code-bg flex flex-wrap gap-4 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
               <div className="flex gap-1.5">
                 <span className="text-secondary font-medium">Path:</span>
-                <span className="text-text font-monospace break-all">{args.filePath}</span>
+                <span className="text-text font-monospace break-all">{filePath}</span>
               </div>
               {args.offset !== undefined && (
                 <div className="flex gap-1.5">

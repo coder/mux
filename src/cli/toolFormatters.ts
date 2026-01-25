@@ -117,7 +117,7 @@ function formatFileEditStart(_toolName: string, args: unknown): string | null {
 
 function formatFileReadStart(_toolName: string, args: unknown): string | null {
   const readArgs = args as FileReadToolArgs;
-  if (!readArgs?.filePath) return null;
+  if (!readArgs?.file_path) return null;
 
   let suffix = "";
   if (readArgs.offset !== undefined || readArgs.limit !== undefined) {
@@ -127,7 +127,7 @@ function formatFileReadStart(_toolName: string, args: unknown): string | null {
     suffix = chalk.dim(` (${parts.join(", ")})`);
   }
 
-  return `📖 ${formatFilePath(readArgs.filePath)}${suffix}`;
+  return `📖 ${formatFilePath(readArgs.file_path)}${suffix}`;
 }
 
 function formatBashStart(_toolName: string, args: unknown): string | null {

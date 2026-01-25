@@ -21,11 +21,12 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
     description: TOOL_DEFINITIONS.file_read.description,
     inputSchema: TOOL_DEFINITIONS.file_read.schema,
     execute: async (
-      { filePath, offset, limit },
+      { file_path, offset, limit },
       { abortSignal: _abortSignal }
     ): Promise<FileReadToolResult> => {
       // Note: abortSignal available but not used - file reads are fast and complete quickly
 
+      let filePath = file_path;
       try {
         // Validate and auto-correct redundant path prefix
         const { correctedPath: validatedPath, warning: pathWarning } = validateAndCorrectPath(

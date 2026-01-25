@@ -39,7 +39,7 @@ export type BashToolResult = z.infer<typeof BashToolResultSchema>;
 
 // File Read Tool Types
 export interface FileReadToolArgs {
-  filePath: string;
+  file_path: string;
   offset?: number; // 1-based starting line number (optional)
   limit?: number; // number of lines to return from offset (optional)
 }

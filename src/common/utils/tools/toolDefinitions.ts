@@ -476,7 +476,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "Read the contents of a file from the file system. Read as little as possible to complete the task.",
     schema: z.object({
-      filePath: z.string().describe("The path to the file to read (absolute or relative)"),
+      file_path: z.string().describe("The path to the file to read (absolute or relative)"),
       offset: z
         .number()
         .int()
