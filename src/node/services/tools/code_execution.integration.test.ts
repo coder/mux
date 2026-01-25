@@ -63,7 +63,7 @@ describe("code_execution integration tests", () => {
 
         // Execute code that reads the file
         const code = `
-        const result = mux.file_read({ filePath: "test.txt" });
+        const result = mux.file_read({ file_path: "test.txt" });
         return result;
       `;
 
@@ -109,7 +109,7 @@ describe("code_execution integration tests", () => {
         );
 
         const code = `
-        const result = mux.file_read({ filePath: "nonexistent.txt" });
+        const result = mux.file_read({ file_path: "nonexistent.txt" });
         return result;
       `;
 
@@ -219,7 +219,7 @@ describe("code_execution integration tests", () => {
         }
         
         // Read the file we just created
-        const readResult = mux.file_read({ filePath: "sandbox_created.txt" });
+        const readResult = mux.file_read({ file_path: "sandbox_created.txt" });
         
         return {
           bashResult,
@@ -272,7 +272,7 @@ describe("code_execution integration tests", () => {
         new ToolBridge(tools)
       );
 
-      // Call file_read without required filePath argument
+      // Call file_read without required file_path argument
       const code = `
         const result = mux.file_read({});
         return result;
@@ -286,7 +286,7 @@ describe("code_execution integration tests", () => {
       // Tool bridge validation throws, which causes sandbox execution to fail
       // The error is propagated to the PTCExecutionResult
       expect(result.success).toBe(false);
-      expect(result.error).toContain("filePath");
+      expect(result.error).toContain("file_path");
     });
 
     it("handles tool execution exceptions gracefully", async () => {
