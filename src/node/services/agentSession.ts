@@ -44,6 +44,7 @@ import {
   type MuxFrontendMetadata,
   type MuxImagePart,
   type MuxMessage,
+  type ReviewNoteDataForDisplay,
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
@@ -70,10 +71,21 @@ import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
 export type { FileState, EditedFileAttachment } from "@/node/services/utils/fileChangeTracker";
 
 // Type guard for compaction request metadata
+// Supports both new `followUpContent` and legacy `continueMessage` for backwards compatibility
 interface CompactionRequestMetadata {
   type: "compaction-request";
   parsed: {
     followUpContent?: CompactionFollowUpRequest;
+    // Legacy field - older persisted requests may use this instead of followUpContent
+    continueMessage?: {
+      text?: string;
+      imageParts?: ImagePart[];
+      reviews?: ReviewNoteDataForDisplay[];
+      muxMetadata?: MuxFrontendMetadata;
+      model?: string;
+      agentId?: string;
+      mode?: "exec" | "plan"; // Legacy: older versions stored mode instead of agentId
+    };
   };
 }
 
@@ -634,16 +646,33 @@ export class AgentSession {
 
       // If this is a compaction request with follow-up content, queue it for auto-send after compaction
       // Use the type guard result to access followUpContent with proper typing
-      if (isCompactionRequest && typedMuxMetadata) {
+      // Supports both new `followUpContent` and legacy `continueMessage` for backwards compatibility
+      if (isCompactionRequest && typedMuxMetadata && options) {
         const compactionMeta = typedMuxMetadata as CompactionRequestMetadata;
-        const followUpContent = compactionMeta.parsed.followUpContent;
+        // Prefer new field, fall back to legacy
+        const rawFollowUp =
+          compactionMeta.parsed.followUpContent ?? compactionMeta.parsed.continueMessage;
 
-        if (followUpContent && options) {
+        if (rawFollowUp) {
+          // Normalize to ensure text is always a string (legacy format may have undefined)
+          const followUpContent = {
+            ...rawFollowUp,
+            text: rawFollowUp.text ?? "",
+          };
+
           // Process the follow-up content (handles reviews -> text formatting + metadata)
           const { finalText, metadata } = prepareUserMessageForSend(
             followUpContent,
             followUpContent.muxMetadata
           );
+
+          // Derive agentId: new field has it directly, legacy may use `mode` field
+          // Legacy `mode` was "exec" | "plan" and maps directly to agentId
+          const legacyMode =
+            "mode" in followUpContent && typeof followUpContent.mode === "string"
+              ? followUpContent.mode
+              : undefined;
+          const effectiveAgentId = followUpContent.agentId ?? legacyMode ?? "exec";
 
           // Use model/agentId from followUpContent - these were captured from the user's
           // original settings when compaction was triggered (compaction uses its own
@@ -654,8 +683,8 @@ export class AgentSession {
             SendMessageOptions,
             "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
           > & { imageParts?: ImagePart[]; muxMetadata?: MuxFrontendMetadata } = {
-            model: followUpContent.model,
-            agentId: followUpContent.agentId,
+            model: followUpContent.model ?? options.model,
+            agentId: effectiveAgentId,
             thinkingLevel: options.thinkingLevel,
             additionalSystemInstructions: options.additionalSystemInstructions,
             providerOptions: options.providerOptions,
