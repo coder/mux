@@ -9,9 +9,7 @@ import {
   getModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
-  getLegacyWorkspaceAISettingsByModeKey,
   AGENT_AI_DEFAULTS_KEY,
-  LEGACY_MODE_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
@@ -19,10 +17,6 @@ import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
 type WorkspaceAISettingsCache = Partial<
   Record<string, { model: string; thinkingLevel: ThinkingLevel }>
->;
-
-type LegacyModeAiDefaults = Partial<
-  Record<string, { modelString?: string; thinkingLevel?: ThinkingLevel }>
 >;
 
 export function WorkspaceModeAISync(props: { workspaceId: string }): null {
@@ -34,18 +28,8 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     {},
     { listener: true }
   );
-  const [legacyModeDefaults] = usePersistedState<LegacyModeAiDefaults>(
-    LEGACY_MODE_AI_DEFAULTS_KEY,
-    {},
-    { listener: true }
-  );
   const [workspaceByAgent] = usePersistedState<WorkspaceAISettingsCache>(
     getWorkspaceAISettingsByAgentKey(workspaceId),
-    {},
-    { listener: true }
-  );
-  const [legacyWorkspaceByMode] = usePersistedState<WorkspaceAISettingsCache>(
-    getLegacyWorkspaceAISettingsByModeKey(workspaceId),
     {},
     { listener: true }
   );
@@ -84,12 +68,6 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const candidateModel =
       fallbackIds.map((id) => workspaceByAgent[id]?.model).find((entry) => entry !== undefined) ??
       agentModelDefault ??
-      fallbackIds
-        .map((id) => legacyWorkspaceByMode[id]?.model)
-        .find((entry) => entry !== undefined) ??
-      fallbackIds
-        .map((id) => legacyModeDefaults[id]?.modelString)
-        .find((entry) => entry !== undefined) ??
       existingModel;
     const resolvedModel =
       typeof candidateModel === "string" && candidateModel.trim().length > 0
@@ -102,12 +80,6 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
         .map((id) => workspaceByAgent[id]?.thinkingLevel)
         .find((entry) => entry !== undefined) ??
       agentThinkingDefault ??
-      fallbackIds
-        .map((id) => legacyWorkspaceByMode[id]?.thinkingLevel)
-        .find((entry) => entry !== undefined) ??
-      fallbackIds
-        .map((id) => legacyModeDefaults[id]?.thinkingLevel)
-        .find((entry) => entry !== undefined) ??
       existingThinking ??
       "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
@@ -119,15 +91,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [
-    agentAiDefaults,
-    agentId,
-    agents,
-    legacyModeDefaults,
-    legacyWorkspaceByMode,
-    workspaceByAgent,
-    workspaceId,
-  ]);
+  }, [agentAiDefaults, agentId, agents, workspaceByAgent, workspaceId]);
 
   return null;
 }

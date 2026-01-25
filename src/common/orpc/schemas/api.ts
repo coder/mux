@@ -931,20 +931,6 @@ const SubagentAiDefaultsEntrySchema = z
   })
   .strict();
 
-const ModeAiDefaultsEntrySchema = z
-  .object({
-    modelString: z.string().min(1).optional(),
-    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
-  })
-  .strict();
-
-const ModeAiDefaultsSchema = z
-  .object({
-    plan: ModeAiDefaultsEntrySchema.optional(),
-    exec: ModeAiDefaultsEntrySchema.optional(),
-    compact: ModeAiDefaultsEntrySchema.optional(),
-  })
-  .strict();
 const AgentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
 const SubagentAiDefaultsSchema = z.record(z.string().min(1), SubagentAiDefaultsEntrySchema);
 
@@ -966,7 +952,6 @@ export const config = {
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
-      modeAiDefaults: ModeAiDefaultsSchema,
     }),
   },
   saveConfig: {
@@ -989,12 +974,6 @@ export const config = {
   updateAgentAiDefaults: {
     input: z.object({
       agentAiDefaults: AgentAiDefaultsSchema,
-    }),
-    output: z.void(),
-  },
-  updateModeAiDefaults: {
-    input: z.object({
-      modeAiDefaults: ModeAiDefaultsSchema,
     }),
     output: z.void(),
   },

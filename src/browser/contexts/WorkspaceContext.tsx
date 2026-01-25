@@ -20,7 +20,6 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
-  LEGACY_MODE_AI_DEFAULTS_KEY,
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
   SELECTED_WORKSPACE_KEY,
@@ -30,7 +29,6 @@ import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePer
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -62,7 +60,6 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
 
   const aiByAgent =
     metadata.aiSettingsByAgent ??
-    metadata.aiSettingsByMode ??
     (metadata.aiSettings
       ? {
           plan: metadata.aiSettings,
@@ -201,11 +198,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         updatePersistedState(
           AGENT_AI_DEFAULTS_KEY,
           normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {})
-        );
-
-        updatePersistedState(
-          LEGACY_MODE_AI_DEFAULTS_KEY,
-          normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
         );
 
         // Seed Mux Gateway prefs from backend so switching ports doesn't reset the UI.

@@ -14,14 +14,13 @@ import {
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { AGENT_AI_DEFAULTS_KEY, LEGACY_MODE_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
   normalizeAgentAiDefaults,
   type AgentAiDefaults,
   type AgentAiDefaultsEntry,
 } from "@/common/types/agentAiDefaults";
-import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import {
   DEFAULT_TASK_SETTINGS,
   TASK_SETTINGS_LIMITS,
@@ -275,12 +274,6 @@ export function TasksSection() {
         setAgentAiDefaults(normalizedAgentDefaults);
         updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedAgentDefaults);
 
-        // Keep a local cache for non-react readers (compaction handler, etc.)
-        updatePersistedState(
-          LEGACY_MODE_AI_DEFAULTS_KEY,
-          normalizeModeAiDefaults(cfg.modeAiDefaults ?? {})
-        );
-
         setLoadFailed(false);
         lastSyncedTaskSettingsRef.current = normalizedTaskSettings;
         lastSyncedAgentAiDefaultsRef.current = normalizedAgentDefaults;
@@ -355,16 +348,6 @@ export function TasksSection() {
 
     // Keep agent defaults cache up-to-date for any syncers/non-react readers.
     updatePersistedState(AGENT_AI_DEFAULTS_KEY, agentAiDefaults);
-
-    // Keep mode defaults cache up-to-date for non-react readers.
-    updatePersistedState(
-      LEGACY_MODE_AI_DEFAULTS_KEY,
-      normalizeModeAiDefaults({
-        plan: agentAiDefaults.plan,
-        exec: agentAiDefaults.exec,
-        compact: agentAiDefaults.compact,
-      })
-    );
 
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);

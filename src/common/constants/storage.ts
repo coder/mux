@@ -90,14 +90,6 @@ export function getWorkspaceAISettingsByAgentKey(workspaceId: string): string {
 }
 
 /**
- * Legacy per-mode workspace AI overrides cache (plan/exec).
- * Format: "workspaceAiSettingsByMode:{workspaceId}"
- */
-export function getLegacyWorkspaceAISettingsByModeKey(workspaceId: string): string {
-  return `workspaceAiSettingsByMode:${workspaceId}`;
-}
-
-/**
  * LEGACY: Get the localStorage key for thinking level preference per model (global).
  * Format: "thinkingLevel:model:{modelName}"
  *
@@ -235,12 +227,6 @@ export const PREFERRED_SYSTEM_1_MODEL_KEY = "preferredSystem1Model";
  * Format: "preferredSystem1ThinkingLevel"
  */
 export const PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY = "preferredSystem1ThinkingLevel";
-
-/**
- * Legacy localStorage key for cached plan/exec defaults (global).
- * Format: "modeAiDefaults"
- */
-export const LEGACY_MODE_AI_DEFAULTS_KEY = "modeAiDefaults";
 
 /**
  * Get the localStorage key for cached per-agent AI defaults (global).
@@ -499,7 +485,6 @@ export function getAutoCompactionThresholdKey(model: string): string {
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getWorkspaceAISettingsByAgentKey,
-  getLegacyWorkspaceAISettingsByModeKey,
   getModelKey,
   getInputKey,
   getInputImagesKey,
