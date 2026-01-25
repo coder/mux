@@ -119,6 +119,30 @@ async function countToolOutputTokens(
   return countTokensForData(outputData, tokenizer);
 }
 
+/** Tools that operate on files - track file paths for these */
+const FILE_PATH_TOOLS = new Set([
+  "file_read",
+  "file_edit_insert",
+  "file_edit_replace_string",
+  "file_edit_replace_lines",
+]);
+
+/**
+ * Extracts file path from tool input for file operations
+ */
+function extractFilePathFromToolInput(toolName: string, input: unknown): string | undefined {
+  if (!FILE_PATH_TOOLS.has(toolName)) {
+    return undefined;
+  }
+  if (typeof input !== "object" || input === null) {
+    return undefined;
+  }
+  // file_read uses filePath, file_edit tools use file_path
+  const inputObj = input as Record<string, unknown>;
+  const path = inputObj.filePath ?? inputObj.file_path;
+  return typeof path === "string" ? path : undefined;
+}
+
 /**
  * Represents a single token counting operation
  */
@@ -132,6 +156,8 @@ export interface TokenCountJob {
    * *single* tool definition only once.
    */
   toolNameForDefinition?: string;
+  /** File path for file operations (file_read, file_edit_*) */
+  filePath?: string;
   promise: Promise<number>;
 }
 
@@ -178,11 +204,13 @@ function createTokenCountingJobs(messages: MuxMessage[], tokenizer: Tokenizer): 
       for (const part of message.parts) {
         if (part.type === "dynamic-tool") {
           const consumerInfo = getConsumerInfoForToolCall(part.toolName, part.input);
+          const filePath = extractFilePathFromToolInput(part.toolName, part.input);
 
           // Tool arguments
           jobs.push({
             consumer: consumerInfo.consumer,
             toolNameForDefinition: consumerInfo.toolNameForDefinition,
+            filePath,
             promise: countTokensForData(part.input, tokenizer),
           });
 
@@ -190,6 +218,7 @@ function createTokenCountingJobs(messages: MuxMessage[], tokenizer: Tokenizer): 
           jobs.push({
             consumer: consumerInfo.consumer,
             toolNameForDefinition: consumerInfo.toolNameForDefinition,
+            filePath,
             promise: countToolOutputTokens(part, tokenizer),
           });
         }
@@ -276,6 +305,14 @@ export function extractSyncMetadata(messages: MuxMessage[], model: string): Sync
   return { systemMessageTokens, usageHistory };
 }
 
+/** Accumulated data for a consumer */
+interface ConsumerAccumulator {
+  fixed: number;
+  variable: number;
+  /** File path -> token count (for file operations) */
+  filePathTokens: Map<string, number>;
+}
+
 /**
  * Merges token counting results into consumer map
  * Adds tool definition tokens only once per tool
@@ -285,8 +322,8 @@ export function mergeResults(
   results: number[],
   toolDefinitions: Map<string, number>,
   systemMessageTokens: number
-): Map<string, { fixed: number; variable: number }> {
-  const consumerMap = new Map<string, { fixed: number; variable: number }>();
+): Map<string, ConsumerAccumulator> {
+  const consumerMap = new Map<string, ConsumerAccumulator>();
   const toolsWithDefinitions = new Set<string>();
 
   // Process all job results
@@ -298,7 +335,11 @@ export function mergeResults(
       continue; // Skip empty results
     }
 
-    const existing = consumerMap.get(job.consumer) ?? { fixed: 0, variable: 0 };
+    const existing = consumerMap.get(job.consumer) ?? {
+      fixed: 0,
+      variable: 0,
+      filePathTokens: new Map<string, number>(),
+    };
 
     const toolNameForDefinition = job.toolNameForDefinition ?? job.consumer;
 
@@ -315,12 +356,26 @@ export function mergeResults(
     // Add variable tokens
     const variableTokens = existing.variable + tokenCount;
 
-    consumerMap.set(job.consumer, { fixed: fixedTokens, variable: variableTokens });
+    // Track file path tokens
+    if (job.filePath) {
+      const existingFileTokens = existing.filePathTokens.get(job.filePath) ?? 0;
+      existing.filePathTokens.set(job.filePath, existingFileTokens + tokenCount);
+    }
+
+    consumerMap.set(job.consumer, {
+      fixed: fixedTokens,
+      variable: variableTokens,
+      filePathTokens: existing.filePathTokens,
+    });
   }
 
   // Add system message tokens as a consumer if present
   if (systemMessageTokens > 0) {
-    consumerMap.set("System", { fixed: 0, variable: systemMessageTokens });
+    consumerMap.set("System", {
+      fixed: 0,
+      variable: systemMessageTokens,
+      filePathTokens: new Map<string, number>(),
+    });
   }
 
   return consumerMap;
@@ -378,12 +433,23 @@ export async function calculateTokenStats(
   const consumers: TokenConsumer[] = Array.from(consumerMap.entries())
     .map(([name, counts]) => {
       const total = counts.fixed + counts.variable;
+
+      // Build top 5 file paths for file operation consumers
+      let topFilePaths: TokenConsumer["topFilePaths"];
+      if (counts.filePathTokens.size > 0) {
+        topFilePaths = Array.from(counts.filePathTokens.entries())
+          .map(([path, tokens]) => ({ path, tokens }))
+          .sort((a, b) => b.tokens - a.tokens)
+          .slice(0, 5);
+      }
+
       return {
         name,
         tokens: total,
         percentage: totalTokens > 0 ? (total / totalTokens) * 100 : 0,
         fixedTokens: counts.fixed > 0 ? counts.fixed : undefined,
         variableTokens: counts.variable > 0 ? counts.variable : undefined,
+        topFilePaths,
       };
     })
     .sort((a, b) => b.tokens - a.tokens);

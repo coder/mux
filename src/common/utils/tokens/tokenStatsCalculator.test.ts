@@ -362,8 +362,8 @@ describe("mergeResults", () => {
 
     const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
 
-    expect(consumerMap.get("User")).toEqual({ fixed: 0, variable: 100 });
-    expect(consumerMap.get("Assistant")).toEqual({ fixed: 0, variable: 200 });
+    expect(consumerMap.get("User")).toMatchObject({ fixed: 0, variable: 100 });
+    expect(consumerMap.get("Assistant")).toMatchObject({ fixed: 0, variable: 200 });
   });
 
   test("accumulates tokens for same consumer", () => {
@@ -377,7 +377,7 @@ describe("mergeResults", () => {
 
     const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
 
-    expect(consumerMap.get("User")).toEqual({ fixed: 0, variable: 150 });
+    expect(consumerMap.get("User")).toMatchObject({ fixed: 0, variable: 150 });
   });
 
   test("adds tool definition tokens only once", () => {
@@ -392,7 +392,7 @@ describe("mergeResults", () => {
     const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
 
     // Fixed tokens added only once, variable tokens accumulated
-    expect(consumerMap.get("Read")).toEqual({ fixed: 25, variable: 150 });
+    expect(consumerMap.get("Read")).toMatchObject({ fixed: 25, variable: 150 });
   });
 
   test("adds system message tokens", () => {
@@ -403,7 +403,7 @@ describe("mergeResults", () => {
 
     const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
 
-    expect(consumerMap.get("System")).toEqual({ fixed: 0, variable: 300 });
+    expect(consumerMap.get("System")).toMatchObject({ fixed: 0, variable: 300 });
   });
 
   test("skips zero token results", () => {
@@ -418,6 +418,6 @@ describe("mergeResults", () => {
     const consumerMap = mergeResults(jobs, results, toolDefinitions, systemMessageTokens);
 
     expect(consumerMap.has("User")).toBe(false);
-    expect(consumerMap.get("Assistant")).toEqual({ fixed: 0, variable: 100 });
+    expect(consumerMap.get("Assistant")).toMatchObject({ fixed: 0, variable: 100 });
   });
 });
