@@ -2259,7 +2259,10 @@ export class AIService extends EventEmitter {
                   let lastErrorMessage: string | undefined;
                   let lastErrorText: string | undefined;
 
-                  const system1Provider = system1.modelString.split(":", 2)[0];
+                  // Normalize gateway models so mux-gateway:anthropic/... is treated as anthropic here.
+                  const [system1Provider] = parseModelString(
+                    normalizeGatewayModel(system1.modelString)
+                  );
 
                   // Anthropic forbids extended thinking when tool_choice forces tool use.
                   // The AI SDK's generateObject({ mode: "json" }) path uses forced tool calls for Anthropic,
