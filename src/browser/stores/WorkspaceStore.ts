@@ -1804,6 +1804,11 @@ export class WorkspaceStore {
       return;
     }
 
+    // Heartbeat events are no-ops for UI state - they exist only for connection liveness detection
+    if ("type" in data && data.type === "heartbeat") {
+      return;
+    }
+
     // OPTIMIZATION: Buffer stream events until caught-up to reduce excess re-renders
     // When first subscribing to a workspace, we receive:
     // 1. Historical messages from chat.jsonl (potentially hundreds of messages)
