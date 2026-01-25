@@ -398,8 +398,17 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
 
       {consumers.topFilePaths && consumers.topFilePaths.length > 0 && (
         <div className="mb-4">
-          <h3 className="text-subtle m-0 mb-2 text-xs font-semibold tracking-wide uppercase">
+          <h3 className="text-subtle m-0 mb-2 flex items-center gap-1 text-xs font-semibold tracking-wide uppercase">
             File Breakdown
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-dim cursor-help text-[10px] font-normal">ⓘ</span>
+              </TooltipTrigger>
+              <TooltipContent align="start" className="max-w-72 whitespace-normal">
+                Token usage from file_read and file_edit tools, aggregated by file path. Consider
+                splitting large files to reduce context usage.
+              </TooltipContent>
+            </Tooltip>
           </h3>
           <FileBreakdown files={consumers.topFilePaths} totalTokens={consumers.totalTokens} />
         </div>
