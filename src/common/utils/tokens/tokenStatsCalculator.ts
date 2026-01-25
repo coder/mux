@@ -119,28 +119,41 @@ async function countToolOutputTokens(
   return countTokensForData(outputData, tokenizer);
 }
 
-/** Tools that operate on files - track file paths for these */
-const FILE_PATH_TOOLS = new Set([
-  "file_read",
-  "file_edit_insert",
-  "file_edit_replace_string",
-  "file_edit_replace_lines",
-]);
+// Type guards for file tool inputs
+function hasFilePath(input: unknown): input is { filePath: string } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "filePath" in input &&
+    typeof (input as { filePath: unknown }).filePath === "string"
+  );
+}
+
+function hasFilePathSnakeCase(input: unknown): input is { file_path: string } {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    "file_path" in input &&
+    typeof (input as { file_path: unknown }).file_path === "string"
+  );
+}
 
 /**
- * Extracts file path from tool input for file operations
+ * Extracts file path from tool input for file operations.
+ * Supports both camelCase (file_read) and snake_case (file_edit_*) naming.
+ * TODO: Standardize tool schemas to use consistent naming (prefer file_path)
  */
 function extractFilePathFromToolInput(toolName: string, input: unknown): string | undefined {
-  if (!FILE_PATH_TOOLS.has(toolName)) {
-    return undefined;
+  switch (toolName) {
+    case "file_read":
+      return hasFilePath(input) ? input.filePath : undefined;
+    case "file_edit_insert":
+    case "file_edit_replace_string":
+    case "file_edit_replace_lines":
+      return hasFilePathSnakeCase(input) ? input.file_path : undefined;
+    default:
+      return undefined;
   }
-  if (typeof input !== "object" || input === null) {
-    return undefined;
-  }
-  // file_read uses filePath, file_edit tools use file_path
-  const inputObj = input as Record<string, unknown>;
-  const path = inputObj.filePath ?? inputObj.file_path;
-  return typeof path === "string" ? path : undefined;
 }
 
 /**
