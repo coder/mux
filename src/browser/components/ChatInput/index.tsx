@@ -1921,7 +1921,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 ? ` Try: ${pdfCapableExamples.join(", ")}.`
                 : " Choose a model with PDF support."),
           });
-          setIsSending(false);
+          setSendingCount((c) => c - 1);
           return;
         }
 
@@ -1936,7 +1936,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 title: "PDF too large",
                 message: `${attachment.filename ?? "PDF"} is ${actualMb}MB, but ${baseModel} allows up to ${caps.maxPdfSizeMb}MB per PDF.`,
               });
-              setIsSending(false);
+              setSendingCount((c) => c - 1);
               return;
             }
           }

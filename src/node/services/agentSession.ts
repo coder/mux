@@ -750,8 +750,8 @@ export class AgentSession {
           // agentId determines tool policy via resolveToolPolicyForAgent in aiService
           const sanitizedOptions: Omit<
             SendMessageOptions,
-            "muxMetadata" | "mode" | "editMessageId" | "imageParts" | "maxOutputTokens"
-          > & { imageParts?: ImagePart[]; muxMetadata?: MuxFrontendMetadata } = {
+            "muxMetadata" | "mode" | "editMessageId" | "fileParts" | "maxOutputTokens"
+          > & { fileParts?: FilePart[]; muxMetadata?: MuxFrontendMetadata } = {
             model: followUpContent.model ?? options.model,
             agentId: effectiveAgentId,
             thinkingLevel: options.thinkingLevel,
@@ -761,10 +761,13 @@ export class AgentSession {
             disableWorkspaceAgents: options.disableWorkspaceAgents,
           };
 
-          // Add image parts if present
-          const imageParts = followUpContent.imageParts;
-          if (imageParts && imageParts.length > 0) {
-            sanitizedOptions.imageParts = imageParts;
+          // Legacy compatibility: older clients stored follow-up attachments in imageParts.
+          const fileParts =
+            followUpContent.fileParts ??
+            (followUpContent as { imageParts?: FilePart[] }).imageParts;
+
+          if (fileParts && fileParts.length > 0) {
+            sanitizedOptions.fileParts = fileParts;
           }
 
           // Add metadata with reviews if present
@@ -774,7 +777,7 @@ export class AgentSession {
 
           const dedupeKey = JSON.stringify({
             text: finalText.trim(),
-            images: (imageParts ?? []).map((image) => `${image.mediaType}:${image.url}`),
+            files: (fileParts ?? []).map((part) => `${part.mediaType}:${part.url}`),
           });
 
           if (this.messageQueue.addOnce(finalText, sanitizedOptions, dedupeKey)) {
