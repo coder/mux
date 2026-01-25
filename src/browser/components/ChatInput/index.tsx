@@ -208,6 +208,23 @@ async function resolveSkillInvocation(options: {
     userText: formatSkillInvocationText(skill.name, afterPrefix.trimStart()),
   };
 }
+async function parseCommandWithSkillInvocation(options: {
+  messageText: string;
+  agentSkillDescriptors: AgentSkillDescriptor[];
+  api: APIClient | null;
+  discovery: SkillResolutionTarget | null;
+}): Promise<{ parsed: ParsedCommand; skillInvocation: SkillInvocation | null }> {
+  const parsed = parseCommand(options.messageText);
+  const skillInvocation = await resolveSkillInvocation({
+    messageText: options.messageText,
+    parsed,
+    agentSkillDescriptors: options.agentSkillDescriptors,
+    api: options.api,
+    discovery: options.discovery,
+  });
+
+  return { parsed: skillInvocation ? null : parsed, skillInvocation };
+}
 /**
  * Format user message text for skill invocation.
  * Makes it explicit to the model that a skill was invoked.
@@ -1485,41 +1502,46 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
 
     const messageText = input.trim();
+    const skillDiscovery: SkillResolutionTarget | null =
+      variant === "creation"
+        ? atMentionProjectPath
+          ? { kind: "project", projectPath: atMentionProjectPath }
+          : null
+        : variant === "workspace" && workspaceId
+          ? {
+              kind: "workspace",
+              workspaceId,
+              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
+            }
+          : null;
+    const { parsed, skillInvocation } = await parseCommandWithSkillInvocation({
+      messageText,
+      agentSkillDescriptors,
+      api,
+      discovery: skillDiscovery,
+    });
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
       let creationMessageTextForSend = messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
-      if (messageText.startsWith("/")) {
-        const parsed = parseCommand(messageText);
-        const skillInvocation = await resolveSkillInvocation({
-          messageText,
-          parsed,
-          agentSkillDescriptors,
-          api,
-          discovery: atMentionProjectPath
-            ? { kind: "project", projectPath: atMentionProjectPath }
-            : null,
-        });
-
-        if (skillInvocation) {
-          if (!api) {
-            pushToast({ type: "error", message: "Not connected to server" });
-            return;
-          }
-
-          creationMessageTextForSend = skillInvocation.userText;
-          creationOptionsOverride = {
-            muxMetadata: buildSkillInvocationMetadata(messageText, skillInvocation.descriptor),
-            // In the creation flow, skills are discovered from the project path. If the skill is
-            // project-scoped (often untracked in git), it may not exist in the new worktree.
-            // Force project-path discovery for this send so resolution matches suggestions.
-            ...(skillInvocation.descriptor.scope === "project"
-              ? { disableWorkspaceAgents: true }
-              : {}),
-          };
+      if (skillInvocation) {
+        if (!api) {
+          pushToast({ type: "error", message: "Not connected to server" });
+          return;
         }
+
+        creationMessageTextForSend = skillInvocation.userText;
+        creationOptionsOverride = {
+          muxMetadata: buildSkillInvocationMetadata(messageText, skillInvocation.descriptor),
+          // In the creation flow, skills are discovered from the project path. If the skill is
+          // project-scoped (often untracked in git), it may not exist in the new worktree.
+          // Force project-path discovery for this send so resolution matches suggestions.
+          ...(skillInvocation.descriptor.scope === "project"
+            ? { disableWorkspaceAgents: true }
+            : {}),
+        };
       }
 
       setHasAttemptedCreateSend(true);
@@ -1555,28 +1577,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (variant !== "workspace") return; // Type guard
 
     try {
-      // Parse command
-      let parsed = parseCommand(messageText);
-
-      let skillInvocation: SkillInvocation | null = null;
-      skillInvocation = await resolveSkillInvocation({
-        messageText,
-        parsed,
-        agentSkillDescriptors,
-        api,
-        discovery: workspaceId
-          ? {
-              kind: "workspace",
-              workspaceId,
-              disableWorkspaceAgents: sendMessageOptions.disableWorkspaceAgents,
-            }
-          : null,
-      });
-
-      if (skillInvocation) {
-        parsed = null;
-      }
-
       if (parsed) {
         // Handle /clear command - show confirmation modal
         if (parsed.type === "clear") {
