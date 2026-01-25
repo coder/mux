@@ -14,6 +14,7 @@ import { BackgroundProcessManager } from "@/node/services/backgroundProcessManag
 
 import { fireEvent } from "@testing-library/react";
 import { createAppHarness } from "./harness";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 interface ServiceContainerPrivates {
   backgroundProcessManager: BackgroundProcessManager;
@@ -152,6 +153,7 @@ describe("Compaction UI (mock AI router)", () => {
       const seedResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
         message: seedMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
       });
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
@@ -206,6 +208,7 @@ describe("Compaction UI (mock AI router)", () => {
       const seedResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
         message: seedMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
       });
       expect(seedResult.success).toBe(true);
       await app.chat.expectTranscriptContains(`Mock response: ${seedMessage}`);
@@ -213,6 +216,7 @@ describe("Compaction UI (mock AI router)", () => {
       const triggerResult = await app.env.orpc.workspace.sendMessage({
         workspaceId: app.workspaceId,
         message: triggerMessage,
+        options: { model: WORKSPACE_DEFAULTS.model, agentId: WORKSPACE_DEFAULTS.agentId },
       });
       expect(triggerResult.success).toBe(true);
 

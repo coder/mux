@@ -449,7 +449,7 @@ export const workspace = {
       message: z.string(),
       options: SendMessageOptionsSchema.extend({
         imageParts: z.array(ImagePartSchema).optional(),
-      }).optional(),
+      }),
     }),
     output: ResultSchema(z.object({}), SendMessageErrorSchema),
   },

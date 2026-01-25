@@ -60,7 +60,7 @@ import {
   isSSHRuntime,
   isDockerRuntime,
 } from "@/common/types/runtime";
-import { defaultModel, isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
@@ -1237,34 +1237,21 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
-  private normalizeSendMessageAgentId(
-    options: SendMessageOptions | undefined
-  ): SendMessageOptions | undefined {
-    if (!options) {
-      return options;
-    }
-
+  private normalizeSendMessageAgentId(options: SendMessageOptions): SendMessageOptions {
+    // agentId is required by the schema, so this just normalizes the value.
     const rawAgentId = options.agentId;
     const normalizedAgentId =
       typeof rawAgentId === "string" && rawAgentId.trim().length > 0
         ? rawAgentId.trim().toLowerCase()
-        : null;
-    if (normalizedAgentId) {
+        : WORKSPACE_DEFAULTS.agentId;
+
+    if (normalizedAgentId === options.agentId) {
       return options;
     }
 
-    const legacyMode =
-      typeof options === "object" && options !== null && "mode" in options
-        ? (options as { mode?: string }).mode
-        : undefined;
-    const legacyAgentId =
-      legacyMode === "plan" || legacyMode === "exec" || legacyMode === "compact"
-        ? legacyMode
-        : null;
-
     return {
       ...options,
-      agentId: legacyAgentId ?? WORKSPACE_DEFAULTS.agentId,
+      agentId: normalizedAgentId,
     };
   }
 
@@ -1306,26 +1293,17 @@ export class WorkspaceService extends EventEmitter {
     if (!extractedSettings) return;
 
     const rawAgentId = options?.agentId;
-    const normalizedAgentId =
+    const agentId =
       typeof rawAgentId === "string" && rawAgentId.trim().length > 0
         ? rawAgentId.trim().toLowerCase()
-        : null;
-    const legacyMode =
-      typeof options === "object" && options !== null && "mode" in options
-        ? (options as { mode?: string }).mode
-        : undefined;
-    const legacyAgentId =
-      legacyMode === "plan" || legacyMode === "exec" || legacyMode === "compact"
-        ? legacyMode
-        : null;
-    const effectiveAgentId = normalizedAgentId ?? legacyAgentId ?? "exec";
+        : WORKSPACE_DEFAULTS.agentId;
 
     // Skip compaction - it may use a different model and shouldn't override user preference.
-    if (effectiveAgentId === "compact") return;
+    if (agentId === "compact") return;
 
     const persistResult = await this.persistWorkspaceAISettingsForAgent(
       workspaceId,
-      effectiveAgentId,
+      agentId,
       extractedSettings,
       {
         emitMetadata: false,
@@ -1399,15 +1377,6 @@ export class WorkspaceService extends EventEmitter {
     return Ok(true);
   }
 
-  private async persistWorkspaceAISettingsForMode(
-    workspaceId: string,
-    mode: UIMode,
-    aiSettings: WorkspaceAISettings,
-    options?: { emitMetadata?: boolean }
-  ): Promise<Result<boolean, string>> {
-    return this.persistWorkspaceAISettingsForAgent(workspaceId, mode, aiSettings, options);
-  }
-
   private async persistWorkspaceAISettings(
     workspaceId: string,
     aiSettings: WorkspaceAISettings,
@@ -1433,21 +1402,30 @@ export class WorkspaceService extends EventEmitter {
       return Err("Workspace not found");
     }
 
-    const prevByAgent = workspaceEntryWithFallback.aiSettingsByAgent;
+    const prevByAgent = workspaceEntryWithFallback.aiSettingsByAgent ?? {};
 
-    const changed =
-      prevByAgent?.plan?.model !== aiSettings.model ||
-      prevByAgent?.plan?.thinkingLevel !== aiSettings.thinkingLevel ||
-      prevByAgent?.exec?.model !== aiSettings.model ||
-      prevByAgent?.exec?.thinkingLevel !== aiSettings.thinkingLevel;
-    if (!changed) {
+    // Check if any existing agent's settings differ from the new settings.
+    // Also consider it "changed" if we have no agent settings yet (first save).
+    const existingAgentIds = Object.keys(prevByAgent);
+    const hasAnyAgentSettings = existingAgentIds.length > 0;
+    const anyAgentChanged = existingAgentIds.some(
+      (agentId) =>
+        prevByAgent[agentId]?.model !== aiSettings.model ||
+        prevByAgent[agentId]?.thinkingLevel !== aiSettings.thinkingLevel
+    );
+    if (hasAnyAgentSettings && !anyAgentChanged) {
       return Ok(false);
     }
 
+    // Update all existing agents with the new settings, or initialize plan/exec if none exist
+    const agentIdsToUpdate = hasAnyAgentSettings ? existingAgentIds : ["plan", "exec"];
+    const updatedSettings: Record<string, WorkspaceAISettings> = {};
+    for (const agentId of agentIdsToUpdate) {
+      updatedSettings[agentId] = aiSettings;
+    }
     workspaceEntryWithFallback.aiSettingsByAgent = {
-      ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
-      plan: aiSettings,
-      exec: aiSettings,
+      ...prevByAgent,
+      ...updatedSettings,
     };
     // Also update the deprecated aiSettings field for backward compatibility with
     // tests and any code that reads workspace.aiSettings directly.
@@ -1498,29 +1476,8 @@ export class WorkspaceService extends EventEmitter {
     mode: UIMode,
     aiSettings: WorkspaceAISettings
   ): Promise<Result<void, string>> {
-    try {
-      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
-      if (!normalized.success) {
-        return Err(normalized.error);
-      }
-
-      const persistResult = await this.persistWorkspaceAISettingsForMode(
-        workspaceId,
-        mode,
-        normalized.data,
-        {
-          emitMetadata: true,
-        }
-      );
-      if (!persistResult.success) {
-        return Err(persistResult.error);
-      }
-
-      return Ok(undefined);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Err(`Failed to update workspace AI settings: ${message}`);
-    }
+    // Mode-based updates use mode as the agentId.
+    return this.updateAgentAISettings(workspaceId, mode, aiSettings);
   }
 
   async updateAgentAISettings(
@@ -1719,11 +1676,9 @@ export class WorkspaceService extends EventEmitter {
   async sendMessage(
     workspaceId: string,
     message: string,
-    options:
-      | (SendMessageOptions & {
-          imageParts?: ImagePart[];
-        })
-      | undefined = { model: defaultModel, agentId: WORKSPACE_DEFAULTS.agentId },
+    options: SendMessageOptions & {
+      imageParts?: ImagePart[];
+    },
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
@@ -1847,9 +1802,9 @@ export class WorkspaceService extends EventEmitter {
         Object.keys(resolvedExperiments).length === 0
           ? options
           : {
-              ...(options ?? { model: defaultModel, agentId: WORKSPACE_DEFAULTS.agentId }),
+              ...options,
               experiments: {
-                ...(options?.experiments ?? {}),
+                ...(options.experiments ?? {}),
                 ...resolvedExperiments,
               },
             };
@@ -1916,10 +1871,7 @@ export class WorkspaceService extends EventEmitter {
 
   async resumeStream(
     workspaceId: string,
-    options: SendMessageOptions | undefined = {
-      model: "claude-3-5-sonnet-latest",
-      agentId: WORKSPACE_DEFAULTS.agentId,
-    },
+    options: SendMessageOptions,
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     try {
@@ -1977,9 +1929,7 @@ export class WorkspaceService extends EventEmitter {
 
       const session = this.getOrCreateSession(workspaceId);
 
-      const normalizedOptions =
-        this.normalizeSendMessageAgentId(options) ??
-        ({ model: defaultModel, agentId: WORKSPACE_DEFAULTS.agentId } as const);
+      const normalizedOptions = this.normalizeSendMessageAgentId(options);
 
       // Persist last-used model + thinking level for cross-device consistency.
       await this.maybePersistAISettingsFromOptions(workspaceId, normalizedOptions, "resume");

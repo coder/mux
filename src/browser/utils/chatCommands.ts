@@ -102,13 +102,15 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   // 1. React to process the workspace switch and update state
   // 2. Effects to run (workspaceStore.syncWorkspaces in App.tsx)
   // 3. WorkspaceStore to subscribe to the new workspace's IPC channel
-  if (options.startMessage && options.sendMessageOptions) {
+  const startMessage = options.startMessage;
+  const sendMessageOptions = options.sendMessageOptions;
+  if (startMessage && sendMessageOptions) {
     requestAnimationFrame(() => {
       client.workspace
         .sendMessage({
           workspaceId: result.metadata.id,
-          message: options.startMessage!,
-          options: options.sendMessageOptions,
+          message: startMessage,
+          options: sendMessageOptions,
         })
         .catch(() => {
           // Best-effort: the user can send the message manually if this fails.
@@ -588,13 +590,16 @@ export async function createNewWorkspace(
   dispatchWorkspaceSwitch(workspaceInfo);
 
   // If there's a start message, defer until React finishes rendering and WorkspaceStore subscribes
-  if (options.startMessage && options.sendMessageOptions) {
+  const startMessage = options.startMessage;
+  const sendMessageOptions = options.sendMessageOptions;
+  const client = options.client;
+  if (startMessage && sendMessageOptions) {
     requestAnimationFrame(() => {
-      options.client.workspace
+      client.workspace
         .sendMessage({
           workspaceId: result.metadata.id,
-          message: options.startMessage!,
-          options: options.sendMessageOptions,
+          message: startMessage,
+          options: sendMessageOptions,
         })
         .catch(() => {
           // Best-effort: the user can send the message manually if this fails.

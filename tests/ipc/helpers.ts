@@ -112,9 +112,12 @@ export async function sendMessage(
 ): Promise<Result<void, SendMessageError>> {
   const client = resolveOrpcClient(source);
 
-  const resolvedOptions: (SendMessageOptions & { imageParts?: ImagePart[] }) | undefined = options
-    ? { ...options, agentId: options.agentId ?? WORKSPACE_DEFAULTS.agentId }
-    : undefined;
+  // options is now required by the oRPC schema; build with defaults if not provided
+  const resolvedOptions: SendMessageOptions & { imageParts?: ImagePart[] } = {
+    model: options?.model ?? WORKSPACE_DEFAULTS.model,
+    agentId: options?.agentId ?? WORKSPACE_DEFAULTS.agentId,
+    ...options,
+  };
 
   let result: WorkspaceSendMessageOutput;
   try {

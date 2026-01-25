@@ -250,7 +250,7 @@ const setupWindow = ({
       sendMessage: (
         workspaceId: WorkspaceSendMessageArgs["workspaceId"],
         message: WorkspaceSendMessageArgs["message"],
-        options?: WorkspaceSendMessageArgs["options"]
+        options: WorkspaceSendMessageArgs["options"]
       ) => sendMessageMock({ workspaceId, message, options }),
       resumeStream: rejectNotImplemented("workspace.resumeStream"),
       interruptStream: rejectNotImplemented("workspace.interruptStream"),
