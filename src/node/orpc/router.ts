@@ -1344,9 +1344,17 @@ export const router = (authToken?: string) => {
             push(message);
           });
 
+          // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
+          // Client uses this to detect stalled connections vs. intentionally idle streams.
+          const HEARTBEAT_INTERVAL_MS = 5_000;
+          const heartbeatInterval = setInterval(() => {
+            push({ type: "heartbeat" });
+          }, HEARTBEAT_INTERVAL_MS);
+
           try {
             yield* iterate();
           } finally {
+            clearInterval(heartbeatInterval);
             end();
             unsubscribe();
           }

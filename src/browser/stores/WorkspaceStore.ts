@@ -229,10 +229,11 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
 const ON_CHAT_RETRY_BASE_MS = 250;
 const ON_CHAT_RETRY_MAX_MS = 5000;
 
-// If a stream is active but we stop receiving onChat events, the UI can get stuck.
-// This can happen with half-open WebSocket paths (e.g., some WSL localhost forwarding setups).
-const ON_CHAT_STALL_TIMEOUT_MS = 60_000;
-const ON_CHAT_STALL_CHECK_INTERVAL_MS = 5_000;
+// Stall detection: server sends heartbeats every 5s, so if we don't receive any events
+// (including heartbeats) for 10s, the connection is likely dead. This handles half-open
+// WebSocket paths (e.g., some WSL localhost forwarding setups).
+const ON_CHAT_STALL_TIMEOUT_MS = 10_000;
+const ON_CHAT_STALL_CHECK_INTERVAL_MS = 2_000;
 
 interface ValidationIssue {
   path?: Array<string | number>;
@@ -1383,20 +1384,16 @@ export class WorkspaceStore {
           { signal: attemptController.signal }
         );
 
-        // Stall watchdog: if a stream is active but we stop receiving events, abort this
-        // subscription attempt so the outer loop can resubscribe.
+        // Stall watchdog: server sends heartbeats every 5s, so if we don't receive ANY events
+        // (including heartbeats) for 10s, the connection is likely dead.
         stallInterval = setInterval(() => {
           if (attemptController.signal.aborted) return;
-
-          const aggregator = this.aggregators.get(workspaceId);
-          const hasActiveStream = aggregator?.getActiveStreamMessageId() !== undefined;
-          if (!hasActiveStream) return;
 
           const elapsedMs = Date.now() - lastChatEventAt;
           if (elapsedMs < ON_CHAT_STALL_TIMEOUT_MS) return;
 
           console.warn(
-            `[WorkspaceStore] onChat appears stalled for ${workspaceId} (no events for ${elapsedMs}ms while a stream is active); retrying...`
+            `[WorkspaceStore] onChat appears stalled for ${workspaceId} (no events for ${elapsedMs}ms); retrying...`
           );
           attemptController.abort();
         }, ON_CHAT_STALL_CHECK_INTERVAL_MS);

@@ -14,6 +14,11 @@ import { MuxProviderOptionsSchema } from "./providerOptions";
 import { RuntimeModeSchema } from "./runtime";
 
 // Chat Events
+
+/** Heartbeat event to keep the connection alive during long operations */
+export const HeartbeatEventSchema = z.object({
+  type: z.literal("heartbeat"),
+});
 export const CaughtUpMessageSchema = z.object({
   type: z.literal("caught-up"),
 });
@@ -371,6 +376,7 @@ export const RestoreToInputEventSchema = z.object({
 // when loading from history or sending new messages.
 export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   // Stream lifecycle events
+  HeartbeatEventSchema,
   CaughtUpMessageSchema,
   StreamErrorMessageSchema,
   DeleteMessageSchema,
