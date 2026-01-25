@@ -88,13 +88,19 @@ type WorkspaceUpdateAISettingsArgs = Parameters<APIClient["workspace"]["updateAI
 type WorkspaceUpdateAISettingsResult = Awaited<
   ReturnType<APIClient["workspace"]["updateAISettings"]>
 >;
+type WorkspaceUpdateAgentAISettingsArgs = Parameters<
+  APIClient["workspace"]["updateAgentAISettings"]
+>[0];
+type WorkspaceUpdateAgentAISettingsResult = Awaited<
+  ReturnType<APIClient["workspace"]["updateAgentAISettings"]>
+>;
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
 type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["generate"]>>;
 type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches" | "runtimeAvailability">;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
-  "sendMessage" | "create" | "updateAISettings"
+  "sendMessage" | "create" | "updateAISettings" | "updateAgentAISettings"
 >;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
 type WindowWithApi = Window & typeof globalThis;
@@ -125,6 +131,11 @@ interface SetupWindowOptions {
   updateAISettings?: ReturnType<
     typeof mock<(args: WorkspaceUpdateAISettingsArgs) => Promise<WorkspaceUpdateAISettingsResult>>
   >;
+  updateAgentAISettings?: ReturnType<
+    typeof mock<
+      (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
+    >
+  >;
   create?: ReturnType<typeof mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>>;
   nameGeneration?: ReturnType<
     typeof mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>
@@ -136,6 +147,7 @@ const setupWindow = ({
   sendMessage,
   create,
   updateAISettings,
+  updateAgentAISettings,
   nameGeneration,
 }: SetupWindowOptions = {}) => {
   const listBranchesMock =
@@ -178,6 +190,17 @@ const setupWindow = ({
       } as WorkspaceUpdateAISettingsResult);
     });
 
+  const updateAgentAISettingsMock =
+    updateAgentAISettings ??
+    mock<
+      (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
+    >(() => {
+      return Promise.resolve({
+        success: true,
+        data: undefined,
+      } as WorkspaceUpdateAgentAISettingsResult);
+    });
+
   const nameGenerationMock =
     nameGeneration ??
     mock<(args: NameGenerationArgs) => Promise<NameGenerationResult>>(() => {
@@ -206,6 +229,8 @@ const setupWindow = ({
       sendMessage: (input: WorkspaceSendMessageArgs) => sendMessageMock(input),
       create: (input: WorkspaceCreateArgs) => createMock(input),
       updateAISettings: (input: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(input),
+      updateAgentAISettings: (input: WorkspaceUpdateAgentAISettingsArgs) =>
+        updateAgentAISettingsMock(input),
     },
     nameGeneration: {
       generate: (input: NameGenerationArgs) => nameGenerationMock(input),
@@ -244,6 +269,8 @@ const setupWindow = ({
       list: rejectNotImplemented("workspace.list"),
       create: (args: WorkspaceCreateArgs) => createMock(args),
       updateAISettings: (args: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(args),
+      updateAgentAISettings: (args: WorkspaceUpdateAgentAISettingsArgs) =>
+        updateAgentAISettingsMock(args),
       remove: rejectNotImplemented("workspace.remove"),
       rename: rejectNotImplemented("workspace.rename"),
       fork: rejectNotImplemented("workspace.fork"),
