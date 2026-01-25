@@ -80,7 +80,7 @@ interface CompactionRequestMetadata {
     // Legacy field - older persisted requests may use this instead of followUpContent
     continueMessage?: {
       text?: string;
-      imageParts?: ImagePart[];
+      imageParts?: FilePart[];
       reviews?: ReviewNoteDataForDisplay[];
       muxMetadata?: MuxFrontendMetadata;
       model?: string;
@@ -718,41 +718,46 @@ export class AgentSession {
       // Supports both new `followUpContent` and legacy `continueMessage` for backwards compatibility
       if (isCompactionRequest && typedMuxMetadata && options) {
         const compactionMeta = typedMuxMetadata as CompactionRequestMetadata;
+        const followUpContent = compactionMeta.parsed.followUpContent;
+        const legacyContinueMessage = compactionMeta.parsed.continueMessage;
         // Prefer new field, fall back to legacy
-        const rawFollowUp =
-          compactionMeta.parsed.followUpContent ?? compactionMeta.parsed.continueMessage;
+        const rawFollowUp = followUpContent ?? legacyContinueMessage;
 
         if (rawFollowUp) {
-          // Normalize to ensure text is always a string (legacy format may have undefined)
-          const followUpContent = {
-            ...rawFollowUp,
-            text: rawFollowUp.text ?? "",
-          };
+          const followUpText = followUpContent?.text ?? legacyContinueMessage?.text ?? "";
+
+          // Normalize attachments: newer metadata uses `fileParts`, older persisted entries used `imageParts`.
+          const followUpFileParts = followUpContent?.fileParts ?? legacyContinueMessage?.imageParts;
 
           // Process the follow-up content (handles reviews -> text formatting + metadata)
           const { finalText, metadata } = prepareUserMessageForSend(
-            followUpContent,
-            followUpContent.muxMetadata
+            {
+              text: followUpText,
+              fileParts: followUpFileParts,
+              reviews: followUpContent?.reviews ?? legacyContinueMessage?.reviews,
+            },
+            followUpContent?.muxMetadata ?? legacyContinueMessage?.muxMetadata
           );
 
-          // Derive agentId: new field has it directly, legacy may use `mode` field
-          // Legacy `mode` was "exec" | "plan" and maps directly to agentId
-          const legacyMode =
-            "mode" in followUpContent && typeof followUpContent.mode === "string"
-              ? followUpContent.mode
-              : undefined;
-          const effectiveAgentId = followUpContent.agentId ?? legacyMode ?? "exec";
+          // Derive agentId: new field has it directly, legacy may use `mode` field.
+          // Legacy `mode` was "exec" | "plan" and maps directly to agentId.
+          const legacyMode = legacyContinueMessage?.mode;
+          const effectiveAgentId =
+            followUpContent?.agentId ?? legacyContinueMessage?.agentId ?? legacyMode ?? "exec";
 
-          // Use model/agentId from followUpContent - these were captured from the user's
+          // Use model/agentId from follow-up content - these were captured from the user's
           // original settings when compaction was triggered (compaction uses its own
           // agentId "compact" and potentially a different model for summarization).
+          const followUpModel =
+            followUpContent?.model ?? legacyContinueMessage?.model ?? options.model;
+
           // Build options for the queued message (strip compaction-specific fields)
           // agentId determines tool policy via resolveToolPolicyForAgent in aiService
           const sanitizedOptions: Omit<
             SendMessageOptions,
             "muxMetadata" | "mode" | "editMessageId" | "fileParts" | "maxOutputTokens"
           > & { fileParts?: FilePart[]; muxMetadata?: MuxFrontendMetadata } = {
-            model: followUpContent.model ?? options.model,
+            model: followUpModel,
             agentId: effectiveAgentId,
             thinkingLevel: options.thinkingLevel,
             additionalSystemInstructions: options.additionalSystemInstructions,
@@ -761,13 +766,8 @@ export class AgentSession {
             disableWorkspaceAgents: options.disableWorkspaceAgents,
           };
 
-          // Legacy compatibility: older clients stored follow-up attachments in imageParts.
-          const fileParts =
-            followUpContent.fileParts ??
-            (followUpContent as { imageParts?: FilePart[] }).imageParts;
-
-          if (fileParts && fileParts.length > 0) {
-            sanitizedOptions.fileParts = fileParts;
+          if (followUpFileParts && followUpFileParts.length > 0) {
+            sanitizedOptions.fileParts = followUpFileParts;
           }
 
           // Add metadata with reviews if present
@@ -777,7 +777,7 @@ export class AgentSession {
 
           const dedupeKey = JSON.stringify({
             text: finalText.trim(),
-            files: (fileParts ?? []).map((part) => `${part.mediaType}:${part.url}`),
+            files: (followUpFileParts ?? []).map((part) => `${part.mediaType}:${part.url}`),
           });
 
           if (this.messageQueue.addOnce(finalText, sanitizedOptions, dedupeKey)) {

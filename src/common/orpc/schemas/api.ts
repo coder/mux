@@ -442,7 +442,7 @@ export const workspace = {
       message: z.string(),
       options: SendMessageOptionsSchema.extend({
         fileParts: z.array(FilePartSchema).optional(),
-      }).optional(),
+      }),
     }),
     output: ResultSchema(z.object({}), SendMessageErrorSchema),
   },
