@@ -197,7 +197,7 @@ describeIntegration("Plan Commands Integration", () => {
     }, 30000);
 
     it("should preserve agentId metadata in summary message", async () => {
-      const branchName = generateBranchName("start-here-preserve-agentId");
+      const branchName = generateBranchName("start-here-preserve-agent-id");
       const trunkBranch = await detectDefaultTrunkBranch(repoPath);
 
       const createResult = await env.orpc.workspace.create({
