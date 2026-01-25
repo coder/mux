@@ -26,6 +26,7 @@ import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/to
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { DiffContainer, DiffRenderer, SelectableDiffRenderer } from "../shared/DiffRenderer";
 import { KebabMenu, type KebabMenuItem } from "../KebabMenu";
+import { JsonHighlight } from "./shared/HighlightedCode";
 import type { ReviewNoteData } from "@/common/types/review";
 
 type FileEditOperationArgs =
@@ -104,6 +105,7 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
 
   const { expanded, toggleExpanded } = useToolExpansion(initialExpanded);
   const [showRaw, setShowRaw] = React.useState(false);
+  const [showInvocation, setShowInvocation] = React.useState(false);
 
   const uiOnlyDiff = getToolOutputUiOnly(result)?.file_edit?.diff;
   const diff = result && result.success ? (uiOnlyDiff ?? result.diff) : undefined;
@@ -112,21 +114,30 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
 
-  // Build kebab menu items for successful edits with diffs
-  const kebabMenuItems: KebabMenuItem[] =
-    result && result.success && diff
-      ? [
-          {
-            label: copied ? "Copied" : "Copy Patch",
-            onClick: () => void copyToClipboard(diff),
-          },
-          {
-            label: showRaw ? "Show Parsed" : "Show Patch",
-            onClick: () => setShowRaw(!showRaw),
-            active: showRaw,
-          },
-        ]
-      : [];
+  // Build kebab menu items - only show menu when there's a result
+  const kebabMenuItems: KebabMenuItem[] = result
+    ? [
+        {
+          label: showInvocation ? "Hide Invocation" : "Show Invocation",
+          onClick: () => setShowInvocation(!showInvocation),
+          active: showInvocation,
+        },
+        // Copy/show patch options only for successful edits with diffs
+        ...(result.success && diff
+          ? [
+              {
+                label: copied ? "Copied" : "Copy Patch",
+                onClick: () => void copyToClipboard(diff),
+              },
+              {
+                label: showRaw ? "Show Parsed" : "Show Patch",
+                onClick: () => setShowRaw(!showRaw),
+                active: showRaw,
+              },
+            ]
+          : []),
+      ]
+    : [];
 
   return (
     <ToolContainer expanded={expanded}>
@@ -154,6 +165,13 @@ export const FileEditToolCall: React.FC<FileEditToolCallProps> = ({
 
       {expanded && (
         <ToolDetails>
+          {showInvocation && (
+            <DetailSection>
+              <DetailLabel>Invocation</DetailLabel>
+              <JsonHighlight value={{ tool: toolName, args }} />
+            </DetailSection>
+          )}
+
           {result && (
             <>
               {result.success === false && result.error && (
