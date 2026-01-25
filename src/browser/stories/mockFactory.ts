@@ -275,7 +275,7 @@ export function createFileReadTool(toolCallId: string, filePath: string, content
     toolCallId,
     toolName: "file_read",
     state: "output-available",
-    input: { filePath },
+    input: { file_path: filePath },
     output: { success: true, content },
   };
 }

@@ -21,7 +21,7 @@ export default {
 };
 
 const SAMPLE_CODE = `// Read a file and make an edit
-const content = await mux.file_read({ filePath: "src/config.ts" });
+const content = await mux.file_read({ file_path: "src/config.ts" });
 console.log("Read file with", content.lines_read, "lines");
 
 await mux.file_edit_replace_string({
@@ -63,7 +63,7 @@ export const Completed: AppStory = {
                     toolCalls: [
                       {
                         toolName: "file_read",
-                        args: { filePath: "src/config.ts" },
+                        args: { file_path: "src/config.ts" },
                         result: { success: true, lines_read: 42 },
                         duration_ms: 15,
                       },
@@ -112,7 +112,7 @@ export const Completed: AppStory = {
                     {
                       toolCallId: "nested-1",
                       toolName: "file_read",
-                      input: { filePath: "src/config.ts" },
+                      input: { file_path: "src/config.ts" },
                       output: {
                         success: true,
                         lines_read: 4,
@@ -192,7 +192,7 @@ export const Executing: AppStory = {
                   {
                     toolCallId: "nested-1",
                     toolName: "file_read",
-                    input: { filePath: "src/config.ts" },
+                    input: { file_path: "src/config.ts" },
                     output: {
                       success: true,
                       file_size: 1024,
@@ -367,7 +367,7 @@ export const NestedToolError: AppStory = {
               toolCalls: [
                 createCodeExecutionTool(
                   "call-1",
-                  `const result = mux.file_read({ filePath: "nonexistent.ts" });
+                  `const result = mux.file_read({ file_path: "nonexistent.ts" });
 return result;`,
                   {
                     success: false,
@@ -377,7 +377,7 @@ return result;`,
                     toolCalls: [
                       {
                         toolName: "file_read",
-                        args: { filePath: "nonexistent.ts" },
+                        args: { file_path: "nonexistent.ts" },
                         // Error-only output shape (no success field) - tool threw
                         result: { error: "ENOENT: no such file or directory" },
                         duration_ms: 5,
@@ -414,7 +414,7 @@ export const Interrupted: AppStory = {
                   {
                     toolCallId: "nested-1",
                     toolName: "file_read",
-                    input: { filePath: "src/config.ts" },
+                    input: { file_path: "src/config.ts" },
                     output: {
                       success: true,
                       file_size: 1024,
@@ -462,7 +462,7 @@ export const ShowCodeView: AppStory = {
                 createCodeExecutionTool(
                   "call-1",
                   `// Analysis script with various syntax elements
-const data = mux.file_read({ filePath: "data.json" });
+const data = mux.file_read({ file_path: "data.json" });
 const parsed = JSON.parse(data.content);
 
 function analyze(items) {
