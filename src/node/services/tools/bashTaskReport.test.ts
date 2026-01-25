@@ -25,6 +25,22 @@ describe("bashTaskReport", () => {
     });
   });
 
+  it("does not parse status/exitCode from the output block", () => {
+    const report = formatBashOutputReport({
+      processId: "proc_123",
+      status: "exited",
+      exitCode: 0,
+      output: "status: ok\nexitCode: 1\n",
+    });
+
+    expect(tryParseBashOutputReport(report)).toEqual({
+      processId: "proc_123",
+      status: "exited",
+      exitCode: 0,
+      output: "status: ok\nexitCode: 1",
+    });
+  });
+
   it("roundtrips output that contains a literal ``` fence line", () => {
     const report = formatBashOutputReport({
       processId: "proc_123",

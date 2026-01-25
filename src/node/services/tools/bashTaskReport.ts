@@ -82,17 +82,24 @@ export function tryParseBashOutputReport(
     return undefined;
   }
 
+  // Parse fenced output block (optional).
+  const fenceStart = lines.findIndex((line) => /^`{3,}text\s*$/.test(line.trimEnd()));
+
   // Find status/exitCode lines. Keep this tolerant to extra blank lines.
+  // IMPORTANT: only scan the header section; the output block may contain literal
+  // "status:" / "exitCode:" lines that must not override the header.
+  const headerLines = fenceStart === -1 ? lines : lines.slice(0, fenceStart);
+
   let status: string | undefined;
   let exitCode: number | undefined;
 
-  for (const line of lines) {
-    if (line.startsWith("status:")) {
+  for (const line of headerLines) {
+    if (status === undefined && line.startsWith("status:")) {
       status = line.slice("status:".length).trim();
       continue;
     }
 
-    if (line.startsWith("exitCode:")) {
+    if (exitCode === undefined && line.startsWith("exitCode:")) {
       const parsed = Number.parseInt(line.slice("exitCode:".length).trim(), 10);
       if (Number.isFinite(parsed)) {
         exitCode = parsed;
@@ -104,9 +111,7 @@ export function tryParseBashOutputReport(
     return undefined;
   }
 
-  // Parse fenced output block (optional).
   let output = "";
-  const fenceStart = lines.findIndex((line) => /^`{3,}text\s*$/.test(line.trimEnd()));
   if (fenceStart !== -1) {
     const fenceLine = lines[fenceStart]?.trimEnd() ?? "";
     const match = /^(`{3,})text\s*$/.exec(fenceLine);
