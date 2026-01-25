@@ -1,5 +1,5 @@
 import React from "react";
-import type { WorkspaceConsumersState } from "@/browser/stores/WorkspaceStore";
+import type { TokenConsumer } from "@/common/types/chatStats";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
 
 // Format token display - show k for thousands with 1 decimal
@@ -7,102 +7,73 @@ const formatTokens = (tokens: number) =>
   tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens.toLocaleString();
 
 interface ConsumerBreakdownProps {
-  consumers: WorkspaceConsumersState;
+  consumers: TokenConsumer[];
+  totalTokens: number;
 }
 
-const ConsumerBreakdownComponent: React.FC<ConsumerBreakdownProps> = ({ consumers }) => {
-  if (consumers.isCalculating) {
-    return <div className="text-secondary py-3 italic">Calculating consumer breakdown...</div>;
-  }
-
-  if (consumers.consumers.length === 0) {
-    return <div className="text-dim py-3 text-left italic">No consumer data available</div>;
+const ConsumerBreakdownComponent: React.FC<ConsumerBreakdownProps> = ({
+  consumers,
+  totalTokens,
+}) => {
+  if (consumers.length === 0) {
+    return null;
   }
 
   return (
-    <>
-      <div className="text-muted mb-2 text-xs">
-        Tokenizer: <span>{consumers.tokenizerName}</span>
-      </div>
-      <div className="flex flex-col gap-3">
-        {consumers.consumers.map((consumer) => {
-          // Calculate percentages for fixed and variable segments
-          const fixedPercentage = consumer.fixedTokens
-            ? (consumer.fixedTokens / consumers.totalTokens) * 100
-            : 0;
-          const variablePercentage = consumer.variableTokens
-            ? (consumer.variableTokens / consumers.totalTokens) * 100
-            : 0;
+    <div className="flex flex-col gap-2">
+      {consumers.map((consumer) => {
+        // Calculate percentages for fixed and variable segments
+        const fixedPercentage = consumer.fixedTokens
+          ? (consumer.fixedTokens / totalTokens) * 100
+          : 0;
+        const variablePercentage = consumer.variableTokens
+          ? (consumer.variableTokens / totalTokens) * 100
+          : 0;
 
-          const tokenDisplay = formatTokens(consumer.tokens);
-
-          return (
-            <div key={consumer.name} className="mb-2 flex flex-col gap-1">
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-foreground flex items-center gap-1 font-medium">
-                  {consumer.name}
-                  {consumer.name === "web_search" && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <HelpIndicator>?</HelpIndicator>
-                      </TooltipTrigger>
-                      <TooltipContent align="center" className="max-w-80 whitespace-normal">
-                        Web search results are encrypted and decrypted server-side. This estimate is
-                        approximate.
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
-                </span>
-                <span className="text-muted text-xs">
-                  {tokenDisplay} ({consumer.percentage.toFixed(1)}%)
-                </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <div className="bg-hover flex h-2 w-full overflow-hidden rounded">
-                  {consumer.fixedTokens && consumer.variableTokens ? (
-                    <>
-                      <div
-                        className="bg-token-fixed h-full transition-[width] duration-300"
-                        style={{ width: `${fixedPercentage}%` }}
-                      />
-                      <div
-                        className="bg-token-variable h-full transition-[width] duration-300"
-                        style={{ width: `${variablePercentage}%` }}
-                      />
-                    </>
-                  ) : (
-                    <div
-                      className="h-full bg-[linear-gradient(90deg,var(--color-token-input)_0%,var(--color-token-output)_100%)] transition-[width] duration-300"
-                      style={{ width: `${consumer.percentage}%` }}
-                    />
-                  )}
-                </div>
-                {consumer.fixedTokens && consumer.variableTokens && (
-                  <div className="text-dim text-left text-[11px]">
-                    Tool definition: {formatTokens(consumer.fixedTokens)} • Usage:{" "}
-                    {formatTokens(consumer.variableTokens)}
-                  </div>
+        return (
+          <div key={consumer.name} className="flex flex-col gap-0.5">
+            <div className="flex items-center justify-between">
+              <span className="text-foreground flex items-center gap-1 text-xs font-medium">
+                {consumer.name}
+                {consumer.name === "web_search" && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <HelpIndicator>?</HelpIndicator>
+                    </TooltipTrigger>
+                    <TooltipContent align="center" className="max-w-80 whitespace-normal">
+                      Web search results are encrypted and decrypted server-side. This estimate is
+                      approximate.
+                    </TooltipContent>
+                  </Tooltip>
                 )}
-                {consumer.topFilePaths && consumer.topFilePaths.length > 0 && (
-                  <div className="text-dim mt-1 flex flex-col gap-0.5 text-left text-[11px]">
-                    {consumer.topFilePaths.map((file) => (
-                      <div
-                        key={file.path}
-                        className="flex items-center justify-between gap-2 truncate"
-                        title={file.path}
-                      >
-                        <span className="truncate">{file.path}</span>
-                        <span className="text-muted shrink-0">{formatTokens(file.tokens)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              </span>
+              <span className="text-muted text-[11px]">
+                {formatTokens(consumer.tokens)} ({consumer.percentage.toFixed(1)}%)
+              </span>
             </div>
-          );
-        })}
-      </div>
-    </>
+            <div className="bg-hover flex h-1.5 w-full overflow-hidden rounded">
+              {consumer.fixedTokens && consumer.variableTokens ? (
+                <>
+                  <div
+                    className="bg-token-fixed h-full transition-[width] duration-300"
+                    style={{ width: `${fixedPercentage}%` }}
+                  />
+                  <div
+                    className="bg-token-variable h-full transition-[width] duration-300"
+                    style={{ width: `${variablePercentage}%` }}
+                  />
+                </>
+              ) : (
+                <div
+                  className="h-full bg-[linear-gradient(90deg,var(--color-token-input)_0%,var(--color-token-output)_100%)] transition-[width] duration-300"
+                  style={{ width: `${consumer.percentage}%` }}
+                />
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 };
 

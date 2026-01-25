@@ -18,10 +18,6 @@ export const TokenConsumerSchema = z.object({
     .number()
     .optional()
     .meta({ description: "Variable usage (e.g., actual tool calls, text)" }),
-  topFilePaths: z
-    .array(TopFilePathSchema)
-    .optional()
-    .meta({ description: "Top 5 files by token count (for file_read/file_edit tools)" }),
 });
 
 export const ChatUsageComponentSchema = z.object({
@@ -46,6 +42,10 @@ export const ChatStatsSchema = z.object({
   usageHistory: z
     .array(ChatUsageDisplaySchema)
     .meta({ description: "Ordered array of actual usage statistics from API responses" }),
+  topFilePaths: z
+    .array(TopFilePathSchema)
+    .optional()
+    .meta({ description: "Top 10 files by token count aggregated across all file tools" }),
 });
 
 /**

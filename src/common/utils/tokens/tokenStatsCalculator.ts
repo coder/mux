@@ -432,27 +432,33 @@ export async function calculateTokenStats(
     0
   );
 
+  // Aggregate file paths across all consumers for top-level breakdown
+  const aggregatedFilePaths = new Map<string, number>();
+  for (const counts of consumerMap.values()) {
+    for (const [path, tokens] of counts.filePathTokens) {
+      aggregatedFilePaths.set(path, (aggregatedFilePaths.get(path) ?? 0) + tokens);
+    }
+  }
+
+  // Build top 10 file paths (aggregated across all file tools)
+  const topFilePaths =
+    aggregatedFilePaths.size > 0
+      ? Array.from(aggregatedFilePaths.entries())
+          .map(([path, tokens]) => ({ path, tokens }))
+          .sort((a, b) => b.tokens - a.tokens)
+          .slice(0, 10)
+      : undefined;
+
   // Create sorted consumer array (descending by token count)
   const consumers: TokenConsumer[] = Array.from(consumerMap.entries())
     .map(([name, counts]) => {
       const total = counts.fixed + counts.variable;
-
-      // Build top 5 file paths for file operation consumers
-      let topFilePaths: TokenConsumer["topFilePaths"];
-      if (counts.filePathTokens.size > 0) {
-        topFilePaths = Array.from(counts.filePathTokens.entries())
-          .map(([path, tokens]) => ({ path, tokens }))
-          .sort((a, b) => b.tokens - a.tokens)
-          .slice(0, 5);
-      }
-
       return {
         name,
         tokens: total,
         percentage: totalTokens > 0 ? (total / totalTokens) * 100 : 0,
         fixedTokens: counts.fixed > 0 ? counts.fixed : undefined,
         variableTokens: counts.variable > 0 ? counts.variable : undefined,
-        topFilePaths,
       };
     })
     .sort((a, b) => b.tokens - a.tokens);
@@ -463,5 +469,6 @@ export async function calculateTokenStats(
     model,
     tokenizerName: tokenizer.encoding,
     usageHistory,
+    topFilePaths,
   };
 }

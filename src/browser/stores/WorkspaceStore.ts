@@ -203,6 +203,7 @@ export interface WorkspaceConsumersState {
   tokenizerName: string;
   totalTokens: number; // Total from tokenization (may differ from usage totalTokens)
   isCalculating: boolean;
+  topFilePaths?: Array<{ path: string; tokens: number }>; // Top 10 files aggregated across all file tools
 }
 
 interface WorkspaceChatTransientState {

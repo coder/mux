@@ -200,6 +200,7 @@ export class WorkspaceConsumerManager {
           tokenizerName: fullStats.tokenizerName,
           totalTokens: fullStats.totalTokens,
           isCalculating: false,
+          topFilePaths: fullStats.topFilePaths,
         });
 
         // Notify store to trigger re-render

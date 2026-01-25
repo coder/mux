@@ -16,6 +16,7 @@ import {
   formatTokens,
 } from "@/common/utils/tokens/tokenMeterUtils";
 import { ConsumerBreakdown } from "./ConsumerBreakdown";
+import { FileBreakdown } from "./FileBreakdown";
 import { ContextUsageBar } from "./ContextUsageBar";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
@@ -395,12 +396,36 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
         </div>
       )}
 
-      <div className="mb-6">
-        <h3 className="text-subtle m-0 mb-3 text-sm font-semibold tracking-wide uppercase">
-          Breakdown by Consumer
-        </h3>
-        <ConsumerBreakdown consumers={consumers} />
-      </div>
+      {consumers.topFilePaths && consumers.topFilePaths.length > 0 && (
+        <div className="mb-4">
+          <h3 className="text-subtle m-0 mb-2 text-xs font-semibold tracking-wide uppercase">
+            File Breakdown
+          </h3>
+          <FileBreakdown files={consumers.topFilePaths} totalTokens={consumers.totalTokens} />
+        </div>
+      )}
+
+      {consumers.consumers.length > 0 && (
+        <div className="mb-4">
+          <h3 className="text-subtle m-0 mb-2 text-xs font-semibold tracking-wide uppercase">
+            Consumer Breakdown
+          </h3>
+          {consumers.isCalculating ? (
+            <div className="text-secondary py-2 text-xs italic">Calculating...</div>
+          ) : (
+            <ConsumerBreakdown
+              consumers={consumers.consumers}
+              totalTokens={consumers.totalTokens}
+            />
+          )}
+        </div>
+      )}
+
+      {!consumers.isCalculating &&
+        consumers.consumers.length === 0 &&
+        (!consumers.topFilePaths || consumers.topFilePaths.length === 0) && (
+          <div className="text-dim py-2 text-xs italic">No consumer data available</div>
+        )}
     </div>
   );
 };
