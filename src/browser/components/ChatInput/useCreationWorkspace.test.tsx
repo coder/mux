@@ -84,9 +84,11 @@ type ListBranchesArgs = Parameters<APIClient["projects"]["listBranches"]>[0];
 type WorkspaceSendMessageArgs = Parameters<APIClient["workspace"]["sendMessage"]>[0];
 type WorkspaceSendMessageResult = Awaited<ReturnType<APIClient["workspace"]["sendMessage"]>>;
 type WorkspaceCreateArgs = Parameters<APIClient["workspace"]["create"]>[0];
-type WorkspaceUpdateAISettingsArgs = Parameters<APIClient["workspace"]["updateAISettings"]>[0];
-type WorkspaceUpdateAISettingsResult = Awaited<
-  ReturnType<APIClient["workspace"]["updateAISettings"]>
+type WorkspaceUpdateAgentAISettingsArgs = Parameters<
+  APIClient["workspace"]["updateAgentAISettings"]
+>[0];
+type WorkspaceUpdateAgentAISettingsResult = Awaited<
+  ReturnType<APIClient["workspace"]["updateAgentAISettings"]>
 >;
 type WorkspaceCreateResult = Awaited<ReturnType<APIClient["workspace"]["create"]>>;
 type NameGenerationArgs = Parameters<APIClient["nameGeneration"]["generate"]>[0];
@@ -94,7 +96,7 @@ type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["gene
 type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches" | "runtimeAvailability">;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
-  "sendMessage" | "create" | "updateAISettings"
+  "sendMessage" | "create" | "updateAgentAISettings"
 >;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
 type WindowWithApi = Window & typeof globalThis;
@@ -122,8 +124,10 @@ interface SetupWindowOptions {
   sendMessage?: ReturnType<
     typeof mock<(args: WorkspaceSendMessageArgs) => Promise<WorkspaceSendMessageResult>>
   >;
-  updateAISettings?: ReturnType<
-    typeof mock<(args: WorkspaceUpdateAISettingsArgs) => Promise<WorkspaceUpdateAISettingsResult>>
+  updateAgentAISettings?: ReturnType<
+    typeof mock<
+      (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
+    >
   >;
   create?: ReturnType<typeof mock<(args: WorkspaceCreateArgs) => Promise<WorkspaceCreateResult>>>;
   nameGeneration?: ReturnType<
@@ -135,7 +139,7 @@ const setupWindow = ({
   listBranches,
   sendMessage,
   create,
-  updateAISettings,
+  updateAgentAISettings,
   nameGeneration,
 }: SetupWindowOptions = {}) => {
   const listBranchesMock =
@@ -169,13 +173,15 @@ const setupWindow = ({
       } as WorkspaceCreateResult);
     });
 
-  const updateAISettingsMock =
-    updateAISettings ??
-    mock<(args: WorkspaceUpdateAISettingsArgs) => Promise<WorkspaceUpdateAISettingsResult>>(() => {
+  const updateAgentAISettingsMock =
+    updateAgentAISettings ??
+    mock<
+      (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
+    >(() => {
       return Promise.resolve({
         success: true,
         data: undefined,
-      } as WorkspaceUpdateAISettingsResult);
+      } as WorkspaceUpdateAgentAISettingsResult);
     });
 
   const nameGenerationMock =
@@ -205,7 +211,8 @@ const setupWindow = ({
     workspace: {
       sendMessage: (input: WorkspaceSendMessageArgs) => sendMessageMock(input),
       create: (input: WorkspaceCreateArgs) => createMock(input),
-      updateAISettings: (input: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(input),
+      updateAgentAISettings: (input: WorkspaceUpdateAgentAISettingsArgs) =>
+        updateAgentAISettingsMock(input),
     },
     nameGeneration: {
       generate: (input: NameGenerationArgs) => nameGenerationMock(input),
@@ -243,14 +250,15 @@ const setupWindow = ({
     workspace: {
       list: rejectNotImplemented("workspace.list"),
       create: (args: WorkspaceCreateArgs) => createMock(args),
-      updateAISettings: (args: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(args),
+      updateAgentAISettings: (args: WorkspaceUpdateAgentAISettingsArgs) =>
+        updateAgentAISettingsMock(args),
       remove: rejectNotImplemented("workspace.remove"),
       rename: rejectNotImplemented("workspace.rename"),
       fork: rejectNotImplemented("workspace.fork"),
       sendMessage: (
         workspaceId: WorkspaceSendMessageArgs["workspaceId"],
         message: WorkspaceSendMessageArgs["message"],
-        options?: WorkspaceSendMessageArgs["options"]
+        options: WorkspaceSendMessageArgs["options"]
       ) => sendMessageMock({ workspaceId, message, options }),
       resumeStream: rejectNotImplemented("workspace.resumeStream"),
       interruptStream: rejectNotImplemented("workspace.interruptStream"),
@@ -312,7 +320,6 @@ const setupWindow = ({
     workspaceApi: {
       sendMessage: sendMessageMock,
       create: createMock,
-      updateAISettings: updateAISettingsMock,
     },
     nameGenerationApi: { generate: nameGenerationMock },
   };
@@ -621,7 +628,7 @@ function createDraftSettingsHarness(
       const settings: DraftWorkspaceSettings = {
         model: "gpt-4",
         thinkingLevel: "medium",
-        mode: "exec",
+        agentId: "exec",
         selectedRuntime: state.selectedRuntime,
         defaultRuntimeMode: state.defaultRuntimeMode,
         trunkBranch: state.trunkBranch,

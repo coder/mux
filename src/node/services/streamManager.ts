@@ -1167,6 +1167,7 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     historySequence: number
   ): void {
+    const streamStartAgentId = streamInfo.initialMetadata?.agentId;
     const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
     this.emit("stream-start", {
       type: "stream-start",
@@ -1175,6 +1176,7 @@ export class StreamManager extends EventEmitter {
       model: streamInfo.model,
       historySequence,
       startTime: streamInfo.startTime,
+      ...(streamStartAgentId && { agentId: streamStartAgentId }),
       ...(streamStartMode && { mode: streamStartMode }),
     } as StreamStartEvent);
   }

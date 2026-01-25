@@ -154,7 +154,7 @@ const AgentHelpTooltip: React.FC = () => (
       Selects an agent definition (system prompt + tool policy).
       <br />
       <br />
-      Open picker: {formatKeybind(KEYBINDS.TOGGLE_MODE)}
+      Open picker: {formatKeybind(KEYBINDS.TOGGLE_AGENT)}
       <br />
       Cycle agents: {formatKeybind(KEYBINDS.CYCLE_AGENT)}
       <br />
@@ -263,7 +263,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
     onComplete?.();
   }, [onComplete]);
 
-  // Hotkey integration (open via ModeContext).
+  // Hotkey integration (open via AgentContext).
   useEffect(() => {
     const handleOpen = () => {
       openPicker({ highlightAgentId: normalizedAgentId });
@@ -447,7 +447,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
           </button>
         </TooltipTrigger>
         <TooltipContent align="center">
-          Select agent ({formatKeybind(KEYBINDS.TOGGLE_MODE)})
+          Select agent ({formatKeybind(KEYBINDS.TOGGLE_AGENT)})
         </TooltipContent>
       </Tooltip>
 

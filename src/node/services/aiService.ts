@@ -66,7 +66,7 @@ import {
   validateAnthropicCompliance,
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
-  injectModeTransition,
+  injectAgentTransition,
   injectFileChangeNotifications,
   injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
@@ -111,7 +111,6 @@ import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
-import type { AgentMode } from "@/common/types/mode";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
@@ -1109,7 +1108,7 @@ export class AIService extends EventEmitter {
    * @param additionalSystemInstructions Optional additional system instructions to append
    * @param maxOutputTokens Optional maximum tokens for model output
    * @param muxProviderOptions Optional provider-specific options
-   * @param mode Optional mode name - affects system message via Mode: sections in AGENTS.md
+   * @param agentId Optional agent id - determines tool policy and plan-file behavior
    * @param recordFileState Optional callback to record file state for external edit detection
    * @param changedFileAttachments Optional attachments for files that were edited externally
    * @param postCompactionAttachments Optional attachments to inject after compaction
@@ -1127,7 +1126,6 @@ export class AIService extends EventEmitter {
     additionalSystemInstructions?: string,
     maxOutputTokens?: number,
     muxProviderOptions?: MuxProviderOptions,
-    mode?: AgentMode,
     agentId?: string,
     recordFileState?: (filePath: string, state: FileState) => void,
     changedFileAttachments?: EditedFileAttachment[],
@@ -1326,11 +1324,10 @@ export class AIService extends EventEmitter {
       //
       // Precedence:
       // - Child workspaces (tasks) use their persisted agentId/agentType.
-      // - Main workspaces use the requested agentId (frontend), falling back to legacy mode.
+      // - Main workspaces use the requested agentId (frontend), falling back to exec.
       const requestedAgentIdRaw =
         (metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
         (typeof agentId === "string" ? agentId : undefined) ??
-        (typeof mode === "string" ? mode : undefined) ??
         "exec";
       const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
       const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
@@ -1365,7 +1362,8 @@ export class AIService extends EventEmitter {
       });
 
       const agentIsPlanLike = isPlanLikeInResolvedChain(agentsForInheritance);
-      const effectiveMode: AgentMode = agentIsPlanLike ? "plan" : "exec";
+      const effectiveMode =
+        effectiveAgentId === "compact" ? "compact" : agentIsPlanLike ? "plan" : "exec";
 
       const cfg = this.config.loadConfigOrDefault();
       const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
@@ -1388,7 +1386,7 @@ export class AIService extends EventEmitter {
           ? [...agentToolPolicy, ...(toolPolicy ?? [])]
           : undefined;
 
-      // Compute tool names for mode transition sentinel.
+      // Compute tool names for agent transition sentinel.
       const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
       const earlyAllTools = await getToolsForModel(
         modelString,
@@ -1397,7 +1395,7 @@ export class AIService extends EventEmitter {
           runtime: earlyRuntime,
           runtimeTempDir: os.tmpdir(),
           secrets: {},
-          mode: effectiveMode,
+          planFileOnly: agentIsPlanLike,
         },
         "", // Empty workspace ID for early stub config
         this.initStateManager,
@@ -1446,7 +1444,7 @@ export class AIService extends EventEmitter {
         effectiveAdditionalInstructions = additionalSystemInstructions
           ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
           : planModeInstruction;
-      } else if (mode && planResult.exists && planResult.content.trim()) {
+      } else if (planResult.exists && planResult.content.trim()) {
         // Users often use "Replace all chat history" after plan mode. In exec (or other non-plan)
         // modes, the model can lose the plan file location because plan path injection only
         // happens in plan mode.
@@ -1467,22 +1465,51 @@ export class AIService extends EventEmitter {
           : nestingInstruction;
       }
 
-      // Read plan content for mode transition (plan → exec)
-      // Only read if switching to exec mode and last assistant was in plan mode
+      // Read plan content for agent transition (plan-like → exec-like)
+      // Only read if switching to exec-like agent and last assistant was plan-like.
       let planContentForTransition: string | undefined;
       if (effectiveMode === "exec") {
         const lastAssistantMessage = [...filteredMessages]
           .reverse()
           .find((m) => m.role === "assistant");
-        if (lastAssistantMessage?.metadata?.mode === "plan" && planResult.content.trim()) {
-          planContentForTransition = planResult.content;
+        const lastAgentId = lastAssistantMessage?.metadata?.agentId;
+        if (lastAgentId && planResult.content.trim()) {
+          let lastAgentIsPlanLike = false;
+          if (lastAgentId === effectiveAgentId) {
+            lastAgentIsPlanLike = agentIsPlanLike;
+          } else {
+            try {
+              const lastDefinition = await readAgentDefinition(
+                runtime,
+                agentDiscoveryPath,
+                lastAgentId
+              );
+              const lastChain = await resolveAgentInheritanceChain({
+                runtime,
+                workspacePath: agentDiscoveryPath,
+                agentId: lastAgentId,
+                agentDefinition: lastDefinition,
+                workspaceId,
+              });
+              lastAgentIsPlanLike = isPlanLikeInResolvedChain(lastChain);
+            } catch (error) {
+              workspaceLog.warn("Failed to resolve last agent definition for plan handoff", {
+                lastAgentId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
+          if (lastAgentIsPlanLike) {
+            planContentForTransition = planResult.content;
+          }
         }
       }
 
-      // Now inject mode transition context with plan content (runtime is now available)
-      const messagesWithModeContext = injectModeTransition(
+      // Now inject agent transition context with plan content (runtime is now available)
+      const messagesWithAgentContext = injectAgentTransition(
         messagesWithSentinel,
-        effectiveMode,
+        effectiveAgentId,
         toolNamesForSentinel,
         planContentForTransition,
         planContentForTransition ? planFilePath : undefined
@@ -1490,7 +1517,7 @@ export class AIService extends EventEmitter {
 
       // Inject file change notifications as user messages (preserves system message cache)
       const messagesWithFileChanges = injectFileChangeNotifications(
-        messagesWithModeContext,
+        messagesWithAgentContext,
         changedFileAttachments
       );
 
@@ -1671,10 +1698,10 @@ export class AIService extends EventEmitter {
           ),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
-          // Plan/exec mode configuration for plan file access.
-          // - read: plan file is readable in all modes (useful context)
-          // - write: enforced by file_edit_* tools (plan file is read-only outside plan mode)
-          mode: effectiveMode,
+          // Plan agent configuration for plan file access.
+          // - read: plan file is readable in all agents (useful context)
+          // - write: enforced by file_edit_* tools (plan file is read-only outside plan agent)
+          planFileOnly: agentIsPlanLike,
           emitChatEvent: (event) => {
             // Defensive: tools should only emit events for the workspace they belong to.
             if ("workspaceId" in event && event.workspaceId !== workspaceId) {
@@ -1784,7 +1811,6 @@ export class AIService extends EventEmitter {
         properties: {
           workspaceId,
           model: modelString,
-          mode: effectiveMode,
           agentId: effectiveAgentId,
           runtimeType: getRuntimeTypeForTelemetry(metadata.runtimeConfig),
 
@@ -1822,7 +1848,7 @@ export class AIService extends EventEmitter {
         timestamp: Date.now(),
         model: modelString,
         systemMessageTokens,
-        mode: effectiveMode, // Track the base mode for this assistant response
+        agentId: effectiveAgentId,
       });
 
       // Append to history to get historySequence assigned
@@ -1853,6 +1879,7 @@ export class AIService extends EventEmitter {
             timestamp: Date.now(),
             model: modelString,
             systemMessageTokens,
+            agentId: effectiveAgentId,
             partial: true,
             error: errorMessage,
             errorType: "context_exceeded",
@@ -1869,6 +1896,7 @@ export class AIService extends EventEmitter {
           model: modelString,
           historySequence,
           startTime: Date.now(),
+          agentId: effectiveAgentId,
           mode: effectiveMode,
         };
         this.emit("stream-start", streamStartEvent);
@@ -1890,6 +1918,7 @@ export class AIService extends EventEmitter {
           timestamp: Date.now(),
           model: modelString,
           systemMessageTokens,
+          agentId: effectiveAgentId,
           toolPolicy: effectiveToolPolicy,
         });
 
@@ -1907,6 +1936,7 @@ export class AIService extends EventEmitter {
           model: modelString,
           historySequence,
           startTime: Date.now(),
+          agentId: effectiveAgentId,
           mode: effectiveMode,
         };
         this.emit("stream-start", streamStartEvent);
@@ -2763,7 +2793,8 @@ export class AIService extends EventEmitter {
         {
           systemMessageTokens,
           timestamp: Date.now(),
-          mode: effectiveMode, // Pass base mode so it persists in final history entry
+          agentId: effectiveAgentId,
+          mode: effectiveMode,
         },
         providerOptions,
         maxOutputTokens,

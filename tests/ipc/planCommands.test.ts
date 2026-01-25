@@ -196,8 +196,8 @@ describeIntegration("Plan Commands Integration", () => {
       }
     }, 30000);
 
-    it("should preserve mode metadata in summary message", async () => {
-      const branchName = generateBranchName("start-here-preserve-mode");
+    it("should preserve agentId metadata in summary message", async () => {
+      const branchName = generateBranchName("start-here-preserve-agent-id");
       const trunkBranch = await detectDefaultTrunkBranch(repoPath);
 
       const createResult = await env.orpc.workspace.create({
@@ -216,7 +216,7 @@ describeIntegration("Plan Commands Integration", () => {
           `start-here-test-${Date.now()}`,
           "assistant",
           "summary",
-          { timestamp: Date.now(), compacted: true, mode: "plan" }
+          { timestamp: Date.now(), compacted: true, agentId: "plan" }
         );
 
         const replaceResult = await env.orpc.workspace.replaceChatHistory({
@@ -234,8 +234,8 @@ describeIntegration("Plan Commands Integration", () => {
           .find((line) => line.length > 0);
 
         expect(firstLine).toBeTruthy();
-        const historyEntry = JSON.parse(firstLine!) as { metadata?: { mode?: string } };
-        expect(historyEntry.metadata?.mode).toBe("plan");
+        const historyEntry = JSON.parse(firstLine!) as { metadata?: { agentId?: string } };
+        expect(historyEntry.metadata?.agentId).toBe("plan");
       } finally {
         await env.orpc.workspace.remove({ workspaceId });
       }

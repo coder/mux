@@ -1,5 +1,4 @@
 import { useThinkingLevel } from "./useThinkingLevel";
-import { useMode } from "@/browser/contexts/ModeContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelsFromSettings";
@@ -10,7 +9,6 @@ import {
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import type { UIMode } from "@/common/types/mode";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
@@ -51,7 +49,6 @@ interface ExperimentValues {
  * Note: Plan mode instructions are handled by the backend (has access to plan file path)
  */
 function constructSendMessageOptions(
-  mode: UIMode,
   agentId: string,
   thinkingLevel: ThinkingLevel,
   preferredModel: string | null | undefined,
@@ -93,7 +90,6 @@ function constructSendMessageOptions(
       ? { system1ThinkingLevel: system1ThinkingLevelForBackend }
       : {}),
     agentId,
-    mode: mode === "exec" || mode === "plan" ? mode : "exec", // Only pass exec/plan to backend
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
     experiments: {
@@ -129,7 +125,6 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
  */
 export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();
-  const [mode] = useMode();
   const { agentId, disableWorkspaceAgents } = useAgent();
   const { options: providerOptions } = useProviderOptions();
   const defaultModel = getDefaultModel();
@@ -176,7 +171,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   const baseModel = migrateGatewayModel(rawModel);
 
   const options = constructSendMessageOptions(
-    mode,
     agentId,
     thinkingLevel,
     preferredModel,

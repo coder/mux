@@ -26,7 +26,7 @@ const ALLOWED_PROCEDURES = {
   workspace: new Set([
     "sendMessage",
     "interruptStream",
-    "updateAISettings",
+    "updateAgentAISettings",
     "answerAskUserQuestion",
     "getPlanContent",
   ]),

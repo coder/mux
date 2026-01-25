@@ -6,7 +6,7 @@ type Mutable<T> = { -readonly [P in keyof T]: T[P] };
 
 describe("WORKSPACE_DEFAULTS", () => {
   test("should have all expected keys", () => {
-    expect(WORKSPACE_DEFAULTS).toHaveProperty("mode");
+    expect(WORKSPACE_DEFAULTS).toHaveProperty("agentId");
     expect(WORKSPACE_DEFAULTS).toHaveProperty("thinkingLevel");
     expect(WORKSPACE_DEFAULTS).toHaveProperty("model");
     expect(WORKSPACE_DEFAULTS).toHaveProperty("autoRetry");
@@ -14,7 +14,7 @@ describe("WORKSPACE_DEFAULTS", () => {
   });
 
   test("should have correct default values", () => {
-    expect(WORKSPACE_DEFAULTS.mode).toBe("exec");
+    expect(WORKSPACE_DEFAULTS.agentId).toBe("exec");
     expect(WORKSPACE_DEFAULTS.thinkingLevel).toBe("off");
     expect(WORKSPACE_DEFAULTS.model).toBe(DEFAULT_MODEL);
     expect(WORKSPACE_DEFAULTS.autoRetry).toBe(true);
@@ -22,7 +22,7 @@ describe("WORKSPACE_DEFAULTS", () => {
   });
 
   test("should have correct types", () => {
-    expect(typeof WORKSPACE_DEFAULTS.mode).toBe("string");
+    expect(typeof WORKSPACE_DEFAULTS.agentId).toBe("string");
     expect(typeof WORKSPACE_DEFAULTS.thinkingLevel).toBe("string");
     expect(typeof WORKSPACE_DEFAULTS.model).toBe("string");
     expect(typeof WORKSPACE_DEFAULTS.autoRetry).toBe("boolean");
@@ -36,20 +36,19 @@ describe("WORKSPACE_DEFAULTS", () => {
   test("should prevent modification attempts (immutability)", () => {
     // Frozen objects silently fail in non-strict mode, throw in strict mode
     // We just verify the object is frozen - TypeScript prevents modification at compile time
-    const originalMode = WORKSPACE_DEFAULTS.mode;
+    const originalAgentId = WORKSPACE_DEFAULTS.agentId;
     const mutableDefaults = WORKSPACE_DEFAULTS as Mutable<typeof WORKSPACE_DEFAULTS>;
     try {
-      mutableDefaults.mode = "plan";
+      mutableDefaults.agentId = "plan" as unknown as typeof WORKSPACE_DEFAULTS.agentId;
     } catch {
       // Expected in strict mode
     }
     // Value should remain unchanged
-    expect(WORKSPACE_DEFAULTS.mode).toBe(originalMode);
+    expect(WORKSPACE_DEFAULTS.agentId).toBe(originalAgentId);
   });
 
-  test("mode should be valid UIMode", () => {
-    const validModes = ["exec", "plan"];
-    expect(validModes).toContain(WORKSPACE_DEFAULTS.mode);
+  test("agentId should default to exec", () => {
+    expect(WORKSPACE_DEFAULTS.agentId).toBe("exec");
   });
 
   test("thinkingLevel should be valid ThinkingLevel", () => {

@@ -116,7 +116,7 @@ describe("task tool", () => {
     }
   });
 
-  it('should reject spawning "exec" tasks while in plan mode', async () => {
+  it('should reject spawning "exec" tasks while in plan agent', async () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
@@ -133,7 +133,7 @@ describe("task tool", () => {
 
     const tool = createTaskTool({
       ...baseConfig,
-      mode: "plan",
+      planFileOnly: true,
       taskService,
     });
 
@@ -151,7 +151,7 @@ describe("task tool", () => {
 
     expect(caught).toBeInstanceOf(Error);
     if (caught instanceof Error) {
-      expect(caught.message).toMatch(/plan mode/i);
+      expect(caught.message).toMatch(/plan agent/i);
     }
     expect(create).not.toHaveBeenCalled();
     expect(waitForAgentReport).not.toHaveBeenCalled();

@@ -270,7 +270,7 @@ describeIntegration("MCP server integration with model", () => {
         const result = await sendMessageWithModel(env, workspaceId, prompt, HAIKU_MODEL, {
           toolPolicy: [{ regex_match: "chrome_take_screenshot", action: "require" }],
           thinkingLevel: "off",
-          mode: "exec",
+          agentId: "exec",
         });
         expect(result.success).toBe(true);
 

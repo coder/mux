@@ -47,9 +47,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("Sub-agent workspaces may not spawn additional sub-agent tasks.");
       }
 
-      // Plan mode is explicitly non-executing. Allow only read-only exploration tasks.
-      if (config.mode === "plan" && requestedAgentId !== "explore") {
-        throw new Error('In Plan Mode you may only spawn agentId: "explore" tasks.');
+      // Plan agent is explicitly non-executing. Allow only read-only exploration tasks.
+      if (config.planFileOnly && requestedAgentId !== "explore") {
+        throw new Error('In the plan agent you may only spawn agentId: "explore" tasks.');
       }
 
       const modelString =

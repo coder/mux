@@ -109,7 +109,7 @@ async function resumeAndWaitForSuccess(
   try {
     const resumeResult = await client.workspace.resumeStream({
       workspaceId,
-      options: { model, toolPolicy: options?.toolPolicy },
+      options: { model, agentId: "exec", toolPolicy: options?.toolPolicy },
     });
 
     if (!resumeResult.success) {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AgentIdSchema } from "./agentDefinition";
 import { AgentModeSchema } from "../../types/mode";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
@@ -60,7 +61,10 @@ export const StreamStartEventSchema = z.object({
     description: "Backend timestamp when stream started (Date.now())",
   }),
   mode: AgentModeSchema.optional().catch(undefined).meta({
-    description: "Agent mode for this stream",
+    description: "Legacy base mode (plan/exec/compact) derived from agent",
+  }),
+  agentId: AgentIdSchema.optional().catch(undefined).meta({
+    description: "Agent id for this stream",
   }),
 });
 
@@ -415,9 +419,13 @@ export const SendMessageOptionsSchema = z.object({
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),
   maxOutputTokens: z.number().optional(),
-  agentId: z.string().optional().catch(undefined),
+  agentId: AgentIdSchema.meta({
+    description: "Agent id for this request",
+  }),
+  mode: AgentModeSchema.optional().catch(undefined).meta({
+    description: "Legacy base mode (plan/exec/compact) for backend fallback",
+  }),
   providerOptions: MuxProviderOptionsSchema.optional(),
-  mode: AgentModeSchema.optional().catch(undefined),
   muxMetadata: z.any().optional(), // Black box
   experiments: ExperimentsSchema.optional(),
   /**

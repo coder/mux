@@ -69,11 +69,10 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   }
 
   // Read selected agent id (workspace-specific)
-  const agentId = readPersistedState<string>(getAgentIdKey(workspaceId), WORKSPACE_DEFAULTS.mode);
-
-  // Derive mode from agentId (plan agent → plan mode, everything else → exec mode)
-  // Used by backend for AI settings persistence and compaction detection
-  const mode = agentId === "plan" ? "plan" : "exec";
+  const agentId = readPersistedState<string>(
+    getAgentIdKey(workspaceId),
+    WORKSPACE_DEFAULTS.agentId
+  );
 
   // Get provider options
   const providerOptions = getProviderOptions();
@@ -105,7 +104,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     system1Model,
     system1ThinkingLevel: system1ThinkingLevel !== "off" ? system1ThinkingLevel : undefined,
     agentId,
-    mode,
     thinkingLevel,
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,

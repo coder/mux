@@ -956,7 +956,9 @@ describe("TaskService", () => {
 
     expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with overrides", {
       model: "anthropic:claude-haiku-4-5",
+      agentId: "explore",
       thinkingLevel: "off",
+      experiments: undefined,
     });
 
     const postCfg = config.loadConfigOrDefault();

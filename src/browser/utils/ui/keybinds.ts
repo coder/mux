@@ -202,7 +202,7 @@ export function formatKeybind(keybind: Keybind): string {
  */
 export const KEYBINDS = {
   /** Open agent picker (focuses search) */
-  TOGGLE_MODE: { key: "A", ctrl: true, shift: true },
+  TOGGLE_AGENT: { key: "A", ctrl: true, shift: true },
 
   /** Cycle to next agent without opening picker */
   CYCLE_AGENT: { key: ".", ctrl: true },

@@ -15,7 +15,6 @@ import {
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { ImagePart, ProvidersConfigMap } from "@/common/orpc/types";
 import {
   buildContinueMessage,
@@ -260,7 +259,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       const continueMessage = buildContinueFromSource(
         triggerUserMessage,
         sendMessageOptions.model,
-        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.mode
+        sendMessageOptions.agentId
       );
 
       if (!continueMessage) {
@@ -319,7 +318,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       const continueMessage = buildContinueFromSource(
         triggerUserMessage,
         sendMessageOptions.model,
-        sendMessageOptions.agentId ?? WORKSPACE_DEFAULTS.mode
+        sendMessageOptions.agentId
       );
 
       if (!continueMessage) {

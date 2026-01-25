@@ -3,8 +3,8 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ImagePart, MuxToolPartSchema } from "@/common/orpc/schemas";
-import type { AgentMode } from "@/common/types/mode";
 import type { z } from "zod";
+import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
@@ -91,12 +91,12 @@ export function buildContinueMessage(
  * Persisted ContinueMessage shape - what we read from storage/history.
  * May be missing fields if saved by older code versions.
  */
-export type PersistedContinueMessage =
-  // Older versions stored `mode` instead of `agentId`.
-  // Keep `mode` here so rebuildContinueMessage can migrate existing history.
-  Partial<Omit<ContinueMessage, typeof ContinueMessageBrand>> & {
-    mode?: "exec" | "plan";
-  };
+export type PersistedContinueMessage = Partial<
+  Omit<ContinueMessage, typeof ContinueMessageBrand>
+> & {
+  /** @deprecated Legacy base mode persisted in older history entries. */
+  mode?: AgentMode;
+};
 
 /**
  * True when the continue message is the default resume sentinel ("Continue")
@@ -130,8 +130,8 @@ export function rebuildContinueMessage(
       ? persisted.agentId.trim()
       : undefined;
 
-  const legacyAgentId =
-    persisted.mode === "plan" || persisted.mode === "exec" ? persisted.mode : undefined;
+  const legacyMode = (persisted as { mode?: unknown }).mode;
+  const legacyAgentId = legacyMode === "plan" || legacyMode === "exec" ? legacyMode : undefined;
 
   return buildContinueMessage({
     text: persisted.text,
@@ -225,6 +225,8 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
   duration?: number;
+  /** @deprecated Legacy base mode derived from agent definition. */
+  mode?: AgentMode;
   timestamp?: number;
   model?: string;
   // Total usage across all steps (for cost calculation)
@@ -244,7 +246,7 @@ export interface MuxMetadata {
   // Readers should use helper: isCompacted = compacted !== undefined && compacted !== false
   compacted?: "user" | "idle" | boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
-  mode?: AgentMode; // The mode active when this message was sent (assistant messages only)
+  agentId?: string; // Agent id active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   muxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
   /**
@@ -358,7 +360,9 @@ export type DisplayedMessage =
       isCompacted: boolean; // Whether this is a compacted summary
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       model?: string;
-      mode?: string; // Mode active when this message was sent (assistant messages only)
+      agentId?: string; // Agent id active when this message was sent (assistant messages only)
+      /** @deprecated Legacy base mode derived from agent definition. */
+      mode?: AgentMode;
       timestamp?: number;
       tokens?: number;
     }

@@ -16,14 +16,12 @@ export const WorkspaceAISettingsSchema = z.object({
 });
 
 /**
- * Per-mode workspace AI overrides.
+ * Per-agent workspace AI overrides.
  *
  * Notes:
- * - Only includes UI modes (plan/exec). Compact is intentionally excluded.
+ * - Keys are agent IDs (plan/exec/custom), values are model + thinking overrides.
  */
-export const WorkspaceAISettingsByModeSchema = z
-  .object({
-    plan: WorkspaceAISettingsSchema.optional(),
-    exec: WorkspaceAISettingsSchema.optional(),
-  })
-  .strict();
+export const WorkspaceAISettingsByAgentSchema = z.record(
+  z.string().min(1),
+  WorkspaceAISettingsSchema
+);

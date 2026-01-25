@@ -27,7 +27,6 @@ import {
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -309,35 +308,7 @@ export const router = (authToken?: string) => {
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
-            modeAiDefaults: config.modeAiDefaults ?? {},
           };
-        }),
-      updateModeAiDefaults: t
-        .input(schemas.config.updateModeAiDefaults.input)
-        .output(schemas.config.updateModeAiDefaults.output)
-        .handler(async ({ context, input }) => {
-          await context.config.editConfig((config) => {
-            const normalizedDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
-
-            const nextAgentAiDefaults = { ...(config.agentAiDefaults ?? {}) };
-            for (const id of ["plan", "exec", "compact"] as const) {
-              const entry = normalizedDefaults[id];
-              if (entry) {
-                nextAgentAiDefaults[id] = entry;
-              } else {
-                delete nextAgentAiDefaults[id];
-              }
-            }
-
-            return {
-              ...config,
-              agentAiDefaults:
-                Object.keys(nextAgentAiDefaults).length > 0 ? nextAgentAiDefaults : undefined,
-              // Keep legacy field up to date.
-              modeAiDefaults:
-                Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined,
-            };
-          });
         }),
       updateAgentAiDefaults: t
         .input(schemas.config.updateAgentAiDefaults.input)
@@ -345,12 +316,6 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           await context.config.editConfig((config) => {
             const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
-
-            const legacyModeDefaults = normalizeModeAiDefaults({
-              plan: normalized.plan,
-              exec: normalized.exec,
-              compact: normalized.compact,
-            });
 
             const legacySubagentDefaultsRaw: Record<string, unknown> = {};
             for (const [agentType, entry] of Object.entries(normalized)) {
@@ -366,8 +331,6 @@ export const router = (authToken?: string) => {
               ...config,
               agentAiDefaults: Object.keys(normalized).length > 0 ? normalized : undefined,
               // Legacy fields (downgrade compatibility)
-              modeAiDefaults:
-                Object.keys(legacyModeDefaults).length > 0 ? legacyModeDefaults : undefined,
               subagentAiDefaults:
                 Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
             };
@@ -399,15 +362,6 @@ export const router = (authToken?: string) => {
             if (input.agentAiDefaults !== undefined) {
               const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
               result.agentAiDefaults = Object.keys(normalized).length > 0 ? normalized : undefined;
-
-              // Legacy fields (downgrade compatibility)
-              const legacyModeDefaults = normalizeModeAiDefaults({
-                plan: normalized.plan,
-                exec: normalized.exec,
-                compact: normalized.compact,
-              });
-              result.modeAiDefaults =
-                Object.keys(legacyModeDefaults).length > 0 ? legacyModeDefaults : undefined;
 
               if (input.subagentAiDefaults === undefined) {
                 const legacySubagentDefaultsRaw: Record<string, unknown> = {};
@@ -1165,6 +1119,16 @@ export const router = (authToken?: string) => {
           }
           return { success: true };
         }),
+      updateAgentAISettings: t
+        .input(schemas.workspace.updateAgentAISettings.input)
+        .output(schemas.workspace.updateAgentAISettings.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.updateAgentAISettings(
+            input.workspaceId,
+            input.agentId,
+            input.aiSettings
+          );
+        }),
       rename: t
         .input(schemas.workspace.rename.input)
         .output(schemas.workspace.rename.output)
@@ -1186,12 +1150,6 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.updateTitle.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.updateTitle(input.workspaceId, input.title);
-        }),
-      updateAISettings: t
-        .input(schemas.workspace.updateAISettings.input)
-        .output(schemas.workspace.updateAISettings.output)
-        .handler(async ({ context, input }) => {
-          return context.workspaceService.updateAISettings(input.workspaceId, input.aiSettings);
         }),
       archive: t
         .input(schemas.workspace.archive.input)

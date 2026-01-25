@@ -82,11 +82,11 @@ export function getThinkingLevelKey(scopeId: string): string {
 }
 
 /**
- * Get the localStorage key for per-mode workspace AI overrides cache.
- * Format: "workspaceAiSettingsByMode:{workspaceId}"
+ * Get the localStorage key for per-agent workspace AI overrides cache.
+ * Format: "workspaceAiSettingsByAgent:{workspaceId}"
  */
-export function getWorkspaceAISettingsByModeKey(workspaceId: string): string {
-  return `workspaceAiSettingsByMode:${workspaceId}`;
+export function getWorkspaceAISettingsByAgentKey(workspaceId: string): string {
+  return `workspaceAiSettingsByAgent:${workspaceId}`;
 }
 
 /**
@@ -227,12 +227,6 @@ export const PREFERRED_SYSTEM_1_MODEL_KEY = "preferredSystem1Model";
  * Format: "preferredSystem1ThinkingLevel"
  */
 export const PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY = "preferredSystem1ThinkingLevel";
-
-/**
- * Get the localStorage key for cached mode AI defaults (global).
- * Format: "modeAiDefaults"
- */
-export const MODE_AI_DEFAULTS_KEY = "modeAiDefaults";
 
 /**
  * Get the localStorage key for cached per-agent AI defaults (global).
@@ -490,7 +484,7 @@ export function getAutoCompactionThresholdKey(model: string): string {
  * List of workspace-scoped key functions that should be copied on fork and deleted on removal
  */
 const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
-  getWorkspaceAISettingsByModeKey,
+  getWorkspaceAISettingsByAgentKey,
   getModelKey,
   getInputKey,
   getInputImagesKey,

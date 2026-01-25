@@ -485,7 +485,7 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
           'Use bash to run: echo ping. Set display_name="ping" and timeout_secs=30. Do not modify files.',
           HAIKU_MODEL,
           {
-            mode: "exec",
+            agentId: "exec",
             thinkingLevel: "off",
             toolPolicy: FORCE_BASH,
           }

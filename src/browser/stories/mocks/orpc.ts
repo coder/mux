@@ -31,7 +31,6 @@ import {
   type SubagentAiDefaults,
   type TaskSettings,
 } from "@/common/types/tasks";
-import { normalizeModeAiDefaults, type ModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import type {
@@ -77,8 +76,6 @@ export interface MockORPCClientOptions {
   workspaces?: FrontendWorkspaceMetadata[];
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
   taskSettings?: Partial<TaskSettings>;
-  /** Initial mode AI defaults for config.getConfig (e.g., Settings → Modes section) */
-  modeAiDefaults?: ModeAiDefaults;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
   agentAiDefaults?: AgentAiDefaults;
   /** Agent definitions to expose via agents.list */
@@ -233,7 +230,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     mcpOverrides = new Map<string, MockMcpOverrides>(),
     mcpTestResults = new Map<string, MockMcpTestResult>(),
     taskSettings: initialTaskSettings,
-    modeAiDefaults: initialModeAiDefaults,
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
     agentDefinitions: initialAgentDefinitions,
@@ -310,22 +306,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);
 
   let agentAiDefaults = normalizeAgentAiDefaults(
-    initialAgentAiDefaults ??
-      ({
-        ...(initialSubagentAiDefaults ?? {}),
-        ...(initialModeAiDefaults ?? {}),
-      } as const)
+    initialAgentAiDefaults ?? ({ ...(initialSubagentAiDefaults ?? {}) } as const)
   );
 
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
-
-  const deriveModeAiDefaults = () =>
-    normalizeModeAiDefaults({
-      plan: agentAiDefaults.plan,
-      exec: agentAiDefaults.exec,
-      compact: agentAiDefaults.compact,
-    });
 
   const deriveSubagentAiDefaults = () => {
     const raw: Record<string, unknown> = {};
@@ -339,7 +324,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   let layoutPresets = initialLayoutPresets ?? DEFAULT_LAYOUT_PRESETS_CONFIG;
-  let modeAiDefaults = deriveModeAiDefaults();
   let subagentAiDefaults = deriveSubagentAiDefaults();
 
   const mockStats: ChatStats = {
@@ -414,7 +398,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           muxGatewayModels,
           agentAiDefaults,
           subagentAiDefaults,
-          modeAiDefaults,
         }),
       saveConfig: (input: {
         taskSettings: unknown;
@@ -425,7 +408,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
         if (input.agentAiDefaults !== undefined) {
           agentAiDefaults = normalizeAgentAiDefaults(input.agentAiDefaults);
-          modeAiDefaults = deriveModeAiDefaults();
           subagentAiDefaults = deriveSubagentAiDefaults();
         }
 
@@ -438,21 +420,12 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           }
 
           agentAiDefaults = normalizeAgentAiDefaults(nextAgentAiDefaults);
-          modeAiDefaults = deriveModeAiDefaults();
         }
 
         return Promise.resolve(undefined);
       },
       updateAgentAiDefaults: (input: { agentAiDefaults: unknown }) => {
         agentAiDefaults = normalizeAgentAiDefaults(input.agentAiDefaults);
-        modeAiDefaults = deriveModeAiDefaults();
-        subagentAiDefaults = deriveSubagentAiDefaults();
-        return Promise.resolve(undefined);
-      },
-      updateModeAiDefaults: (input: { modeAiDefaults: unknown }) => {
-        modeAiDefaults = normalizeModeAiDefaults(input.modeAiDefaults);
-        agentAiDefaults = normalizeAgentAiDefaults({ ...agentAiDefaults, ...modeAiDefaults });
-        modeAiDefaults = deriveModeAiDefaults();
         subagentAiDefaults = deriveSubagentAiDefaults();
         return Promise.resolve(undefined);
       },
@@ -616,6 +589,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         });
       },
       remove: () => Promise.resolve({ success: true }),
+      updateAgentAISettings: () => Promise.resolve({ success: true, data: undefined }),
+      updateModeAISettings: () => Promise.resolve({ success: true, data: undefined }),
+      updateTitle: () => Promise.resolve({ success: true, data: undefined }),
       rename: (input: { workspaceId: string }) =>
         Promise.resolve({
           success: true,

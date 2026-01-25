@@ -105,6 +105,7 @@ export function sendMessageCommand(
   // Prepare options
   const options: SendMessageOptions = {
     model: defaultModel,
+    agentId: "exec",
   };
 
   if (editMessageId) {

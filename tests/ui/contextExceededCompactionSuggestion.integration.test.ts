@@ -60,6 +60,7 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           message: "Trigger context error",
           options: {
             model: KNOWN_MODELS.GPT.id,
+            agentId: "exec",
             providerOptions: {
               openai: {
                 forceContextLimitError: true,
@@ -114,6 +115,7 @@ describeIntegration("Context exceeded compaction suggestion (UI)", () => {
           message: "Trigger context error",
           options: {
             model: KNOWN_MODELS.GPT.id,
+            agentId: "exec",
             providerOptions: {
               openai: {
                 forceContextLimitError: true,

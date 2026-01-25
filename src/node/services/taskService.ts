@@ -27,6 +27,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -237,6 +238,24 @@ export class TaskService {
     });
   }
 
+  // Prefer per-agent settings so tasks inherit the correct agent defaults;
+  // fall back to legacy workspace settings for older configs.
+  private resolveWorkspaceAISettings(
+    workspace: {
+      aiSettingsByAgent?: Record<string, { model: string; thinkingLevel?: ThinkingLevel }>;
+      aiSettings?: { model: string; thinkingLevel?: ThinkingLevel };
+    },
+    agentId: string | undefined
+  ): { model: string; thinkingLevel?: ThinkingLevel } | undefined {
+    const normalizedAgentId =
+      typeof agentId === "string" && agentId.trim().length > 0
+        ? agentId.trim().toLowerCase()
+        : undefined;
+    return (
+      (normalizedAgentId ? workspace.aiSettingsByAgent?.[normalizedAgentId] : undefined) ??
+      workspace.aiSettings
+    );
+  }
   private async emitWorkspaceMetadata(workspaceId: string): Promise<void> {
     assert(workspaceId.length > 0, "emitWorkspaceMetadata: workspaceId must be non-empty");
 
@@ -298,6 +317,7 @@ export class TaskService {
       const model = task.taskModelString ?? defaultModel;
       const resumeResult = await this.workspaceService.resumeStream(task.id, {
         model,
+        agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
         thinkingLevel: task.taskThinkingLevel,
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
         additionalSystemInstructions:
@@ -330,7 +350,12 @@ export class TaskService {
         task.id,
         "Mux restarted while this task was running. Continue where you left off. " +
           "When you have a final answer, call agent_report exactly once.",
-        { model, thinkingLevel: task.taskThinkingLevel, experiments: task.taskExperiments }
+        {
+          model,
+          agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+          thinkingLevel: task.taskThinkingLevel,
+          experiments: task.taskExperiments,
+        }
       );
     }
   }
@@ -415,12 +440,13 @@ export class TaskService {
       );
     }
 
+    const parentAiSettings = this.resolveWorkspaceAISettings(parentMeta, agentId);
     const inheritedModelString =
       typeof args.modelString === "string" && args.modelString.trim().length > 0
         ? args.modelString.trim()
-        : (parentMeta.aiSettings?.model ?? defaultModel);
+        : (parentAiSettings?.model ?? defaultModel);
     const inheritedThinkingLevel: ThinkingLevel =
-      args.thinkingLevel ?? parentMeta.aiSettings?.thinkingLevel ?? "off";
+      args.thinkingLevel ?? parentAiSettings?.thinkingLevel ?? "off";
 
     const subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
 
@@ -675,6 +701,7 @@ export class TaskService {
     // Start immediately (counts towards parallel limit).
     const sendResult = await this.workspaceService.sendMessage(taskId, prompt, {
       model: taskModelString,
+      agentId,
       thinkingLevel: effectiveThinkingLevel,
       experiments: args.experiments,
     });
@@ -1644,7 +1671,12 @@ export class TaskService {
         const sendResult = await this.workspaceService.sendMessage(
           taskId,
           queuedPrompt,
-          { model, thinkingLevel: task.taskThinkingLevel, experiments: task.taskExperiments },
+          {
+            model,
+            agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+            thinkingLevel: task.taskThinkingLevel,
+            experiments: task.taskExperiments,
+          },
           { allowQueuedAgentTask: true }
         );
         if (!sendResult.success) {
@@ -1662,7 +1694,12 @@ export class TaskService {
         });
         const resumeResult = await this.workspaceService.resumeStream(
           taskId,
-          { model, thinkingLevel: task.taskThinkingLevel, experiments: task.taskExperiments },
+          {
+            model,
+            agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+            thinkingLevel: task.taskThinkingLevel,
+            experiments: task.taskExperiments,
+          },
           { allowQueuedAgentTask: true }
         );
 
@@ -1727,11 +1764,14 @@ export class TaskService {
       }
 
       const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
-      const model = entry.workspace.aiSettings?.model ?? defaultModel;
+      const parentAgentId = entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId;
+      const parentAiSettings = this.resolveWorkspaceAISettings(entry.workspace, parentAgentId);
+      const model = parentAiSettings?.model ?? defaultModel;
 
       const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
         model,
-        thinkingLevel: entry.workspace.aiSettings?.thinkingLevel,
+        agentId: parentAgentId,
+        thinkingLevel: parentAiSettings?.thinkingLevel,
         additionalSystemInstructions:
           `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
           "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
@@ -1783,6 +1823,7 @@ export class TaskService {
       "Your stream ended without calling agent_report. Call agent_report exactly once now with your final report.",
       {
         model,
+        agentId: entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId,
         thinkingLevel: entry.workspace.taskThinkingLevel,
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
       }
@@ -1837,6 +1878,7 @@ export class TaskService {
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
       const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
         model: entry.workspace.taskModelString ?? defaultModel,
+        agentId: WORKSPACE_DEFAULTS.agentId,
       });
       if (!resumeResult.success) {
         log.error("Failed to auto-resume parent after fallback report", {
@@ -2018,6 +2060,7 @@ export class TaskService {
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
       const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
         model: latestChildEntry?.workspace.taskModelString ?? defaultModel,
+        agentId: WORKSPACE_DEFAULTS.agentId,
       });
       if (!resumeResult.success) {
         log.error("Failed to auto-resume parent after agent_report", {

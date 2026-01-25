@@ -15,8 +15,8 @@ import {
 } from "./helpers";
 import { resolveOrpcClient } from "./helpers";
 
-describe("workspace.updateAISettings", () => {
-  test("persists aiSettings and returns them via workspace.getInfo and workspace.list", async () => {
+describe("workspace.updateAgentAISettings", () => {
+  test("persists aiSettingsByAgent and returns them via workspace.getInfo and workspace.list", async () => {
     const env: TestEnvironment = await createTestEnvironment();
     const tempGitRepo = await createTempGitRepo();
 
@@ -31,25 +31,32 @@ describe("workspace.updateAISettings", () => {
       expect(workspaceId).toBeTruthy();
 
       const client = resolveOrpcClient(env);
-      const updateResult = await client.workspace.updateAISettings({
+      const updateResult = await client.workspace.updateAgentAISettings({
         workspaceId: workspaceId!,
+        agentId: "exec",
         aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
       });
       expect(updateResult.success).toBe(true);
 
       const info = await client.workspace.getInfo({ workspaceId: workspaceId! });
-      expect(info?.aiSettings).toEqual({ model: "openai:gpt-5.2", thinkingLevel: "xhigh" });
+      expect(info?.aiSettingsByAgent?.exec).toEqual({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "xhigh",
+      });
 
       const list = await client.workspace.list();
       const fromList = list.find((m) => m.id === workspaceId);
-      expect(fromList?.aiSettings).toEqual({ model: "openai:gpt-5.2", thinkingLevel: "xhigh" });
+      expect(fromList?.aiSettingsByAgent?.exec).toEqual({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "xhigh",
+      });
     } finally {
       await cleanupTestEnvironment(env);
       await cleanupTempGitRepo(tempGitRepo);
     }
   }, 60000);
 
-  test("compaction requests do not override workspace aiSettings", async () => {
+  test("compaction requests do not override workspace agent settings", async () => {
     const env: TestEnvironment = await createTestEnvironment();
     const tempGitRepo = await createTempGitRepo();
 
@@ -66,8 +73,9 @@ describe("workspace.updateAISettings", () => {
       const client = resolveOrpcClient(env);
 
       // Set initial workspace AI settings
-      const updateResult = await client.workspace.updateAISettings({
+      const updateResult = await client.workspace.updateAgentAISettings({
         workspaceId: workspaceId!,
+        agentId: "exec",
         aiSettings: { model: "anthropic:claude-sonnet-4-20250514", thinkingLevel: "medium" },
       });
       expect(updateResult.success).toBe(true);
@@ -80,7 +88,7 @@ describe("workspace.updateAISettings", () => {
         options: {
           model: "openai:gpt-4.1-mini", // Different model for compaction
           thinkingLevel: "off",
-          mode: "compact",
+          agentId: "compact",
           muxMetadata: {
             type: "compaction-request",
             rawCommand: "/compact",
@@ -91,7 +99,7 @@ describe("workspace.updateAISettings", () => {
 
       // Verify the original workspace AI settings were NOT overwritten
       const info = await client.workspace.getInfo({ workspaceId: workspaceId! });
-      expect(info?.aiSettings).toEqual({
+      expect(info?.aiSettingsByAgent?.exec).toEqual({
         model: "anthropic:claude-sonnet-4-20250514",
         thinkingLevel: "medium",
       });

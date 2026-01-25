@@ -87,6 +87,7 @@ describe("AgentSession pre-stream errors", () => {
 
     const result = await session.sendMessage("hello", {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
     });
 
     expect(result.success).toBe(false);

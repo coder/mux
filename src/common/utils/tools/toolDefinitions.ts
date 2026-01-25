@@ -1117,12 +1117,10 @@ export function getToolSchemas(): Record<string, ToolSchema> {
 /**
  * Get which tools are available for a given model
  * @param modelString The model string (e.g., "anthropic:claude-opus-4-1")
- * @param _mode Deprecated - tool availability is now controlled by agent tool policy
  * @returns Array of tool names available for the model
  */
 export function getAvailableTools(
   modelString: string,
-  _mode?: "plan" | "exec",
   options?: { enableAgentReport?: boolean }
 ): string[] {
   const [provider] = modelString.split(":");

@@ -17,7 +17,6 @@ import {
   normalizeSubagentAiDefaults,
   normalizeTaskSettings,
 } from "@/common/types/tasks";
-import { normalizeModeAiDefaults } from "@/common/types/modeAiDefaults";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -134,7 +133,6 @@ export class Config {
           muxGatewayModels?: unknown;
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
-          modeAiDefaults?: unknown;
           useSSH2Transport?: unknown;
         };
 
@@ -162,15 +160,11 @@ export class Config {
           const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
           const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
           const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
-          const legacyModeAiDefaults = normalizeModeAiDefaults(parsed.modeAiDefaults);
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
               ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
-              : normalizeAgentAiDefaults({
-                  ...legacySubagentAiDefaults,
-                  ...(legacyModeAiDefaults as Record<string, unknown>),
-                });
+              : normalizeAgentAiDefaults(legacySubagentAiDefaults);
 
           const layoutPresetsRaw = normalizeLayoutPresetsConfig(parsed.layoutPresets);
           const layoutPresets = isLayoutPresetsConfigEmpty(layoutPresetsRaw)
@@ -195,7 +189,6 @@ export class Config {
             agentAiDefaults,
             // Legacy fields are still parsed and returned for downgrade compatibility.
             subagentAiDefaults: legacySubagentAiDefaults,
-            modeAiDefaults: legacyModeAiDefaults,
             featureFlagOverrides: parsed.featureFlagOverrides,
             useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
           };
@@ -211,7 +204,6 @@ export class Config {
       taskSettings: DEFAULT_TASK_SETTINGS,
       agentAiDefaults: {},
       subagentAiDefaults: {},
-      modeAiDefaults: {},
     };
   }
 
@@ -237,7 +229,6 @@ export class Config {
         muxGatewayModels?: ProjectsConfig["muxGatewayModels"];
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
-        modeAiDefaults?: ProjectsConfig["modeAiDefaults"];
         useSSH2Transport?: boolean;
       } = {
         projects: Array.from(config.projects.entries()),
@@ -296,19 +287,6 @@ export class Config {
       if (config.agentAiDefaults && Object.keys(config.agentAiDefaults).length > 0) {
         data.agentAiDefaults = config.agentAiDefaults;
 
-        // Downgrade compatibility: also write legacy modeAiDefaults + subagentAiDefaults.
-        // Older clients ignore unknown keys, so this is safe.
-        const legacyMode: Record<string, unknown> = {};
-        for (const id of ["plan", "exec", "compact"] as const) {
-          const entry = config.agentAiDefaults[id];
-          if (entry) {
-            legacyMode[id] = entry;
-          }
-        }
-        if (Object.keys(legacyMode).length > 0) {
-          data.modeAiDefaults = legacyMode as ProjectsConfig["modeAiDefaults"];
-        }
-
         const legacySubagent: Record<string, unknown> = {};
         for (const [id, entry] of Object.entries(config.agentAiDefaults)) {
           if (id === "plan" || id === "exec" || id === "compact") continue;
@@ -319,9 +297,6 @@ export class Config {
         }
       } else {
         // Legacy only.
-        if (config.modeAiDefaults && Object.keys(config.modeAiDefaults).length > 0) {
-          data.modeAiDefaults = config.modeAiDefaults;
-        }
         if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
           data.subagentAiDefaults = config.subagentAiDefaults;
         }
@@ -590,7 +565,14 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig (apply default if missing)
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
-              aiSettingsByMode: workspace.aiSettingsByMode,
+              aiSettingsByAgent:
+                workspace.aiSettingsByAgent ??
+                (workspace.aiSettings
+                  ? {
+                      plan: workspace.aiSettings,
+                      exec: workspace.aiSettings,
+                    }
+                  : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               taskStatus: workspace.taskStatus,
@@ -611,6 +593,19 @@ export class Config {
             }
 
             // Migrate missing runtimeConfig to config for next load
+            if (!workspace.aiSettingsByAgent) {
+              const derived = workspace.aiSettings
+                ? {
+                    plan: workspace.aiSettings,
+                    exec: workspace.aiSettings,
+                  }
+                : undefined;
+              if (derived) {
+                workspace.aiSettingsByAgent = derived;
+                configModified = true;
+              }
+            }
+
             if (!workspace.runtimeConfig) {
               workspace.runtimeConfig = metadata.runtimeConfig;
               configModified = true;
@@ -653,7 +648,14 @@ export class Config {
             metadata.runtimeConfig ??= DEFAULT_RUNTIME_CONFIG;
 
             // Preserve any config-only fields that may not exist in legacy metadata.json
-            metadata.aiSettingsByMode ??= workspace.aiSettingsByMode;
+            metadata.aiSettingsByAgent ??=
+              workspace.aiSettingsByAgent ??
+              (workspace.aiSettings
+                ? {
+                    plan: workspace.aiSettings,
+                    exec: workspace.aiSettings,
+                  }
+                : undefined);
             metadata.aiSettings ??= workspace.aiSettings;
 
             // Preserve tree/task metadata when present in config (metadata.json won't have it)
@@ -670,6 +672,11 @@ export class Config {
             metadata.unarchivedAt ??= workspace.unarchivedAt;
             // Preserve section assignment from config
             metadata.sectionId ??= workspace.sectionId;
+            if (!workspace.aiSettingsByAgent && metadata.aiSettingsByAgent) {
+              workspace.aiSettingsByAgent = metadata.aiSettingsByAgent;
+              configModified = true;
+            }
+
             // Migrate to config for next load
             workspace.id = metadata.id;
             workspace.name = metadata.name;
@@ -694,7 +701,14 @@ export class Config {
               // GUARANTEE: All workspaces must have runtimeConfig
               runtimeConfig: DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
-              aiSettingsByMode: workspace.aiSettingsByMode,
+              aiSettingsByAgent:
+                workspace.aiSettingsByAgent ??
+                (workspace.aiSettings
+                  ? {
+                      plan: workspace.aiSettings,
+                      exec: workspace.aiSettings,
+                    }
+                  : undefined),
               parentWorkspaceId: workspace.parentWorkspaceId,
               agentType: workspace.agentType,
               taskStatus: workspace.taskStatus,
@@ -731,7 +745,14 @@ export class Config {
             // GUARANTEE: All workspaces must have runtimeConfig (even in error cases)
             runtimeConfig: DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
-            aiSettingsByMode: workspace.aiSettingsByMode,
+            aiSettingsByAgent:
+              workspace.aiSettingsByAgent ??
+              (workspace.aiSettings
+                ? {
+                    plan: workspace.aiSettings,
+                    exec: workspace.aiSettings,
+                  }
+                : undefined),
             parentWorkspaceId: workspace.parentWorkspaceId,
             agentType: workspace.agentType,
             taskStatus: workspace.taskStatus,

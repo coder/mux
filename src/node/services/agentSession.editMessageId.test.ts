@@ -82,6 +82,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
 
     const result = await session.sendMessage("hello", {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
       editMessageId: "missing-user-message-id",
     });
 
@@ -167,6 +168,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
 
     const result = await session.sendMessage("edited", {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
       editMessageId: originalMessageId,
       imageParts: [],
     });
@@ -258,6 +260,7 @@ describe("AgentSession.sendMessage (editMessageId)", () => {
 
     const result = await session.sendMessage("edited", {
       model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
       editMessageId: originalMessageId,
     });
 

@@ -2,7 +2,6 @@ import { useState } from "react";
 import React from "react";
 import { StartHereModal } from "@/browser/components/StartHereModal";
 import { createMuxMessage } from "@/common/types/message";
-import type { AgentMode } from "@/common/types/mode";
 import { useAPI } from "@/browser/contexts/API";
 
 /**
@@ -18,7 +17,7 @@ export function useStartHere(
   workspaceId: string | undefined,
   content: string,
   isCompacted = false,
-  options?: { deletePlanFile?: boolean; sourceMode?: AgentMode }
+  options?: { deletePlanFile?: boolean; sourceAgentId?: string }
 ) {
   const { api } = useAPI();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -48,7 +47,7 @@ export function useStartHere(
         {
           timestamp: Date.now(),
           compacted: "user",
-          mode: options?.sourceMode,
+          agentId: options?.sourceAgentId,
         }
       );
 

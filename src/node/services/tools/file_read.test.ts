@@ -402,7 +402,7 @@ describe("file_read tool", () => {
         cwd: testDir,
         runtime: new LocalRuntime(testDir),
         runtimeTempDir: testDir,
-        mode: "plan",
+        planFileOnly: true,
         planFilePath: planPath,
       });
 
@@ -460,7 +460,6 @@ describe("file_read tool", () => {
         cwd: testDir,
         runtime: new LocalRuntime(testDir),
         runtimeTempDir: testDir,
-        mode: "exec",
         planFilePath: planPath,
       });
 

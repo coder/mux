@@ -82,7 +82,10 @@ describe("AgentSession disposal race conditions", () => {
       return promise;
     };
 
-    session.queueMessage("Queued message", { model: "anthropic:claude-sonnet-4-5" });
+    session.queueMessage("Queued message", {
+      model: "anthropic:claude-sonnet-4-5",
+      agentId: "exec",
+    });
     session.sendQueuedMessages();
 
     expect(inFlight).toBeDefined();

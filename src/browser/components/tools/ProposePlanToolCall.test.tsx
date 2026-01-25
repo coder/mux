@@ -34,7 +34,7 @@ let startHereCalls: Array<{
   workspaceId: string | undefined;
   content: string;
   isCompacted: boolean;
-  options: { deletePlanFile?: boolean; sourceMode?: string } | undefined;
+  options: { deletePlanFile?: boolean; sourceAgentId?: string } | undefined;
 }> = [];
 
 const useStartHereMock = mock(
@@ -121,7 +121,7 @@ describe("ProposePlanToolCall", () => {
     );
 
     expect(startHereCalls.length).toBe(1);
-    expect(startHereCalls[0]?.options).toEqual({ sourceMode: "plan" });
+    expect(startHereCalls[0]?.options).toEqual({ sourceAgentId: "plan" });
     expect(startHereCalls[0]?.isCompacted).toBe(false);
 
     // The Start Here message should explicitly tell the user the plan file remains on disk.

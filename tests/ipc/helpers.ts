@@ -32,6 +32,7 @@ import type { OrpcTestClient } from "./orpcTestClient";
 import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 import type { WorkspaceSendMessageOutput } from "@/common/orpc/schemas";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { HistoryService } from "../../src/node/services/historyService";
 import { createMuxMessage } from "../../src/common/types/message";
 
@@ -92,7 +93,11 @@ export function modelString(provider: string, model: string): string {
 /**
  * Send a message via IPC
  */
-type SendMessageWithModelOptions = Omit<SendMessageOptions, "model"> & {
+type SendMessageOptionsWithAgentFallback = Omit<SendMessageOptions, "agentId"> & {
+  agentId?: SendMessageOptions["agentId"];
+};
+
+type SendMessageWithModelOptions = Omit<SendMessageOptionsWithAgentFallback, "model"> & {
   imageParts?: Array<{ url: string; mediaType: string }>;
 };
 
@@ -103,13 +108,24 @@ export async function sendMessage(
   source: OrpcSource,
   workspaceId: string,
   message: string,
-  options?: SendMessageOptions & { imageParts?: ImagePart[] }
+  options?: SendMessageOptionsWithAgentFallback & { imageParts?: ImagePart[] }
 ): Promise<Result<void, SendMessageError>> {
   const client = resolveOrpcClient(source);
 
+  // options is now required by the oRPC schema; build with defaults if not provided
+  const resolvedOptions: SendMessageOptions & { imageParts?: ImagePart[] } = {
+    model: options?.model ?? WORKSPACE_DEFAULTS.model,
+    agentId: options?.agentId ?? WORKSPACE_DEFAULTS.agentId,
+    ...options,
+  };
+
   let result: WorkspaceSendMessageOutput;
   try {
-    result = await client.workspace.sendMessage({ workspaceId, message, options });
+    result = await client.workspace.sendMessage({
+      workspaceId,
+      message,
+      options: resolvedOptions,
+    });
   } catch (error) {
     // Normalize ORPC input validation or transport errors into Result shape expected by tests.
     let raw: string = "";
@@ -286,7 +302,7 @@ export async function sendMessageAndWait(
         model,
         toolPolicy,
         thinkingLevel: "off", // Disable reasoning for fast test execution
-        mode: "exec", // Execute commands directly, don't propose plans
+        agentId: "exec", // Execute commands directly, don't propose plans
       },
     });
 

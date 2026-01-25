@@ -260,7 +260,7 @@ describe("fileCommon", () => {
       cwd: "/home/user/project",
       runtime: mockRuntime,
       runtimeTempDir: "/tmp",
-      mode: "plan",
+      planFileOnly: true,
       planFilePath,
     };
 

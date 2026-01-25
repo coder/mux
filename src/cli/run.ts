@@ -544,10 +544,10 @@ async function main(): Promise<number> {
   const buildSendOptions = (cliMode: CLIMode): SendMessageOptions => ({
     model,
     thinkingLevel,
-    mode: cliMode,
+    agentId: cliMode,
     experiments,
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
-    // Plan mode instructions are handled by the backend (has access to plan file path)
+    // Plan agent instructions are handled by the backend (has access to plan file path)
   });
 
   const liveEvents: WorkspaceChatMessage[] = [];

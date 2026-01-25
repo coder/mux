@@ -12,7 +12,7 @@ import {
   getProjectScopeId,
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByModeKey,
+  getWorkspaceAISettingsByAgentKey,
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -84,35 +84,34 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         return;
       }
 
-      type WorkspaceAISettingsByModeCache = Partial<
+      type WorkspaceAISettingsByAgentCache = Partial<
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
-      const agentId = readPersistedState<string>(getAgentIdKey(scopeId), "exec");
+      const normalizedAgentId =
+        readPersistedState<string>(getAgentIdKey(scopeId), "exec").trim().toLowerCase() || "exec";
 
-      updatePersistedState<WorkspaceAISettingsByModeCache>(
-        getWorkspaceAISettingsByModeKey(props.workspaceId),
+      updatePersistedState<WorkspaceAISettingsByAgentCache>(
+        getWorkspaceAISettingsByAgentKey(props.workspaceId),
         (prev) => {
-          const record: WorkspaceAISettingsByModeCache =
+          const record: WorkspaceAISettingsByAgentCache =
             prev && typeof prev === "object" ? prev : {};
           return {
             ...record,
-            [agentId]: { model, thinkingLevel: level },
+            [normalizedAgentId]: { model, thinkingLevel: level },
           };
         },
         {}
       );
 
-      // Only persist when the active agent is a base mode (exec/plan) so custom-agent overrides
-      // don't clobber exec/plan defaults that other agents inherit.
-      if (!api || (agentId !== "exec" && agentId !== "plan")) {
+      if (!api) {
         return;
       }
 
       api.workspace
-        .updateModeAISettings({
+        .updateAgentAISettings({
           workspaceId: props.workspaceId,
-          mode: agentId,
+          agentId: normalizedAgentId,
           aiSettings: { model, thinkingLevel: level },
         })
         .catch(() => {

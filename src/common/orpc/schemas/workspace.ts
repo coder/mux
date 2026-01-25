@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { RuntimeConfigSchema } from "./runtime";
-import { WorkspaceAISettingsByModeSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
+import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
 
@@ -26,8 +26,8 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "ISO 8601 timestamp of when workspace was created (optional for backward compatibility)",
   }),
-  aiSettingsByMode: WorkspaceAISettingsByModeSchema.optional().meta({
-    description: "Per-mode AI settings (plan/exec) persisted in config",
+  aiSettingsByAgent: WorkspaceAISettingsByAgentSchema.optional().meta({
+    description: "Per-agent AI settings persisted in config",
   }),
   runtimeConfig: RuntimeConfigSchema.meta({
     description: "Runtime configuration for this workspace (always set, defaults to local on load)",

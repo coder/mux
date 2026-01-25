@@ -19,7 +19,7 @@ Object.freeze(STORAGE_KEYS);
  * - Settings are reset to defaults
  *
  * Per-workspace overrides persist in localStorage using keys like:
- * - `mode:{workspaceId}`
+ * - `agentId:{workspaceId}`
  * - `model:{workspaceId}`
  * - `thinkingLevel:{workspaceId}`
  * - `input:{workspaceId}`
@@ -32,7 +32,6 @@ Object.freeze(STORAGE_KEYS);
  * Do not modify these values at runtime - they serve as the single source of truth.
  */
 
-import type { UIMode } from "@/common/types/mode";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
@@ -41,8 +40,8 @@ import { DEFAULT_MODEL } from "@/common/constants/knownModels";
  * Type assertions ensure proper typing while maintaining immutability.
  */
 export const WORKSPACE_DEFAULTS = {
-  /** Default UI mode (plan vs exec) for new workspaces */
-  mode: "exec" as UIMode,
+  /** Default agent id for new workspaces (built-in exec agent). */
+  agentId: "exec" as const,
 
   /** Default thinking/reasoning level for new workspaces */
   thinkingLevel: "off" as ThinkingLevel,

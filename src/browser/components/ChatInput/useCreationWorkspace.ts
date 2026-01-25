@@ -19,7 +19,7 @@ import {
   getNotifyOnResponseAutoEnableKey,
   getNotifyOnResponseKey,
   getThinkingLevelKey,
-  getWorkspaceAISettingsByModeKey,
+  getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
@@ -75,7 +75,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
 
     updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(
-      getWorkspaceAISettingsByModeKey(workspaceId),
+      getWorkspaceAISettingsByAgentKey(workspaceId),
       (prev) => {
         const record = prev && typeof prev === "object" ? prev : {};
         return {
@@ -316,32 +316,18 @@ export function useCreationWorkspace({
 
         // Best-effort: persist the initial AI settings to the backend immediately so this workspace
         // is portable across devices even before the first stream starts.
-        try {
-          api.workspace
-            .updateModeAISettings({
-              workspaceId: metadata.id,
-              mode: settings.mode,
-              aiSettings: {
-                model: settings.model,
-                thinkingLevel: settings.thinkingLevel,
-              },
-            })
-            .catch(() => {
-              // Ignore (offline / older backend). sendMessage will persist as a fallback.
-            });
-        } catch {
-          api.workspace
-            .updateAISettings({
-              workspaceId: metadata.id,
-              aiSettings: {
-                model: settings.model,
-                thinkingLevel: settings.thinkingLevel,
-              },
-            })
-            .catch(() => {
-              // Ignore (offline / older backend). sendMessage will persist as a fallback.
-            });
-        }
+        api.workspace
+          .updateAgentAISettings({
+            workspaceId: metadata.id,
+            agentId: settings.agentId,
+            aiSettings: {
+              model: settings.model,
+              thinkingLevel: settings.thinkingLevel,
+            },
+          })
+          .catch(() => {
+            // Ignore - sendMessage will persist AI settings as a fallback.
+          });
         // Sync preferences immediately (before switching)
         syncCreationPreferences(projectPath, metadata.id);
         if (projectPath) {
@@ -402,7 +388,7 @@ export function useCreationWorkspace({
       settings.selectedRuntime,
       runtimeAvailabilityState,
       setSelectedRuntime,
-      settings.mode,
+      settings.agentId,
       settings.model,
       settings.thinkingLevel,
       settings.trunkBranch,
