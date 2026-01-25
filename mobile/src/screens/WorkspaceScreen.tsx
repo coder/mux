@@ -481,11 +481,25 @@ function WorkspaceScreenInner({
   // Seed per-workspace settings from backend metadata (desktop parity).
   // This keeps model + thinking consistent across devices.
   useEffect(() => {
-    if (!workspaceId || !metadata?.aiSettings) {
+    if (!workspaceId || !metadata) {
       return;
     }
 
-    const ai = metadata.aiSettings as { model?: unknown; thinkingLevel?: unknown };
+    const aiByAgent =
+      metadata.aiSettingsByAgent ??
+      metadata.aiSettingsByMode ??
+      (metadata.aiSettings
+        ? {
+            plan: metadata.aiSettings,
+            exec: metadata.aiSettings,
+          }
+        : undefined);
+
+    const ai = aiByAgent?.[mode];
+    if (!ai) {
+      return;
+    }
+
     const nextModel = typeof ai.model === "string" && isKnownModelId(ai.model) ? ai.model : null;
     const nextThinking = isThinkingLevel(ai.thinkingLevel) ? ai.thinkingLevel : null;
 
@@ -503,6 +517,9 @@ function WorkspaceScreenInner({
     }
   }, [
     workspaceId,
+    mode,
+    metadata?.aiSettingsByAgent,
+    metadata?.aiSettingsByMode,
     metadata?.aiSettings?.model,
     metadata?.aiSettings?.thinkingLevel,
     model,
@@ -753,8 +770,9 @@ function WorkspaceScreenInner({
 
         if (workspaceId) {
           client.workspace
-            .updateAISettings({
+            .updateAgentAISettings({
               workspaceId,
+              agentId: mode,
               aiSettings: { model: modelId, thinkingLevel: nextThinkingLevel },
             })
             .catch(() => {
@@ -767,7 +785,7 @@ function WorkspaceScreenInner({
         }
       }
     },
-    [addRecentModel, client, model, setModel, setThinkingLevel, thinkingLevel, workspaceId]
+    [addRecentModel, client, model, mode, setModel, setThinkingLevel, thinkingLevel, workspaceId]
   );
 
   const handleSelectMode = useCallback(
@@ -793,13 +811,17 @@ function WorkspaceScreenInner({
         }
 
         client.workspace
-          .updateAISettings({ workspaceId, aiSettings: { model, thinkingLevel: effective } })
+          .updateAgentAISettings({
+            workspaceId,
+            agentId: mode,
+            aiSettings: { model, thinkingLevel: effective },
+          })
           .catch(() => {
             // Best-effort only.
           });
       });
     },
-    [client, model, thinkingLevel, setThinkingLevel, workspaceId]
+    [client, model, mode, thinkingLevel, setThinkingLevel, workspaceId]
   );
 
   const handleToggle1MContext = useCallback(() => {

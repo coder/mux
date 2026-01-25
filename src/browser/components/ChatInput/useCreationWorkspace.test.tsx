@@ -84,10 +84,6 @@ type ListBranchesArgs = Parameters<APIClient["projects"]["listBranches"]>[0];
 type WorkspaceSendMessageArgs = Parameters<APIClient["workspace"]["sendMessage"]>[0];
 type WorkspaceSendMessageResult = Awaited<ReturnType<APIClient["workspace"]["sendMessage"]>>;
 type WorkspaceCreateArgs = Parameters<APIClient["workspace"]["create"]>[0];
-type WorkspaceUpdateAISettingsArgs = Parameters<APIClient["workspace"]["updateAISettings"]>[0];
-type WorkspaceUpdateAISettingsResult = Awaited<
-  ReturnType<APIClient["workspace"]["updateAISettings"]>
->;
 type WorkspaceUpdateAgentAISettingsArgs = Parameters<
   APIClient["workspace"]["updateAgentAISettings"]
 >[0];
@@ -100,7 +96,7 @@ type NameGenerationResult = Awaited<ReturnType<APIClient["nameGeneration"]["gene
 type MockOrpcProjectsClient = Pick<APIClient["projects"], "listBranches" | "runtimeAvailability">;
 type MockOrpcWorkspaceClient = Pick<
   APIClient["workspace"],
-  "sendMessage" | "create" | "updateAISettings" | "updateAgentAISettings"
+  "sendMessage" | "create" | "updateAgentAISettings"
 >;
 type MockOrpcNameGenerationClient = Pick<APIClient["nameGeneration"], "generate">;
 type WindowWithApi = Window & typeof globalThis;
@@ -128,9 +124,6 @@ interface SetupWindowOptions {
   sendMessage?: ReturnType<
     typeof mock<(args: WorkspaceSendMessageArgs) => Promise<WorkspaceSendMessageResult>>
   >;
-  updateAISettings?: ReturnType<
-    typeof mock<(args: WorkspaceUpdateAISettingsArgs) => Promise<WorkspaceUpdateAISettingsResult>>
-  >;
   updateAgentAISettings?: ReturnType<
     typeof mock<
       (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
@@ -146,7 +139,6 @@ const setupWindow = ({
   listBranches,
   sendMessage,
   create,
-  updateAISettings,
   updateAgentAISettings,
   nameGeneration,
 }: SetupWindowOptions = {}) => {
@@ -179,15 +171,6 @@ const setupWindow = ({
         success: true,
         metadata: TEST_METADATA,
       } as WorkspaceCreateResult);
-    });
-
-  const updateAISettingsMock =
-    updateAISettings ??
-    mock<(args: WorkspaceUpdateAISettingsArgs) => Promise<WorkspaceUpdateAISettingsResult>>(() => {
-      return Promise.resolve({
-        success: true,
-        data: undefined,
-      } as WorkspaceUpdateAISettingsResult);
     });
 
   const updateAgentAISettingsMock =
@@ -228,7 +211,6 @@ const setupWindow = ({
     workspace: {
       sendMessage: (input: WorkspaceSendMessageArgs) => sendMessageMock(input),
       create: (input: WorkspaceCreateArgs) => createMock(input),
-      updateAISettings: (input: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(input),
       updateAgentAISettings: (input: WorkspaceUpdateAgentAISettingsArgs) =>
         updateAgentAISettingsMock(input),
     },
@@ -268,7 +250,6 @@ const setupWindow = ({
     workspace: {
       list: rejectNotImplemented("workspace.list"),
       create: (args: WorkspaceCreateArgs) => createMock(args),
-      updateAISettings: (args: WorkspaceUpdateAISettingsArgs) => updateAISettingsMock(args),
       updateAgentAISettings: (args: WorkspaceUpdateAgentAISettingsArgs) =>
         updateAgentAISettingsMock(args),
       remove: rejectNotImplemented("workspace.remove"),
@@ -339,7 +320,6 @@ const setupWindow = ({
     workspaceApi: {
       sendMessage: sendMessageMock,
       create: createMock,
-      updateAISettings: updateAISettingsMock,
     },
     nameGenerationApi: { generate: nameGenerationMock },
   };

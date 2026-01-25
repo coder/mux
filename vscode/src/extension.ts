@@ -43,7 +43,6 @@ interface PendingAutoSelectState {
   createdAtMs: number;
 }
 
-
 let muxLogChannel: vscode.LogOutputChannel | undefined;
 
 function getMuxLogChannel(): vscode.LogOutputChannel {
@@ -462,14 +461,31 @@ function createWorkspaceQuickPickItem(
     detailParts.push(`Created: ${new Date(workspace.createdAt).toLocaleDateString()}`);
   }
 
+  const aiByAgent =
+    workspace.aiSettingsByAgent ??
+    workspace.aiSettingsByMode ??
+    (workspace.aiSettings
+      ? {
+          plan: workspace.aiSettings,
+          exec: workspace.aiSettings,
+        }
+      : undefined);
+  const fallbackAgentId = workspace.agentId ?? workspace.agentType ?? "exec";
+  const fallbackAiSettings = aiByAgent?.[fallbackAgentId];
+
   // Prefer activity-derived model/thinking ("last used") but fall back to workspace-scoped settings.
-  const lastModel = workspace.extensionMetadata?.lastModel ?? workspace.aiSettings?.model;
+  const lastModel =
+    workspace.extensionMetadata?.lastModel ??
+    fallbackAiSettings?.model ??
+    workspace.aiSettings?.model;
   if (lastModel) {
     detailParts.push(`Model: ${lastModel}`);
   }
 
   const lastThinkingLevel =
-    workspace.extensionMetadata?.lastThinkingLevel ?? workspace.aiSettings?.thinkingLevel;
+    workspace.extensionMetadata?.lastThinkingLevel ??
+    fallbackAiSettings?.thinkingLevel ??
+    workspace.aiSettings?.thinkingLevel;
   if (lastThinkingLevel) {
     detailParts.push(`Reasoning: ${lastThinkingLevel}`);
   }
@@ -587,7 +603,9 @@ async function configureConnectionCommand(context: vscode.ExtensionContext): Pro
           description: currentUrl ? `Current: ${currentUrl}` : "Current: auto-discover",
         },
         ...(currentUrl
-          ? ([{ label: "Clear server URL override", description: "Use env/lockfile/default" }] as const)
+          ? ([
+              { label: "Clear server URL override", description: "Use env/lockfile/default" },
+            ] as const)
           : ([] as const)),
         {
           label: "Set auth token",
@@ -681,7 +699,9 @@ async function debugConnectionCommand(context: vscode.ExtensionContext): Promise
     discovery = await discoverServerConfig(context);
   } catch (error) {
     muxLogError("mux: debugConnection discovery failed", { error: formatError(error) });
-    void vscode.window.showErrorMessage(`mux: Failed to discover server config. (${formatError(error)})`);
+    void vscode.window.showErrorMessage(
+      `mux: Failed to discover server config. (${formatError(error)})`
+    );
     return;
   }
 
@@ -710,7 +730,7 @@ async function debugConnectionCommand(context: vscode.ExtensionContext): Promise
   if (auth.status !== "ok") {
     const hint =
       auth.status === "unauthorized"
-        ? " Run \"mux: Configure Connection\" to update the auth token."
+        ? ' Run "mux: Configure Connection" to update the auth token.'
         : "";
 
     void vscode.window.showErrorMessage(
@@ -851,11 +871,19 @@ async function getWorkspacesForSidebar(
   }
 }
 
-function renderChatViewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, traceId: string): string {
+function renderChatViewHtml(
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
+  traceId: string
+): string {
   assert(typeof traceId === "string" && traceId.length > 0, "traceId must be a non-empty string");
 
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "out", "muxChatView.js"));
-  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "out", "muxChatView.css"));
+  const scriptUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, "out", "muxChatView.js")
+  );
+  const styleUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, "out", "muxChatView.css")
+  );
   const katexStyleUri = webview.asWebviewUri(
     vscode.Uri.joinPath(extensionUri, "out", "katex", "katex.min.css")
   );
@@ -907,7 +935,6 @@ function renderChatViewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, t
   return html;
 }
 
-
 class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private view: vscode.WebviewView | undefined;
 
@@ -939,7 +966,8 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
   private subscriptionAbort: AbortController | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext) {
-    this.selectedWorkspaceId = context.workspaceState.get<string>(SELECTED_WORKSPACE_STATE_KEY) ?? null;
+    this.selectedWorkspaceId =
+      context.workspaceState.get<string>(SELECTED_WORKSPACE_STATE_KEY) ?? null;
   }
 
   private clearReadyProbeInterval(): void {
@@ -1016,158 +1044,171 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
     try {
       view.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this.context.extensionUri, "out"),
-        vscode.Uri.joinPath(this.context.extensionUri, "media"),
-      ],
-    };
+        enableScripts: true,
+        localResourceRoots: [
+          vscode.Uri.joinPath(this.context.extensionUri, "out"),
+          vscode.Uri.joinPath(this.context.extensionUri, "media"),
+        ],
+      };
 
-    muxLogDebug("mux.chatView: webview.options set", {
-      enableScripts: view.webview.options.enableScripts ?? false,
-      localResourceRoots: (view.webview.options.localResourceRoots ?? []).map((uri) => uri.toString()),
-    });
-
-    const visibilityDisposable = view.onDidChangeVisibility(async () => {
-      muxLogDebug("mux.chatView: view visibility changed", { visible: view.visible });
-
-      if (!view.visible) {
-        return;
-      }
-
-      if (!this.isWebviewReady) {
-        return;
-      }
-
-      await this.refreshWorkspaces();
-    });
-    viewDisposables.push(visibilityDisposable);
-
-    // Register the message handler before setting HTML to avoid losing the initial
-    // "ready" handshake due to a race.
-    const messageDisposable = view.webview.onDidReceiveMessage((msg: unknown) => {
-      const msgType =
-        typeof msg === "object" &&
-        msg !== null &&
-        "type" in msg &&
-        typeof (msg as { type?: unknown }).type === "string"
-          ? (msg as { type: string }).type
-          : undefined;
-
-      const meta =
-        typeof msg === "object" && msg !== null && "__muxMeta" in msg
-          ? (msg as { __muxMeta?: unknown }).__muxMeta
-          : undefined;
-
-      muxLogDebug("mux.chatView: <- webview message", {
-        traceId: this.traceId,
-        type: msgType,
-        meta,
+      muxLogDebug("mux.chatView: webview.options set", {
+        enableScripts: view.webview.options.enableScripts ?? false,
+        localResourceRoots: (view.webview.options.localResourceRoots ?? []).map((uri) =>
+          uri.toString()
+        ),
       });
 
-      void this.onWebviewMessage(msg).catch((error) => {
-        muxLogError("mux.chatView: error handling webview message", { error: formatError(error) });
-        console.error("mux.chatView: error handling webview message", error);
-        this.postMessage({
-          type: "uiNotice",
-          level: "error",
-          message: `Webview message error: ${formatError(error)}`,
+      const visibilityDisposable = view.onDidChangeVisibility(async () => {
+        muxLogDebug("mux.chatView: view visibility changed", { visible: view.visible });
+
+        if (!view.visible) {
+          return;
+        }
+
+        if (!this.isWebviewReady) {
+          return;
+        }
+
+        await this.refreshWorkspaces();
+      });
+      viewDisposables.push(visibilityDisposable);
+
+      // Register the message handler before setting HTML to avoid losing the initial
+      // "ready" handshake due to a race.
+      const messageDisposable = view.webview.onDidReceiveMessage((msg: unknown) => {
+        const msgType =
+          typeof msg === "object" &&
+          msg !== null &&
+          "type" in msg &&
+          typeof (msg as { type?: unknown }).type === "string"
+            ? (msg as { type: string }).type
+            : undefined;
+
+        const meta =
+          typeof msg === "object" && msg !== null && "__muxMeta" in msg
+            ? (msg as { __muxMeta?: unknown }).__muxMeta
+            : undefined;
+
+        muxLogDebug("mux.chatView: <- webview message", {
+          traceId: this.traceId,
+          type: msgType,
+          meta,
         });
-      });
-    });
-    viewDisposables.push(messageDisposable);
 
-    view.onDidDispose(() => {
-      muxLogDebug("mux.chatView: disposed");
-      visibilityDisposable.dispose();
-      messageDisposable.dispose();
-      this.traceId = null;
-      this.view = undefined;
-      this.isWebviewReady = false;
-      this.dispose();
-    });
-
-    const traceId = this.traceId;
-    assert(typeof traceId === "string" && traceId.length > 0, "mux.chatView: traceId must be set before rendering webview");
-
-    const html = renderChatViewHtml(view.webview, this.context.extensionUri, traceId);
-    muxLogDebug("mux.chatView: setting webview.html", { traceId, htmlLength: html.length });
-    view.webview.html = html;
-
-    // While debugging the stuck "Loading mux..." state, this sends a message to the webview
-    // at a fixed interval until we get a "ready" message back.
-    let probeAttempts = 0;
-    this.readyProbeInterval = setInterval(() => {
-      if (this.view !== view) {
-        muxLogDebug("mux.chatView: stopping debugProbe (view changed)");
-        this.clearReadyProbeInterval();
-        return;
-      }
-
-      if (this.isWebviewReady) {
-        muxLogDebug("mux.chatView: stopping debugProbe (ready received)");
-        this.clearReadyProbeInterval();
-        return;
-      }
-
-      probeAttempts += 1;
-      const attempt = probeAttempts;
-      const sentAtMs = Date.now();
-
-      void view.webview.postMessage({ type: "debugProbe", attempt, sentAtMs }).then(
-        (delivered) => {
-          muxLogDebug("mux.chatView: -> debugProbe", { traceId: this.traceId, attempt, delivered });
-        },
-        (error) => {
-          muxLogWarn("mux.chatView: debugProbe postMessage failed", {
-            traceId: this.traceId,
-            attempt,
+        void this.onWebviewMessage(msg).catch((error) => {
+          muxLogError("mux.chatView: error handling webview message", {
             error: formatError(error),
           });
-        }
+          console.error("mux.chatView: error handling webview message", error);
+          this.postMessage({
+            type: "uiNotice",
+            level: "error",
+            message: `Webview message error: ${formatError(error)}`,
+          });
+        });
+      });
+      viewDisposables.push(messageDisposable);
+
+      view.onDidDispose(() => {
+        muxLogDebug("mux.chatView: disposed");
+        visibilityDisposable.dispose();
+        messageDisposable.dispose();
+        this.traceId = null;
+        this.view = undefined;
+        this.isWebviewReady = false;
+        this.dispose();
+      });
+
+      const traceId = this.traceId;
+      assert(
+        typeof traceId === "string" && traceId.length > 0,
+        "mux.chatView: traceId must be set before rendering webview"
       );
 
-      if (attempt >= 15) {
-        muxLogWarn("mux.chatView: stopping debugProbe after max attempts", { maxAttempts: attempt });
-        this.clearReadyProbeInterval();
-      }
-    }, 1_000);
+      const html = renderChatViewHtml(view.webview, this.context.extensionUri, traceId);
+      muxLogDebug("mux.chatView: setting webview.html", { traceId, htmlLength: html.length });
+      view.webview.html = html;
 
-    const readyWarnTimeout = setTimeout(() => {
-      if (this.view !== view) {
-        return;
-      }
+      // While debugging the stuck "Loading mux..." state, this sends a message to the webview
+      // at a fixed interval until we get a "ready" message back.
+      let probeAttempts = 0;
+      this.readyProbeInterval = setInterval(() => {
+        if (this.view !== view) {
+          muxLogDebug("mux.chatView: stopping debugProbe (view changed)");
+          this.clearReadyProbeInterval();
+          return;
+        }
 
-      if (this.isWebviewReady) {
-        return;
-      }
+        if (this.isWebviewReady) {
+          muxLogDebug("mux.chatView: stopping debugProbe (ready received)");
+          this.clearReadyProbeInterval();
+          return;
+        }
 
-      muxLogWarn("mux.chatView: webview has not sent ready after 2s", {
-        traceId: this.traceId,
-        visible: view.visible,
-        cspSource: view.webview.cspSource,
-        hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
-      });
-    }, 2_000);
-    this.readyProbeTimeouts.push(readyWarnTimeout);
+        probeAttempts += 1;
+        const attempt = probeAttempts;
+        const sentAtMs = Date.now();
 
-    const readyErrorTimeout = setTimeout(() => {
-      if (this.view !== view) {
-        return;
-      }
+        void view.webview.postMessage({ type: "debugProbe", attempt, sentAtMs }).then(
+          (delivered) => {
+            muxLogDebug("mux.chatView: -> debugProbe", {
+              traceId: this.traceId,
+              attempt,
+              delivered,
+            });
+          },
+          (error) => {
+            muxLogWarn("mux.chatView: debugProbe postMessage failed", {
+              traceId: this.traceId,
+              attempt,
+              error: formatError(error),
+            });
+          }
+        );
 
-      if (this.isWebviewReady) {
-        return;
-      }
+        if (attempt >= 15) {
+          muxLogWarn("mux.chatView: stopping debugProbe after max attempts", {
+            maxAttempts: attempt,
+          });
+          this.clearReadyProbeInterval();
+        }
+      }, 1_000);
 
-      muxLogError("mux.chatView: webview has not sent ready after 10s", {
-        traceId: this.traceId,
-        visible: view.visible,
-        cspSource: view.webview.cspSource,
-        hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
-      });
-    }, 10_000);
-    this.readyProbeTimeouts.push(readyErrorTimeout);
+      const readyWarnTimeout = setTimeout(() => {
+        if (this.view !== view) {
+          return;
+        }
+
+        if (this.isWebviewReady) {
+          return;
+        }
+
+        muxLogWarn("mux.chatView: webview has not sent ready after 2s", {
+          traceId: this.traceId,
+          visible: view.visible,
+          cspSource: view.webview.cspSource,
+          hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
+        });
+      }, 2_000);
+      this.readyProbeTimeouts.push(readyWarnTimeout);
+
+      const readyErrorTimeout = setTimeout(() => {
+        if (this.view !== view) {
+          return;
+        }
+
+        if (this.isWebviewReady) {
+          return;
+        }
+
+        muxLogError("mux.chatView: webview has not sent ready after 10s", {
+          traceId: this.traceId,
+          visible: view.visible,
+          cspSource: view.webview.cspSource,
+          hint: "Open Webview Developer Tools and look for CSP/script errors; also check Output > Mux.",
+        });
+      }, 10_000);
+      this.readyProbeTimeouts.push(readyErrorTimeout);
     } catch (error) {
       muxLogError("mux.chatView: resolveWebviewView failed", {
         traceId: this.traceId,
@@ -1188,7 +1229,7 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       // Best-effort: show something in the UI even if the React bundle fails to load.
       try {
         view.webview.html =
-          "<!DOCTYPE html><html lang=\"en\"><body><h3>Failed to load mux chat view</h3><p>Check Output > Mux for details.</p></body></html>";
+          '<!DOCTYPE html><html lang="en"><body><h3>Failed to load mux chat view</h3><p>Check Output > Mux for details.</p></body></html>';
       } catch {
         // Ignore - best effort only.
       }
@@ -1200,14 +1241,20 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
     if (!this.view) {
       if (shouldLog) {
-        muxLogDebug("mux.chatView: -> drop postMessage (no view)", { traceId: this.traceId, type: message.type });
+        muxLogDebug("mux.chatView: -> drop postMessage (no view)", {
+          traceId: this.traceId,
+          type: message.type,
+        });
       }
       return;
     }
 
     if (!this.isWebviewReady) {
       if (shouldLog) {
-        muxLogDebug("mux.chatView: -> drop postMessage (webview not ready)", { traceId: this.traceId, type: message.type });
+        muxLogDebug("mux.chatView: -> drop postMessage (webview not ready)", {
+          traceId: this.traceId,
+          type: message.type,
+        });
       }
       return;
     }
@@ -1256,10 +1303,17 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
 
       case "copyDebugLog": {
         const text = msg.text;
-        muxLogInfo("mux.chatView: copyDebugLog requested", { traceId: this.traceId, length: text.length });
+        muxLogInfo("mux.chatView: copyDebugLog requested", {
+          traceId: this.traceId,
+          length: text.length,
+        });
 
         await vscode.env.clipboard.writeText(text);
-        this.postMessage({ type: "uiNotice", level: "info", message: "Copied mux debug log to clipboard." });
+        this.postMessage({
+          type: "uiNotice",
+          level: "info",
+          message: "Copied mux debug log to clipboard.",
+        });
         return;
       }
 
@@ -1390,7 +1444,6 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     }
   }
 
-
   private resolveOrpcProcedure(
     client: unknown,
     path: string[]
@@ -1436,20 +1489,27 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     this.activeOrpcStreams.delete(streamId);
 
     void stream.iterator.return?.().catch((error) => {
-      muxLogWarn("mux.chatView: stream iterator return failed", { streamId, error: formatError(error) });
+      muxLogWarn("mux.chatView: stream iterator return failed", {
+        streamId,
+        error: formatError(error),
+      });
     });
   }
 
   private isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
     return Boolean(
       value &&
-        typeof value === "object" &&
-        Symbol.asyncIterator in value &&
-        typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function"
+      typeof value === "object" &&
+      Symbol.asyncIterator in value &&
+      typeof (value as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] === "function"
     );
   }
 
-  private async pumpOrpcStream(streamId: string, iterator: AsyncIterator<unknown>, controller: AbortController): Promise<void> {
+  private async pumpOrpcStream(
+    streamId: string,
+    iterator: AsyncIterator<unknown>,
+    controller: AbortController
+  ): Promise<void> {
     try {
       for await (const value of {
         [Symbol.asyncIterator]() {
@@ -1620,7 +1680,11 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       return;
     }
 
-    if (this.subscribedWorkspaceId === workspaceId && this.subscriptionAbort && !this.subscriptionAbort.signal.aborted) {
+    if (
+      this.subscribedWorkspaceId === workspaceId &&
+      this.subscriptionAbort &&
+      !this.subscriptionAbort.signal.aborted
+    ) {
       return;
     }
 
@@ -1656,7 +1720,10 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
     }
 
     try {
-      const iterator = await api.client.workspace.onChat({ workspaceId }, { signal: controller.signal });
+      const iterator = await api.client.workspace.onChat(
+        { workspaceId },
+        { signal: controller.signal }
+      );
 
       for await (const event of iterator) {
         if (controller.signal.aborted) {
@@ -1687,7 +1754,6 @@ class MuxChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposab
       }
     }
   }
-
 
   private async openWorkspaceFromView(workspaceId: string): Promise<void> {
     assert(typeof workspaceId === "string", "openWorkspaceFromView requires workspaceId");
@@ -1757,7 +1823,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("mux.configureConnection", () => configureConnectionCommand(context))
+    vscode.commands.registerCommand("mux.configureConnection", () =>
+      configureConnectionCommand(context)
+    )
   );
 
   context.subscriptions.push(
@@ -1771,4 +1839,3 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
  * Deactivate the extension
  */
 export function deactivate() {}
-

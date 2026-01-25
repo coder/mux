@@ -417,13 +417,6 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
-  updateAISettings: {
-    input: z.object({
-      workspaceId: z.string(),
-      aiSettings: WorkspaceAISettingsSchema,
-    }),
-    output: ResultSchema(z.void(), z.string()),
-  },
   archive: {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),

@@ -199,8 +199,9 @@ function ChatComposerInner(props: {
     const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, thinkingLevel);
 
     api.workspace
-      .updateAISettings({
+      .updateAgentAISettings({
         workspaceId: props.workspaceId,
+        agentId,
         aiSettings: { model: canonicalModel, thinkingLevel: effectiveThinkingLevel },
       })
       .catch(() => {
