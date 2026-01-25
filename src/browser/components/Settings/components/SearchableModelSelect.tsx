@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
 import { ProviderIcon } from "@/browser/components/ProviderIcon";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { getModelName, getModelProvider } from "@/common/utils/ai/models";
 
@@ -103,6 +104,8 @@ export function SearchableModelSelect(props: {
         break;
       case "Escape":
         e.preventDefault();
+        // Prevent Escape from triggering global handlers (like stream interrupt).
+        stopKeyboardPropagation(e);
         setIsOpen(false);
         break;
     }
