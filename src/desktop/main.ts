@@ -31,6 +31,13 @@ import {
   dialog,
   screen,
 } from "electron";
+
+// Increase renderer V8 heap limit from default ~4GB to 8GB.
+// At ~3.9GB usage, the default limit causes frequent Mark-Compact GC cycles
+// with low mutator utilization (~39%), degrading UI responsiveness.
+// Must be called before app.whenReady().
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
+
 import * as fs from "fs";
 import * as path from "path";
 import type { Config } from "@/node/config";
