@@ -3,6 +3,7 @@ import { Streamdown } from "streamdown";
 import type { Pluggable } from "unified";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import remarkBreaks from "remark-breaks";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -22,12 +23,27 @@ interface MarkdownCoreProps {
    * Default: false for completed content, true during streaming.
    */
   parseIncompleteMarkdown?: boolean;
+  /**
+   * Preserve single newlines as line breaks (like GitHub-flavored markdown).
+   * When true, single newlines in text become <br> elements instead of being
+   * collapsed to spaces. Useful for user-authored content where newlines
+   * are intentional. Default: false.
+   */
+  preserveLineBreaks?: boolean;
 }
 
 // Plugin arrays are defined at module scope to maintain stable references.
 // Streamdown treats new array references as changes requiring full re-parse.
 const REMARK_PLUGINS: Pluggable[] = [
   [remarkGfm, {}],
+  [remarkMath, { singleDollarTextMath: false }],
+];
+
+// Same as above, but with remarkBreaks to preserve single newlines as <br>.
+// Used for user-authored content where newlines are intentional (e.g., user messages).
+const REMARK_PLUGINS_WITH_BREAKS: Pluggable[] = [
+  [remarkGfm, {}],
+  remarkBreaks,
   [remarkMath, { singleDollarTextMath: false }],
 ];
 
@@ -104,7 +120,7 @@ const REHYPE_PLUGINS: Pluggable[] = [
  * Memoized to prevent expensive re-parsing when content hasn't changed.
  */
 export const MarkdownCore = React.memo<MarkdownCoreProps>(
-  ({ content, children, parseIncompleteMarkdown = false }) => {
+  ({ content, children, parseIncompleteMarkdown = false, preserveLineBreaks = false }) => {
     // Memoize the normalized content to avoid recalculating on every render
     const normalizedContent = useMemo(() => normalizeMarkdown(content), [content]);
 
@@ -112,7 +128,7 @@ export const MarkdownCore = React.memo<MarkdownCoreProps>(
       <>
         <Streamdown
           components={markdownComponents}
-          remarkPlugins={REMARK_PLUGINS}
+          remarkPlugins={preserveLineBreaks ? REMARK_PLUGINS_WITH_BREAKS : REMARK_PLUGINS}
           rehypePlugins={REHYPE_PLUGINS}
           parseIncompleteMarkdown={parseIncompleteMarkdown}
           // Use "static" mode for completed content to bypass useTransition() deferral.
