@@ -103,7 +103,8 @@ export const DevcontainerUnavailable: AppStory = {
 
     // Dev container button should be disabled (wait for availability data to load)
     const groupCanvas = within(runtimeGroup);
-    const devcontainerButton = groupCanvas.getByText("Dev container").closest("button");
+    const devcontainerText = await groupCanvas.findByText("Dev container");
+    const devcontainerButton = devcontainerText.closest("button");
     if (!devcontainerButton) throw new Error("Dev container button not found");
     await waitFor(
       async () => {
@@ -143,7 +144,8 @@ export const DevcontainerSingleConfig: AppStory = {
 
     // Click Dev container runtime button (find within the group to avoid ambiguity)
     const groupCanvas = within(runtimeGroup);
-    const devcontainerButton = groupCanvas.getByText("Dev container").closest("button");
+    const devcontainerText = await groupCanvas.findByText("Dev container");
+    const devcontainerButton = devcontainerText.closest("button");
     if (!devcontainerButton) throw new Error("Dev container button not found");
     await userEvent.click(devcontainerButton);
 
@@ -195,7 +197,8 @@ export const DevcontainerMultiConfig: AppStory = {
 
     // Click Dev container runtime button (find within the group to avoid ambiguity)
     const groupCanvas = within(runtimeGroup);
-    const devcontainerButton = groupCanvas.getByText("Dev container").closest("button");
+    const devcontainerText = await groupCanvas.findByText("Dev container");
+    const devcontainerButton = devcontainerText.closest("button");
     if (!devcontainerButton) throw new Error("Dev container button not found");
     await userEvent.click(devcontainerButton);
 
