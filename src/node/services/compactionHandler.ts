@@ -451,6 +451,12 @@ export class CompactionHandler {
     // Clear entire history and get deleted sequences
     const clearResult = await this.historyService.clearHistory(this.workspaceId);
     if (!clearResult.success) {
+      // We persist post-compaction state before clearing history for crash safety.
+      // If clearHistory fails, the pre-compaction messages are still intact, so keeping the
+      // persisted snapshot would cause redundant injection on the next send.
+      this.cachedFileDiffs = [];
+      await this.deletePersistedPendingStateBestEffort();
+
       return Err(`Failed to clear history: ${clearResult.error}`);
     }
     const deletedSequences = clearResult.data;

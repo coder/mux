@@ -511,6 +511,16 @@ describe("CompactionHandler", () => {
 
       expect(result).toBe(false);
       expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(0);
+
+      // Ensure we don't keep a persisted snapshot when compaction didn't clear history.
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      let exists = true;
+      try {
+        await fsPromises.stat(persistedPath);
+      } catch {
+        exists = false;
+      }
+      expect(exists).toBe(false);
     });
 
     it("should return false when appendToHistory() fails", async () => {
