@@ -9,22 +9,13 @@ export const PolicyProviderNameSchema = z.enum(
 );
 export type PolicyProviderName = z.infer<typeof PolicyProviderNameSchema>;
 
-export const PolicyModelAccessRuleSchema = z
-  .object({
-    // NOTE: the policy file itself is evaluated as JS before validation.
-    // This field is therefore the evaluated result of any expression.
-    match: z.union([z.string(), z.array(z.string())]),
-  })
-  .strict();
-export type PolicyModelAccessRule = z.infer<typeof PolicyModelAccessRuleSchema>;
-
 export const PolicyProviderAccessSchema = z
   .object({
     id: PolicyProviderNameSchema,
     // Empty/undefined means "do not force".
     base_url: z.string().optional(),
     // Empty/undefined means "allow all".
-    model_access: z.array(PolicyModelAccessRuleSchema).optional(),
+    model_access: z.array(z.string()).optional(),
   })
   .strict();
 export type PolicyProviderAccess = z.infer<typeof PolicyProviderAccessSchema>;

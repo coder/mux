@@ -441,38 +441,6 @@ export class CoderService {
   }
 
   /**
-   * Best-effort: get the signed-in Coder user's email via `coder whoami`.
-   * Returns null if unavailable (not logged in, older CLI, etc.).
-   */
-  async getSignedInEmail(): Promise<string | null> {
-    try {
-      using proc = execAsync("coder whoami --output json");
-      const { stdout } = await proc.result;
-
-      const data = JSON.parse(stdout) as unknown;
-      if (!Array.isArray(data) || !data[0] || typeof data[0] !== "object") {
-        return null;
-      }
-
-      const record = data[0] as Record<string, unknown>;
-      const email = record.email;
-      if (typeof email === "string" && email.trim()) {
-        return email.trim();
-      }
-
-      // Be permissive across CLI versions.
-      const altEmail = record.user_email;
-      if (typeof altEmail === "string" && altEmail.trim()) {
-        return altEmail.trim();
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
    * Get the Coder deployment URL via `coder whoami`.
    * Throws if Coder CLI is not configured/logged in.
    */

@@ -2,18 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import type { CoderService } from "@/node/services/coderService";
 import { PolicyService } from "./policyService";
 
 const PREFIX = "mux-policy-service-test-";
-
-class FakeCoderService {
-  constructor(private readonly email: string | null) {}
-
-  getSignedInEmail(): Promise<string | null> {
-    return Promise.resolve(this.email);
-  }
-}
 
 describe("PolicyService", () => {
   let tempDir: string;
@@ -22,7 +13,7 @@ describe("PolicyService", () => {
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(tmpdir(), PREFIX));
-    policyPath = path.join(tempDir, "policy.js");
+    policyPath = path.join(tempDir, "policy.json");
     prevPolicyFileEnv = process.env.MUX_POLICY_FILE;
   });
 
@@ -39,18 +30,18 @@ describe("PolicyService", () => {
   test("disabled when MUX_POLICY_FILE is unset", async () => {
     delete process.env.MUX_POLICY_FILE;
 
-    const service = new PolicyService(new FakeCoderService(null) as unknown as CoderService);
+    const service = new PolicyService();
     await service.initialize();
     expect(service.getStatus()).toEqual({ state: "disabled" });
     expect(service.getEffectivePolicy()).toBeNull();
     service.dispose();
   });
 
-  test("blocks startup when policy file fails to evaluate", async () => {
-    await writeFile(policyPath, "({ policy_format_version: '0.1',", "utf-8");
+  test("blocks startup when policy file fails to parse", async () => {
+    await writeFile(policyPath, '{"policy_format_version":"0.1",', "utf-8");
     process.env.MUX_POLICY_FILE = policyPath;
 
-    const service = new PolicyService(new FakeCoderService(null) as unknown as CoderService);
+    const service = new PolicyService();
     await service.initialize();
 
     const status = service.getStatus();
@@ -65,12 +56,15 @@ describe("PolicyService", () => {
   test("blocks startup when minimum_client_version is higher than client", async () => {
     await writeFile(
       policyPath,
-      "({ policy_format_version: '0.1', minimum_client_version: '9999.0.0' })",
+      JSON.stringify({
+        policy_format_version: "0.1",
+        minimum_client_version: "9999.0.0",
+      }),
       "utf-8"
     );
     process.env.MUX_POLICY_FILE = policyPath;
 
-    const service = new PolicyService(new FakeCoderService(null) as unknown as CoderService);
+    const service = new PolicyService();
     await service.initialize();
 
     const status = service.getStatus();
@@ -82,35 +76,46 @@ describe("PolicyService", () => {
     service.dispose();
   });
 
-  test("evaluates JS expressions with user.email context", async () => {
+  test("enforces provider_access model_access allowlist when non-empty", async () => {
     await writeFile(
       policyPath,
-      `({
+      JSON.stringify({
         policy_format_version: "0.1",
-        provider_access: [
-          {
-            id: "openai",
-            model_access: [
-              {
-                match: user.email === "admin@example.com" ? ["gpt-4"] : ["gpt-3.5"],
-              },
-            ],
-          },
-        ],
-      })`,
+        provider_access: [{ id: "openai", model_access: ["gpt-4"] }],
+      }),
       "utf-8"
     );
     process.env.MUX_POLICY_FILE = policyPath;
 
-    const service = new PolicyService(
-      new FakeCoderService("admin@example.com") as unknown as CoderService
-    );
+    const service = new PolicyService();
     await service.initialize();
 
     expect(service.isEnforced()).toBe(true);
     expect(service.isProviderAllowed("openai")).toBe(true);
+    expect(service.isProviderAllowed("anthropic")).toBe(false);
     expect(service.isModelAllowed("openai", "gpt-4")).toBe(true);
     expect(service.isModelAllowed("openai", "gpt-3.5")).toBe(false);
+
+    service.dispose();
+  });
+
+  test("treats empty model_access as allow-all for that provider", async () => {
+    await writeFile(
+      policyPath,
+      JSON.stringify({
+        policy_format_version: "0.1",
+        provider_access: [{ id: "openai", model_access: [] }],
+      }),
+      "utf-8"
+    );
+    process.env.MUX_POLICY_FILE = policyPath;
+
+    const service = new PolicyService();
+    await service.initialize();
+
+    expect(service.isEnforced()).toBe(true);
+    expect(service.isModelAllowed("openai", "gpt-4")).toBe(true);
+    expect(service.isModelAllowed("openai", "gpt-3.5")).toBe(true);
 
     service.dispose();
   });

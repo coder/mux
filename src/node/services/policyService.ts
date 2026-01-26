@@ -1,5 +1,4 @@
 import { EventEmitter } from "events";
-import * as vm from "node:vm";
 import { readFile } from "node:fs/promises";
 import { log } from "@/node/services/log";
 import {
@@ -11,13 +10,11 @@ import {
 import type { ProviderName } from "@/common/constants/providers";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MCPServerTransport } from "@/common/types/mcp";
-import type { CoderService } from "@/node/services/coderService";
 import { compareVersions } from "@/node/services/coderService";
 
 import packageJson from "../../../package.json";
 
 const POLICY_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
-const POLICY_EVAL_TIMEOUT_MS = 250;
 
 function stableNormalize(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -67,17 +64,9 @@ function normalizeForcedBaseUrl(value: string | undefined): string | undefined {
   return trimmed;
 }
 
-interface PolicyUserContext {
-  user: {
-    email: string | null;
-  };
-}
-
-function evaluatePolicyFile(text: string, context: PolicyUserContext): unknown {
-  // Treat the file as a JS expression returning the policy object.
-  // Wrapping in parentheses allows the file to start with `{ ... }`.
-  const wrapped = `(${text}\n)`;
-  return vm.runInNewContext(wrapped, context, { timeout: POLICY_EVAL_TIMEOUT_MS });
+function parsePolicyFile(text: string): unknown {
+  // Policy files are strict JSON (no JS evaluation).
+  return JSON.parse(text) as unknown;
 }
 
 export type PolicyStatus =
@@ -96,7 +85,7 @@ export class PolicyService {
     policy: this.effectivePolicy,
   });
 
-  constructor(private readonly coderService: CoderService) {
+  constructor() {
     // Multiple windows can subscribe.
     this.emitter.setMaxListeners(50);
   }
@@ -231,13 +220,12 @@ export class PolicyService {
     }
 
     try {
-      const [clientVersion, email, fileText] = await Promise.all([
+      const [clientVersion, fileText] = await Promise.all([
         getClientVersion(),
-        this.coderService.getSignedInEmail().catch(() => null),
         readFile(filePath, "utf8"),
       ]);
 
-      const raw = evaluatePolicyFile(fileText, { user: { email } });
+      const raw = parsePolicyFile(fileText);
       const parsed = PolicyFileSchema.parse(raw);
 
       // Version gates
@@ -269,18 +257,11 @@ export class PolicyService {
             return { id: p.id, forcedBaseUrl, allowedModels: null };
           }
 
-          const allowedModels: string[] = [];
-          for (const rule of models) {
-            const match = rule.match;
-            if (Array.isArray(match)) {
-              allowedModels.push(...match);
-            } else {
-              allowedModels.push(match);
-            }
+          // Normalize + drop empties. An empty list means "allow all".
+          const normalized = models.map((m) => m.trim()).filter(Boolean);
+          if (normalized.length === 0) {
+            return { id: p.id, forcedBaseUrl, allowedModels: null };
           }
-
-          // Normalize + drop empties.
-          const normalized = allowedModels.map((m) => m.trim()).filter(Boolean);
 
           return { id: p.id, forcedBaseUrl, allowedModels: normalized };
         });

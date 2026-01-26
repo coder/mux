@@ -197,7 +197,7 @@ export class ServiceContainer {
     this.signingService = getSigningService();
     this.coderService = coderService;
 
-    this.policyService = new PolicyService(this.coderService);
+    this.policyService = new PolicyService();
 
     // PolicyService is a cross-cutting dependency; use setter injection to avoid
     // constructor cycles between services.

@@ -14,71 +14,39 @@ Mux supports an **admin-controlled policy file** that can restrict what users ca
 Set `MUX_POLICY_FILE` to an absolute path on the machine running Mux:
 
 ```bash
-export MUX_POLICY_FILE="/etc/mux/policy.js"
+export MUX_POLICY_FILE="/etc/mux/policy.json"
 ```
 
-If `MUX_POLICY_FILE` is set but the file can’t be read/evaluated/validated, Mux will **block startup** with an error.
+If `MUX_POLICY_FILE` is set but the file can’t be read/parsed/validated, Mux will **block startup** with an error.
 
 ## File format
 
-The policy file is evaluated as a **trusted JavaScript expression** that returns an object.
+The policy file is **strict JSON**.
 
-- This allows comments and dynamic rules.
-- The evaluated result is **strictly validated**; unknown fields are rejected.
+- Unknown fields are rejected.
+- JSON must be valid (no comments, no trailing commas).
 
 Example skeleton:
 
-```js
-({
-  policy_format_version: "0.1",
-
-  // Optional: block running older clients.
-  minimum_client_version: "1.0.0",
-
-  // Optional: provider/model restrictions.
-  provider_access: [
+```json
+{
+  "policy_format_version": "0.1",
+  "minimum_client_version": "1.0.0",
+  "provider_access": [
     {
-      id: "openai",
-      base_url: "https://api.openai.com/v1", // optional, forces base URL
-      model_access: [{ match: ["gpt-5.2", "gpt-5.2-codex"] }], // optional
-    },
+      "id": "openai",
+      "base_url": "https://api.openai.com/v1",
+      "model_access": ["gpt-5.2", "gpt-5.2-codex"]
+    }
   ],
-
-  // Optional: MCP restrictions.
-  tools: {
-    allow_user_defined_mcp: {
-      stdio: true,
-      remote: false,
-    },
+  "tools": {
+    "allow_user_defined_mcp": {
+      "stdio": true,
+      "remote": false
+    }
   },
-
-  // Optional: runtime allowlist.
-  runtimes: [{ id: "worktree" }, { id: "ssh+coder" }],
-});
-```
-
-## Evaluation context
-
-The policy file is evaluated with a sandbox global named `user`:
-
-- `user.email`: the signed-in Coder user email when available, otherwise `null`.
-
-This enables dynamic JS expressions like:
-
-```js
-({
-  policy_format_version: "0.1",
-  provider_access: [
-    {
-      id: "openai",
-      model_access: [
-        {
-          match: user.email === "admin@example.com" ? ["gpt-5.2"] : ["gpt-5.2-codex-mini"],
-        },
-      ],
-    },
-  ],
-});
+  "runtimes": [{ "id": "worktree" }, { "id": "ssh+coder" }]
+}
 ```
 
 ## Provider and model access (`provider_access`)
@@ -91,14 +59,13 @@ Each entry supports:
 
 - `id` (required): provider ID (matches what you see in Settings → Providers)
 - `base_url` (optional): if set to a non-empty string, Mux forces that provider base URL
-- `model_access` (optional): a list of rules; the allowed model set is the **union** of all `match` values
+- `model_access` (optional): list of allowed model IDs
 
-`model_access.match` may be either:
+`model_access` behavior:
 
-- a single model ID string, or
-- an array of model ID strings
-
-If `model_access` is omitted or an empty array, all models for that provider are allowed.
+- If omitted, all models for that provider are allowed.
+- If present but an empty list, all models for that provider are allowed.
+- If non-empty, only the listed models are allowed.
 
 ### Mux Gateway models
 
@@ -111,32 +78,32 @@ The Mux Gateway provider ID is `mux-gateway`. Gateway model IDs use the form:
 
 Example:
 
-```js
-({
-  policy_format_version: "0.1",
-  provider_access: [
+```json
+{
+  "policy_format_version": "0.1",
+  "provider_access": [
     {
-      id: "mux-gateway",
-      model_access: [{ match: ["openai/gpt-5.2", "anthropic/claude-sonnet-4-5"] }],
-    },
-  ],
-});
+      "id": "mux-gateway",
+      "model_access": ["openai/gpt-5.2", "anthropic/claude-sonnet-4-5"]
+    }
+  ]
+}
 ```
 
 ## MCP restrictions (`tools.allow_user_defined_mcp`)
 
 Control whether users can add/edit MCP servers themselves:
 
-```js
-({
-  policy_format_version: "0.1",
-  tools: {
-    allow_user_defined_mcp: {
-      stdio: false,
-      remote: false,
-    },
-  },
-});
+```json
+{
+  "policy_format_version": "0.1",
+  "tools": {
+    "allow_user_defined_mcp": {
+      "stdio": false,
+      "remote": false
+    }
+  }
+}
 ```
 
 - `stdio` applies to local `stdio` MCP servers.
@@ -159,11 +126,11 @@ If `runtimes` is present, only the listed runtime IDs are allowed:
 
 Example: allow only worktrees and Coder-managed SSH:
 
-```js
-({
-  policy_format_version: "0.1",
-  runtimes: [{ id: "worktree" }, { id: "ssh+coder" }],
-});
+```json
+{
+  "policy_format_version": "0.1",
+  "runtimes": [{ "id": "worktree" }, { "id": "ssh+coder" }]
+}
 ```
 
 ## Operational behavior
