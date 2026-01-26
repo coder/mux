@@ -49,9 +49,11 @@ describe("Chat with Mux system workspace (UI)", () => {
 
       expect(window.location.pathname).toBe(`/workspace/${MUX_CHAT_WORKSPACE_ID}`);
       expect(view.queryByText("Welcome to Mux")).toBeNull();
+
+      // On first boot, the mux-chat workspace should seed a synthetic welcome message.
       await waitFor(
         () => {
-          expect(view.getByText(/Hi, I'm Mux/i)).toBeTruthy();
+          expect(view.container.querySelector('[data-message-id="mux-chat-welcome"]')).toBeTruthy();
         },
         { timeout: 30_000 }
       );

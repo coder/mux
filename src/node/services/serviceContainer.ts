@@ -316,7 +316,8 @@ export class ServiceContainer {
       MUX_CHAT_WELCOME_MESSAGE_ID,
       "assistant",
       MUX_CHAT_WELCOME_MESSAGE,
-      { synthetic: true, timestamp: Date.now() }
+      // Note: This message should be visible in the UI, so it must NOT be marked synthetic.
+      { timestamp: Date.now() }
     );
 
     const appendResult = await this.historyService.appendToHistory(MUX_CHAT_WORKSPACE_ID, message);
