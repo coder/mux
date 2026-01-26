@@ -6,7 +6,7 @@ import * as fs from "node:fs/promises";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 
-import type { MuxMessage } from "@/common/types/message";
+import type { MuxMessage, MuxToolPart } from "@/common/types/message";
 
 import { resolveAgentBody } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
@@ -47,18 +47,20 @@ export interface RunSystem1MemoryWriterParams {
   generateTextImpl?: GenerateTextLike;
 }
 
-type MemoryWriterEvent = {
+interface MemoryWriterToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  output?: unknown;
+  state: "input-available" | "output-available";
+}
+
+interface MemoryWriterEvent {
   historySequence?: number;
   role: string;
   text?: string;
-  toolCalls?: Array<{
-    toolCallId: string;
-    toolName: string;
-    input: unknown;
-    output?: unknown;
-    state: "input-available" | "output-available";
-  }>;
-};
+  toolCalls?: MemoryWriterToolCall[];
+}
 
 function buildMemoryWriterEvents(history: MuxMessage[]): MemoryWriterEvent[] {
   const events: MemoryWriterEvent[] = [];
@@ -72,23 +74,12 @@ function buildMemoryWriterEvents(history: MuxMessage[]): MemoryWriterEvent[] {
       .join("");
 
     const toolParts = msg.parts
-      .filter(
-        (
-          part
-        ): part is {
-          type: "dynamic-tool";
-          toolCallId: string;
-          toolName: string;
-          input: unknown;
-          state: "input-available" | "output-available";
-          output?: unknown;
-        } => part.type === "dynamic-tool"
-      )
+      .filter((part): part is MuxToolPart => part.type === "dynamic-tool")
       .map((part) => ({
         toolCallId: part.toolCallId,
         toolName: part.toolName,
         input: part.input,
-        output: part.output,
+        output: part.state === "output-available" ? part.output : undefined,
         state: part.state,
       }));
 

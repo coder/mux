@@ -589,7 +589,7 @@ export class AIService extends EventEmitter {
         const ctx = this.memoryWriterContextsByMessageId.get(data.messageId);
         if (ctx) {
           this.memoryWriterContextsByMessageId.delete(data.messageId);
-          this.memoryWriterPolicy.onAssistantStreamEnd(ctx);
+          void this.memoryWriterPolicy.onAssistantStreamEnd(ctx);
         }
       } catch (error) {
         log.debug("[system1][memory] Failed to schedule memory writer", {
