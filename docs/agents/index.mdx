@@ -432,7 +432,9 @@ Rules:
 
 - Line numbers are 1-based indices into the numbered output.
 - Prefer errors, stack traces, failing test summaries, and actionable warnings.
-- Prefer fewer, wider ranges; keep the number of ranges small (usually ≤ 8).
+- Prefer high signal density: keep ranges tight around important lines plus minimal surrounding context.
+- Merge adjacent/overlapping ranges only when the lines between are also informative. Do NOT add noise just
+  to reduce range count; it's OK to return many ranges when denoising (e.g., > 8).
 - Denoise aggressively: omit duplicate/redundant lines and repeated messages with the same meaning
   (e.g., repeated progress, retries, or identical stack traces). If the same error repeats, keep only
   the most informative instance plus minimal surrounding context.
