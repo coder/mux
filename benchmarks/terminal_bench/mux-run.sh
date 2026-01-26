@@ -30,6 +30,7 @@ MUX_THINKING_LEVEL="${MUX_THINKING_LEVEL:-high}"
 MUX_MODE="${MUX_MODE:-exec}"
 MUX_RUNTIME="${MUX_RUNTIME:-}"
 MUX_EXPERIMENTS="${MUX_EXPERIMENTS:-}"
+MUX_PRELUDE="${MUX_PRELUDE:-}"
 
 resolve_project_path() {
   if [[ -n "${MUX_PROJECT_PATH}" ]]; then
@@ -79,6 +80,11 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
       cmd+=(--experiment "${exp}")
     fi
   done
+fi
+
+# Add prelude to system prompt (not inherited by sub-agents)
+if [[ -n "${MUX_PRELUDE}" ]]; then
+  cmd+=(--prelude "${MUX_PRELUDE}")
 fi
 
 MUX_OUTPUT_FILE="/tmp/mux-output.jsonl"

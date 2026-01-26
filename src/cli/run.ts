@@ -257,6 +257,10 @@ program
   .option("--no-mcp-config", "ignore .mux/mcp.jsonc, use only --mcp servers")
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
+  .option(
+    "--prelude <text>",
+    "additional instructions appended to the system prompt (not inherited by sub-agents)"
+  )
   .addHelpText(
     "after",
     `
@@ -270,6 +274,7 @@ Examples:
   $ mux run --json "List all files" | jq '.type'
   $ mux run --mcp "memory=npx -y @modelcontextprotocol/server-memory" "Remember this"
   $ mux run --mcp "chrome=npx chrome-devtools-mcp" --mcp "fs=npx @anthropic/mcp-fs" "Take a screenshot"
+  $ mux run --prelude "Always explain your reasoning first" "Refactor auth module"
 `
   );
 
@@ -290,6 +295,7 @@ interface CLIOptions {
   mcpConfig: boolean;
   experiment: string[];
   budget?: number;
+  prelude?: string;
 }
 
 const opts = program.opts<CLIOptions>();
@@ -546,6 +552,9 @@ async function main(): Promise<number> {
     thinkingLevel,
     agentId: cliMode,
     experiments,
+    // Prelude is appended to system prompt but NOT inherited by sub-agents (additionalSystemInstructions
+    // is not passed through in taskService.ts when creating sub-agent tasks)
+    additionalSystemInstructions: opts.prelude,
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     // Plan agent instructions are handled by the backend (has access to plan file path)
   });

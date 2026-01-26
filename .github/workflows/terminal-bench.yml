@@ -38,6 +38,10 @@ on:
         description: "Experiments to enable (comma-separated)"
         required: false
         type: string
+      prelude:
+        description: "Additional instructions appended to system prompt (not inherited by sub-agents)"
+        required: false
+        type: string
       timeout:
         description: "Agent timeout in seconds (default: 1800 = 30 min)"
         required: false
@@ -94,6 +98,10 @@ on:
         description: "Experiments to enable (comma-separated)"
         required: false
         type: string
+      prelude:
+        description: "Additional instructions appended to system prompt (not inherited by sub-agents)"
+        required: false
+        type: string
       timeout:
         description: "Agent timeout in seconds (default: 1800 = 30 min)"
         required: false
@@ -147,6 +155,7 @@ jobs:
             ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_PRELUDE: ${{ inputs.prelude }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}

@@ -61,6 +61,7 @@ class MuxAgent(BaseInstalledAgent):
         "MUX_MODE",
         "MUX_RUNTIME",
         "MUX_EXPERIMENTS",
+        "MUX_PRELUDE",
     )
 
     def __init__(
