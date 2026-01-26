@@ -34,6 +34,7 @@ describe("MemoryWriterPolicy", () => {
           projects: new Map(),
           taskSettings: { ...DEFAULT_TASK_SETTINGS, memoryWriterIntervalMessages: 2 },
         }),
+        loadProvidersConfig: () => null,
       },
       {
         getHistory: (): Promise<
@@ -75,6 +76,7 @@ describe("MemoryWriterPolicy", () => {
           projects: new Map(),
           taskSettings: { ...DEFAULT_TASK_SETTINGS, memoryWriterIntervalMessages: 1 },
         }),
+        loadProvidersConfig: () => null,
       },
       {
         getHistory: async (): Promise<
@@ -114,6 +116,43 @@ describe("MemoryWriterPolicy", () => {
     expect(getHistoryCalls).toBe(2);
   });
 
+  it("uses agentAiDefaults.system1_memory_writer model overrides", async () => {
+    let lastModelString: string | undefined;
+
+    const policy = new MemoryWriterPolicy(
+      {
+        loadConfigOrDefault: () => ({
+          projects: new Map(),
+          taskSettings: { ...DEFAULT_TASK_SETTINGS, memoryWriterIntervalMessages: 1 },
+          agentAiDefaults: {
+            system1_memory_writer: {
+              modelString: "google:gemini-3-flash-preview",
+              thinkingLevel: "high",
+            },
+          },
+        }),
+        loadProvidersConfig: () => null,
+      },
+      {
+        getHistory: (): Promise<
+          { success: true; data: MuxMessage[] } | { success: false; error: string }
+        > => Promise.resolve({ success: true, data: [] }),
+      },
+      (modelString) => {
+        lastModelString = modelString;
+        return Promise.resolve(undefined);
+      }
+    );
+
+    const promise = policy.onAssistantStreamEnd(
+      createContext({ messageId: "msg_1", modelString: "openai:gpt-5.1-codex-mini" })
+    );
+    expect(promise).toBeDefined();
+    await promise;
+
+    expect(lastModelString).toBe("google:gemini-3-flash-preview");
+  });
+
   it("skips when System1 is disabled", () => {
     let getHistoryCalls = 0;
 
@@ -123,6 +162,7 @@ describe("MemoryWriterPolicy", () => {
           projects: new Map(),
           taskSettings: { ...DEFAULT_TASK_SETTINGS, memoryWriterIntervalMessages: 1 },
         }),
+        loadProvidersConfig: () => null,
       },
       {
         getHistory: (): Promise<

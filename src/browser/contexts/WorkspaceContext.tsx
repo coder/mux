@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
@@ -35,12 +35,13 @@ import {
 import { useAPI } from "@/browser/contexts/API";
 import {
   readPersistedState,
+  readPersistedString,
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
@@ -366,10 +367,70 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     void api.config
       .getConfig()
       .then((cfg) => {
-        updatePersistedState(
-          AGENT_AI_DEFAULTS_KEY,
-          normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {})
-        );
+        const normalizedAgentAiDefaults = normalizeAgentAiDefaults(cfg.agentAiDefaults ?? {});
+        updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedAgentAiDefaults);
+
+        // One-time best-effort migration: legacy System1 model/thinking settings (localStorage)
+        // -> global per-agent defaults (backend config).
+        if (api.config.updateAgentAiDefaults) {
+          const legacyModel = readPersistedString("preferredSystem1Model")?.trim();
+          const legacyThinkingRaw = readPersistedState<unknown>(
+            "preferredSystem1ThinkingLevel",
+            undefined
+          );
+          const legacyThinking = coerceThinkingLevel(legacyThinkingRaw) ?? "off";
+
+          const shouldMigrateModel = typeof legacyModel === "string" && legacyModel.length > 0;
+          const shouldMigrateThinking = legacyThinkingRaw !== undefined && legacyThinking !== "off";
+
+          if (shouldMigrateModel || shouldMigrateThinking) {
+            const mergeLegacyDefaults = (agentId: string, next: AgentAiDefaults): boolean => {
+              const existing = next[agentId] ?? {};
+              const updated = { ...existing };
+              let didUpdate = false;
+
+              if (shouldMigrateModel && !updated.modelString) {
+                updated.modelString = legacyModel;
+                didUpdate = true;
+              }
+
+              if (shouldMigrateThinking && !updated.thinkingLevel) {
+                updated.thinkingLevel = legacyThinking;
+                didUpdate = true;
+              }
+
+              if (didUpdate) {
+                next[agentId] = updated;
+              }
+
+              return didUpdate;
+            };
+
+            const nextDefaults: AgentAiDefaults = { ...normalizedAgentAiDefaults };
+            const updatedSystem1Bash = mergeLegacyDefaults("system1_bash", nextDefaults);
+            const updatedSystem1MemoryWriter = mergeLegacyDefaults(
+              "system1_memory_writer",
+              nextDefaults
+            );
+
+            const didUpdate = updatedSystem1Bash || updatedSystem1MemoryWriter;
+
+            if (didUpdate) {
+              const normalizedNext = normalizeAgentAiDefaults(nextDefaults);
+
+              api.config
+                .updateAgentAiDefaults({ agentAiDefaults: normalizedNext })
+                .then(() => {
+                  updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedNext);
+                  updatePersistedState("preferredSystem1Model", undefined);
+                  updatePersistedState("preferredSystem1ThinkingLevel", undefined);
+                })
+                .catch(() => {
+                  // Best-effort only.
+                });
+            }
+          }
+        }
 
         // Seed Mux Gateway prefs from backend so switching ports doesn't reset the UI.
         if (cfg.muxGatewayEnabled !== undefined) {

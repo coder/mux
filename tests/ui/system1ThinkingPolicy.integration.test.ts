@@ -1,18 +1,11 @@
 /**
- * Integration test: System 1 settings should only expose thinking levels
- * supported by the selected System 1 model.
+ * Integration test: System1 agent defaults should only expose thinking levels
+ * supported by the selected model.
  */
 
 import "./dom";
 import { fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
-import {
-  PREFERRED_SYSTEM_1_MODEL_KEY,
-  PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-} from "@/common/constants/storage";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import { createAppHarness } from "./harness";
@@ -22,7 +15,7 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 const GEMINI_FLASH_PREVIEW = "google:gemini-3-flash-preview";
 
 /**
- * Regression for: the System 1 Reasoning dropdown showing unsupported options.
+ * Regression for: the System1 Reasoning dropdown showing unsupported options.
  *
  * Example:
  * - Model: gemini-3-flash-preview
@@ -32,18 +25,22 @@ const GEMINI_FLASH_PREVIEW = "google:gemini-3-flash-preview";
  * - UI clamps display to "high"
  * - Dropdown does not include "xhigh"
  */
-describeIntegration("System 1 reasoning policy", () => {
+describeIntegration("System1 reasoning policy", () => {
   test("clamps and filters unsupported thinking levels for the selected model", async () => {
     const harness = await createAppHarness({
       branchPrefix: "system1",
-      beforeRender() {
-        updatePersistedState(getExperimentKey(EXPERIMENT_IDS.SYSTEM_1), true);
-        updatePersistedState(PREFERRED_SYSTEM_1_MODEL_KEY, GEMINI_FLASH_PREVIEW);
-        updatePersistedState(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, "xhigh");
-      },
     });
 
     try {
+      await harness.env.orpc.config.updateAgentAiDefaults({
+        agentAiDefaults: {
+          system1_bash: {
+            modelString: GEMINI_FLASH_PREVIEW,
+            thinkingLevel: "xhigh",
+          },
+        },
+      });
+
       const doc = harness.view.container.ownerDocument;
       const user = userEvent.setup({ document: doc });
 
@@ -51,28 +48,35 @@ describeIntegration("System 1 reasoning policy", () => {
       const settingsButton = await canvas.findByTestId("settings-button", {}, { timeout: 10_000 });
       settingsButton.click();
 
-      const body = within(harness.view.container.ownerDocument.body);
+      const body = within(doc.body);
       const dialog = await body.findByRole("dialog", {}, { timeout: 10_000 });
       const dialogCanvas = within(dialog);
 
-      const system1TabButton = await dialogCanvas.findByRole(
+      const agentsTabButton = await dialogCanvas.findByRole(
         "button",
         {
-          name: /system 1/i,
+          name: /agents/i,
         },
         { timeout: 10_000 }
       );
-      await user.click(system1TabButton);
+      await user.click(agentsTabButton);
 
-      await dialogCanvas.findByText(/System 1 Reasoning/i);
+      await dialogCanvas.findByText(/System1 Defaults \(internal\)/i);
 
-      const reasoningSelect = await waitFor(() => {
-        const el = dialog.querySelector('button[role="combobox"]') as HTMLButtonElement | null;
-        if (!el) {
-          throw new Error("System 1 Reasoning select not found");
-        }
-        return el;
-      });
+      const system1BashTitle = await dialogCanvas.findByText("System1 Bash");
+      const system1BashCard = system1BashTitle.closest("div.rounded-md") as HTMLElement | null;
+      if (!system1BashCard) {
+        throw new Error("System1 Bash defaults card not found");
+      }
+
+      const reasoningLabel = within(system1BashCard).getByText("Reasoning");
+      const reasoningContainer = reasoningLabel.parentElement;
+      const reasoningSelect = reasoningContainer?.querySelector(
+        'button[role="combobox"]'
+      ) as HTMLButtonElement | null;
+      if (!reasoningSelect) {
+        throw new Error("System1 Bash Reasoning select not found");
+      }
 
       await waitFor(() => {
         const value = reasoningSelect.textContent?.trim();
@@ -89,7 +93,7 @@ describeIntegration("System 1 reasoning policy", () => {
       const xhighOption = body.queryByRole("option", { name: "xhigh" });
       if (xhighOption) {
         throw new Error(
-          "Expected System 1 Reasoning dropdown to hide xhigh for gemini-3-flash-preview"
+          "Expected System1 Reasoning dropdown to hide xhigh for gemini-3-flash-preview"
         );
       }
     } finally {

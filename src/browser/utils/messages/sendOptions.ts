@@ -4,18 +4,12 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getDisableWorkspaceAgentsKey,
-  PREFERRED_SYSTEM_1_MODEL_KEY,
-  PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
-import {
-  readPersistedState,
-  readPersistedString,
-  updatePersistedState,
-} from "@/browser/hooks/usePersistedState";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
@@ -81,19 +75,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   // Read disableWorkspaceAgents toggle (workspace-scoped)
 
-  const system1ModelTrimmed = readPersistedString(PREFERRED_SYSTEM_1_MODEL_KEY)?.trim();
-  const baseSystem1Model =
-    system1ModelTrimmed !== undefined && system1ModelTrimmed.length > 0
-      ? migrateGatewayModel(system1ModelTrimmed)
-      : undefined;
-  const system1Model =
-    baseSystem1Model !== undefined ? toGatewayModel(baseSystem1Model) : undefined;
-  const system1ThinkingLevelRaw = readPersistedState<unknown>(
-    PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-    "off"
-  );
-  const system1ThinkingLevel = coerceThinkingLevel(system1ThinkingLevelRaw) ?? "off";
-
   const disableWorkspaceAgents = readPersistedState<boolean>(
     getDisableWorkspaceAgentsKey(workspaceId),
     false
@@ -101,8 +82,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   return {
     model,
-    system1Model,
-    system1ThinkingLevel: system1ThinkingLevel !== "off" ? system1ThinkingLevel : undefined,
     agentId,
     thinkingLevel,
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)

@@ -276,18 +276,6 @@ export function getLastRuntimeConfigKey(projectPath: string): string {
 export const PREFERRED_COMPACTION_MODEL_KEY = "preferredCompactionModel";
 
 /**
- * Get the localStorage key for the preferred System 1 model (global)
- * Format: "preferredSystem1Model"
- */
-export const PREFERRED_SYSTEM_1_MODEL_KEY = "preferredSystem1Model";
-
-/**
- * Get the localStorage key for the preferred System 1 thinking level (global)
- * Format: "preferredSystem1ThinkingLevel"
- */
-export const PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY = "preferredSystem1ThinkingLevel";
-
-/**
  * Get the localStorage key for cached per-agent AI defaults (global).
  * Format: "agentAiDefaults"
  */

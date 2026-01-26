@@ -4,19 +4,23 @@ import assert from "@/common/utils/assert";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
-import type { ThinkingLevel } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { DEFAULT_TASK_SETTINGS, SYSTEM1_MEMORY_WRITER_LIMITS } from "@/common/types/tasks";
 
-import type { Config } from "@/node/config";
+import type { Config, ProviderConfig } from "@/node/config";
 import type { HistoryService } from "@/node/services/historyService";
 import { log } from "@/node/services/log";
+import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 
 import type { LanguageModel } from "ai";
 
 import { runSystem1WriteProjectMemories } from "./system1MemoryWriter";
+
+const SYSTEM1_MEMORY_WRITER_AGENT_ID = "system1_memory_writer";
+
+const MUX_GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google", "xai"]);
 
 export interface MemoryWriterStreamContext {
   workspaceId: string;
@@ -29,8 +33,6 @@ export interface MemoryWriterStreamContext {
   // Stream options (captured at send time)
   modelString: string;
   muxProviderOptions: MuxProviderOptions;
-  system1Model?: string;
-  system1ThinkingLevel?: ThinkingLevel;
   system1Enabled: boolean;
 }
 
@@ -44,7 +46,7 @@ export class MemoryWriterPolicy {
   private readonly inFlightByWorkspace = new Map<string, Promise<void>>();
 
   constructor(
-    private readonly config: Pick<Config, "loadConfigOrDefault">,
+    private readonly config: Pick<Config, "loadConfigOrDefault" | "loadProvidersConfig">,
     private readonly historyService: Pick<HistoryService, "getHistory">,
     private readonly createModel: CreateModelFn
   ) {
@@ -116,13 +118,62 @@ export class MemoryWriterPolicy {
         return;
       }
 
-      const system1ModelString =
-        typeof ctx.system1Model === "string" ? ctx.system1Model.trim() : "";
-      const effectiveSystem1ModelString = system1ModelString || ctx.modelString;
+      const cfg = this.config.loadConfigOrDefault();
 
+      const applyMuxGatewayToSystem1Model = (candidateModelString: string): string => {
+        const trimmedCandidate = candidateModelString.trim();
+        if (!trimmedCandidate) {
+          return "";
+        }
+        if (trimmedCandidate.startsWith("mux-gateway:")) {
+          return trimmedCandidate;
+        }
+
+        if (cfg.muxGatewayEnabled === false) {
+          return trimmedCandidate;
+        }
+
+        const enabledModels = cfg.muxGatewayModels ?? [];
+        if (!enabledModels.includes(trimmedCandidate)) {
+          return trimmedCandidate;
+        }
+
+        const colonIndex = trimmedCandidate.indexOf(":");
+        if (colonIndex === -1) {
+          return trimmedCandidate;
+        }
+
+        const provider = trimmedCandidate.slice(0, colonIndex);
+        if (!MUX_GATEWAY_SUPPORTED_PROVIDERS.has(provider)) {
+          return trimmedCandidate;
+        }
+
+        const providersConfig = this.config.loadProvidersConfig();
+        const gatewayConfig: ProviderConfig = providersConfig?.["mux-gateway"] ?? {};
+        const gatewayCreds = resolveProviderCredentials("mux-gateway", gatewayConfig);
+        if (!gatewayCreds.isConfigured || !gatewayCreds.couponCode) {
+          return trimmedCandidate;
+        }
+
+        const model = trimmedCandidate.slice(colonIndex + 1);
+        return `mux-gateway:${provider}/${model}`;
+      };
+
+      const system1Defaults = cfg.agentAiDefaults?.[SYSTEM1_MEMORY_WRITER_AGENT_ID];
+      const system1ModelOverride =
+        typeof system1Defaults?.modelString === "string" ? system1Defaults.modelString.trim() : "";
+      const system1ModelCandidate = system1ModelOverride || ctx.modelString;
+      const effectiveSystem1ModelString = applyMuxGatewayToSystem1Model(system1ModelCandidate);
+
+      if (!effectiveSystem1ModelString) {
+        workspaceLog.debug("[system1][memory] Skipping memory writer (missing System1 model)");
+        return;
+      }
+
+      const requestedThinkingLevel = system1Defaults?.thinkingLevel ?? "off";
       const effectiveThinkingLevel = enforceThinkingPolicy(
         effectiveSystem1ModelString,
-        ctx.system1ThinkingLevel ?? "off"
+        requestedThinkingLevel
       );
 
       const model = await this.createModel(effectiveSystem1ModelString, ctx.muxProviderOptions);

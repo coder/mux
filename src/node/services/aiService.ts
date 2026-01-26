@@ -1206,8 +1206,6 @@ export class AIService extends EventEmitter {
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
     experiments?: SendMessageOptions["experiments"],
-    system1Model?: string,
-    system1ThinkingLevel?: ThinkingLevel,
     disableWorkspaceAgents?: boolean,
     hasQueuedMessage?: () => boolean,
     openaiTruncationModeOverride?: "auto" | "disabled"
@@ -2290,13 +2288,65 @@ export class AIService extends EventEmitter {
               const bashOutputExecuteFn = getExecuteFnForTool(baseBashOutputTool);
               const taskAwaitExecuteFn = getExecuteFnForTool(baseTaskAwaitTool);
 
-              const system1ModelString =
-                typeof system1Model === "string" ? system1Model.trim() : "";
-              const effectiveSystem1ModelStringForThinking = system1ModelString || modelString;
+              const applyMuxGatewayToSystem1Model = (candidateModelString: string): string => {
+                const trimmedCandidate = candidateModelString.trim();
+                if (!trimmedCandidate) {
+                  return "";
+                }
+                if (trimmedCandidate.startsWith("mux-gateway:")) {
+                  return trimmedCandidate;
+                }
+
+                if (cfg.muxGatewayEnabled === false) {
+                  return trimmedCandidate;
+                }
+
+                const enabledModels = cfg.muxGatewayModels ?? [];
+                if (!enabledModels.includes(trimmedCandidate)) {
+                  return trimmedCandidate;
+                }
+
+                const colonIndex = trimmedCandidate.indexOf(":");
+                if (colonIndex === -1) {
+                  return trimmedCandidate;
+                }
+
+                const provider = trimmedCandidate.slice(0, colonIndex);
+                if (
+                  provider !== "anthropic" &&
+                  provider !== "openai" &&
+                  provider !== "google" &&
+                  provider !== "xai"
+                ) {
+                  return trimmedCandidate;
+                }
+
+                const providersConfig = this.config.loadProvidersConfig();
+                const gatewayConfig: ProviderConfig = providersConfig?.["mux-gateway"] ?? {};
+                const gatewayCreds = resolveProviderCredentials("mux-gateway", gatewayConfig);
+                if (!gatewayCreds.isConfigured || !gatewayCreds.couponCode) {
+                  return trimmedCandidate;
+                }
+
+                const model = trimmedCandidate.slice(colonIndex + 1);
+                return `mux-gateway:${provider}/${model}`;
+              };
+
+              const system1Defaults = cfg.agentAiDefaults?.system1_bash;
+              const system1ModelOverride =
+                typeof system1Defaults?.modelString === "string"
+                  ? system1Defaults.modelString.trim()
+                  : "";
+              const system1ModelCandidate = system1ModelOverride || modelString;
+              const system1ModelString = applyMuxGatewayToSystem1Model(system1ModelCandidate);
+
+              const system1ThinkingLevel = system1Defaults?.thinkingLevel ?? "off";
               const effectiveSystem1ThinkingLevel = enforceThinkingPolicy(
-                effectiveSystem1ModelStringForThinking,
-                system1ThinkingLevel ?? "off"
+                system1ModelString,
+                system1ThinkingLevel
               );
+
+              const usePrimaryModelForSystem1 = system1ModelString === modelString;
 
               let cachedSystem1Model: { modelString: string; model: LanguageModel } | undefined;
               let cachedSystem1ModelFailed = false;
@@ -2304,7 +2354,7 @@ export class AIService extends EventEmitter {
               const getSystem1ModelForStream = async (): Promise<
                 { modelString: string; model: LanguageModel } | undefined
               > => {
-                if (!system1ModelString) {
+                if (usePrimaryModelForSystem1) {
                   return { modelString, model: modelResult.data };
                 }
 
@@ -2880,8 +2930,6 @@ export class AIService extends EventEmitter {
         parentWorkspaceId: metadata.parentWorkspaceId,
         modelString,
         muxProviderOptions: effectiveMuxProviderOptions,
-        system1Model,
-        system1ThinkingLevel,
         system1Enabled: experiments?.system1 === true,
       });
 
