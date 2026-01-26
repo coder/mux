@@ -295,7 +295,7 @@ export function CreationControls(props: CreationControlsProps) {
   return (
     <div className="mb-3 flex flex-col gap-4">
       {/* Project name / workspace name header row - wraps on narrow viewports */}
-      <div className="flex flex-wrap items-center gap-y-2" data-component="WorkspaceNameGroup">
+      <div className="flex items-center gap-y-2" data-component="WorkspaceNameGroup">
         {projects.size > 1 ? (
           <RadixSelect
             value={props.projectPath}
@@ -333,25 +333,23 @@ export function CreationControls(props: CreationControlsProps) {
         )}
         <span className="text-muted-foreground mx-2 text-lg">/</span>
 
-        {/* Name input with magic wand - uses grid overlay technique for auto-sizing */}
-        <div className="relative inline-grid items-center">
-          {/* Hidden sizer span - determines width based on content, minimum is placeholder width */}
-          <span className="invisible col-start-1 row-start-1 pr-7 text-lg font-semibold whitespace-pre">
-            {nameState.name || "workspace-name"}
-          </span>
+        {/* Name input with magic wand */}
+        <div className="flex items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <input
                 id="workspace-name"
                 type="text"
-                size={1}
                 value={nameState.name}
                 onChange={handleNameChange}
                 onFocus={handleInputFocus}
                 placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
                 disabled={props.disabled}
                 className={cn(
-                  "col-start-1 row-start-1 min-w-0 bg-transparent border-border-medium focus:border-accent h-7 w-full rounded-md border border-transparent text-lg font-semibold focus:border focus:bg-bg-dark focus:outline-none disabled:opacity-50",
+                  `border-border-medium focus:border-accent h-7 rounded-md
+                   border border-transparent bg-transparent text-lg font-semibold 
+                   field-sizing-content focus:border focus:bg-bg-dark focus:outline-none 
+                   disabled:opacity-50 max-w-[50vw] sm:max-w-[40vw] lg:max-w-[30vw]`,
                   nameState.autoGenerate ? "text-muted" : "text-foreground",
                   nameState.error && "border-red-500"
                 )}
@@ -362,37 +360,35 @@ export function CreationControls(props: CreationControlsProps) {
             </TooltipContent>
           </Tooltip>
           {/* Magic wand / loading indicator */}
-          <div className="absolute inset-y-0 right-0 flex items-center pr-2">
-            {nameState.isGenerating ? (
-              <Loader2 className="text-accent h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={handleWandClick}
-                    disabled={props.disabled}
-                    className="flex h-full items-center disabled:opacity-50"
-                    aria-label={
-                      nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
-                    }
-                  >
-                    <Wand2
-                      className={cn(
-                        "h-3.5 w-3.5 transition-colors",
-                        nameState.autoGenerate
-                          ? "text-accent"
-                          : "text-muted-foreground opacity-50 hover:opacity-75"
-                      )}
-                    />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
+          {nameState.isGenerating ? (
+            <Loader2 className="text-accent h-3.5 w-3.5 shrink-0 animate-spin" />
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleWandClick}
+                  disabled={props.disabled}
+                  className="flex shrink-0 items-center disabled:opacity-50"
+                  aria-label={
+                    nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
+                  }
+                >
+                  <Wand2
+                    className={cn(
+                      "h-3.5 w-3.5 transition-colors",
+                      nameState.autoGenerate
+                        ? "text-accent"
+                        : "text-muted-foreground opacity-50 hover:opacity-75"
+                    )}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent align="center">
+                {nameState.autoGenerate ? "Auto-naming enabled" : "Click to enable auto-naming"}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         {/* Error display */}

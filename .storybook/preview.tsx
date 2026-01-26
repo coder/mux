@@ -122,10 +122,40 @@ const preview: Preview = {
         date: /Date$/i,
       },
     },
+    initialGlobals: {
+      theme: "dark",
+      viewport: { value: "desktop", isRotated: false },
+    },
+    viewport: {
+      options: {
+        mobile1: {
+          name: "iPhone SE",
+          styles: { width: "375px", height: "667px" },
+          type: "mobile",
+        },
+        mobile2: {
+          name: "iPhone XR",
+          styles: { width: "414px", height: "896px" },
+          type: "mobile",
+        },
+        tablet: {
+          name: "iPad",
+          styles: { width: "768px", height: "1024px" },
+          type: "mobile",
+        },
+        desktop: {
+          name: "Desktop",
+          styles: { width: "1280px", height: "800px" },
+          type: "mobile",
+        },
+      },
+    },
     chromatic: {
       modes: {
         dark: { theme: "dark" },
         light: { theme: "light" },
+        "dark-mobile": { theme: "dark", viewport: "mobile1" },
+        "light-mobile": { theme: "light", viewport: "mobile1" },
       },
     },
   },
