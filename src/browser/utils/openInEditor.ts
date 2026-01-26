@@ -34,6 +34,10 @@ function trimTrailingSlash(path: string): string {
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
 
+function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
 function normalizePathSeparators(path: string): string {
   return path.replace(/\\/g, "/");
 }
@@ -180,7 +184,9 @@ export async function openInEditor(args: {
 
     // Build the config file path if available
     const configFilePath = args.runtimeConfig.configPath
-      ? `${hostWorkspacePath}/${args.runtimeConfig.configPath}`
+      ? isAbsolutePath(args.runtimeConfig.configPath)
+        ? args.runtimeConfig.configPath
+        : `${hostWorkspacePath}/${args.runtimeConfig.configPath}`
       : undefined;
 
     const deepLink = getDevcontainerDeepLink({
