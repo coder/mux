@@ -1051,6 +1051,12 @@ body,
   /* Show mobile menu button only on touch devices */
   .mobile-menu-btn {
     display: inline-flex !important;
+    justify-content: flex-start !important;
+    padding-left: 12px !important;
+  }
+
+  .mobile-sticky-header:has(.mobile-menu-btn) {
+    padding-left: 0 !important;
   }
 
   /* Show mobile overlay only on touch devices */

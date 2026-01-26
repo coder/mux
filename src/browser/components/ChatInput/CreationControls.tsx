@@ -175,7 +175,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     : RUNTIME_OPTIONS;
 
   return (
-    <div className="flex gap-1" role="group" aria-label="Runtime type">
+    <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
         const isDefault = props.defaultMode === option.value;
