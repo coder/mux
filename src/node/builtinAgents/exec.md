@@ -33,6 +33,8 @@ tools:
     - ask_user_question
     # Internal-only tools
     - system1_keep_ranges
+    - memory_read
+    - memory_write
 ---
 
 You are in Exec mode.
