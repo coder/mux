@@ -109,11 +109,10 @@ import {
 } from "./draftAttachmentsStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
+import { PDF_MEDIA_TYPE, DOCX_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
-
-const PDF_MEDIA_TYPE = "application/pdf";
 
 function getBaseMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -1940,6 +1939,32 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               return;
             }
           }
+        }
+      }
+
+      // Preflight: if the message includes DOCX files, ensure the selected model can accept them.
+      const docxAttachments = attachments.filter(
+        (attachment) => getBaseMediaType(attachment.mediaType) === DOCX_MEDIA_TYPE
+      );
+      if (docxAttachments.length > 0) {
+        const caps = getModelCapabilities(baseModel);
+        if (caps && !caps.supportsDocxInput) {
+          const docxCapableExamples = Object.values(KNOWN_MODELS)
+            .map((m) => m.id)
+            .filter((model) => getModelCapabilities(model)?.supportsDocxInput)
+            .slice(0, 3);
+
+          pushToast({
+            type: "error",
+            title: "DOCX not supported",
+            message:
+              `Model ${baseModel} does not support DOCX input.` +
+              (docxCapableExamples.length > 0
+                ? ` Try: ${docxCapableExamples.join(", ")}.`
+                : " Choose a model with DOCX support."),
+          });
+          setSendingCount((c) => c - 1);
+          return;
         }
       }
       // Save current draft state for restoration on error

@@ -91,6 +91,7 @@ interface CompactionRequestMetadata {
 }
 
 const PDF_MEDIA_TYPE = "application/pdf";
+const DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 function normalizeMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -612,6 +613,21 @@ export class AgentSession {
               );
             }
           }
+        }
+      }
+
+      // Defense-in-depth: reject DOCX for models we know don't support them.
+      const docxParts = effectiveFileParts.filter(
+        (part) => normalizeMediaType(part.mediaType) === DOCX_MEDIA_TYPE
+      );
+
+      if (docxParts.length > 0) {
+        const caps = getModelCapabilities(options.model);
+
+        if (caps && !caps.supportsDocxInput) {
+          return Err(
+            createUnknownSendMessageError(`Model ${options.model} does not support DOCX input.`)
+          );
         }
       }
     }

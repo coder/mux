@@ -15,6 +15,8 @@ interface ModelData {
   mode?: string;
   supports_function_calling?: boolean;
   supports_vision?: boolean;
+  supports_pdf_input?: boolean;
+  supports_docx_input?: boolean;
   supports_reasoning?: boolean;
   supports_response_schema?: boolean;
   knowledge_cutoff?: string;
@@ -139,5 +141,38 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_reasoning: true,
     supports_response_schema: true,
     supported_endpoints: ["/v1/responses"],
+  },
+
+  // Gemini 3 Pro Preview - supports PDF and DOCX input
+  // Google's Gemini models support document types including .docx
+  "gemini-3-pro-preview": {
+    max_input_tokens: 1048576,
+    max_output_tokens: 65536,
+    input_cost_per_token: 0.00000125, // $1.25 per million input tokens
+    output_cost_per_token: 0.00001, // $10 per million output tokens
+    litellm_provider: "google",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_docx_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
+  // Gemini 3 Flash Preview - supports PDF and DOCX input
+  "gemini-3-flash-preview": {
+    max_input_tokens: 1048576,
+    max_output_tokens: 65536,
+    input_cost_per_token: 0.000000075, // $0.075 per million input tokens
+    output_cost_per_token: 0.0000003, // $0.30 per million output tokens
+    litellm_provider: "google",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_vision: true,
+    supports_pdf_input: true,
+    supports_docx_input: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
   },
 };

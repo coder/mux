@@ -1,8 +1,11 @@
 import type { FilePart } from "@/common/orpc/types";
-import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
+import {
+  MAX_SVG_TEXT_CHARS,
+  SVG_MEDIA_TYPE,
+  PDF_MEDIA_TYPE,
+  DOCX_MEDIA_TYPE,
+} from "@/common/constants/imageAttachments";
 import type { ChatAttachment } from "@/browser/components/ChatAttachments";
-
-const PDF_MEDIA_TYPE = "application/pdf";
 
 function normalizeMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -31,6 +34,7 @@ function getMimeTypeFromExtension(filename: string): string | null {
     bmp: "image/bmp",
     svg: SVG_MEDIA_TYPE,
     pdf: PDF_MEDIA_TYPE,
+    docx: DOCX_MEDIA_TYPE,
   };
   return mimeTypes[ext ?? ""] ?? null;
 }
@@ -41,6 +45,7 @@ function getSupportedMediaType(file: File): string | null {
 
   if (base.startsWith("image/")) return base;
   if (base === PDF_MEDIA_TYPE) return base;
+  if (base === DOCX_MEDIA_TYPE) return base;
   return null;
 }
 

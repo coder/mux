@@ -4,6 +4,7 @@ import { normalizeGatewayModel } from "./models";
 
 interface RawModelCapabilitiesData {
   supports_pdf_input?: boolean;
+  supports_docx_input?: boolean;
   supports_vision?: boolean;
   supports_audio_input?: boolean;
   supports_video_input?: boolean;
@@ -13,13 +14,14 @@ interface RawModelCapabilitiesData {
 
 export interface ModelCapabilities {
   supportsPdfInput: boolean;
+  supportsDocxInput: boolean;
   supportsVision: boolean;
   supportsAudioInput: boolean;
   supportsVideoInput: boolean;
   maxPdfSizeMb?: number;
 }
 
-export type SupportedInputMediaType = "image" | "pdf" | "audio" | "video";
+export type SupportedInputMediaType = "image" | "pdf" | "docx" | "audio" | "video";
 
 /**
  * Generates lookup keys for a model string with multiple naming patterns.
@@ -60,6 +62,7 @@ function extractModelCapabilities(data: RawModelCapabilitiesData): ModelCapabili
     // Some providers omit supports_pdf_input but still include a max_pdf_size_mb field.
     // Treat maxPdfSizeMb as a strong signal that PDF input is supported.
     supportsPdfInput: data.supports_pdf_input === true || maxPdfSizeMb !== undefined,
+    supportsDocxInput: data.supports_docx_input === true,
     supportsVision: data.supports_vision === true,
     supportsAudioInput: data.supports_audio_input === true,
     supportsVideoInput: data.supports_video_input === true,
@@ -99,6 +102,7 @@ export function getSupportedInputMediaTypes(
   const result = new Set<SupportedInputMediaType>();
   if (caps.supportsVision) result.add("image");
   if (caps.supportsPdfInput) result.add("pdf");
+  if (caps.supportsDocxInput) result.add("docx");
   if (caps.supportsAudioInput) result.add("audio");
   if (caps.supportsVideoInput) result.add("video");
   return result;

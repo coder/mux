@@ -1,6 +1,8 @@
 import React from "react";
 import { FileText, X } from "lucide-react";
 
+import { PDF_MEDIA_TYPE, DOCX_MEDIA_TYPE } from "@/common/constants/imageAttachments";
+
 export interface ChatAttachment {
   id: string;
   url: string;
@@ -16,6 +18,13 @@ interface ChatAttachmentsProps {
 
 function getBaseMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
+}
+
+function getDocumentLabel(mediaType: string, filename?: string): string {
+  if (filename) return filename;
+  if (mediaType === PDF_MEDIA_TYPE) return "PDF";
+  if (mediaType === DOCX_MEDIA_TYPE) return "DOCX";
+  return mediaType;
 }
 
 export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
@@ -54,8 +63,7 @@ export const ChatAttachments: React.FC<ChatAttachmentsProps> = (props) => {
           );
         }
 
-        const label =
-          attachment.filename ?? (baseMediaType === "application/pdf" ? "PDF" : baseMediaType);
+        const label = getDocumentLabel(baseMediaType, attachment.filename);
 
         return (
           <div

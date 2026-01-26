@@ -27,4 +27,20 @@ describe("getSupportedInputMediaTypes", () => {
     expect(supported).not.toBeNull();
     expect(supported?.has("pdf")).toBe(true);
   });
+
+  it("includes docx when model supports_docx_input is true", () => {
+    // Gemini 3 Pro supports DOCX input
+    const supported = getSupportedInputMediaTypes("google:gemini-3-pro-preview");
+    expect(supported).not.toBeNull();
+    expect(supported?.has("docx")).toBe(true);
+    expect(supported?.has("pdf")).toBe(true);
+  });
+
+  it("does not include docx for models without docx support", () => {
+    // Claude doesn't support DOCX
+    const supported = getSupportedInputMediaTypes("anthropic:claude-sonnet-4-5");
+    expect(supported).not.toBeNull();
+    expect(supported?.has("docx")).toBe(false);
+    expect(supported?.has("pdf")).toBe(true);
+  });
 });

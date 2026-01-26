@@ -5,6 +5,7 @@ import type { FilePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { PDF_MEDIA_TYPE, DOCX_MEDIA_TYPE } from "@/common/constants/imageAttachments";
 
 interface UserMessageContentProps {
   content: string;
@@ -176,9 +177,11 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
 
             const label =
               part.filename ??
-              (baseMediaType === "application/pdf"
+              (baseMediaType === PDF_MEDIA_TYPE
                 ? "PDF attachment"
-                : `Attachment (${baseMediaType})`);
+                : baseMediaType === DOCX_MEDIA_TYPE
+                  ? "DOCX attachment"
+                  : `Attachment (${baseMediaType})`);
 
             return (
               <a
@@ -205,7 +208,11 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
                     link.href = blobUrl;
                     link.download =
                       part.filename ??
-                      (baseMediaType === "application/pdf" ? "attachment.pdf" : "attachment");
+                      (baseMediaType === PDF_MEDIA_TYPE
+                        ? "attachment.pdf"
+                        : baseMediaType === DOCX_MEDIA_TYPE
+                          ? "attachment.docx"
+                          : "attachment");
                     document.body.appendChild(link);
                     link.click();
                     link.remove();

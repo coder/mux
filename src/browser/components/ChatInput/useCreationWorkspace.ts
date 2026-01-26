@@ -102,6 +102,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
 }
 
 const PDF_MEDIA_TYPE = "application/pdf";
+const DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 function getBaseMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -361,6 +362,33 @@ export function useCreationWorkspace({
                 return false;
               }
             }
+          }
+        }
+
+        // Preflight: if the first message includes DOCX files, ensure the selected model can accept them.
+        const docxFileParts = (fileParts ?? []).filter(
+          (part) => getBaseMediaType(part.mediaType) === DOCX_MEDIA_TYPE
+        );
+        if (docxFileParts.length > 0) {
+          const caps = getModelCapabilities(baseModel);
+          if (caps && !caps.supportsDocxInput) {
+            const docxCapableExamples = Object.values(KNOWN_MODELS)
+              .map((m) => m.id)
+              .filter((model) => getModelCapabilities(model)?.supportsDocxInput)
+              .slice(0, 3);
+
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              title: "DOCX not supported",
+              message:
+                `Model ${baseModel} does not support DOCX input.` +
+                (docxCapableExamples.length > 0
+                  ? ` Try: ${docxCapableExamples.join(", ")}.`
+                  : " Choose a model with DOCX support."),
+            });
+            setIsSending(false);
+            return false;
           }
         }
 
