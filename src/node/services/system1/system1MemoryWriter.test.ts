@@ -25,6 +25,12 @@ describe("system1MemoryWriter", () => {
     process.env.MUX_ROOT = muxRoot;
 
     try {
+      await fs.writeFile(
+        path.join(muxRoot, "AGENTS.md"),
+        "# Global\n\n- Prefer short diffs.\n",
+        "utf8"
+      );
+
       await fs.writeFile(path.join(projectDir, "AGENTS.md"), "# Agents\n", "utf8");
 
       const { memoriesDir, memoryPath } = getMemoryFilePathForProject(projectDir);
@@ -54,6 +60,18 @@ describe("system1MemoryWriter", () => {
         history,
         timeoutMs: 5_000,
         generateTextImpl: async (args) => {
+          const messages = (args as { messages?: unknown }).messages as
+            | Array<{ content?: unknown }>
+            | undefined;
+          expect(Array.isArray(messages)).toBe(true);
+          expect(typeof messages?.[0]?.content).toBe("string");
+
+          const userMessage = messages?.[0]?.content as string;
+          expect(userMessage).toContain("Global AGENTS.md");
+          expect(userMessage).toContain("# Global");
+          expect(userMessage).toContain("Project/workspace AGENTS.md");
+          expect(userMessage).toContain("# Agents");
+
           const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
           expect(tools && "memory_write" in tools).toBe(true);
 
@@ -89,6 +107,12 @@ describe("system1MemoryWriter", () => {
     process.env.MUX_ROOT = muxRoot;
 
     try {
+      await fs.writeFile(
+        path.join(muxRoot, "AGENTS.md"),
+        "# Global\n\n- Prefer short diffs.\n",
+        "utf8"
+      );
+
       await fs.writeFile(path.join(projectDir, "AGENTS.md"), "# Agents\n", "utf8");
 
       const { memoriesDir, memoryPath } = getMemoryFilePathForProject(projectDir);
@@ -162,6 +186,12 @@ describe("system1MemoryWriter", () => {
     process.env.MUX_ROOT = muxRoot;
 
     try {
+      await fs.writeFile(
+        path.join(muxRoot, "AGENTS.md"),
+        "# Global\n\n- Prefer short diffs.\n",
+        "utf8"
+      );
+
       await fs.writeFile(path.join(projectDir, "AGENTS.md"), "# Agents\n", "utf8");
 
       const { memoriesDir, memoryPath } = getMemoryFilePathForProject(projectDir);
