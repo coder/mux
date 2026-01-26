@@ -121,6 +121,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
           content={textContent}
           className={markdownClassName}
           style={markdownStyles[props.variant]}
+          preserveLineBreaks
         />
       );
     }
@@ -141,6 +142,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
             content={remainingContent.trim()}
             className={markdownClassName}
             style={markdownStyles[props.variant]}
+            preserveLineBreaks
           />
         )}
       </div>

@@ -6,16 +6,24 @@ interface MarkdownRendererProps {
   content: string;
   className?: string;
   style?: React.CSSProperties;
+  /**
+   * Preserve single newlines as line breaks (like GitHub-flavored markdown).
+   * When true, single newlines in text become <br> elements instead of being
+   * collapsed to spaces. Useful for user-authored content where newlines
+   * are intentional. Default: false.
+   */
+  preserveLineBreaks?: boolean;
 }
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   className,
   style,
+  preserveLineBreaks,
 }) => {
   return (
     <div className={cn("markdown-content", className)} style={style}>
-      <MarkdownCore content={content} />
+      <MarkdownCore content={content} preserveLineBreaks={preserveLineBreaks} />
     </div>
   );
 };
