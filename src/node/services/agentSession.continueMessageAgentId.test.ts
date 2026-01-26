@@ -55,7 +55,10 @@ describe("AgentSession continue-message agentId fallback", () => {
       setMessageQueued: mock(() => undefined),
     } as unknown as BackgroundProcessManager;
 
-    const config: Config = { srcDir: "/tmp" } as unknown as Config;
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
     const partialService: PartialService = {} as unknown as PartialService;
 
     const session = new AgentSession({

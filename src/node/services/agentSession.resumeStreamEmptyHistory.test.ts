@@ -40,7 +40,10 @@ describe("AgentSession.resumeStream", () => {
       setMessageQueued: mock(() => undefined),
     } as unknown as BackgroundProcessManager;
 
-    const config: Config = { srcDir: "/tmp" } as unknown as Config;
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => "/tmp"),
+    } as unknown as Config;
 
     const session = new AgentSession({
       workspaceId: "ws",
