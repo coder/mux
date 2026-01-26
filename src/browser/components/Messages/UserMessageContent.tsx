@@ -3,6 +3,7 @@ import { FileText } from "lucide-react";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface UserMessageContentProps {
@@ -37,6 +38,30 @@ const imageContainerStyles = {
 } as const;
 
 const markdownClassName = "user-message-markdown";
+
+function dataUrlToBlob(dataUrl: string): Blob | null {
+  if (!dataUrl.startsWith("data:")) return null;
+
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) return null;
+
+  const header = dataUrl.slice("data:".length, commaIndex);
+  if (!header.includes(";base64")) return null;
+
+  const mimeType = header.split(";")[0] ?? "application/octet-stream";
+
+  try {
+    const base64 = dataUrl.slice(commaIndex + 1);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mimeType });
+  } catch {
+    return null;
+  }
+}
 
 function getBaseMediaType(mediaType: string): string {
   return mediaType.toLowerCase().trim().split(";")[0];
@@ -162,6 +187,37 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
                 target="_blank"
                 rel="noreferrer"
                 className={fileAttachmentStyles[props.variant]}
+                onClick={(event) => {
+                  const blob = dataUrlToBlob(part.url);
+                  if (!blob) {
+                    return;
+                  }
+
+                  event.preventDefault();
+
+                  const blobUrl = URL.createObjectURL(blob);
+
+                  if (isDesktopMode()) {
+                    // In desktop mode, new windows are routed via shell.openExternal.
+                    // blob: URLs are tied to this renderer and won't resolve externally,
+                    // so download the file in-app instead.
+                    const link = document.createElement("a");
+                    link.href = blobUrl;
+                    link.download =
+                      part.filename ??
+                      (baseMediaType === "application/pdf" ? "attachment.pdf" : "attachment");
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+                    return;
+                  }
+
+                  window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+                  // Keep the blob URL alive long enough for the new tab to load.
+                  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+                }}
               >
                 <FileText className="h-4 w-4 shrink-0" />
                 <span className="truncate">{label}</span>
