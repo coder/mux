@@ -185,9 +185,9 @@ endif
 
 
 dev-desktop-sandbox: ## Start an isolated Electron dev instance (fresh MUX_ROOT + free ports)
-	@bun scripts/dev-desktop-sandbox.ts
+	@bun scripts/dev-desktop-sandbox.ts $(DEV_DESKTOP_SANDBOX_ARGS)
 dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + free ports)
-	@bun scripts/dev-server-sandbox.ts
+	@bun scripts/dev-server-sandbox.ts $(DEV_SERVER_SANDBOX_ARGS)
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
 	@NODE_ENV=development bunx electron --remote-debugging-port=9222 .

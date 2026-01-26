@@ -22,7 +22,7 @@ make dev-server-sandbox
 ## What it does
 
 - Creates a fresh temporary `MUX_ROOT` directory
-- Copies these files into the sandbox if present:
+- Copies these files into the sandbox if present (unless disabled by flags):
   - `providers.jsonc` (provider config)
   - `config.json` (project list)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
@@ -32,6 +32,15 @@ make dev-server-sandbox
 ## Options
 
 ```bash
+# Start with a clean instance (do not copy providers or projects)
+make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-providers --clean-projects"
+
+# Skip copying providers.jsonc
+make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-providers"
+
+# Clear projects from config.json (preserves other config)
+make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-projects"
+
 # Use a specific root to seed from (defaults to ~/.mux-dev then ~/.mux)
 SEED_MUX_ROOT=~/.mux-dev make dev-server-sandbox
 
