@@ -15,6 +15,7 @@ import {
   WEB_FETCH_MAX_OUTPUT_BYTES,
 } from "@/common/constants/toolLimits";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
+import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 
@@ -686,7 +687,9 @@ export const TOOL_DEFINITIONS = {
               .strict()
           )
           .min(1)
-          .max(50)
+          // Allow at least as many ranges as the user can request via maxKeptLines.
+          // (In the worst case, the model may emit one 1-line range per kept line.)
+          .max(SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.max)
           .describe("Line ranges to keep"),
       })
       .strict(),
