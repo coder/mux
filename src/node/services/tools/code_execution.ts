@@ -72,7 +72,7 @@ ${muxTypes}
 \`\`\`
 
 **Usage notes:**
-- \`mux.*\` functions return results directly (no \`await\` needed)
+- \`mux.*\` functions are synchronous—do not use \`await\`
 - Use \`return\` to provide a final result to the model
 - Use \`console.log/warn/error\` for debugging - output is captured
 - Results are JSON-serialized; non-serializable values return \`{ error: "..." }\`
@@ -85,7 +85,7 @@ ${muxTypes}
         .string()
         .min(1)
         .describe(
-          "JavaScript code to execute. All mux.* functions are async. Use 'return' for final result."
+          "JavaScript code to execute. mux.* calls are synchronous—do not use await. Use 'return' for final result."
         ),
       timeout_secs: z
         .number()
