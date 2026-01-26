@@ -221,10 +221,7 @@ export function GeneralSection() {
               {terminalFontWarning ? (
                 <div className="text-warning text-xs">{terminalFontWarning}</div>
               ) : null}
-              <div className="text-muted text-xs">
-                Mux includes a built-in Nerd Font symbols fallback for terminal icons. Set this to
-                any monospace font you like.
-              </div>
+              <div className="text-muted text-xs">Set this to a monospace font you like.</div>
               {isBrowserMode ? (
                 <div className="text-muted text-xs">
                   Browser mode uses fonts installed on the client device (plus the bundled symbols
