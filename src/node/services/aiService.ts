@@ -5,27 +5,17 @@ import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import {
-  JSONParseError,
-  TypeValidationError,
-  convertToModelMessages,
-  generateObject,
-  generateText,
-  type LanguageModel,
-  type Tool,
-} from "ai";
+import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import {
   applySystem1KeepRangesToOutput,
-  buildSystem1BashKeepRangesPrompt,
   formatNumberedLinesForSystem1,
   formatSystem1BashFilterNotice,
   getHeuristicKeepRangesForBashOutput,
-  parseSystem1KeepRanges,
   splitBashOutputLines,
-  system1BashKeepRangesSchema,
 } from "@/node/services/system1/bashOutputFiltering";
+import { runSystem1KeepRangesForBashOutput } from "@/node/services/system1/system1AgentRunner";
 import {
   formatBashOutputReport,
   tryParseBashOutputReport,
@@ -2161,14 +2151,6 @@ export class AIService extends EventEmitter {
                 return cachedSystem1Model;
               };
 
-              type GenerateObjectProviderOptions = Parameters<
-                typeof generateObject
-              >[0]["providerOptions"];
-
-              type GenerateTextProviderOptions = Parameters<
-                typeof generateText
-              >[0]["providerOptions"];
-
               const maybeFilterBashOutputWithSystem1 = async (params: {
                 toolName: string;
                 output: string;
@@ -2255,27 +2237,11 @@ export class AIService extends EventEmitter {
                     undefined,
                     effectiveMuxProviderOptions,
                     workspaceId
-                  ) as unknown as GenerateObjectProviderOptions;
+                  ) as unknown as Record<string, unknown>;
 
                   const numberedOutput = formatNumberedLinesForSystem1(lines);
 
-                  const { systemPrompt, userMessage } = buildSystem1BashKeepRangesPrompt({
-                    maxKeptLines,
-                    script: params.script,
-                    numberedOutput,
-                  });
-
-                  const upstreamAborted = params.abortSignal?.aborted ?? false;
                   const startTimeMs = Date.now();
-                  const deadlineMs = startTimeMs + timeoutMs;
-
-                  const system1AbortController = new AbortController();
-                  const unlink = linkAbortSignal(params.abortSignal, system1AbortController);
-                  const timeout = setTimeout(() => {
-                    system1TimedOut = true;
-                    system1AbortController.abort();
-                  }, timeoutMs);
-                  timeout.unref?.();
 
                   if (typeof params.toolCallId === "string" && params.toolCallId.length > 0) {
                     this.emit("bash-output", {
@@ -2289,170 +2255,60 @@ export class AIService extends EventEmitter {
                     } satisfies BashOutputEvent);
                   }
 
-                  let attempts = 0;
                   let filterMethod: "system1" | "heuristic" = "system1";
                   let keepRangesCount = 0;
                   let finishReason: string | undefined;
                   let lastErrorName: string | undefined;
                   let lastErrorMessage: string | undefined;
-                  let lastErrorText: string | undefined;
-
-                  // Normalize gateway models so mux-gateway:anthropic/... is treated as anthropic here.
-                  const [system1Provider] = parseModelString(
-                    normalizeGatewayModel(system1.modelString)
-                  );
-
-                  // Anthropic forbids extended thinking when tool_choice forces tool use.
-                  // The AI SDK's generateObject({ mode: "json" }) path uses forced tool calls for Anthropic,
-                  // so we use generateText + JSON parsing for keep_ranges to keep extended thinking enabled.
-                  const useGenerateTextForKeepRanges = system1Provider === "anthropic";
-
-                  class KeepRangesParseError extends Error {
-                    public readonly text: string;
-
-                    constructor(text: string) {
-                      super("Failed to parse System 1 keep_ranges JSON");
-                      this.name = "KeepRangesParseError";
-                      this.text = text;
-                    }
-                  }
 
                   let applied: ReturnType<typeof applySystem1KeepRangesToOutput> = undefined;
 
-                  const getErrorText = (error: unknown): string | undefined => {
-                    if (JSONParseError.isInstance(error)) {
-                      return error.text;
-                    }
+                  try {
+                    const keepRangesResult = await runSystem1KeepRangesForBashOutput({
+                      runtime,
+                      agentDiscoveryPath,
+                      runtimeTempDir,
+                      model: system1.model,
+                      modelString: system1.modelString,
+                      providerOptions: system1ProviderOptions,
+                      script: params.script,
+                      numberedOutput,
+                      maxKeptLines,
+                      timeoutMs,
+                      abortSignal: params.abortSignal,
+                      onTimeout: () => {
+                        system1TimedOut = true;
+                      },
+                    });
 
-                    if (error instanceof KeepRangesParseError) {
-                      return error.text;
-                    }
-
-                    if (TypeValidationError.isInstance(error)) {
-                      try {
-                        return JSON.stringify(error.value);
-                      } catch {
-                        return undefined;
-                      }
-                    }
-
-                    return undefined;
-                  };
-
-                  const tryGenerateKeepRanges = async (attemptParams: {
-                    correctionText?: string | undefined;
-                  }): Promise<ReturnType<typeof applySystem1KeepRangesToOutput>> => {
-                    attempts += 1;
-
-                    const correctionSnippet =
-                      typeof attemptParams.correctionText === "string" &&
-                      attemptParams.correctionText.length > 0
-                        ? attemptParams.correctionText.slice(0, 500)
-                        : undefined;
-
-                    const attemptSystemPrompt = correctionSnippet
-                      ? systemPrompt +
-                        "\n\nIMPORTANT: Your previous response was invalid. Output ONLY valid JSON that matches the schema exactly."
-                      : systemPrompt;
-
-                    const attemptUserMessage = correctionSnippet
-                      ? `${userMessage}\n\nPrevious invalid response (truncated):\n${correctionSnippet}\n\nReturn corrected JSON only.`
-                      : userMessage;
-
-                    if (useGenerateTextForKeepRanges) {
-                      const response = await generateText({
-                        model: system1.model,
-                        system: attemptSystemPrompt,
-                        messages: [{ role: "user", content: attemptUserMessage }],
-                        abortSignal: system1AbortController.signal,
-                        providerOptions:
-                          system1ProviderOptions as unknown as GenerateTextProviderOptions,
-                        maxOutputTokens: 600,
-                        maxRetries: 0,
-                      });
-
-                      finishReason = response.finishReason;
-
-                      const keepRanges = parseSystem1KeepRanges(response.text);
-                      if (!keepRanges) {
-                        throw new KeepRangesParseError(response.text);
-                      }
-                      keepRangesCount = keepRanges.length;
-
-                      return applySystem1KeepRangesToOutput({
+                    if (keepRangesResult) {
+                      finishReason = keepRangesResult.finishReason;
+                      keepRangesCount = keepRangesResult.keepRanges.length;
+                      applied = applySystem1KeepRangesToOutput({
                         rawOutput: params.output,
-                        keepRanges,
+                        keepRanges: keepRangesResult.keepRanges,
                         maxKeptLines,
                       });
                     }
-
-                    const response = await generateObject({
-                      model: system1.model,
-                      schema: system1BashKeepRangesSchema,
-                      mode: "json",
-                      system: attemptSystemPrompt,
-                      messages: [{ role: "user", content: attemptUserMessage }],
-                      abortSignal: system1AbortController.signal,
-                      providerOptions: system1ProviderOptions,
-                      maxOutputTokens: 600,
-                      maxRetries: 0,
-                    });
-
-                    finishReason = response.finishReason;
-                    const keepRanges = response.object.keep_ranges;
-                    keepRangesCount = keepRanges.length;
-
-                    return applySystem1KeepRangesToOutput({
-                      rawOutput: params.output,
-                      keepRanges,
-                      maxKeptLines,
-                    });
-                  };
-
-                  try {
-                    try {
-                      applied = await tryGenerateKeepRanges({});
-                    } catch (error) {
-                      lastErrorName = error instanceof Error ? error.name : undefined;
-                      lastErrorMessage = error instanceof Error ? error.message : String(error);
-                      lastErrorText = getErrorText(error);
-                    }
-
-                    if (!applied || applied.keptLines === 0) {
-                      const remainingMs = deadlineMs - Date.now();
-                      if (remainingMs >= 750 && !system1AbortController.signal.aborted) {
-                        try {
-                          applied = await tryGenerateKeepRanges({
-                            correctionText: lastErrorText ?? "(invalid response)",
-                          });
-                        } catch (error) {
-                          lastErrorName = error instanceof Error ? error.name : undefined;
-                          lastErrorMessage = error instanceof Error ? error.message : String(error);
-                          lastErrorText = getErrorText(error);
-                        }
-                      }
-                    }
-                  } finally {
-                    clearTimeout(timeout);
-                    unlink();
+                  } catch (error) {
+                    lastErrorName = error instanceof Error ? error.name : undefined;
+                    lastErrorMessage = error instanceof Error ? error.message : String(error);
                   }
 
                   if (!applied || applied.keptLines === 0) {
                     const elapsedMs = Date.now() - startTimeMs;
+                    const upstreamAborted = params.abortSignal?.aborted ?? false;
 
                     log.debug("[system1] Failed to generate keep_ranges", {
                       workspaceId,
                       toolName: params.toolName,
                       system1Model: system1.modelString,
-                      attempts,
                       elapsedMs,
-                      remainingMs: deadlineMs - Date.now(),
                       timedOut: system1TimedOut,
                       upstreamAborted,
+                      keepRangesCount,
                       errorName: lastErrorName,
                       error: lastErrorMessage,
-                      responseLength: lastErrorText?.length,
-                      responseSnippet: lastErrorText?.slice(0, 200),
                     });
 
                     if (!heuristicFallbackEnabled || upstreamAborted) {
@@ -2505,7 +2361,6 @@ export class AIService extends EventEmitter {
                     toolName: params.toolName,
                     system1Model: system1.modelString,
                     filterMethod,
-                    attempts,
                     keepRangesCount,
                     finishReason,
                     elapsedMs,

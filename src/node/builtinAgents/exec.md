@@ -20,6 +20,8 @@ tools:
     # Exec mode doesn't use planning tools
     - propose_plan
     - ask_user_question
+    # Internal-only tools
+    - system1_keep_ranges
 ---
 
 You are in Exec mode.

@@ -1,16 +1,15 @@
-import { generateObject, generateText } from "ai";
+import * as os from "node:os";
 
 import { buildProviderOptions } from "../../src/common/utils/ai/providerOptions";
 import { getThinkingPolicyForModel } from "../../src/common/utils/thinking/policy";
 import { THINKING_LEVELS, type ThinkingLevel } from "../../src/common/types/thinking";
 import {
   applySystem1KeepRangesToOutput,
-  buildSystem1BashKeepRangesPrompt,
   formatNumberedLinesForSystem1,
-  parseSystem1KeepRanges,
   splitBashOutputLines,
-  system1BashKeepRangesSchema,
 } from "../../src/node/services/system1/bashOutputFiltering";
+import { runSystem1KeepRangesForBashOutput } from "../../src/node/services/system1/system1AgentRunner";
+import { createRuntime } from "../../src/node/runtime/runtimeFactory";
 
 import {
   cleanupTestEnvironment,
@@ -119,8 +118,8 @@ const RAW_OUTPUT = [
 const SCRIPT = "bun test";
 const MAX_KEPT_LINES = 40;
 
-// This test calls real providers via generateObject() and validates that we can reliably
-// obtain usable keep_ranges for bash output filtering across a model + thinking-level matrix.
+// This test calls real providers via runSystem1KeepRangesForBashOutput() and validates that we can
+// reliably obtain usable keep_ranges for bash output filtering across a model + thinking-level matrix.
 describeIntegration("System1 bash output compaction (keep_ranges matrix)", () => {
   let env: TestEnvironment;
 
@@ -159,19 +158,16 @@ describeIntegration("System1 bash output compaction (keep_ranges matrix)", () =>
           throw new Error(`Failed to create model ${modelString}: ${modelResult.error}`);
         }
 
+        const runtime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
+        const agentDiscoveryPath = process.cwd();
+        const runtimeTempDir = os.tmpdir();
+
         const lines = splitBashOutputLines(RAW_OUTPUT);
         const numberedOutput = formatNumberedLinesForSystem1(lines);
-        const { systemPrompt, userMessage } = buildSystem1BashKeepRangesPrompt({
-          maxKeptLines: MAX_KEPT_LINES,
-          script: SCRIPT,
-          numberedOutput,
-        });
 
         const policy = getThinkingPolicyForModel(modelString);
         const allowedThinkingLevels = policy.length > 0 ? policy : THINKING_LEVELS;
         const thinkingLevels = pickThinkingLevels(allowedThinkingLevels);
-
-        const provider = parseModelString(modelString)?.provider;
 
         for (const thinkingLevel of thinkingLevels) {
           const providerOptions = buildProviderOptions(
@@ -181,46 +177,26 @@ describeIntegration("System1 bash output compaction (keep_ranges matrix)", () =>
             undefined,
             undefined,
             "system1-test"
-          ) as unknown;
+          ) as unknown as Record<string, unknown>;
 
-          let keepRanges: Parameters<typeof applySystem1KeepRangesToOutput>[0]["keepRanges"];
+          const keepRangesResult = await runSystem1KeepRangesForBashOutput({
+            runtime,
+            agentDiscoveryPath,
+            runtimeTempDir,
+            model: modelResult.data,
+            modelString,
+            providerOptions,
+            script: SCRIPT,
+            numberedOutput,
+            maxKeptLines: MAX_KEPT_LINES,
+            timeoutMs: 30_000,
+          });
 
-          if (provider === "anthropic") {
-            const result = await generateText({
-              model: modelResult.data,
-              system: systemPrompt,
-              messages: [{ role: "user", content: userMessage }],
-              providerOptions: providerOptions as Parameters<
-                typeof generateText
-              >[0]["providerOptions"],
-              maxOutputTokens: 600,
-              maxRetries: 0,
-            });
-
-            const parsedKeepRanges = parseSystem1KeepRanges(result.text);
-            if (!parsedKeepRanges) {
-              throw new Error(
-                `Failed to parse keep_ranges from ${modelString} (${thinkingLevel}): ${result.text.slice(0, 200)}`
-              );
-            }
-
-            keepRanges = parsedKeepRanges;
-          } else {
-            const result = await generateObject({
-              model: modelResult.data,
-              schema: system1BashKeepRangesSchema,
-              mode: "json",
-              system: systemPrompt,
-              messages: [{ role: "user", content: userMessage }],
-              providerOptions: providerOptions as Parameters<
-                typeof generateObject
-              >[0]["providerOptions"],
-              maxOutputTokens: 600,
-              maxRetries: 0,
-            });
-
-            keepRanges = result.object.keep_ranges;
+          if (!keepRangesResult) {
+            throw new Error(`Failed to obtain keep_ranges from ${modelString} (${thinkingLevel})`);
           }
+
+          const keepRanges = keepRangesResult.keepRanges;
 
           const applied = applySystem1KeepRangesToOutput({
             rawOutput: RAW_OUTPUT,

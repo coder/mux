@@ -659,6 +659,39 @@ export const TOOL_DEFINITIONS = {
       "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
     schema: AgentReportToolArgsSchema,
   },
+  system1_keep_ranges: {
+    description:
+      "Internal tool used by mux to record which line ranges to keep when filtering large bash output.",
+    schema: z
+      .object({
+        keep_ranges: z
+          .array(
+            z
+              .object({
+                start: z.coerce
+                  .number()
+                  .finite()
+                  .min(1)
+                  .describe("1-based start line (inclusive) in the numbered output"),
+                end: z.coerce
+                  .number()
+                  .finite()
+                  .min(1)
+                  .describe("1-based end line (inclusive) in the numbered output"),
+                reason: z
+                  .string()
+                  .optional()
+                  .describe("Optional short reason for keeping this range"),
+              })
+              .strict()
+          )
+          .min(1)
+          .max(50)
+          .describe("Line ranges to keep"),
+      })
+      .strict(),
+  },
+
   todo_write: {
     description:
       "Create or update the todo list for tracking multi-step tasks (limit: 7 items). " +
@@ -1143,6 +1176,7 @@ export function getAvailableTools(
     "task_terminate",
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
+    "system1_keep_ranges",
     "todo_write",
     "todo_read",
     "status_set",

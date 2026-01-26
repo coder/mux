@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import assert from "@/common/utils/assert";
 
 export interface System1KeepRange {
@@ -8,16 +6,6 @@ export interface System1KeepRange {
   reason?: string;
 }
 
-const system1BashKeepRangeSchema = z.object({
-  start: z.coerce.number().finite(),
-  end: z.coerce.number().finite(),
-});
-
-export const system1BashKeepRangesSchema = z.object({
-  keep_ranges: z.array(system1BashKeepRangeSchema),
-});
-
-export type System1BashKeepRangesObject = z.infer<typeof system1BashKeepRangesSchema>;
 export interface ApplySystem1KeepRangesResult {
   filteredOutput: string;
   keptLines: number;
@@ -68,107 +56,6 @@ export function splitBashOutputLines(output: string): string[] {
 
 export function formatNumberedLinesForSystem1(lines: string[]): string {
   return lines.map((line, index) => `${String(index + 1).padStart(4, "0")}| ${line}`).join("\n");
-}
-
-export function buildSystem1BashKeepRangesPrompt(params: {
-  maxKeptLines: number;
-  script: string;
-  numberedOutput: string;
-}): { systemPrompt: string; userMessage: string } {
-  assert(
-    Number.isInteger(params.maxKeptLines) && params.maxKeptLines > 0,
-    "maxKeptLines must be a positive integer"
-  );
-  assert(typeof params.script === "string", "script must be a string");
-  assert(
-    typeof params.numberedOutput === "string" && params.numberedOutput.length > 0,
-    "numberedOutput must be a non-empty string"
-  );
-
-  const systemPrompt = [
-    "You are a fast log filtering assistant.",
-    "Given numbered bash output, return ONLY valid JSON (no markdown, no prose).",
-    'Schema: {"keep_ranges":[{"start":number,"end":number}]}',
-    "Rules:",
-    "- start/end are 1-based line numbers into the numbered output",
-    `- Keep at most ${params.maxKeptLines} lines total (we may truncate)`,
-    "- Prefer errors, stack traces, failing test summaries, and actionable warnings",
-    "- Prefer fewer, wider ranges (return at most 8 ranges)",
-    "- If uncertain, keep the most informative 1-5 lines",
-    "",
-    "Example:",
-    "Numbered output:",
-    "0001| building...",
-    "0002| ERROR: expected X, got Y",
-    "0003|   at path/to/file.ts:12:3",
-    "0004| done",
-    "JSON:",
-    '{"keep_ranges":[{"start":2,"end":3}]}',
-  ].join("\n");
-
-  const userMessage = `Bash script:\n${params.script}\n\nNumbered output:\n${params.numberedOutput}`;
-
-  return { systemPrompt, userMessage };
-}
-
-function extractFirstJsonObject(text: string): string | undefined {
-  // Be tolerant of Markdown wrappers.
-  const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(text);
-  const candidate = fenceMatch ? fenceMatch[1] : text;
-
-  const first = candidate.indexOf("{");
-  const last = candidate.lastIndexOf("}");
-  if (first === -1 || last === -1 || last <= first) {
-    return undefined;
-  }
-
-  return candidate.slice(first, last + 1);
-}
-
-export function parseSystem1KeepRanges(text: string): System1KeepRange[] | undefined {
-  const jsonText = extractFirstJsonObject(text);
-  if (!jsonText) {
-    return undefined;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    return undefined;
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return undefined;
-  }
-
-  const keepRanges = (parsed as { keep_ranges?: unknown }).keep_ranges;
-  if (!Array.isArray(keepRanges)) {
-    return undefined;
-  }
-
-  const out: System1KeepRange[] = [];
-  for (const entry of keepRanges) {
-    const parsedEntry = system1BashKeepRangeSchema.safeParse(entry);
-    if (!parsedEntry.success) {
-      continue;
-    }
-
-    const reasonValue =
-      entry && typeof entry === "object" && !Array.isArray(entry)
-        ? (entry as { reason?: unknown }).reason
-        : undefined;
-
-    const reason = typeof reasonValue === "string" ? reasonValue : undefined;
-
-    out.push({
-      start: parsedEntry.data.start,
-      end: parsedEntry.data.end,
-      reason,
-    });
-  }
-
-  return out.length > 0 ? out : undefined;
 }
 
 const HEURISTIC_IMPORTANT_LINE_REGEX =

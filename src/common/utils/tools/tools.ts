@@ -20,6 +20,7 @@ import { createTaskListTool } from "@/node/services/tools/task_list";
 import { createAgentSkillReadTool } from "@/node/services/tools/agent_skill_read";
 import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_read_file";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
+import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
 import { log } from "@/node/services/log";
@@ -299,6 +300,7 @@ export async function getToolsForModel(
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),
     status_set: createStatusSetTool(config),

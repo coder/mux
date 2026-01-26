@@ -4,7 +4,6 @@ import {
   formatNumberedLinesForSystem1,
   getHeuristicKeepRangesForBashOutput,
   formatSystem1BashFilterNotice,
-  parseSystem1KeepRanges,
   splitBashOutputLines,
 } from "./bashOutputFiltering";
 
@@ -47,35 +46,6 @@ describe("bashOutputFiltering", () => {
       });
 
       expect(notice).toBe("Auto-filtered output: kept 1/2 lines (trigger: bytes).");
-    });
-  });
-
-  describe("parseSystem1KeepRanges", () => {
-    it("coerces numeric strings for start/end", () => {
-      const ranges = parseSystem1KeepRanges('{"keep_ranges":[{"start":"2","end":"4"}]}');
-      expect(ranges).toEqual([{ start: 2, end: 4, reason: undefined }]);
-    });
-    it("parses keep_ranges JSON", () => {
-      const ranges = parseSystem1KeepRanges(
-        '{"keep_ranges":[{"start":2,"end":4,"reason":"error"}]}'
-      );
-      expect(ranges).toEqual([{ start: 2, end: 4, reason: "error" }]);
-    });
-
-    it("parses keep_ranges from json code fences", () => {
-      const ranges = parseSystem1KeepRanges('```json\n{"keep_ranges":[{"start":1,"end":1}]}\n```');
-      expect(ranges).toEqual([{ start: 1, end: 1, reason: undefined }]);
-    });
-
-    it("returns undefined when no keep_ranges array is present", () => {
-      expect(parseSystem1KeepRanges("{}")).toBeUndefined();
-    });
-
-    it("filters out invalid range entries", () => {
-      const ranges = parseSystem1KeepRanges(
-        '{"keep_ranges":[{"start":"nope","end":2},{"start":1,"end":2}]}'
-      );
-      expect(ranges).toEqual([{ start: 1, end: 2, reason: undefined }]);
     });
   });
 
