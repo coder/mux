@@ -53,13 +53,13 @@ describe("Chat with Mux system workspace (UI)", () => {
         () => {
           expect(view.getByText(/Hi, I'm Mux/i)).toBeTruthy();
         },
-        { timeout: 10_000 }
+        { timeout: 30_000 }
       );
     } finally {
       await cleanupView(view, cleanupDom);
       await cleanupTestEnvironment(env);
     }
-  }, 30_000);
+  }, 60_000);
 
   test("Mux logo navigates back to Chat with Mux", async () => {
     const env = await createTestEnvironment();

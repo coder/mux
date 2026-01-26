@@ -23,6 +23,34 @@ function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
   return [path, { workspaces: [] }];
 }
 
+async function openProjectCreationView(container: HTMLElement, projectPath: string): Promise<void> {
+  const projectRow = await waitFor(
+    () => {
+      const el = container.querySelector(
+        `[data-project-path="${projectPath}"][aria-controls]`
+      ) as HTMLElement | null;
+      if (!el) {
+        throw new Error(`Project row not found for ${projectPath}`);
+      }
+      return el;
+    },
+    { timeout: 5_000 }
+  );
+
+  fireEvent.click(projectRow);
+
+  // ProjectPage renders a branch selector textarea + runtime controls.
+  await waitFor(
+    () => {
+      const textarea = container.querySelector("textarea");
+      if (!textarea) {
+        throw new Error("Project creation page not rendered");
+      }
+    },
+    { timeout: 5_000 }
+  );
+}
+
 function findRuntimeButton(container: HTMLElement, label: string): HTMLButtonElement | null {
   const group = container.querySelector(
     '[data-component="RuntimeTypeGroup"]'
@@ -52,6 +80,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
 
     try {
       await view.waitForReady();
+      await openProjectCreationView(view.container, projectPath);
 
       // Wait for runtime controls to render (depends on listBranches finishing)
       await waitFor(
@@ -148,6 +177,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
 
     try {
       await view.waitForReady();
+      await openProjectCreationView(view.container, projectPath);
 
       // Wait for the git init banner to confirm the project is treated as non-git
       await waitFor(

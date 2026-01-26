@@ -150,6 +150,42 @@ export async function setupWorkspaceView(
 }
 
 /**
+ * Navigate to a project's creation page (ProjectPage) by clicking the project row.
+ *
+ * Note: Mux now boots into the built-in mux-chat workspace, so tests that need the
+ * creation UI must explicitly open it.
+ */
+export async function openProjectCreationView(
+  view: RenderedApp,
+  projectPath: string
+): Promise<void> {
+  await view.waitForReady();
+
+  const projectRow = await waitFor(
+    () => {
+      const el = view.container.querySelector(
+        `[data-project-path="${projectPath}"][aria-controls]`
+      ) as HTMLElement | null;
+      if (!el) throw new Error("Project not found in sidebar");
+      return el;
+    },
+    { timeout: 10_000 }
+  );
+
+  fireEvent.click(projectRow);
+
+  await waitFor(
+    () => {
+      const textarea = view.container.querySelector("textarea");
+      if (!textarea) {
+        throw new Error("Project creation page not rendered");
+      }
+    },
+    { timeout: 10_000 }
+  );
+}
+
+/**
  * Clean up after a UI test: unmount view, run RTL cleanup, then restore DOM.
  * Use in finally blocks to ensure consistent cleanup.
  */

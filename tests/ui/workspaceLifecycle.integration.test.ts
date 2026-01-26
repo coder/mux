@@ -25,7 +25,7 @@ import { detectDefaultTrunkBranch } from "../../src/node/git";
 
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView, setupWorkspaceView } from "./helpers";
+import { cleanupView, openProjectCreationView, setupWorkspaceView } from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -342,10 +342,9 @@ describeIntegration("Workspace Delete from Archive (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("clicking delete on archived workspace stays on project page (single project default view)", async () => {
-    // This tests the case where user has only 1 project and the app defaults
-    // to showing ProjectPage (with archives) without explicitly navigating there.
-    // In this case, the URL might still be "/" but creationProjectPath is set.
+  test("clicking delete on archived workspace stays on project page", async () => {
+    // Ensure deleting an archived workspace does not navigate away from the project page.
+    // (Mux now boots into mux-chat, so tests must explicitly open ProjectPage.)
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
     const branchName = generateBranchName("test-delete-default-view");
@@ -371,17 +370,7 @@ describeIntegration("Workspace Delete from Archive (UI)", () => {
     });
 
     try {
-      await view.waitForReady();
-
-      // DON'T click the project - just wait for the default view
-      // With 1 project, the app should show ProjectPage automatically
-      await waitFor(
-        () => {
-          const textarea = view.container.querySelector("textarea");
-          if (!textarea) throw new Error("Project page not rendered (no textarea)");
-        },
-        { timeout: 5_000 }
-      );
+      await openProjectCreationView(view, projectPath);
 
       // ArchivedWorkspaces is collapsed by default; expand so archived rows are visible.
       const expandArchivedButton = await waitFor(
@@ -485,30 +474,7 @@ describeIntegration("Workspace Delete from Archive (UI)", () => {
     });
 
     try {
-      await view.waitForReady();
-
-      // Click the project to navigate to project page (where archived workspaces show)
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
-          if (!el) throw new Error("Project not found");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
-
-      // Wait for project page to render with archived workspaces section
-      await waitFor(
-        () => {
-          const archivedSection = view.container.querySelector('[class*="Archived"]');
-          const textarea = view.container.querySelector("textarea");
-          if (!archivedSection && !textarea) {
-            throw new Error("Project page not rendered");
-          }
-        },
-        { timeout: 5_000 }
-      );
+      await openProjectCreationView(view, projectPath);
 
       // ArchivedWorkspaces is collapsed by default; expand so archived rows are visible.
       const expandArchivedButton = await waitFor(

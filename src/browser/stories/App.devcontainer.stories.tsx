@@ -10,6 +10,20 @@ import { createMockORPCClient, type MockORPCClientOptions } from "@/browser/stor
 import { expandProjects } from "./storyHelpers";
 import type { ProjectConfig } from "@/node/config";
 
+async function openProjectCreationView(storyRoot: HTMLElement, projectPath: string): Promise<void> {
+  // App now boots into the built-in mux-chat workspace.
+  // Navigate to the project creation page so runtime controls are visible.
+  const projectRow = await waitFor(
+    () => {
+      const el = storyRoot.querySelector(`[data-project-path="${projectPath}"][aria-controls]`);
+      if (!el) throw new Error("Project row not found");
+      return el;
+    },
+    { timeout: 10_000 }
+  );
+
+  await userEvent.click(projectRow);
+}
 export default {
   ...appMeta,
   title: "App/Dev container",
@@ -92,6 +106,7 @@ export const DevcontainerUnavailable: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot, "/Users/dev/no-devcontainer-cli");
     const canvas = within(storyRoot);
 
     // Wait for the runtime button group to appear
@@ -133,6 +148,7 @@ export const DevcontainerSingleConfig: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot, "/Users/dev/devcontainer-app");
     const canvas = within(storyRoot);
 
     // Wait for the runtime button group to appear
@@ -185,6 +201,7 @@ export const DevcontainerMultiConfig: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot, "/Users/dev/devcontainer-multi");
     const canvas = within(storyRoot);
     const body = within(storyRoot.ownerDocument.body);
 

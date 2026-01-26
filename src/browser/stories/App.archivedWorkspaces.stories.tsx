@@ -87,6 +87,20 @@ export const WorkspaceNameInRuntimeTooltip: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    // App now boots into the built-in mux-chat workspace.
+    // Navigate to the project creation page so ArchivedWorkspaces is visible.
+    const projectRow = await waitFor(
+      () => {
+        const el = storyRoot.querySelector(
+          '[data-project-path="/Users/dev/my-project"][aria-controls]'
+        );
+        if (!el) throw new Error("Project row not found");
+        return el;
+      },
+      { timeout: 10_000 }
+    );
+    await userEvent.click(projectRow);
+
     const canvas = within(storyRoot);
 
     // Wait for the archived list to load and scroll it into view (it's below the creation prompt).

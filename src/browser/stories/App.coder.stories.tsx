@@ -11,6 +11,22 @@ import { expandProjects } from "./storyHelpers";
 import type { ProjectConfig } from "@/node/config";
 import type { CoderTemplate, CoderPreset, CoderWorkspace } from "@/common/orpc/schemas/coder";
 
+async function openProjectCreationView(storyRoot: HTMLElement): Promise<void> {
+  // App now boots into the built-in mux-chat workspace.
+  // Navigate to the project creation page so runtime controls are visible.
+  const projectRow = await waitFor(
+    () => {
+      const el = storyRoot.querySelector(
+        '[data-project-path="/Users/dev/my-project"][aria-controls]'
+      );
+      if (!el) throw new Error("Project row not found");
+      return el;
+    },
+    { timeout: 10_000 }
+  );
+
+  await userEvent.click(projectRow);
+}
 export default {
   ...appMeta,
   title: "App/Coder",
@@ -120,6 +136,7 @@ export const SSHWithCoderAvailable: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
     // Wait for the runtime button group to appear
@@ -166,6 +183,7 @@ export const CoderNewWorkspace: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
     // Wait for runtime controls
@@ -213,6 +231,7 @@ export const CoderExistingWorkspace: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
     // Wait for runtime controls
@@ -257,6 +276,7 @@ export const CoderNotAvailable: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
     // Wait for runtime controls
@@ -302,6 +322,7 @@ export const CoderOutdated: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
     // Wait for runtime controls
@@ -369,6 +390,7 @@ export const CoderNoPresets: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
     // Wait for runtime controls
@@ -424,6 +446,7 @@ export const CoderNoRunningWorkspaces: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
     // Wait for runtime controls
