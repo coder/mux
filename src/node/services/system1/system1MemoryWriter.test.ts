@@ -72,6 +72,9 @@ describe("system1MemoryWriter", () => {
           expect(userMessage).toContain("</global-instructions>");
           expect(userMessage).toContain("<context-instructions>");
           expect(userMessage).toContain("# Agents");
+          expect(userMessage).toContain("<memory-file>");
+          expect(userMessage).toContain("old");
+          expect(userMessage).toContain("</memory-file>");
           expect(userMessage).toContain("</context-instructions>");
 
           const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;

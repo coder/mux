@@ -18,7 +18,7 @@ You will be given:
 - The current conversation transcript (including tool calls/results)
 - Global instructions (wrapped in <global-instructions>...</global-instructions>)
 - Project/workspace instructions (wrapped in <context-instructions>...</context-instructions>)
-- The current contents of the project's memory file (may be empty)
+- The current contents of the project's memory file (wrapped in <memory-file>...</memory-file>)
 
 Your task:
 
