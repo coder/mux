@@ -130,4 +130,34 @@ describe("createUnknownSendMessageError", () => {
     expect(() => createUnknownSendMessageError("")).toThrow();
     expect(() => createUnknownSendMessageError("   ")).toThrow();
   });
+
+  test("strips 'undefined: ' prefix from error messages", () => {
+    const result = createUnknownSendMessageError(
+      "undefined: The document file name can only contain alphanumeric characters"
+    );
+
+    expect(result.type).toBe("unknown");
+    if (result.type === "unknown") {
+      expect(result.raw).toBe("The document file name can only contain alphanumeric characters");
+      expect(result.raw).not.toContain("undefined:");
+    }
+  });
+
+  test("preserves messages without 'undefined: ' prefix", () => {
+    const result = createUnknownSendMessageError("Normal error message");
+
+    expect(result.type).toBe("unknown");
+    if (result.type === "unknown") {
+      expect(result.raw).toBe("Normal error message");
+    }
+  });
+
+  test("only strips prefix when at the start of message", () => {
+    const result = createUnknownSendMessageError("Error code undefined: something happened");
+
+    expect(result.type).toBe("unknown");
+    if (result.type === "unknown") {
+      expect(result.raw).toBe("Error code undefined: something happened");
+    }
+  });
 });

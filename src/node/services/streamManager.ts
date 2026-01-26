@@ -30,6 +30,7 @@ import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import {
   coerceStreamErrorTypeForMessage,
   createErrorEvent,
+  stripNoisyErrorPrefix,
   type StreamErrorPayload,
 } from "@/node/services/utils/sendMessageError";
 import type { PartialService } from "./partialService";
@@ -1723,7 +1724,10 @@ export class StreamManager extends EventEmitter {
     error: unknown
   ): StreamErrorPayload & { errorType: StreamErrorType } {
     // Extract error message (errors thrown from 'error' parts already have the correct message)
-    let errorMessage: string = error instanceof Error ? error.message : String(error);
+    // Apply prefix stripping to remove noisy "undefined: " prefixes from provider errors
+    let errorMessage: string = stripNoisyErrorPrefix(
+      error instanceof Error ? error.message : String(error)
+    );
     let actualError: unknown = error;
 
     // For categorization, use the cause if available (preserves the original error structure)

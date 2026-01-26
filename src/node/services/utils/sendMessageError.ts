@@ -5,12 +5,28 @@ import type { StreamErrorMessage } from "@/common/orpc/types";
 import { createAssistantMessageId } from "./messageIds";
 
 /**
+ * Strip noisy error prefixes from provider error messages.
+ * e.g., "undefined: The document file name can only contain..."
+ *       becomes "The document file name can only contain..."
+ *
+ * These prefixes are artifacts of how upstream errors are coerced to strings
+ * (e.g., `${error.type}: ${error.message}` where type is undefined).
+ */
+export const stripNoisyErrorPrefix = (message: string): string => {
+  // Strip "undefined: " prefix (common in Anthropic SDK errors)
+  if (message.startsWith("undefined: ")) {
+    return message.slice("undefined: ".length);
+  }
+  return message;
+};
+
+/**
  * Helper to wrap arbitrary errors into SendMessageError structures.
  * Enforces that the raw string is non-empty for defensive debugging.
  */
 export const createUnknownSendMessageError = (raw: string): SendMessageError => {
   assert(typeof raw === "string", "Expected raw error to be a string");
-  const trimmed = raw.trim();
+  const trimmed = stripNoisyErrorPrefix(raw.trim());
   assert(trimmed.length > 0, "createUnknownSendMessageError requires a non-empty message");
 
   return {

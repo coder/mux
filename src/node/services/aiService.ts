@@ -33,6 +33,7 @@ import {
 import { linkAbortSignal } from "@/node/utils/abort";
 import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
 import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToolMediaAsUserMessages";
+import { sanitizeAnthropicPdfFilenames } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -1550,10 +1551,18 @@ export class AIService extends EventEmitter {
       // This is request-only (does not mutate persisted history).
       const messagesWithInlinedSvg = inlineSvgAsTextForProvider(sanitizedMessages);
 
+      // Sanitize PDF filenames for Anthropic (request-only, preserves original in UI/history).
+      // Anthropic rejects document names containing periods, underscores, etc.
+      const messagesWithSanitizedPdf =
+        providerForMessages === "anthropic"
+          ? sanitizeAnthropicPdfFilenames(messagesWithInlinedSvg)
+          : messagesWithInlinedSvg;
+
       // Some MCP tools return images as base64 in tool results.
       // Providers can treat tool-result payloads as text/JSON, which can blow up context.
       // Rewrite those tool outputs to small text placeholders and attach the images as file parts.
-      const messagesWithToolMediaExtracted = extractToolMediaAsUserMessages(messagesWithInlinedSvg);
+      const messagesWithToolMediaExtracted =
+        extractToolMediaAsUserMessages(messagesWithSanitizedPdf);
 
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
