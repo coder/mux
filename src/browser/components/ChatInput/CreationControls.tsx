@@ -370,9 +370,7 @@ export function CreationControls(props: CreationControlsProps) {
                   onClick={handleWandClick}
                   disabled={props.disabled}
                   className="flex shrink-0 items-center disabled:opacity-50"
-                  aria-label={
-                    nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"
-                  }
+                  aria-label={nameState.autoGenerate ? "Disable auto-naming" : "Enable auto-naming"}
                 >
                   <Wand2
                     className={cn(
