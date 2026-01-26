@@ -117,8 +117,8 @@ export function isLocalhost(hostname: string): boolean {
  * Convert a string to hex encoding (for VS Code remote URIs).
  */
 function toHex(str: string): string {
-  return Array.from(str)
-    .map((c) => c.charCodeAt(0).toString(16).padStart(2, "0"))
+  return Array.from(new TextEncoder().encode(str))
+    .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
