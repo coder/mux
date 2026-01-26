@@ -1382,6 +1382,12 @@ export class AIService extends EventEmitter {
         workspaceId === MUX_CHAT_WORKSPACE_ID
           ? [
               { regex_match: ".*", action: "disable" },
+
+              // Allow docs lookup via built-in skills (e.g. mux-docs), while keeping
+              // filesystem/binary execution locked down.
+              { regex_match: "agent_skill_read", action: "enable" },
+              { regex_match: "agent_skill_read_file", action: "enable" },
+
               { regex_match: "mux_global_agents_read", action: "enable" },
               { regex_match: "mux_global_agents_write", action: "enable" },
               { regex_match: "ask_user_question", action: "enable" },
