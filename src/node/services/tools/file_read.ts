@@ -41,8 +41,11 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
 
         // Validate that the path is within the working directory
         // Exception: allow reading the plan file in plan mode (it may be outside workspace cwd)
+        // Allow reading stream-scoped runtimeTempDir (e.g., full bash output saved during compaction).
         if (!(await isPlanFilePath(filePath, config))) {
-          const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
+          const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime, [
+            config.runtimeTempDir,
+          ]);
           if (pathValidation) {
             // In plan mode, hint about the plan file path to help model recover
             const hint =

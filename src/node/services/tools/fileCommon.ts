@@ -1,4 +1,5 @@
 import * as path from "path";
+import assert from "@/common/utils/assert";
 import { createPatch } from "diff";
 import type { FileStat, Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
@@ -182,17 +183,20 @@ export function validateNoRedundantPrefix(
 
 /**
  * Validates that a file path is within the allowed working directory.
- * Returns an error object if the path is outside cwd, null if valid.
+ * Returns an error object if the path is outside cwd (and any optional allowlisted roots),
+ * null if valid.
  *
  * @param filePath - The file path to validate (can be relative or absolute)
  * @param cwd - The working directory that file operations are restricted to
  * @param runtime - The runtime (used to detect SSH - TODO: make path validation runtime-aware)
+ * @param extraAllowedDirs - Additional absolute directories that are allowlisted for access.
  * @returns Error object if invalid, null if valid
  */
 export function validatePathInCwd(
   filePath: string,
   cwd: string,
-  runtime: Runtime
+  runtime: Runtime,
+  extraAllowedDirs: string[] = []
 ): { error: string } | null {
   // TODO: Make path validation runtime-aware instead of skipping for SSH.
   // For now, skip local path validation for SSH runtimes since:
@@ -202,18 +206,31 @@ export function validatePathInCwd(
     return null;
   }
 
+  const trimmedExtraAllowedDirs = extraAllowedDirs
+    .map((dir) => dir.trim())
+    .filter((dir) => dir.length > 0);
+
+  // extraAllowedDirs are an internal allowlist (e.g., stream-scoped runtimeTempDir).
+  // For safety, require absolute paths so misconfiguration doesn't widen access.
+  for (const dir of trimmedExtraAllowedDirs) {
+    assert(path.isAbsolute(dir), `extraAllowedDir must be an absolute path: '${dir}'`);
+  }
+
   // Resolve the path (handles relative paths and normalizes)
   const resolvedPath = path.isAbsolute(filePath)
     ? path.resolve(filePath)
     : path.resolve(cwd, filePath);
-  const resolvedCwd = path.resolve(cwd);
 
-  // Check if resolved path starts with cwd (accounting for trailing slashes)
-  // Use path.relative to check if we need to go "up" from cwd to reach the file
-  const relativePath = path.relative(resolvedCwd, resolvedPath);
+  const allowedRoots = [cwd, ...trimmedExtraAllowedDirs].map((dir) => path.resolve(dir));
 
-  // If the relative path starts with '..' or is empty, the file is outside cwd
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+  // Check if resolved path is within any allowed root.
+  // Use path.relative to check if we need to go "up" from the root to reach the file.
+  const isWithinAllowedRoot = allowedRoots.some((root) => {
+    const relativePath = path.relative(root, resolvedPath);
+    return !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
+  });
+
+  if (!isWithinAllowedRoot) {
     return {
       error: `File operations are restricted to the workspace directory (${cwd}). The path '${filePath}' resolves outside this directory. If you need to modify files outside the workspace, please ask the user for permission first.`,
     };

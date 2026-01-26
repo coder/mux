@@ -80,6 +80,16 @@ describe("fileCommon", () => {
       expect(validatePathInCwd("file.ts", cwd, runtime)).toBeNull();
     });
 
+    it("should allow absolute paths within extraAllowedDirs", () => {
+      expect(validatePathInCwd("/tmp/test.txt", cwd, runtime, ["/tmp"])).toBeNull();
+    });
+
+    it("should reject absolute paths outside cwd and extraAllowedDirs", () => {
+      const result = validatePathInCwd("/etc/passwd", cwd, runtime, ["/tmp"]);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("restricted to the workspace directory");
+    });
+
     it("should allow absolute paths within cwd", () => {
       expect(validatePathInCwd("/workspace/project/src/file.ts", cwd, runtime)).toBeNull();
       expect(validatePathInCwd("/workspace/project/file.ts", cwd, runtime)).toBeNull();

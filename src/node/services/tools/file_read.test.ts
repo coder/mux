@@ -24,6 +24,7 @@ function createTestFileReadTool(options?: { cwd?: string }) {
 
   return {
     tool,
+    runtimeTempDir: tempDir.path,
     [Symbol.dispose]() {
       tempDir[Symbol.dispose]();
     },
@@ -372,6 +373,23 @@ describe("file_read tool", () => {
     }
   });
 
+  it("should allow reading files from runtimeTempDir", async () => {
+    using testEnv = createTestFileReadTool({ cwd: testDir });
+    const tool = testEnv.tool;
+
+    const tmpFilePath = path.join(testEnv.runtimeTempDir, "bash-full.txt");
+    await fs.writeFile(tmpFilePath, "lineA\nlineB");
+
+    const result = (await tool.execute!(
+      { file_path: tmpFilePath },
+      mockToolCallOptions
+    )) as FileReadToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.content).toBe("1\tlineA\n2\tlineB");
+    }
+  });
   it("should reject reading absolute paths outside cwd", async () => {
     // Setup
     using testEnv = createTestFileReadTool({ cwd: testDir });
