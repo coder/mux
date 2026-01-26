@@ -37,14 +37,13 @@ describe("WorkspaceHarnessService (journal)", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  async function setupWorkspace(): Promise<{
+  async function setupWorkspace(workspaceName = "branch"): Promise<{
     workspaceId: string;
     workspaceName: string;
     workspacePath: string;
   }> {
     const projectPath = "/fake/project";
     const workspaceId = "ws-id";
-    const workspaceName = "branch";
 
     const workspacePath = getWorkspacePath({
       srcDir: config.srcDir,
@@ -88,6 +87,27 @@ describe("WorkspaceHarnessService (journal)", () => {
     const contents = await fs.readFile(journalPath, "utf-8");
     expect(contents).toContain("# Harness journal (append-only)");
     expect(contents).toContain("## Entry template");
+    expect(contents).toContain(`.mux/harness/${workspaceName}.jsonc`);
+  });
+
+  it("creates harness files for slashy workspace names", async () => {
+    const { workspaceId, workspaceName, workspacePath } = await setupWorkspace("feature/foo");
+
+    const service = new WorkspaceHarnessService(config);
+    await service.setHarnessForWorkspace(workspaceId, {
+      version: 1,
+      checklist: [],
+      gates: [],
+      loop: {},
+    });
+
+    const configPath = path.join(workspacePath, ".mux", "harness", `${workspaceName}.jsonc`);
+    const journalPath = path.join(workspacePath, ".mux", "harness", `${workspaceName}.progress.md`);
+
+    expect(await pathExists(configPath)).toBe(true);
+    expect(await pathExists(journalPath)).toBe(true);
+
+    const contents = await fs.readFile(journalPath, "utf-8");
     expect(contents).toContain(`.mux/harness/${workspaceName}.jsonc`);
   });
 

@@ -20,7 +20,7 @@ import { log } from "@/node/services/log";
 
 const HARNESS_DIR = ".mux/harness";
 
-const HARNESS_GITIGNORE_PATTERNS = [`${HARNESS_DIR}/*.jsonc`, `${HARNESS_DIR}/*.progress.md`];
+const HARNESS_GITIGNORE_PATTERNS = [`${HARNESS_DIR}/**/*.jsonc`, `${HARNESS_DIR}/**/*.progress.md`];
 
 const DEFAULT_LOOP_SETTINGS: Required<
   Pick<
@@ -55,6 +55,11 @@ function joinForRuntime(runtimeConfig: RuntimeConfig | undefined, ...parts: stri
   // running mux on Windows. Use POSIX joins so we don't accidentally introduce backslashes.
   const usePosix = runtimeConfig?.type === "ssh" || runtimeConfig?.type === "docker";
   return usePosix ? path.posix.join(...parts) : path.join(...parts);
+}
+
+function dirnameForRuntime(runtimeConfig: RuntimeConfig | undefined, filePath: string): string {
+  const usePosix = runtimeConfig?.type === "ssh" || runtimeConfig?.type === "docker";
+  return usePosix ? path.posix.dirname(filePath) : path.dirname(filePath);
 }
 
 function isAbsoluteForRuntime(runtimeConfig: RuntimeConfig | undefined, filePath: string): boolean {
@@ -241,7 +246,9 @@ function renderHarnessJournalBootstrapMarkdown(params: {
 }): string {
   const nowIso = new Date().toISOString();
 
-  const configBasename = path.basename(params.paths.configPath);
+  const configPrefix =
+    params.metadata.name.trim().length > 0 ? params.metadata.name.trim() : "workspace";
+  const configRelPath = path.posix.join(HARNESS_DIR, `${configPrefix}.jsonc`);
 
   const lines: string[] = [];
   lines.push("# Harness journal (append-only)");
@@ -251,7 +258,7 @@ function renderHarnessJournalBootstrapMarkdown(params: {
   lines.push("");
   lines.push(`- Workspace: ${params.metadata.name} (${params.metadata.id})`);
   lines.push(`- Created: ${nowIso}`);
-  lines.push(`- Harness config: ${path.posix.join(HARNESS_DIR, configBasename)}`);
+  lines.push(`- Harness config: ${configRelPath}`);
   lines.push("");
   lines.push("## Entry template");
   lines.push("");
@@ -357,15 +364,26 @@ export class WorkspaceHarnessService {
   private async ensureHarnessDir(
     runtime: ReturnType<typeof createRuntime>,
     workspacePath: string,
-    runtimeConfig: RuntimeConfig | undefined
+    runtimeConfig: RuntimeConfig | undefined,
+    paths?: WorkspaceHarnessFilePaths
   ): Promise<void> {
     const harnessDirPath = joinForRuntime(runtimeConfig, workspacePath, HARNESS_DIR);
 
-    try {
-      await runtime.ensureDir(harnessDirPath);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to create ${HARNESS_DIR} directory: ${msg}`);
+    const dirPaths = new Set([harnessDirPath]);
+    if (paths) {
+      // Workspace names can contain slashes (e.g. "feature/foo"), which means harness files may end up
+      // nested under `.mux/harness/feature/foo.jsonc`. Ensure parent dirs exist before writing.
+      dirPaths.add(dirnameForRuntime(runtimeConfig, paths.configPath));
+      dirPaths.add(dirnameForRuntime(runtimeConfig, paths.progressPath));
+    }
+
+    for (const dirPath of dirPaths) {
+      try {
+        await runtime.ensureDir(dirPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to create harness directory (${dirPath}): ${msg}`);
+      }
     }
   }
 
@@ -445,7 +463,12 @@ export class WorkspaceHarnessService {
     paths: WorkspaceHarnessFilePaths;
   }): Promise<void> {
     try {
-      await this.ensureHarnessDir(params.runtime, params.workspacePath, params.runtimeConfig);
+      await this.ensureHarnessDir(
+        params.runtime,
+        params.workspacePath,
+        params.runtimeConfig,
+        params.paths
+      );
 
       const exists = await statIsFile(params.runtime, params.paths.progressPath);
       if (exists) {
@@ -518,7 +541,7 @@ export class WorkspaceHarnessService {
     const normalized = normalizeWorkspaceHarnessConfig(config);
     const serialized = JSON.stringify(normalized, null, 2) + "\n";
 
-    await this.ensureHarnessDir(runtime, workspacePath, metadata.runtimeConfig);
+    await this.ensureHarnessDir(runtime, workspacePath, metadata.runtimeConfig, paths);
 
     await writeFileString(runtime, paths.configPath, serialized);
     await this.ensureHarnessGitignored(runtime, workspacePath, metadata.runtimeConfig);
