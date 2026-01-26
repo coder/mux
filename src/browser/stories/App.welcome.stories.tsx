@@ -79,8 +79,8 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
       modes: {
         dark: { theme: "dark" },
         light: { theme: "light" },
-        "dark-mobile": { theme: "dark", viewport: "mobile1" },
-        "light-mobile": { theme: "light", viewport: "mobile1" },
+        "dark-mobile": { theme: "dark", viewport: "mobile1", hasTouch: true },
+        "light-mobile": { theme: "light", viewport: "mobile1", hasTouch: true },
       },
     },
   },
