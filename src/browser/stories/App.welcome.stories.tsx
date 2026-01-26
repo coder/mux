@@ -74,6 +74,16 @@ export const CreateWorkspace: AppStory = {
 
 /** Creation view with multiple projects - shows sidebar with projects */
 export const CreateWorkspaceMultipleProjects: AppStory = {
+  parameters: {
+    chromatic: {
+      modes: {
+        dark: { theme: "dark" },
+        light: { theme: "light" },
+        "dark-mobile": { theme: "dark", viewport: "mobile1" },
+        "light-mobile": { theme: "light", viewport: "mobile1" },
+      },
+    },
+  },
   render: () => (
     <AppWithMocks
       setup={() => {

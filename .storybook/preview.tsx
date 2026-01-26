@@ -154,8 +154,6 @@ const preview: Preview = {
       modes: {
         dark: { theme: "dark" },
         light: { theme: "light" },
-        "dark-mobile": { theme: "dark", viewport: "mobile1" },
-        "light-mobile": { theme: "light", viewport: "mobile1" },
       },
     },
   },
