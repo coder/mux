@@ -728,16 +728,18 @@ export function TasksSection() {
 
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
-              <div className="text-foreground text-sm">Plan: Implement replaces chat history</div>
+              <div className="text-foreground text-sm">
+                Plan: Implement replaces conversation with plan
+              </div>
               <div className="text-muted text-xs">
-                When enabled, clicking Implement in a propose_plan message clears the chat to the
-                plan before switching to Exec.
+                When enabled, clicking Implement on a plan proposal clears previous messages and
+                shows the plan before switching to Exec.
               </div>
             </div>
             <Switch
               checked={taskSettings.proposePlanImplementReplacesChatHistory ?? false}
               onCheckedChange={setProposePlanImplementReplacesChatHistory}
-              aria-label="Toggle plan Implement replaces chat history"
+              aria-label="Toggle plan Implement replaces conversation with plan"
             />
           </div>
         </div>
