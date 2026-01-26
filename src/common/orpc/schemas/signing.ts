@@ -1,8 +1,8 @@
 /**
  * Signing ORPC schemas
  *
- * Defines input/output schemas for Ed25519 message signing endpoints.
- * Used for signing mux.md shared content with optional GitHub identity.
+ * Defines input/output schemas for mux.md message signing endpoints.
+ * Used for signing shared content with optional GitHub identity attribution.
  */
 
 import { z } from "zod";
@@ -19,7 +19,7 @@ export const signingErrorOutput = z.object({
 });
 
 export const signingCapabilitiesOutput = z.object({
-  /** Public key in OpenSSH format (ssh-ed25519 AAAA...), null if no Ed25519 key found */
+  /** Public key in OpenSSH format (ssh-ed25519 AAAA...), null if no key is available */
   publicKey: z.string().nullable(),
   /** Detected GitHub username, if any */
   githubUser: z.string().nullable(),
@@ -29,21 +29,24 @@ export const signingCapabilitiesOutput = z.object({
 
 export type SigningCapabilities = z.infer<typeof signingCapabilitiesOutput>;
 
-// --- Get sign credentials endpoint ---
-// Returns credentials needed for native signing via mux-md-client
+// --- signMessage endpoint ---
+// Returns a mux.md-compatible signature envelope for the provided content.
 
-export const getSignCredentialsInput = z.object({});
-
-export const getSignCredentialsOutput = z.object({
-  /** Base64-encoded private key bytes (32 bytes for Ed25519, variable for ECDSA) */
-  privateKeyBase64: z.string(),
-  /** Public key in OpenSSH format */
+export const signatureEnvelopeOutput = z.object({
+  sig: z.string(),
   publicKey: z.string(),
-  /** Detected GitHub username, if any */
-  githubUser: z.string().nullable(),
+  githubUser: z.string().optional(),
 });
 
-export type SignCredentials = z.infer<typeof getSignCredentialsOutput>;
+export type SignatureEnvelope = z.infer<typeof signatureEnvelopeOutput>;
+
+export const signMessageInput = z
+  .object({
+    content: z.string(),
+  })
+  .strict();
+
+export const signMessageOutput = signatureEnvelopeOutput;
 
 // --- Clear identity cache endpoint ---
 
@@ -58,9 +61,9 @@ export const signing = {
     input: signingCapabilitiesInput,
     output: signingCapabilitiesOutput,
   },
-  getSignCredentials: {
-    input: getSignCredentialsInput,
-    output: getSignCredentialsOutput,
+  signMessage: {
+    input: signMessageInput,
+    output: signMessageOutput,
   },
   clearIdentityCache: {
     input: clearIdentityCacheInput,

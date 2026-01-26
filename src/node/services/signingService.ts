@@ -1,17 +1,28 @@
 /**
  * Signing Service
  *
- * Provides signing credentials for mux.md shares.
- * - Loads keys from ~/.mux/message_signing_key or ~/.ssh/id_* using sshpk
- * - Returns private key bytes for use with mux-md-client native signing
- * - Returns public key in OpenSSH format
+ * Provides message signing for mux.md shares.
+ *
+ * - Loads unencrypted key files from disk via sshpk
+ * - Can sign via SSH agent (SSH_AUTH_SOCK), including 1Password's SSH agent
+ * - Produces mux.md-compatible SignatureEnvelopes (no private key bytes cross IPC)
  * - Detects GitHub username via `gh auth status`
  */
 
+import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+import {
+  computeFingerprint,
+  createSignatureEnvelope,
+  parsePublicKey,
+  type KeyType as MuxMdKeyType,
+  type SignatureEnvelope,
+} from "@coder/mux-md-client";
+import { createSshAgentSignatureEnvelope } from "@coder/mux-md-client/ssh-agent";
 import sshpk from "sshpk";
+import { OpenSSHAgent, type KnownPublicKeys, type ParsedKey, type PublicKeyEntry } from "ssh2";
 import { getMuxHome } from "@/common/constants/paths";
 import { execAsync } from "@/node/utils/disposableExec";
 import { log } from "@/node/services/log";
@@ -43,17 +54,37 @@ interface SigningCapabilities {
   error: SigningError | null;
 }
 
-interface SignCredentials {
-  /** Base64-encoded private key bytes for use with mux-md-client */
-  privateKeyBase64: string;
-  /** Public key in OpenSSH format */
-  publicKey: string;
-  /** Detected GitHub username, if any */
-  githubUser: string | null;
+type SigningKeySelection =
+  | {
+      kind: "disk";
+      keyPair: KeyPair;
+    }
+  | {
+      kind: "ssh-agent";
+      sshAuthSock: string;
+      publicKeyOpenSSH: string;
+      fingerprint: string;
+    };
+
+interface AgentKeyCandidate {
+  publicKeyOpenSSH: string;
+  fingerprint: string;
+  muxKeyType: MuxMdKeyType;
 }
 
-/** Supported key types for signing */
-const SUPPORTED_KEY_TYPES = ["ed25519", "ecdsa"];
+const SUPPORTED_AGENT_KEY_TYPES = new Set([
+  "ssh-ed25519",
+  "ecdsa-sha2-nistp256",
+  "ecdsa-sha2-nistp384",
+  "ecdsa-sha2-nistp521",
+]);
+
+const AGENT_KEY_TYPE_PRIORITY: Record<MuxMdKeyType, number> = {
+  ed25519: 0,
+  "ecdsa-p256": 1,
+  "ecdsa-p384": 2,
+  "ecdsa-p521": 3,
+};
 
 /** Default paths to check for signing keys, in order of preference */
 export function getDefaultKeyPaths(): string[] {
@@ -64,34 +95,64 @@ export function getDefaultKeyPaths(): string[] {
   ];
 }
 
+function normalizeOpenSshPublicKey(publicKey: string): string | null {
+  const parts = publicKey.trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  return `${parts[0]} ${parts[1]}`;
+}
+
 /**
  * Service for message signing (Ed25519 or ECDSA).
- * Loads key from ~/.mux/message_signing_key or ~/.ssh/id_ed25519 or ~/.ssh/id_ecdsa.
+ * Loads keys from disk or uses an SSH agent if available.
  */
 export class SigningService {
-  private keyPair: KeyPair | null = null;
+  private signingKey: SigningKeySelection | null = null;
   private keyLoadAttempted = false;
+  private keyLoadPromise: Promise<SigningKeySelection | null> | null = null;
   private keyLoadError: string | null = null;
   private hasEncryptedKey = false;
+
   private identityCache: IdentityStatus | null = null;
   private identityPromise: Promise<IdentityStatus> | null = null;
   private readonly keyPaths: string[];
 
   constructor(keyPaths?: string[]) {
     this.keyPaths = keyPaths ?? getDefaultKeyPaths();
+    assert(this.keyPaths.length > 0, "SigningService: keyPaths must be non-empty");
+  }
+
+  private static isParsedKey(value: unknown): value is ParsedKey {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "type" in value &&
+      typeof (value as ParsedKey).getPublicSSH === "function"
+    );
+  }
+
+  private static unwrapSshAgentIdentity(identity: ParsedKey | PublicKeyEntry): ParsedKey | null {
+    if (SigningService.isParsedKey(identity)) return identity;
+
+    const pubKey = identity.pubKey;
+    if (SigningService.isParsedKey(pubKey)) return pubKey;
+
+    if (typeof pubKey === "object" && pubKey !== null && "pubKey" in pubKey) {
+      const inner = (pubKey as { pubKey: ParsedKey | Buffer | string }).pubKey;
+      if (SigningService.isParsedKey(inner)) return inner;
+    }
+
+    return null;
+  }
+  private static isSupportedDiskKeyType(type: string): type is "ed25519" | "ecdsa" {
+    return type === "ed25519" || type === "ecdsa";
   }
 
   /**
    * Load a signing keypair from disk using sshpk.
-   * Tries ~/.mux/message_signing_key first, then SSH keys.
    * Supports Ed25519 and ECDSA keys in PEM or OpenSSH format.
-   * Returns null if no supported key is found.
    */
-  private loadKeyPair(): KeyPair | null {
-    if (this.keyLoadAttempted) return this.keyPair;
-    this.keyLoadAttempted = true;
-
-    for (const keyPath of this.keyPaths) {
+  private tryLoadDiskKeyPair(keyPaths: string[]): KeyPair | null {
+    for (const keyPath of keyPaths) {
       if (!existsSync(keyPath)) continue;
 
       try {
@@ -102,7 +163,7 @@ export class SigningService {
         const privateKey = sshpk.parsePrivateKey(keyData, "auto", { filename: keyPath });
 
         // Verify it's a supported key type
-        if (!SUPPORTED_KEY_TYPES.includes(privateKey.type)) {
+        if (!SigningService.isSupportedDiskKeyType(privateKey.type)) {
           log.info(
             "[SigningService] Key at",
             keyPath,
@@ -119,11 +180,11 @@ export class SigningService {
         // Extract raw private key bytes for use with mux-md-client signing
         const privateKeyBytes = this.extractPrivateKeyBytes(privateKey);
 
-        this.keyPair = { privateKey, privateKeyBytes, publicKeyOpenSSH };
+        const keyPair = { privateKey, privateKeyBytes, publicKeyOpenSSH };
 
         log.info("[SigningService] Loaded", privateKey.type, "key from:", keyPath);
         log.info("[SigningService] Public key:", publicKeyOpenSSH.slice(0, 50) + "...");
-        return this.keyPair;
+        return keyPair;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         // Check for encrypted key
@@ -140,13 +201,246 @@ export class SigningService {
       }
     }
 
-    // Set appropriate error based on what we found
+    return null;
+  }
+
+  private async listSshAgentKeyCandidates(sshAuthSock: string): Promise<AgentKeyCandidate[]> {
+    assert(
+      sshAuthSock.trim().length > 0,
+      "listSshAgentKeyCandidates: sshAuthSock must be non-empty"
+    );
+
+    const agent = new OpenSSHAgent(sshAuthSock);
+    const identities = await new Promise<KnownPublicKeys<ParsedKey>>((resolve, reject) => {
+      agent.getIdentities((err, keys) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve(keys ?? []);
+      });
+    });
+
+    const candidates: AgentKeyCandidate[] = [];
+
+    for (const identity of identities) {
+      const parsedIdentity = SigningService.unwrapSshAgentIdentity(identity);
+      if (!parsedIdentity) continue;
+      if (!SUPPORTED_AGENT_KEY_TYPES.has(parsedIdentity.type)) continue;
+
+      // OpenSSH public key format: "<type> <base64(blob)> [comment]"
+      const publicKeyOpenSSH = `${parsedIdentity.type} ${parsedIdentity
+        .getPublicSSH()
+        .toString("base64")}`;
+
+      try {
+        const parsed = parsePublicKey(publicKeyOpenSSH);
+        const fingerprint = await computeFingerprint(parsed.keyBytes);
+
+        candidates.push({
+          publicKeyOpenSSH,
+          fingerprint,
+          muxKeyType: parsed.type,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log.debug("[SigningService] Skipping unsupported SSH agent key:", message);
+      }
+    }
+
+    return candidates;
+  }
+
+  private pickPreferredAgentKey(candidates: AgentKeyCandidate[]): AgentKeyCandidate | null {
+    let best: AgentKeyCandidate | null = null;
+
+    for (const candidate of candidates) {
+      if (!best) {
+        best = candidate;
+        continue;
+      }
+      if (
+        AGENT_KEY_TYPE_PRIORITY[candidate.muxKeyType] < AGENT_KEY_TYPE_PRIORITY[best.muxKeyType]
+      ) {
+        best = candidate;
+      }
+    }
+
+    return best;
+  }
+
+  private async trySelectSshAgentKey(): Promise<{
+    selection: SigningKeySelection | null;
+    error: string | null;
+  }> {
+    const desiredPublicKeyRaw = process.env.MUX_SIGNING_PUBLIC_KEY?.trim();
+    const desiredFingerprint = process.env.MUX_SIGNING_KEY_FINGERPRINT?.trim();
+    const hasOverride = Boolean(desiredPublicKeyRaw?.length) || Boolean(desiredFingerprint?.length);
+
+    const sshAuthSock = process.env.SSH_AUTH_SOCK?.trim();
+    if (!sshAuthSock) {
+      if (hasOverride) {
+        return {
+          selection: null,
+          error:
+            "MUX_SIGNING_PUBLIC_KEY/MUX_SIGNING_KEY_FINGERPRINT is set but SSH_AUTH_SOCK is not set",
+        };
+      }
+      return { selection: null, error: null };
+    }
+
+    let candidates: AgentKeyCandidate[];
+    try {
+      candidates = await this.listSshAgentKeyCandidates(sshAuthSock);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.info("[SigningService] Failed to query SSH agent:", message);
+      if (hasOverride) {
+        return {
+          selection: null,
+          error: `Failed to query SSH agent (SSH_AUTH_SOCK=${sshAuthSock})`,
+        };
+      }
+      return { selection: null, error: null };
+    }
+
+    if (candidates.length === 0) {
+      if (hasOverride) {
+        return { selection: null, error: `No supported signing keys found in SSH agent` };
+      }
+      return { selection: null, error: null };
+    }
+
+    // Apply optional selection constraints for agent-backed keys.
+    if (hasOverride) {
+      let filtered = candidates;
+
+      if (desiredPublicKeyRaw) {
+        const normalized = normalizeOpenSshPublicKey(desiredPublicKeyRaw);
+        if (!normalized) {
+          return {
+            selection: null,
+            error:
+              "MUX_SIGNING_PUBLIC_KEY must be an OpenSSH public key string (e.g. 'ssh-ed25519 AAAA...')",
+          };
+        }
+
+        try {
+          parsePublicKey(normalized);
+        } catch {
+          return {
+            selection: null,
+            error: "MUX_SIGNING_PUBLIC_KEY is not a supported SSH public key",
+          };
+        }
+
+        filtered = filtered.filter((c) => c.publicKeyOpenSSH === normalized);
+      }
+
+      if (desiredFingerprint) {
+        filtered = filtered.filter((c) => c.fingerprint === desiredFingerprint);
+      }
+
+      if (filtered.length === 0) {
+        return {
+          selection: null,
+          error:
+            "No SSH agent key matched MUX_SIGNING_PUBLIC_KEY/MUX_SIGNING_KEY_FINGERPRINT (check your SSH agent)",
+        };
+      }
+
+      const chosen = filtered[0];
+      return {
+        selection: {
+          kind: "ssh-agent",
+          sshAuthSock,
+          publicKeyOpenSSH: chosen.publicKeyOpenSSH,
+          fingerprint: chosen.fingerprint,
+        },
+        error: null,
+      };
+    }
+
+    // Otherwise, pick a reasonable default.
+    const chosen = this.pickPreferredAgentKey(candidates);
+    if (!chosen) {
+      return { selection: null, error: null };
+    }
+
+    return {
+      selection: {
+        kind: "ssh-agent",
+        sshAuthSock,
+        publicKeyOpenSSH: chosen.publicKeyOpenSSH,
+        fingerprint: chosen.fingerprint,
+      },
+      error: null,
+    };
+  }
+
+  private async loadSigningKey(): Promise<SigningKeySelection | null> {
+    if (this.keyLoadAttempted) return this.signingKey;
+    if (this.keyLoadPromise) return this.keyLoadPromise;
+
+    this.keyLoadPromise = (async () => {
+      try {
+        const loaded = await this.doLoadSigningKey();
+        this.signingKey = loaded;
+        return loaded;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log.warn("[SigningService] Unexpected key load error:", message);
+        this.signingKey = null;
+        this.keyLoadError = "Failed to load signing key";
+        return null;
+      } finally {
+        this.keyLoadAttempted = true;
+        this.keyLoadPromise = null;
+      }
+    })();
+
+    return this.keyLoadPromise;
+  }
+
+  private async doLoadSigningKey(): Promise<SigningKeySelection | null> {
+    this.keyLoadError = null;
+    this.hasEncryptedKey = false;
+
+    // 1) Explicit disk key always wins.
+    const explicitPath = this.keyPaths[0];
+    if (explicitPath) {
+      const explicitDisk = this.tryLoadDiskKeyPair([explicitPath]);
+      if (explicitDisk) {
+        return { kind: "disk", keyPair: explicitDisk };
+      }
+    }
+
+    // 2) Prefer SSH-agent keys over default ~/.ssh/id_* keys.
+    const agentResult = await this.trySelectSshAgentKey();
+    if (agentResult.error) {
+      this.keyLoadError = agentResult.error;
+      return null;
+    }
+    if (agentResult.selection) {
+      return agentResult.selection;
+    }
+
+    // 3) Fall back to disk defaults.
+    const fallbackDisk = this.tryLoadDiskKeyPair(this.keyPaths.slice(1));
+    if (fallbackDisk) {
+      return { kind: "disk", keyPair: fallbackDisk };
+    }
+
+    // Set appropriate error based on what we found.
     if (this.hasEncryptedKey) {
-      this.keyLoadError = `Signing key requires a passphrase. Create an unencrypted key at ~/.mux/message_signing_key or use ssh-add to load keys.`;
+      this.keyLoadError =
+        "Signing key requires a passphrase. Encrypted key files are skipped unless loaded in your SSH agent (SSH_AUTH_SOCK).";
     } else {
-      this.keyLoadError = `No signing key found. Create ~/.mux/message_signing_key or ensure ~/.ssh/id_ed25519 or ~/.ssh/id_ecdsa exists.`;
+      this.keyLoadError =
+        "No signing key found. Create ~/.mux/message_signing_key or ensure your SSH agent is running (SSH_AUTH_SOCK).";
     }
     log.info("[SigningService]", this.keyLoadError);
+
     return null;
   }
 
@@ -228,9 +522,9 @@ export class SigningService {
    * Get signing capabilities - public key and identity info.
    */
   async getCapabilities(): Promise<SigningCapabilities> {
-    const keyPair = this.loadKeyPair();
+    const signingKey = await this.loadSigningKey();
 
-    if (!keyPair) {
+    if (!signingKey) {
       return {
         publicKey: null,
         githubUser: null,
@@ -242,36 +536,67 @@ export class SigningService {
 
     const identity = await this.detectIdentity();
 
+    const publicKey =
+      signingKey.kind === "disk"
+        ? signingKey.keyPair.publicKeyOpenSSH
+        : signingKey.publicKeyOpenSSH;
+
     return {
-      publicKey: keyPair.publicKeyOpenSSH,
+      publicKey,
       githubUser: identity.githubUser,
       error: identity.error ? { message: identity.error, hasEncryptedKey: false } : null,
     };
   }
 
   /**
-   * Get signing credentials for use with mux-md-client native signing.
-   * Returns private key bytes (base64), public key, and identity info.
+   * Sign a mux.md share payload.
    *
-   * @returns Credentials for native signing
-   * @throws Error if no signing key is available
+   * Returns a mux.md SignatureEnvelope that can be embedded during upload.
+   *
+   * @throws Error if no signing key is available.
    */
-  async getSignCredentials(): Promise<SignCredentials> {
-    const keyPair = this.loadKeyPair();
-    if (!keyPair) {
+  async signMessage(content: string): Promise<SignatureEnvelope> {
+    assert(typeof content === "string", "signMessage: content must be a string");
+
+    const signingKey = await this.loadSigningKey();
+    if (!signingKey) {
       throw new Error(this.keyLoadError ?? "No signing key available");
     }
 
     const identity = await this.detectIdentity();
+    const githubUser = identity.githubUser ?? undefined;
 
-    // Base64 encode the private key bytes for transport over IPC
-    const privateKeyBase64 = Buffer.from(keyPair.privateKeyBytes).toString("base64");
+    const bytes = new TextEncoder().encode(content);
 
-    return {
-      privateKeyBase64,
-      publicKey: keyPair.publicKeyOpenSSH,
-      githubUser: identity.githubUser,
-    };
+    if (signingKey.kind === "disk") {
+      const envelope = await createSignatureEnvelope(
+        bytes,
+        signingKey.keyPair.privateKeyBytes,
+        signingKey.keyPair.publicKeyOpenSSH,
+        { githubUser }
+      );
+      assert(
+        normalizeOpenSshPublicKey(envelope.publicKey) ===
+          normalizeOpenSshPublicKey(signingKey.keyPair.publicKeyOpenSSH),
+        "signMessage: disk signature returned unexpected public key"
+      );
+      return envelope;
+    }
+
+    const envelope = await createSshAgentSignatureEnvelope(bytes, {
+      sshAuthSock: signingKey.sshAuthSock,
+      publicKey: signingKey.publicKeyOpenSSH,
+      fingerprint: signingKey.fingerprint,
+      githubUser,
+    });
+
+    assert(
+      normalizeOpenSshPublicKey(envelope.publicKey) ===
+        normalizeOpenSshPublicKey(signingKey.publicKeyOpenSSH),
+      "signMessage: ssh-agent signature returned unexpected public key"
+    );
+
+    return envelope;
   }
 
   /**
@@ -279,12 +604,15 @@ export class SigningService {
    * Allows re-detection after user creates a key or logs in.
    */
   clearIdentityCache(): void {
-    this.keyPair = null;
+    this.signingKey = null;
     this.keyLoadAttempted = false;
+    this.keyLoadPromise = null;
     this.keyLoadError = null;
     this.hasEncryptedKey = false;
+
     this.identityCache = null;
     this.identityPromise = null;
+
     log.info("[SigningService] Cleared key and identity cache");
   }
 }

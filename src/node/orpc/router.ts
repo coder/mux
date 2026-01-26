@@ -2013,11 +2013,11 @@ export const router = (authToken?: string) => {
         .handler(async ({ context }) => {
           return context.signingService.getCapabilities();
         }),
-      getSignCredentials: t
-        .input(schemas.signing.getSignCredentials.input)
-        .output(schemas.signing.getSignCredentials.output)
-        .handler(async ({ context }) => {
-          return context.signingService.getSignCredentials();
+      signMessage: t
+        .input(schemas.signing.signMessage.input)
+        .output(schemas.signing.signMessage.output)
+        .handler(({ context, input }) => {
+          return context.signingService.signMessage(input.content);
         }),
       clearIdentityCache: t
         .input(schemas.signing.clearIdentityCache.input)

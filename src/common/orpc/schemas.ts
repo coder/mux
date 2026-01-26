@@ -182,7 +182,7 @@ export {
   TelemetryEventSchema,
   signing,
   type SigningCapabilities,
-  type SignCredentials,
+  type SignatureEnvelope,
   terminal,
   tokenizer,
   update,

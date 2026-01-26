@@ -13,11 +13,12 @@ import {
   parseUrl,
   type FileInfo,
   type SignOptions,
+  type SignatureEnvelope,
   type UploadResult,
 } from "@coder/mux-md-client";
 
 // Re-export types from package
-export type { FileInfo, SignOptions, UploadResult };
+export type { FileInfo, SignOptions, SignatureEnvelope, UploadResult };
 
 export const MUX_MD_BASE_URL = "https://mux.md";
 export const MUX_MD_HOST = "mux.md";
@@ -46,6 +47,11 @@ export function parseMuxMdUrl(url: string): { id: string; key: string } | null {
 export interface UploadOptions {
   /** Expiration time (ISO date string or Date object) */
   expiresAt?: string | Date;
+  /**
+   * Precomputed signature envelope to embed in the encrypted payload.
+   * Takes precedence over `sign`.
+   */
+  signature?: SignatureEnvelope;
   /** Sign options for native signing via mux-md-client */
   sign?: SignOptions;
 }
@@ -63,6 +69,7 @@ export async function uploadToMuxMd(
   return upload(new TextEncoder().encode(content), fileInfo, {
     baseUrl: MUX_MD_BASE_URL,
     expiresAt: options.expiresAt,
+    signature: options.signature,
     sign: options.sign,
   });
 }
