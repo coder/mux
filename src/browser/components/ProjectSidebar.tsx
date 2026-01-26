@@ -841,20 +841,32 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   (draft, index) => [draft.draftId, index + 1] as const
                                 )
                               );
-                              const unsectionedDrafts = sortedDrafts.filter(
-                                (draft) => draft.sectionId === null
-                              );
+                              const sectionIds = new Set(sections.map((section) => section.id));
+                              const normalizeDraftSectionId = (
+                                draft: (typeof sortedDrafts)[number]
+                              ): string | null => {
+                                return typeof draft.sectionId === "string" &&
+                                  sectionIds.has(draft.sectionId)
+                                  ? draft.sectionId
+                                  : null;
+                              };
+
+                              // Drafts can reference a section that has since been deleted.
+                              // Treat those as unsectioned so they remain accessible.
+                              const unsectionedDrafts: typeof sortedDrafts = [];
                               const draftsBySectionId = new Map<string, typeof sortedDrafts>();
                               for (const draft of sortedDrafts) {
-                                if (typeof draft.sectionId !== "string") {
+                                const sectionId = normalizeDraftSectionId(draft);
+                                if (sectionId === null) {
+                                  unsectionedDrafts.push(draft);
                                   continue;
                                 }
 
-                                const existing = draftsBySectionId.get(draft.sectionId);
+                                const existing = draftsBySectionId.get(sectionId);
                                 if (existing) {
                                   existing.push(draft);
                                 } else {
-                                  draftsBySectionId.set(draft.sectionId, [draft]);
+                                  draftsBySectionId.set(sectionId, [draft]);
                                 }
                               }
 
@@ -883,6 +895,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 const isSelected =
                                   pendingNewWorkspaceProject === projectPath &&
                                   pendingNewWorkspaceDraftId === draft.draftId;
+                                const sectionId = normalizeDraftSectionId(draft);
 
                                 return (
                                   <DraftWorkspaceListItem
@@ -895,7 +908,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       handleOpenWorkspaceDraft(
                                         projectPath,
                                         draft.draftId,
-                                        draft.sectionId
+                                        sectionId
                                       )
                                     }
                                     onDelete={() => {
@@ -913,16 +926,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                           openWorkspaceDraft(
                                             projectPath,
                                             fallback.draftId,
-                                            fallback.sectionId
+                                            normalizeDraftSectionId(fallback)
                                           );
                                         } else {
-                                          navigateToProject(
-                                            projectPath,
-                                            typeof draft.sectionId === "string" &&
-                                              draft.sectionId.trim().length > 0
-                                              ? draft.sectionId
-                                              : undefined
-                                          );
+                                          navigateToProject(projectPath, sectionId ?? undefined);
                                         }
                                       }
 
