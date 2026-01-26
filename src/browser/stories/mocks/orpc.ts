@@ -23,6 +23,12 @@ import type {
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
 import type { ChatStats } from "@/common/types/chatStats";
+import {
+  MUX_CHAT_AGENT_ID,
+  MUX_CHAT_WORKSPACE_ID,
+  MUX_CHAT_WORKSPACE_NAME,
+  MUX_CHAT_WORKSPACE_TITLE,
+} from "@/common/constants/muxChat";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -214,7 +220,7 @@ type MockMcpTestResult = { success: true; tools: string[] } | { success: false; 
 export function createMockORPCClient(options: MockORPCClientOptions = {}): APIClient {
   const {
     projects = new Map<string, ProjectConfig>(),
-    workspaces = [],
+    workspaces: inputWorkspaces = [],
     onChat,
     executeBash,
     providersConfig = { anthropic: { apiKeySet: true, isConfigured: true } },
@@ -258,6 +264,23 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     return { enabled, variant: statsTabVariant, override: statsTabOverride } as const;
   };
 
+  // App now boots into the built-in mux-chat workspace by default.
+  // Ensure Storybook mocks always include it so stories don't render "Workspace not found".
+  const muxChatWorkspace: FrontendWorkspaceMetadata = {
+    id: MUX_CHAT_WORKSPACE_ID,
+    name: MUX_CHAT_WORKSPACE_NAME,
+    title: MUX_CHAT_WORKSPACE_TITLE,
+    projectName: "Mux",
+    projectPath: "/Users/dev/.mux/system/chat-with-mux",
+    namedWorkspacePath: "/Users/dev/.mux/system/chat-with-mux",
+    runtimeConfig: { type: "local" },
+    agentId: MUX_CHAT_AGENT_ID,
+  };
+
+  const workspaces = inputWorkspaces.some((w) => w.id === MUX_CHAT_WORKSPACE_ID)
+    ? inputWorkspaces
+    : [muxChatWorkspace, ...inputWorkspaces];
+
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
   let createdWorkspaceCounter = 0;
@@ -300,6 +323,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         uiSelectable: false,
         subagentRunnable: true,
         base: "exec",
+      },
+      {
+        id: "mux",
+        scope: "built-in",
+        name: "Mux",
+        description: "Configure mux global behavior (system workspace)",
+        uiSelectable: false,
+        subagentRunnable: false,
       },
     ] satisfies AgentDefinitionDescriptor[]);
 
