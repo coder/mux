@@ -222,12 +222,6 @@ export function GeneralSection() {
                 <div className="text-warning text-xs">{terminalFontWarning}</div>
               ) : null}
               <div className="text-muted text-xs">Set this to a monospace font you like.</div>
-              {isBrowserMode ? (
-                <div className="text-muted text-xs">
-                  Browser mode uses fonts installed on the client device (plus the bundled symbols
-                  fallback). Fonts installed on the mux server are not used.
-                </div>
-              ) : null}
               <div className="text-muted text-xs">
                 Preview:{" "}
                 <span className="text-foreground" style={{ fontFamily: terminalFontPreviewFamily }}>
