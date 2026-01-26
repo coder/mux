@@ -68,10 +68,14 @@ export async function runSystem1KeepRangesForBashOutput(
   );
 
   // Intentionally keep the System 1 prompt minimal to avoid consuming context budget.
+  //
+  // Use the built-in definition for this internal agent. Allowing project/global overrides
+  // would introduce a new footgun compared to the previously hard-coded System1 prompt.
   const systemPrompt = await resolveAgentBody(
     params.runtime,
     params.agentDiscoveryPath,
-    "system1_bash"
+    "system1_bash",
+    { skipScopesAbove: "global" }
   );
 
   const userMessage = [

@@ -428,9 +428,31 @@ export async function resolveAgentBody(
   runtime: Runtime,
   workspacePath: string,
   agentId: AgentId,
-  options?: { roots?: AgentDefinitionsRoots }
+  options?: { roots?: AgentDefinitionsRoots; skipScopesAbove?: AgentDefinitionScope }
 ): Promise<string> {
   const visited = new Set<string>();
+
+  function mergeSkipScopesAbove(
+    a: AgentDefinitionScope | undefined,
+    b: AgentDefinitionScope | undefined
+  ): AgentDefinitionScope | undefined {
+    if (!a) {
+      return b;
+    }
+    if (!b) {
+      return a;
+    }
+
+    const aIndex = SCOPE_PRIORITY.indexOf(a);
+    const bIndex = SCOPE_PRIORITY.indexOf(b);
+
+    // Defensive fallback. (In practice, both should always be in SCOPE_PRIORITY.)
+    if (aIndex === -1 || bIndex === -1) {
+      return a;
+    }
+
+    return aIndex > bIndex ? a : b;
+  }
 
   async function resolve(
     id: AgentId,
@@ -461,10 +483,14 @@ export async function resolveAgentBody(
       return pkg.body;
     }
 
-    const baseBody = await resolve(baseId, depth + 1, computeBaseSkipScope(baseId, id, pkg.scope));
+    const baseBody = await resolve(
+      baseId,
+      depth + 1,
+      mergeSkipScopesAbove(skipScopesAbove, computeBaseSkipScope(baseId, id, pkg.scope))
+    );
     const separator = baseBody.trim() && pkg.body.trim() ? "\n\n" : "";
     return `${baseBody}${separator}${pkg.body}`;
   }
 
-  return resolve(agentId, 0);
+  return resolve(agentId, 0, options?.skipScopesAbove);
 }
