@@ -129,7 +129,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
         cwd: TEST_CWD,
         runtime: mockRuntime,
         runtimeTempDir: "/tmp",
-        planFileOnly: true,
+        mode: "plan",
         planFilePath: PLAN_FILE_PATH,
       },
       filePath: OTHER_FILE_PATH,
@@ -138,7 +138,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("In the plan agent, only the plan file can be edited");
+      expect(result.error).toContain("In plan mode, only the plan file can be edited");
       expect(result.error).toContain(OTHER_FILE_PATH);
     }
 
@@ -162,7 +162,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
         cwd: workspaceCwd,
         runtime: new LocalRuntime(workspaceCwd),
         runtimeTempDir: tempDir.path,
-        planFileOnly: true,
+        mode: "plan",
         planFilePath: planPath,
       },
       filePath: planPath,
@@ -237,7 +237,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("read-only outside the plan agent");
+      expect(result.error).toContain("read-only outside plan mode");
     }
 
     // Verify file was not modified
@@ -285,7 +285,7 @@ describe("executeFileEditOperation plan mode enforcement", () => {
         cwd: "/home/user/project",
         runtime: mockRuntime,
         runtimeTempDir: "/tmp",
-        planFileOnly: true,
+        mode: "plan",
         planFilePath: "/home/user/.mux/sessions/ws/plan.md",
       },
       filePath: "../.mux/sessions/ws/plan.md", // Alternate path to plan file

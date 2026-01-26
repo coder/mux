@@ -462,9 +462,9 @@ export class LoopRunnerService extends EventEmitter {
       const progressPathHint = `.mux/harness/${info.name}.progress.md`;
 
       const modelString =
-        info.aiSettingsByMode?.exec?.model ?? info.aiSettings?.model ?? defaultModel;
+        info.aiSettingsByAgent?.exec?.model ?? info.aiSettings?.model ?? defaultModel;
       const thinkingLevel =
-        info.aiSettingsByMode?.exec?.thinkingLevel ?? info.aiSettings?.thinkingLevel;
+        info.aiSettingsByAgent?.exec?.thinkingLevel ?? info.aiSettings?.thinkingLevel;
 
       const blocked = config.checklist.find((item) => item.status === "blocked") ?? null;
       const nextItem = findNextChecklistItem(config);
@@ -502,6 +502,7 @@ export class LoopRunnerService extends EventEmitter {
       const sendResult = await this.workspaceService.sendMessage(workspaceId, prompt, {
         model: modelString,
         thinkingLevel,
+        agentId: "exec",
         mode: "exec",
         toolPolicy,
         muxMetadata: { type: "harness-loop", iteration: updatedStateBeforeSend.iteration },
