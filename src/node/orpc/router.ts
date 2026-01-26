@@ -1947,7 +1947,7 @@ export const router = (authToken?: string) => {
               }
 
               const userModel =
-                metadata.aiSettingsByMode?.exec?.model ?? metadata.aiSettings?.model;
+                metadata.aiSettingsByAgent?.exec?.model ?? metadata.aiSettings?.model;
               const modelString = await selectModelForNameGeneration(
                 context.aiService,
                 undefined,

@@ -1416,7 +1416,10 @@ export class AIService extends EventEmitter {
           runtime: earlyRuntime,
           runtimeTempDir: os.tmpdir(),
           secrets: {},
-          planFileOnly: agentIsPlanLike,
+          mode: effectiveMode === "plan" ? "plan" : "exec",
+          agentId: effectiveAgentId,
+          allowedEditPaths:
+            effectiveAgentId === "harness-init" ? [".mux/harness/*.jsonc"] : undefined,
         },
         "", // Empty workspace ID for early stub config
         this.initStateManager,
@@ -1763,7 +1766,7 @@ export class AIService extends EventEmitter {
           // Plan/exec mode configuration for plan file access.
           // - read: plan file is readable in all modes (useful context)
           // - write: enforced by file_edit_* tools (plan file is read-only outside plan mode)
-          mode: effectiveMode,
+          mode: effectiveMode === "plan" ? "plan" : "exec",
           agentId: effectiveAgentId,
           allowedEditPaths:
             effectiveAgentId === "harness-init" ? [".mux/harness/*.jsonc"] : undefined,

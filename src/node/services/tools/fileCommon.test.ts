@@ -333,7 +333,7 @@ describe("fileCommon", () => {
       cwd: "/home/user/project",
       runtime: mockRuntime,
       runtimeTempDir: "/tmp",
-      planFileOnly: true,
+      mode: "plan",
       planFilePath,
     };
 

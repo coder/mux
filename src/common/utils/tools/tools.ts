@@ -39,6 +39,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { TaskService } from "@/node/services/taskService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { UIMode } from "@/common/types/mode";
 import type { FileState } from "@/node/services/agentSession";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
