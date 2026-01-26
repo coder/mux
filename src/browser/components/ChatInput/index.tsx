@@ -1795,9 +1795,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               pushToast({ type: "error", title: "Fork Failed", message: errorMsg });
               setInput(messageText); // Restore input on error
             } else {
+              const forkedName =
+                forkResult.workspaceInfo?.name ?? parsed.newName ?? "new workspace";
               pushToast({
                 type: "success",
-                message: `Forked to workspace "${parsed.newName}"`,
+                message: `Forked to workspace "${forkedName}"`,
               });
             }
           } catch (error) {

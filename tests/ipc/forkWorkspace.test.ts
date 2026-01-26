@@ -51,8 +51,8 @@ describeIntegration("Workspace fork", () => {
         const sourceWorkspaceId = createResult.metadata.id;
 
         // Test various invalid names
+        // Note: Empty string now triggers auto-generation (same as undefined), so it's not tested here
         const invalidNames = [
-          { name: "", expectedError: "empty" },
           { name: "Invalid-Name", expectedError: "a-z" },
           { name: "name with spaces", expectedError: "a-z" },
           { name: "name@special", expectedError: "a-z" },
@@ -556,6 +556,159 @@ describeIntegration("Workspace fork", () => {
         // Cleanup
         await client.workspace.remove({ workspaceId: sourceWorkspaceId });
         await client.workspace.remove({ workspaceId: forkedWorkspaceId });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
+
+  test.concurrent(
+    "should auto-generate incremented name and title when forking without arguments",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+        const client = resolveOrpcClient(env);
+
+        // Create source workspace with a title
+        const createResult = await client.workspace.create({
+          projectPath: tempGitRepo,
+          branchName: "bugs-asd23",
+          trunkBranch,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) return;
+        const sourceWorkspaceId = createResult.metadata.id;
+
+        // Set title on source workspace
+        await client.workspace.updateTitle({
+          workspaceId: sourceWorkspaceId,
+          title: "Fixing bugs",
+        });
+
+        // Fork without specifying a name (auto-generate)
+        const forkResult = await client.workspace.fork({
+          sourceWorkspaceId,
+        });
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+
+        // Verify auto-generated name and title
+        expect(forkResult.metadata.name).toBe("bugs-asd23-2");
+        expect(forkResult.metadata.title).toBe("Fixing bugs 2");
+
+        // Fork again to test increment
+        const forkResult2 = await client.workspace.fork({
+          sourceWorkspaceId: forkResult.metadata.id,
+        });
+        expect(forkResult2.success).toBe(true);
+        if (!forkResult2.success) return;
+
+        // Verify further increment
+        expect(forkResult2.metadata.name).toBe("bugs-asd23-3");
+        expect(forkResult2.metadata.title).toBe("Fixing bugs 3");
+
+        // Cleanup
+        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        await client.workspace.remove({ workspaceId: forkResult.metadata.id });
+        await client.workspace.remove({ workspaceId: forkResult2.metadata.id });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
+
+  test.concurrent(
+    "should auto-generate name but not title when source has no title",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+        const client = resolveOrpcClient(env);
+
+        // Create source workspace without a title
+        const createResult = await client.workspace.create({
+          projectPath: tempGitRepo,
+          branchName: "sidebar-k3m9",
+          trunkBranch,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) return;
+        const sourceWorkspaceId = createResult.metadata.id;
+
+        // Fork without specifying a name
+        const forkResult = await client.workspace.fork({
+          sourceWorkspaceId,
+        });
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+
+        // Verify auto-generated name, no title
+        expect(forkResult.metadata.name).toBe("sidebar-k3m9-2");
+        expect(forkResult.metadata.title).toBeUndefined();
+
+        // Cleanup
+        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        await client.workspace.remove({ workspaceId: forkResult.metadata.id });
+      } finally {
+        await cleanupTestEnvironment(env);
+        await cleanupTempGitRepo(tempGitRepo);
+      }
+    },
+    15000
+  );
+
+  test.concurrent(
+    "should avoid name collisions when forking same source multiple times",
+    async () => {
+      const env = await createTestEnvironment();
+      const tempGitRepo = await createTempGitRepo();
+
+      try {
+        const trunkBranch = await detectDefaultTrunkBranch(tempGitRepo);
+        const client = resolveOrpcClient(env);
+
+        // Create source workspace
+        const createResult = await client.workspace.create({
+          projectPath: tempGitRepo,
+          branchName: "collision-test",
+          trunkBranch,
+        });
+        expect(createResult.success).toBe(true);
+        if (!createResult.success) return;
+        const sourceWorkspaceId = createResult.metadata.id;
+
+        // Fork from source - should get -2
+        const fork1 = await client.workspace.fork({ sourceWorkspaceId });
+        expect(fork1.success).toBe(true);
+        if (!fork1.success) return;
+        expect(fork1.metadata.name).toBe("collision-test-2");
+
+        // Fork from source AGAIN - should get -3 (avoids collision with -2)
+        const fork2 = await client.workspace.fork({ sourceWorkspaceId });
+        expect(fork2.success).toBe(true);
+        if (!fork2.success) return;
+        expect(fork2.metadata.name).toBe("collision-test-3");
+
+        // Fork from source a third time - should get -4
+        const fork3 = await client.workspace.fork({ sourceWorkspaceId });
+        expect(fork3.success).toBe(true);
+        if (!fork3.success) return;
+        expect(fork3.metadata.name).toBe("collision-test-4");
+
+        // Cleanup
+        await client.workspace.remove({ workspaceId: sourceWorkspaceId });
+        await client.workspace.remove({ workspaceId: fork1.metadata.id });
+        await client.workspace.remove({ workspaceId: fork2.metadata.id });
+        await client.workspace.remove({ workspaceId: fork3.metadata.id });
       } finally {
         await cleanupTestEnvironment(env);
         await cleanupTempGitRepo(tempGitRepo);

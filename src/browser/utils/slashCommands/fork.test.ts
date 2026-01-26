@@ -1,10 +1,12 @@
 import { parseCommand } from "./parser";
 
 describe("/fork command", () => {
-  it("should parse /fork without arguments to show help", () => {
+  it("should parse /fork without arguments for auto-increment", () => {
     const result = parseCommand("/fork");
     expect(result).toEqual({
-      type: "fork-help",
+      type: "fork",
+      newName: undefined,
+      startMessage: undefined,
     });
   });
 

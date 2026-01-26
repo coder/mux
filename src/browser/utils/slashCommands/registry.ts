@@ -474,16 +474,11 @@ const planCommandDefinition: SlashCommandDefinition = {
 const forkCommandDefinition: SlashCommandDefinition = {
   key: "fork",
   description:
-    "Fork workspace with new name and optional start message. Add start message on lines after the command.",
+    "Fork workspace. Optionally specify new name and start message on lines after the command.",
   handler: ({ rawInput }): ParsedCommand => {
     const { tokens, message } = parseMultilineCommand(rawInput);
 
-    if (tokens.length === 0) {
-      return {
-        type: "fork-help",
-      };
-    }
-
+    // No arguments = auto-generate name (backend handles incrementing)
     const newName = tokens[0];
 
     // Start message can be from remaining tokens on same line or multiline content

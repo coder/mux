@@ -57,7 +57,7 @@ import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
   sourceWorkspaceId: string;
-  newName: string;
+  newName?: string;
   startMessage?: string;
   sendMessageOptions?: SendMessageOptions;
 }
@@ -426,10 +426,11 @@ async function handleForkCommand(
       return { clearInput: false, toastShown: true };
     } else {
       trackCommandUsed("fork");
+      const forkedName = forkResult.workspaceInfo?.name ?? parsed.newName ?? "new workspace";
       setToast({
         id: Date.now().toString(),
         type: "success",
-        message: `Forked to workspace "${parsed.newName}"`,
+        message: `Forked to workspace "${forkedName}"`,
       });
       return { clearInput: true, toastShown: true };
     }

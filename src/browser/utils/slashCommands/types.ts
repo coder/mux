@@ -21,8 +21,7 @@ export type ParsedCommand =
   | { type: "clear" }
   | { type: "truncate"; percentage: number }
   | { type: "compact"; maxOutputTokens?: number; continueMessage?: string; model?: string }
-  | { type: "fork"; newName: string; startMessage?: string }
-  | { type: "fork-help" }
+  | { type: "fork"; newName?: string; startMessage?: string }
   | {
       type: "new";
       workspaceName?: string;

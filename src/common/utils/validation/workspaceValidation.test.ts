@@ -1,3 +1,4 @@
+import { WORKSPACE_NAME_MAX_LENGTH } from "@/constants/workspaceNaming";
 import { validateWorkspaceName } from "./workspaceValidation";
 
 describe("validateWorkspaceName", () => {
@@ -35,7 +36,7 @@ describe("validateWorkspaceName", () => {
     });
 
     test("accepts 64 characters", () => {
-      const name = "a".repeat(64);
+      const name = "a".repeat(WORKSPACE_NAME_MAX_LENGTH);
       expect(validateWorkspaceName(name).valid).toBe(true);
     });
   });
@@ -48,10 +49,10 @@ describe("validateWorkspaceName", () => {
     });
 
     test("rejects names over 64 characters", () => {
-      const name = "a".repeat(65);
+      const name = "a".repeat(WORKSPACE_NAME_MAX_LENGTH + 1);
       const result = validateWorkspaceName(name);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain("64 characters");
+      expect(result.error).toContain(`${WORKSPACE_NAME_MAX_LENGTH} characters`);
     });
 
     test("rejects uppercase letters", () => {
