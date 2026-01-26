@@ -680,11 +680,15 @@ export const TOOL_DEFINITIONS = {
                   .min(1)
                   .describe("1-based end line (inclusive) in the numbered output"),
                 reason: z
-                  .string()
-                  .optional()
+                  .preprocess(
+                    (value) => (value === null ? undefined : value),
+                    z.string().optional()
+                  )
                   .describe("Optional short reason for keeping this range"),
               })
-              .strict()
+              // Providers/models sometimes include extra keys in tool arguments; be permissive and
+              // ignore them rather than failing the whole compaction call.
+              .passthrough()
           )
           .min(1)
           // Allow at least as many ranges as the user can request via maxKeptLines.
@@ -692,7 +696,7 @@ export const TOOL_DEFINITIONS = {
           .max(SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.max)
           .describe("Line ranges to keep"),
       })
-      .strict(),
+      .passthrough(),
   },
 
   todo_write: {

@@ -433,7 +433,7 @@ Given the numbered output, decide which lines to keep so the user sees the most 
 IMPORTANT:
 
 - You MUST call `system1_keep_ranges` exactly once.
-- Do NOT output JSON, markdown, or prose. Only the tool call.
+- Do NOT output markdown or prose. Only the tool call (with valid JSON arguments).
 
 Rules:
 
@@ -463,7 +463,7 @@ Example:
   - 0003| at path/to/file.ts:12:3
   - 0004| done
 - Tool call:
-  - system1_keep_ranges({ keep_ranges: [{ start: 2, end: 3, reason: "error" }] })
+  - system1_keep_ranges({"keep_ranges":[{"start":2,"end":3,"reason":"error"}]})
 ```
 
 </Accordion>
