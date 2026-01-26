@@ -121,9 +121,12 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   return { success: true, workspaceInfo };
 }
 
-export interface SlashCommandContext extends Omit<CommandHandlerContext, "workspaceId"> {
+export interface SlashCommandContext extends Omit<CommandHandlerContext, "workspaceId" | "api"> {
+  api: RouterClient<AppRouter> | null;
   workspaceId?: string;
   variant: "workspace" | "creation";
+  projectPath?: string | null;
+  openSettings?: (section?: string) => void;
 
   // Global Actions
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
@@ -160,6 +163,16 @@ export async function processSlashCommand(
     setPreferredModel,
     onModelChange,
   } = context;
+
+  const requireClient = (): RouterClient<AppRouter> | null => {
+    if (client) return client;
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Not connected to server",
+    });
+    return null;
+  };
 
   // 1. Global Commands
   if (parsed.type === "providers-set") {
@@ -200,6 +213,8 @@ export async function processSlashCommand(
   if (parsed.type === "model-set") {
     const modelString = parsed.modelString;
 
+    const activeClient = client;
+
     // Validate provider:model format
     if (!modelString.includes(":")) {
       setToast({
@@ -220,37 +235,176 @@ export async function processSlashCommand(
       return { clearInput: false, toastShown: true };
     }
 
-    // Validate provider is supported
-    const { isValidProvider } = await import("@/common/constants/providers");
-    if (!isValidProvider(provider)) {
+    try {
+      // Validate provider is supported
+      const { isValidProvider } = await import("@/common/constants/providers");
+      if (!isValidProvider(provider)) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: `Unknown provider "${provider}"`,
+        });
+        return { clearInput: false, toastShown: true };
+      }
+
+      // Check if model needs to be added to provider's custom models
+      if (activeClient) {
+        try {
+          const config = await activeClient.providers.getConfig();
+          const existingModels = config[provider]?.models ?? [];
+          if (!existingModels.includes(modelId)) {
+            // Add model via the same API as settings
+            await activeClient.providers.setModels({
+              provider,
+              models: [...existingModels, modelId],
+            });
+          }
+        } catch (error) {
+          console.error("Failed to sync model settings:", error);
+        }
+      }
+
+      setInput("");
+      setPreferredModel(modelString);
+      onModelChange?.(modelString);
+      trackCommandUsed("model");
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: `Model changed to ${modelString}`,
+      });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      console.error("Failed to update model:", error);
       setToast({
         id: Date.now().toString(),
         type: "error",
-        message: `Unknown provider "${provider}"`,
+        message: error instanceof Error ? error.message : "Failed to update model",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+  }
+
+  if (parsed.type === "mcp-open") {
+    setInput("");
+    context.openSettings?.("projects");
+    return { clearInput: true, toastShown: false };
+  }
+
+  if (parsed.type === "debug-llm-request") {
+    setInput("");
+    window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST));
+    return { clearInput: true, toastShown: false };
+  }
+
+  if (parsed.type === "mcp-add" || parsed.type === "mcp-edit" || parsed.type === "mcp-remove") {
+    const activeClient = requireClient();
+    if (!activeClient) {
+      return { clearInput: false, toastShown: true };
+    }
+
+    if (!context.projectPath) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "Select a workspace to manage MCP servers",
       });
       return { clearInput: false, toastShown: true };
     }
 
-    // Check if model needs to be added to provider's custom models
-    const config = await client.providers.getConfig();
-    const existingModels = config[provider]?.models ?? [];
-    if (!existingModels.includes(modelId)) {
-      // Add model via the same API as settings
-      await client.providers.setModels({ provider, models: [...existingModels, modelId] });
+    setSendingState(true);
+    setInput("");
+
+    try {
+      const projectPath = context.projectPath;
+      const result =
+        parsed.type === "mcp-add" || parsed.type === "mcp-edit"
+          ? await activeClient.projects.mcp.add({
+              projectPath,
+              name: parsed.name,
+              command: parsed.command,
+            })
+          : await activeClient.projects.mcp.remove({ projectPath, name: parsed.name });
+
+      if (!result.success) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: result.error ?? "Failed to update MCP servers",
+        });
+        return { clearInput: false, toastShown: true };
+      }
+
+      const successMessage =
+        parsed.type === "mcp-add"
+          ? `Added MCP server ${parsed.name}`
+          : parsed.type === "mcp-edit"
+            ? `Updated MCP server ${parsed.name}`
+            : `Removed MCP server ${parsed.name}`;
+      setToast({ id: Date.now().toString(), type: "success", message: successMessage });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      console.error("Failed to update MCP servers", error);
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update MCP servers",
+      });
+      return { clearInput: false, toastShown: true };
+    } finally {
+      setSendingState(false);
+    }
+  }
+
+  if (parsed.type === "idle-compaction") {
+    const activeClient = requireClient();
+    if (!activeClient) {
+      return { clearInput: false, toastShown: true };
+    }
+
+    if (!context.projectPath) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "No project selected",
+      });
+      return { clearInput: false, toastShown: true };
     }
 
     setInput("");
-    setPreferredModel(modelString);
-    onModelChange?.(modelString);
-    trackCommandUsed("model");
-    setToast({
-      id: Date.now().toString(),
-      type: "success",
-      message: `Model changed to ${modelString}`,
-    });
-    return { clearInput: true, toastShown: true };
-  }
 
+    try {
+      const result = await activeClient.projects.idleCompaction.set({
+        projectPath: context.projectPath,
+        hours: parsed.hours,
+      });
+
+      if (!result.success) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: result.error ?? "Failed to update setting",
+        });
+        return { clearInput: false, toastShown: true };
+      }
+
+      setToast({
+        id: Date.now().toString(),
+        type: "success",
+        message: parsed.hours
+          ? `Idle compaction set to ${parsed.hours} hours`
+          : "Idle compaction disabled",
+      });
+      return { clearInput: true, toastShown: true };
+    } catch (error) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update setting",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+  }
   if (parsed.type === "vim-toggle") {
     setInput("");
     setVimEnabled((prev) => !prev);
@@ -280,28 +434,50 @@ export async function processSlashCommand(
       case "compact":
         // handleCompactCommand expects workspaceId in context
         if (!context.workspaceId) throw new Error("Workspace ID required");
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
         return handleCompactCommand(parsed, {
           ...context,
+          api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
       case "fork":
-        return handleForkCommand(parsed, context);
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
+        return handleForkCommand(parsed, {
+          ...context,
+          api: client,
+        });
       case "new":
         if (!context.workspaceId) throw new Error("Workspace ID required");
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
         return handleNewCommand(parsed, {
           ...context,
+          api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
       case "plan-show":
         if (!context.workspaceId) throw new Error("Workspace ID required");
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
         return handlePlanShowCommand({
           ...context,
+          api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
       case "plan-open":
         if (!context.workspaceId) throw new Error("Workspace ID required");
+        if (!requireClient()) {
+          return { clearInput: false, toastShown: true };
+        }
         return handlePlanOpenCommand({
           ...context,
+          api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
     }
