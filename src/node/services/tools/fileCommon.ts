@@ -216,12 +216,17 @@ export function validatePathInCwd(
     assert(path.isAbsolute(dir), `extraAllowedDir must be an absolute path: '${dir}'`);
   }
 
-  // Resolve the path (handles relative paths and normalizes)
-  const resolvedPath = path.isAbsolute(filePath)
-    ? path.resolve(filePath)
-    : path.resolve(cwd, filePath);
+  const filePathIsAbsolute = path.isAbsolute(filePath);
 
-  const allowedRoots = [cwd, ...trimmedExtraAllowedDirs].map((dir) => path.resolve(dir));
+  // Only allow extraAllowedDirs when the caller provides an absolute path.
+  // This prevents relative-path escapes (e.g., ../...) from bypassing cwd restrictions.
+
+  // Resolve the path (handles relative paths and normalizes)
+  const resolvedPath = filePathIsAbsolute ? path.resolve(filePath) : path.resolve(cwd, filePath);
+
+  const allowedRoots = [cwd, ...(filePathIsAbsolute ? trimmedExtraAllowedDirs : [])].map((dir) =>
+    path.resolve(dir)
+  );
 
   // Check if resolved path is within any allowed root.
   // Use path.relative to check if we need to go "up" from the root to reach the file.
