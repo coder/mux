@@ -30,6 +30,9 @@ export interface TaskSettings {
   bashOutputCompactionMaxKeptLines?: number;
   bashOutputCompactionTimeoutMs?: number;
   bashOutputCompactionHeuristicFallback?: boolean;
+
+  // System 1: project memory writer
+  memoryWriterIntervalMessages?: number;
 }
 
 export const TASK_SETTINGS_LIMITS = {
@@ -42,6 +45,10 @@ export const SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS = {
   bashOutputCompactionMinTotalBytes: { min: 0, max: 16 * 1024, default: 4 * 1024 },
   bashOutputCompactionMaxKeptLines: { min: 1, max: 1_000, default: 40 },
   bashOutputCompactionTimeoutMs: { min: 1_000, max: 120_000, default: 5_000 },
+} as const;
+
+export const SYSTEM1_MEMORY_WRITER_LIMITS = {
+  memoryWriterIntervalMessages: { min: 1, max: 50, default: 2 },
 } as const;
 
 export const DEFAULT_TASK_SETTINGS: TaskSettings = {
@@ -60,6 +67,8 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   bashOutputCompactionTimeoutMs:
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default,
   bashOutputCompactionHeuristicFallback: true,
+
+  memoryWriterIntervalMessages: SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.default,
 };
 
 export interface SubagentAiDefaultsEntry {
@@ -193,6 +202,13 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
       : (DEFAULT_TASK_SETTINGS.bashOutputCompactionHeuristicFallback ?? true);
   const bashOutputCompactionTimeoutMs = Math.floor(bashOutputCompactionTimeoutMsRaw / 1000) * 1000;
 
+  const memoryWriterIntervalMessages = clampInt(
+    record.memoryWriterIntervalMessages,
+    SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.default,
+    SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.min,
+    SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.max
+  );
+
   const result: TaskSettings = {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
@@ -204,6 +220,7 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     bashOutputCompactionMaxKeptLines,
     bashOutputCompactionTimeoutMs,
     bashOutputCompactionHeuristicFallback,
+    memoryWriterIntervalMessages,
   };
 
   assert(
@@ -245,6 +262,10 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     Number.isInteger(bashOutputCompactionTimeoutMs),
     "normalizeTaskSettings: bashOutputCompactionTimeoutMs must be an integer"
+  );
+  assert(
+    Number.isInteger(memoryWriterIntervalMessages),
+    "normalizeTaskSettings: memoryWriterIntervalMessages must be an integer"
   );
 
   assert(

@@ -21,6 +21,7 @@ const BUILT_IN_SOURCES: BuiltInSource[] = [
   { id: "auto", content: BUILTIN_AGENT_CONTENT.auto },
   { id: "compact", content: BUILTIN_AGENT_CONTENT.compact },
   { id: "explore", content: BUILTIN_AGENT_CONTENT.explore },
+  { id: "system1_memory_writer", content: BUILTIN_AGENT_CONTENT.system1_memory_writer },
   { id: "system1_bash", content: BUILTIN_AGENT_CONTENT.system1_bash },
   { id: "mux", content: BUILTIN_AGENT_CONTENT.mux },
   { id: "orchestrator", content: BUILTIN_AGENT_CONTENT.orchestrator },

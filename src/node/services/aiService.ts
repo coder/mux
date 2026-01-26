@@ -1,8 +1,27 @@
 import * as fs from "fs/promises";
 import { EventEmitter } from "events";
-
-import { type LanguageModel, type Tool } from "ai";
-
+import type { XaiProviderOptions } from "@ai-sdk/xai";
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
+import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
+import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
+import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
+import {
+  applySystem1KeepRangesToOutput,
+  formatNumberedLinesForSystem1,
+  formatSystem1BashFilterNotice,
+  getHeuristicKeepRangesForBashOutput,
+  splitBashOutputLines,
+} from "@/node/services/system1/bashOutputFiltering";
+import { decideBashOutputCompaction } from "@/node/services/system1/bashCompactionPolicy";
+import { runSystem1KeepRangesForBashOutput } from "@/node/services/system1/system1AgentRunner";
+import {
+  MemoryWriterPolicy,
+  type MemoryWriterStreamContext,
+} from "@/node/services/system1/memoryWriterPolicy";
+import {
+  formatBashOutputReport,
+  tryParseBashOutputReport,
+} from "@/node/services/tools/bashTaskReport";
 import { linkAbortSignal } from "@/node/utils/abort";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -166,6 +185,9 @@ export class AIService extends EventEmitter {
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
 
+  private readonly memoryWriterPolicy: MemoryWriterPolicy;
+  private readonly memoryWriterContextsByMessageId = new Map<string, MemoryWriterStreamContext>();
+
   constructor(
     config: Config,
     historyService: HistoryService,
@@ -195,6 +217,23 @@ export class AIService extends EventEmitter {
       this.providerService.getConfig()
     );
     this.providerModelFactory = new ProviderModelFactory(config, providerService, policyService);
+
+    this.memoryWriterPolicy = new MemoryWriterPolicy(
+      this.config,
+      this.historyService,
+      async (modelStringToCreate, muxProviderOptions) => {
+        const created = await this.createModel(modelStringToCreate, muxProviderOptions);
+        if (!created.success) {
+          log.debug("[system1][memory] Failed to create model", {
+            modelString: modelStringToCreate,
+            error: created.error,
+          });
+          return undefined;
+        }
+
+        return created.data;
+      }
+    );
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
     this.mockModeEnabled = false;
@@ -275,11 +314,26 @@ export class AIService extends EventEmitter {
         log.warn("Failed to capture debug LLM response snapshot", { error: errMsg });
       }
 
+      try {
+        const ctx = this.memoryWriterContextsByMessageId.get(data.messageId);
+        if (ctx) {
+          this.memoryWriterContextsByMessageId.delete(data.messageId);
+          this.memoryWriterPolicy.onAssistantStreamEnd(ctx);
+        }
+      } catch (error) {
+        log.debug("[system1][memory] Failed to schedule memory writer", {
+          workspaceId: data.workspaceId,
+          messageId: data.messageId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       this.emit("stream-end", data);
     });
 
     // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
+      this.memoryWriterContextsByMessageId.delete(data.messageId);
       void (async () => {
         try {
           if (data.abandonPartial) {
@@ -306,6 +360,25 @@ export class AIService extends EventEmitter {
         }
       })();
     });
+
+    this.streamManager.on("error", (data) => {
+      if (data && typeof data === "object" && "messageId" in data) {
+        const messageId = (data as { messageId?: unknown }).messageId;
+        if (typeof messageId === "string" && messageId.length > 0) {
+          this.memoryWriterContextsByMessageId.delete(messageId);
+        }
+      }
+
+      this.emit("error", data);
+    });
+    // Forward tool events
+    this.streamManager.on("tool-call-start", (data) => this.emit("tool-call-start", data));
+    this.streamManager.on("tool-call-delta", (data) => this.emit("tool-call-delta", data));
+    this.streamManager.on("tool-call-end", (data) => this.emit("tool-call-end", data));
+    // Forward reasoning events
+    this.streamManager.on("reasoning-delta", (data) => this.emit("reasoning-delta", data));
+    this.streamManager.on("reasoning-end", (data) => this.emit("reasoning-end", data));
+    this.streamManager.on("usage-delta", (data) => this.emit("usage-delta", data));
   }
 
   private async ensureSessionsDir(): Promise<void> {
@@ -1081,6 +1154,20 @@ export class AIService extends EventEmitter {
             })
           : tools;
 
+      this.memoryWriterContextsByMessageId.set(assistantMessageId, {
+        workspaceId,
+        messageId: assistantMessageId,
+        workspaceName: metadata.name,
+        projectPath: metadata.projectPath,
+        runtimeConfig: metadata.runtimeConfig,
+        parentWorkspaceId: metadata.parentWorkspaceId,
+        modelString,
+        muxProviderOptions: effectiveMuxProviderOptions,
+        system1Model,
+        system1ThinkingLevel,
+        system1Enabled: experiments?.system1 === true,
+      });
+
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
@@ -1114,6 +1201,7 @@ export class AIService extends EventEmitter {
       );
 
       if (!streamResult.success) {
+        this.memoryWriterContextsByMessageId.delete(assistantMessageId);
         // StreamManager already returns SendMessageError
         return Err(streamResult.error);
       }
@@ -1121,7 +1209,16 @@ export class AIService extends EventEmitter {
       // If we were interrupted during StreamManager startup before the stream was registered,
       // make sure we don't leave an empty assistant placeholder behind.
       if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
-        await deleteAbortedPlaceholder(assistantMessageId);
+        this.memoryWriterContextsByMessageId.delete(assistantMessageId);
+        const deleteResult = await this.historyService.deleteMessage(
+          workspaceId,
+          assistantMessageId
+        );
+        if (!deleteResult.success) {
+          log.error(
+            `Failed to delete aborted assistant placeholder (${assistantMessageId}): ${deleteResult.error}`
+          );
+        }
       }
 
       // StreamManager now handles history updates directly on stream-end

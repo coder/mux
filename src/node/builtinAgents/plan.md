@@ -14,6 +14,12 @@ tools:
     # Plan should not apply sub-agent patches.
     - task_apply_git_patch
   # Note: file_edit_* tools ARE available but restricted to plan file only at runtime
+  remove:
+    # Internal-only tools
+    - system1_keep_ranges
+    - memory_read
+    - memory_write
+
   # Note: task tools ARE enabled - Plan delegates to Explore sub-agents
 ---
 
