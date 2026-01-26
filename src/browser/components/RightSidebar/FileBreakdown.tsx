@@ -28,10 +28,8 @@ const FileBreakdownComponent: React.FC<FileBreakdownProps> = ({ files, totalToke
           <div key={file.path} className="flex items-center gap-1.5">
             <FileIcon filePath={file.path} className="text-secondary shrink-0 text-xs" />
             <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="text-foreground direction-rtl min-w-0 flex-1 truncate text-left text-xs">
-                  {displayPath}
-                </span>
+              <TooltipTrigger className="text-foreground direction-rtl min-w-0 flex-1 truncate text-left text-xs">
+                {displayPath}
               </TooltipTrigger>
               <TooltipContent>{displayPath}</TooltipContent>
             </Tooltip>
