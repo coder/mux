@@ -53,6 +53,8 @@ on:
         required: true
       OPENAI_API_KEY:
         required: true
+      GOOGLE_API_KEY:
+        required: false
       DAYTONA_API_KEY:
         required: false
       GCP_SA_KEY:
@@ -149,6 +151,7 @@ jobs:
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
 
       - name: Print results summary
