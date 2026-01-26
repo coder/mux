@@ -1,3 +1,4 @@
+import path from "path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import type { DemoProjectConfig } from "./demoProject";
 
@@ -123,6 +124,15 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       }
 
       await workspaceItem.click();
+
+      // The app now boots into the persistent "Chat with Mux" workspace, which already renders
+      // a transcript immediately. Waiting on the transcript alone is no longer sufficient to
+      // confirm that the click actually navigated to the demo workspace.
+      const expectedProjectName = path.basename(context.projectPath);
+      await expect(page.getByTestId("workspace-header")).toContainText(expectedProjectName, {
+        timeout: 20_000,
+      });
+
       await chat.waitForTranscript();
     },
   };
@@ -208,8 +218,8 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
     },
 
     async expectStatusMessageContains(text: string): Promise<void> {
-      const status = page.getByRole("status").filter({ hasText: text });
-      await expect(status).toBeVisible();
+      const toastSelector = `[role="status"]:has-text("${text}")`;
+      await page.waitForSelector(toastSelector, { state: "visible", timeout: 30_000 });
     },
 
     /**
