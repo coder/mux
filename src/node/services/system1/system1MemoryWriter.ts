@@ -12,6 +12,7 @@ import { resolveAgentBody } from "@/node/services/agentDefinitions/agentDefiniti
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { createMemoryReadTool } from "@/node/services/tools/memory_read";
 import { createMemoryWriteTool } from "@/node/services/tools/memory_write";
+import { getMuxHome } from "@/common/constants/paths";
 import { getMemoryFilePathForProject } from "@/node/services/tools/memoryCommon";
 import {
   readInstructionSet,
@@ -158,11 +159,13 @@ export async function runSystem1WriteProjectMemories(
     { skipScopesAbove: "global" }
   );
 
+  const globalAgentsMd = await readInstructionSet(getMuxHome());
+
   const workspaceInstructions = await readInstructionSetFromRuntime(
     params.runtime,
     params.workspacePath
   );
-  const agentsMd = workspaceInstructions ?? (await readInstructionSet(params.projectPath));
+  const contextAgentsMd = workspaceInstructions ?? (await readInstructionSet(params.projectPath));
 
   const { projectId, memoryPath } = getMemoryFilePathForProject(params.projectPath);
 
@@ -185,8 +188,11 @@ export async function runSystem1WriteProjectMemories(
   const userMessageParts = [
     `projectId: ${projectId}`,
     "",
-    "AGENTS.md:",
-    agentsMd ?? "(none)",
+    "Global AGENTS.md (~/.mux/AGENTS.md):",
+    globalAgentsMd ?? "(none)",
+    "",
+    "Project/workspace AGENTS.md:",
+    contextAgentsMd ?? "(none)",
     "",
     "Current memory file content:",
     existingMemory.length > 0 ? existingMemory : "(empty)",
