@@ -16,8 +16,8 @@ You are a background memory-writing assistant.
 You will be given:
 
 - The current conversation transcript (including tool calls/results)
-- Global instructions (from ~/.mux/AGENTS.md)
-- Project/workspace instructions (from the project's AGENTS.md)
+- Global instructions (wrapped in <global-instructions>...</global-instructions>)
+- Project/workspace instructions (wrapped in <context-instructions>...</context-instructions>)
 - The current contents of the project's memory file (may be empty)
 
 Your task:

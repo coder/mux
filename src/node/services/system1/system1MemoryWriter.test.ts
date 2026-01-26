@@ -67,10 +67,12 @@ describe("system1MemoryWriter", () => {
           expect(typeof messages?.[0]?.content).toBe("string");
 
           const userMessage = messages?.[0]?.content as string;
-          expect(userMessage).toContain("Global AGENTS.md");
+          expect(userMessage).toContain("<global-instructions>");
           expect(userMessage).toContain("# Global");
-          expect(userMessage).toContain("Project/workspace AGENTS.md");
+          expect(userMessage).toContain("</global-instructions>");
+          expect(userMessage).toContain("<context-instructions>");
           expect(userMessage).toContain("# Agents");
+          expect(userMessage).toContain("</context-instructions>");
 
           const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
           expect(tools && "memory_write" in tools).toBe(true);
