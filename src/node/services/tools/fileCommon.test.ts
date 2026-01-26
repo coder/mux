@@ -165,13 +165,14 @@ describe("fileCommon", () => {
     it("allows edits to allowlisted files", async () => {
       const config = buildConfig({
         mode: "exec",
-        allowedEditPaths: [".mux/harness/*.jsonc"],
+        allowedEditPaths: [".mux/harness/*.jsonc", ".mux/harness/**/*.jsonc"],
       });
 
       expect(await validatePlanModeAccess(".mux/harness/main.jsonc", config)).toBeNull();
       expect(
         await validatePlanModeAccess("/workspace/project/.mux/harness/main.jsonc", config)
       ).toBeNull();
+      expect(await validatePlanModeAccess(".mux/harness/feature/foo.jsonc", config)).toBeNull();
     });
 
     it("rejects edits to non-allowlisted files", async () => {

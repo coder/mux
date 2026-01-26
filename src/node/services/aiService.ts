@@ -1419,7 +1419,9 @@ export class AIService extends EventEmitter {
           mode: effectiveMode === "plan" ? "plan" : "exec",
           agentId: effectiveAgentId,
           allowedEditPaths:
-            effectiveAgentId === "harness-init" ? [".mux/harness/*.jsonc"] : undefined,
+            effectiveAgentId === "harness-init"
+              ? [".mux/harness/*.jsonc", ".mux/harness/**/*.jsonc"]
+              : undefined,
         },
         "", // Empty workspace ID for early stub config
         this.initStateManager,
@@ -1769,7 +1771,9 @@ export class AIService extends EventEmitter {
           mode: effectiveMode === "plan" ? "plan" : "exec",
           agentId: effectiveAgentId,
           allowedEditPaths:
-            effectiveAgentId === "harness-init" ? [".mux/harness/*.jsonc"] : undefined,
+            effectiveAgentId === "harness-init"
+              ? [".mux/harness/*.jsonc", ".mux/harness/**/*.jsonc"]
+              : undefined,
           emitChatEvent: (event) => {
             // Defensive: tools should only emit events for the workspace they belong to.
             if ("workspaceId" in event && event.workspaceId !== workspaceId) {

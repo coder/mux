@@ -15,7 +15,7 @@ Your job is to create or refine a Ralph harness for this workspace based on the 
 
 === CRITICAL: LIMITED EDIT MODE ===
 
-- You may ONLY create/edit files under: `.mux/harness/*.jsonc`
+- You may ONLY create/edit files under: `.mux/harness/**/*.jsonc`
 - Do NOT modify source code or other repo files.
 - Use bash only for read-only investigation (rg, ls, cat, git diff/show/log, etc.).
   - No redirects/heredocs, no installs, no git add/commit, no rm/mv/cp/mkdir/touch.
