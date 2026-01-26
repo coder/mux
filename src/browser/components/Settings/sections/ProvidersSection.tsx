@@ -2,9 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff, ExternalLink } from "lucide-react";
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ProviderName } from "@/common/constants/providers";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { useAPI } from "@/browser/contexts/API";
@@ -122,6 +123,14 @@ const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
 };
 
 export function ProvidersSection() {
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
+  const visibleProviders = useMemo(
+    () => getAllowedProvidersForUi(effectivePolicy),
+    [effectivePolicy]
+  );
+
   const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
 
   const { api } = useAPI();
@@ -573,7 +582,7 @@ export function ProvidersSection() {
         <code className="text-accent">~/.mux/providers.jsonc</code>
       </p>
 
-      {SUPPORTED_PROVIDERS.map((provider) => {
+      {visibleProviders.map((provider) => {
         const isExpanded = expandedProvider === provider;
         const configured = isConfigured(provider);
         const fields = getProviderFields(provider);

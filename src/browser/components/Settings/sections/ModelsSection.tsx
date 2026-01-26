@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { Loader2, Plus } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import {
@@ -15,7 +15,9 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { PROVIDER_DISPLAY_NAMES, SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
@@ -49,6 +51,14 @@ interface EditingState {
 }
 
 export function ModelsSection() {
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
+  const visibleProviders = useMemo(
+    () => getAllowedProvidersForUi(effectivePolicy),
+    [effectivePolicy]
+  );
+
   const { api } = useAPI();
   const { config, loading, updateModelsOptimistically } = useProvidersConfig();
   const [lastProvider, setLastProvider] = usePersistedState(LAST_CUSTOM_MODEL_PROVIDER_KEY, "");
@@ -56,7 +66,7 @@ export function ModelsSection() {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const selectableProviders = SUPPORTED_PROVIDERS.filter(
+  const selectableProviders = visibleProviders.filter(
     (provider) => !HIDDEN_PROVIDERS.has(provider)
   );
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =

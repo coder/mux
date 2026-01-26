@@ -54,6 +54,7 @@ import { TaskService } from "@/node/services/taskService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
+import { PolicyService } from "@/node/services/policyService";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
 const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
@@ -104,6 +105,7 @@ export class ServiceContainer {
   public readonly experimentsService: ExperimentsService;
   public readonly sessionUsageService: SessionUsageService;
   public readonly signingService: SigningService;
+  public readonly policyService: PolicyService;
   public readonly coderService: CoderService;
   private readonly initStateManager: InitStateManager;
   private readonly extensionMetadata: ExtensionMetadataService;
@@ -194,6 +196,16 @@ export class ServiceContainer {
     this.workspaceService.setSessionTimingService(this.sessionTimingService);
     this.signingService = getSigningService();
     this.coderService = coderService;
+
+    this.policyService = new PolicyService(this.coderService);
+
+    // PolicyService is a cross-cutting dependency; use setter injection to avoid
+    // constructor cycles between services.
+    this.providerService.setPolicyService(this.policyService);
+    this.mcpServerManager.setPolicyService(this.policyService);
+    this.aiService.setPolicyService(this.policyService);
+    this.workspaceService.setPolicyService(this.policyService);
+
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
 
@@ -229,6 +241,9 @@ export class ServiceContainer {
     await this.extensionMetadata.initialize();
     // Initialize telemetry service
     await this.telemetryService.initialize();
+
+    // Initialize policy service (startup gating)
+    await this.policyService.initialize();
 
     // Initialize feature flag state (don't block startup on network).
     this.featureFlagService
@@ -352,6 +367,7 @@ export class ServiceContainer {
    * Terminates all background processes to prevent orphans.
    */
   async dispose(): Promise<void> {
+    this.policyService.dispose();
     this.mcpServerManager.dispose();
     await this.muxGatewayOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();

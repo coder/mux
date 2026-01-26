@@ -41,6 +41,7 @@ import {
   MCPTestResultSchema,
   WorkspaceMCPOverridesSchema,
 } from "./mcp";
+import { PolicyGetResponseSchema } from "./policy";
 
 // Experiments
 export const ExperimentValueSchema = z.object({
@@ -149,6 +150,19 @@ export const providers = {
   },
   // Subscription: emits when provider config changes (API keys, models, etc.)
   onConfigChanged: {
+    input: z.void(),
+    output: eventIterator(z.void()),
+  },
+};
+
+// Policy (admin-enforced config)
+export const policy = {
+  get: {
+    input: z.void(),
+    output: PolicyGetResponseSchema,
+  },
+  // Subscription: emits when the effective policy changes (file refresh)
+  onChanged: {
     input: z.void(),
     output: eventIterator(z.void()),
   },

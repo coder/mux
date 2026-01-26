@@ -55,6 +55,15 @@ interface CreationControlsProps {
   onSectionChange?: (sectionId: string | null) => void;
   /** Which runtime field (if any) is in error state for visual feedback */
   runtimeFieldError?: "docker" | "ssh" | null;
+
+  /** Policy: allowed runtime modes (null/undefined = allow all) */
+  allowedRuntimeModes?: RuntimeMode[] | null;
+  /** Policy: allow plain host SSH */
+  allowSshHost?: boolean;
+  /** Policy: allow Coder-backed SSH */
+  allowSshCoder?: boolean;
+  /** Optional policy error message to display near runtime controls */
+  runtimePolicyError?: string | null;
   /** Coder workspace controls props (optional - only rendered when provided) */
   coderProps?: Omit<CoderControlsProps, "disabled">;
 }
@@ -66,6 +75,12 @@ interface RuntimeButtonGroupProps {
   defaultMode: RuntimeMode;
   onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
+  /** Policy: allowed runtime modes (null/undefined = allow all) */
+  allowedRuntimeModes?: RuntimeMode[] | null;
+  /** Policy: allow plain host SSH */
+  allowSshHost?: boolean;
+  /** Policy: allow Coder-backed SSH */
+  allowSshCoder?: boolean;
   runtimeAvailabilityState?: RuntimeAvailabilityState;
 }
 
@@ -169,9 +184,35 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     availabilityMap?.devcontainer?.available === false &&
     availabilityMap.devcontainer.reason === "No devcontainer.json found";
 
-  const runtimeOptions = hideDevcontainer
-    ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
-    : RUNTIME_OPTIONS;
+  const allowSshHost = props.allowSshHost ?? true;
+  const allowSshCoder = props.allowSshCoder ?? true;
+  const allowedModeSet = props.allowedRuntimeModes ? new Set(props.allowedRuntimeModes) : null;
+
+  const isModeAllowedByPolicy = (mode: RuntimeMode): boolean => {
+    if (!allowedModeSet) {
+      return true;
+    }
+
+    if (mode === RUNTIME_MODE.SSH) {
+      return allowSshHost || allowSshCoder;
+    }
+
+    return allowedModeSet.has(mode);
+  };
+
+  const runtimeOptions = (
+    hideDevcontainer
+      ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
+      : RUNTIME_OPTIONS
+  ).filter((option) => {
+    const allowed = isModeAllowedByPolicy(option.value);
+    if (!allowed && option.value !== props.value) {
+      // Hide policy-disabled options unless they're currently selected.
+      return false;
+    }
+
+    return true;
+  });
 
   return (
     <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
@@ -182,9 +223,14 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
         // Disable only if availability is explicitly known and unavailable.
         // When availability is undefined (loading or fetch failed), allow selection
         // as fallback - the config picker will validate before creation.
+        const isPolicyDisabled = !isModeAllowedByPolicy(option.value);
         const isModeDisabled = availability !== undefined && !availability.available;
-        const disabledReason =
-          availability && !availability.available ? availability.reason : undefined;
+        const disabledReason = isPolicyDisabled
+          ? "Disabled by policy"
+          : availability && !availability.available
+            ? availability.reason
+            : undefined;
+        const isDisabled = Boolean(props.disabled) || isModeDisabled || isPolicyDisabled;
         const Icon = option.Icon;
 
         return (
@@ -193,13 +239,13 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
               <button
                 type="button"
                 onClick={() => props.onChange(option.value)}
-                disabled={Boolean(props.disabled) || isModeDisabled}
+                disabled={isDisabled}
                 aria-pressed={isActive}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all duration-150",
                   "cursor-pointer",
                   isActive ? option.activeClass : option.idleClass,
-                  (Boolean(props.disabled) || isModeDisabled) && "cursor-not-allowed opacity-50"
+                  isDisabled && "cursor-not-allowed opacity-50"
                 )}
               >
                 <Icon size={12} />
@@ -215,7 +261,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                 <span>{option.description}</span>
                 <DocsLink path={option.docsPath} />
               </div>
-              {isModeDisabled ? (
+              {disabledReason ? (
                 <p className="mt-1 text-yellow-500">{disabledReason ?? "Unavailable"}</p>
               ) : (
                 <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
@@ -471,6 +517,9 @@ export function CreationControls(props: CreationControlsProps) {
             defaultMode={props.defaultRuntimeMode}
             onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
+            allowedRuntimeModes={props.allowedRuntimeModes}
+            allowSshHost={props.allowSshHost}
+            allowSshCoder={props.allowSshCoder}
             runtimeAvailabilityState={runtimeAvailabilityState}
           />
 
@@ -504,6 +553,7 @@ export function CreationControls(props: CreationControlsProps) {
 
           {/* SSH Host Input - hidden when Coder is enabled or will be enabled after checking */}
           {selectedRuntime.mode === "ssh" &&
+            (props.allowSshHost ?? true) &&
             !props.coderProps?.enabled &&
             // Also hide when Coder is still checking but has saved config (will enable after check)
             !(props.coderProps?.coderInfo === null && props.coderProps?.coderConfig) && (
@@ -552,6 +602,10 @@ export function CreationControls(props: CreationControlsProps) {
             </div>
           )}
         </div>
+
+        {props.runtimePolicyError && (
+          <p className="text-xs text-red-500">{props.runtimePolicyError}</p>
+        )}
 
         {/* Dev container controls - config dropdown/input + credential sharing */}
         {selectedRuntime.mode === "devcontainer" && devcontainerSelection.uiMode !== "hidden" && (
@@ -626,7 +680,6 @@ export function CreationControls(props: CreationControlsProps) {
             </label>
           </div>
         )}
-
         {/* Credential sharing - separate row for consistency with Coder controls */}
         {selectedRuntime.mode === "docker" && (
           <label className="flex items-center gap-1.5 text-xs">
@@ -647,11 +700,11 @@ export function CreationControls(props: CreationControlsProps) {
             <DocsLink path="/runtime/docker#credential-sharing" />
           </label>
         )}
-
         {/* Coder Controls - shown when SSH mode is selected and Coder is available */}
         {selectedRuntime.mode === "ssh" && props.coderProps && (
           <CoderControls
             {...props.coderProps}
+            requiredByPolicy={props.allowSshHost === false && props.allowSshCoder !== false}
             disabled={props.disabled}
             hasError={props.runtimeFieldError === "ssh"}
           />

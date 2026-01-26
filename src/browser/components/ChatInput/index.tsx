@@ -23,6 +23,11 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
+import {
+  getAllowedRuntimeModesForUi,
+  isParsedRuntimeAllowedByPolicy,
+} from "@/browser/utils/policyUi";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
@@ -141,6 +146,14 @@ export type { ChatInputProps, ChatInputAPI };
 
 const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { api } = useAPI();
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
+  const mcpAllowUserDefined = effectivePolicy?.mcp.allowUserDefined;
+  const runtimePolicy = useMemo(
+    () => getAllowedRuntimeModesForUi(effectivePolicy),
+    [effectivePolicy]
+  );
   const { variant } = props;
   const creationProjectPath = variant === "creation" ? props.projectPath : "";
   const creationDraftId = variant === "creation" ? props.pendingDraftId : null;
@@ -617,6 +630,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       ? validateCreationRuntime(creationState.selectedRuntime, coderState.presets.length)
       : null;
 
+  const creationRuntimePolicyError =
+    variant === "creation" &&
+    effectivePolicy?.runtimes != null &&
+    !isParsedRuntimeAllowedByPolicy(effectivePolicy, creationState.selectedRuntime)
+      ? creationState.selectedRuntime.mode === "ssh" &&
+        !creationState.selectedRuntime.coder &&
+        runtimePolicy.allowSshHost === false &&
+        runtimePolicy.allowSshCoder
+        ? "Host SSH runtimes are disabled by policy. Enable “Use Coder Workspace”."
+        : "Selected runtime is disabled by policy."
+      : null;
+
   const runtimeFieldError =
     variant === "creation" && hasAttemptedCreateSend ? (creationRuntimeError?.mode ?? null) : null;
 
@@ -639,6 +664,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           sections: creationSections,
           selectedSectionId,
           onSectionChange: handleCreationSectionChange,
+          allowedRuntimeModes: runtimePolicy.allowedModes,
+          allowSshHost: runtimePolicy.allowSshHost,
+          allowSshCoder: runtimePolicy.allowSshCoder,
+          runtimePolicyError: creationRuntimePolicyError,
           runtimeFieldError,
           // Pass coderProps when CLI is available/outdated, Coder is enabled, or still checking (so "Checking…" UI renders)
           coderProps:
@@ -665,13 +694,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const hasImages = attachments.length > 0;
   const hasReviews = attachedReviews.length > 0;
   // Disable send while Coder presets are loading (user could bypass preset validation)
+  const policyBlocksCreateSend = variant === "creation" && creationRuntimePolicyError != null;
   const coderPresetsLoading =
     coderState.enabled && !coderState.coderConfig?.existingWorkspace && coderState.loadingPresets;
   const canSend =
     (hasTypedText || hasImages || hasReviews) &&
     !disabled &&
     !sendInFlightBlocksInput &&
-    !coderPresetsLoading;
+    !coderPresetsLoading &&
+    !policyBlocksCreateSend;
 
   // Creation variant: keep the project-scoped model/thinking in sync with global agent defaults
   // so switching agents uses the configured defaults (and respects "inherit" semantics).
@@ -985,10 +1016,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       providerNames,
       agentSkills: agentSkillDescriptors,
       variant,
+      mcpAllowUserDefined,
     });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames, agentSkillDescriptors, variant]);
+  }, [input, providerNames, agentSkillDescriptors, variant, mcpAllowUserDefined]);
 
   // Load provider names for suggestions
   useEffect(() => {

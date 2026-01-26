@@ -50,6 +50,7 @@ import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
+import type { PolicyService } from "@/node/services/policyService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -445,6 +446,7 @@ export class AIService extends EventEmitter {
   private readonly config: Config;
   private readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   private mcpServerManager?: MCPServerManager;
+  private policyService?: PolicyService;
   private telemetryService?: TelemetryService;
   private readonly initStateManager: InitStateManager;
   private mockModeEnabled: boolean;
@@ -496,6 +498,9 @@ export class AIService extends EventEmitter {
     }
   }
 
+  setPolicyService(service: PolicyService): void {
+    this.policyService = service;
+  }
   setTelemetryService(service: TelemetryService): void {
     this.telemetryService = service;
   }
@@ -672,6 +677,23 @@ export class AIService extends EventEmitter {
         });
       }
 
+      if (this.policyService?.isEnforced()) {
+        const provider = providerName as ProviderName;
+        if (!this.policyService.isProviderAllowed(provider)) {
+          return Err({
+            type: "policy_denied",
+            message: `Provider ${providerName} is not allowed by policy`,
+          });
+        }
+
+        if (!this.policyService.isModelAllowed(provider, modelId)) {
+          return Err({
+            type: "policy_denied",
+            message: `Model ${providerName}:${modelId} is not allowed by policy`,
+          });
+        }
+      }
+
       // Load providers configuration - the ONLY source of truth
       const providersConfig = this.config.loadProvidersConfig();
       let providerConfig = providersConfig?.[providerName] ?? {};
@@ -681,6 +703,14 @@ export class AIService extends EventEmitter {
       providerConfig = baseUrl
         ? { ...configWithoutBaseUrl, baseURL: baseUrl }
         : configWithoutBaseUrl;
+
+      // Policy: force provider base URL (if configured).
+      const forcedBaseUrl = this.policyService?.isEnforced()
+        ? this.policyService.getForcedBaseUrl(providerName as ProviderName)
+        : undefined;
+      if (forcedBaseUrl) {
+        providerConfig = { ...providerConfig, baseURL: forcedBaseUrl };
+      }
 
       // Inject app attribution headers (used by OpenRouter and other compatible platforms).
       // We never overwrite user-provided values (case-insensitive header matching).
@@ -1241,6 +1271,15 @@ export class AIService extends EventEmitter {
       }
 
       const metadata = metadataResult.data;
+
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isRuntimeAllowed(metadata.runtimeConfig)) {
+          return Err({
+            type: "policy_denied",
+            message: "Workspace runtime is not allowed by policy",
+          });
+        }
+      }
       const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
 
       // Get actual workspace path from config (handles both legacy and new format)

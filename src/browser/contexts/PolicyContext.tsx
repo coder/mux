@@ -1,0 +1,82 @@
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import type { EffectivePolicy, PolicyGetResponse, PolicyStatus } from "@/common/orpc/types";
+import { useAPI } from "@/browser/contexts/API";
+
+interface PolicyContextValue {
+  status: PolicyStatus;
+  policy: EffectivePolicy | null;
+  loading: boolean;
+  refresh: () => Promise<void>;
+}
+
+const PolicyContext = createContext<PolicyContextValue | null>(null);
+
+export function PolicyProvider(props: { children: React.ReactNode }) {
+  const apiState = useAPI();
+  const api = apiState.api;
+  const [response, setResponse] = useState<PolicyGetResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    if (!api) {
+      setResponse(null);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const next = await api.policy.get();
+      setResponse(next);
+    } catch {
+      setResponse(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    if (!api) {
+      setResponse(null);
+      setLoading(false);
+      return;
+    }
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    void refresh();
+
+    (async () => {
+      try {
+        const iterator = await api.policy.onChanged(undefined, { signal });
+        for await (const _ of iterator) {
+          if (signal.aborted) {
+            break;
+          }
+          void refresh();
+        }
+      } catch {
+        // Expected on unmount.
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api, refresh]);
+
+  const status: PolicyStatus = response?.status ?? { state: "disabled" };
+  const policy = response?.policy ?? null;
+
+  return (
+    <PolicyContext.Provider value={{ status, policy, loading, refresh }}>
+      {props.children}
+    </PolicyContext.Provider>
+  );
+}
+
+export function usePolicy(): PolicyContextValue {
+  const ctx = useContext(PolicyContext);
+  if (!ctx) {
+    throw new Error("usePolicy must be used within a PolicyProvider");
+  }
+  return ctx;
+}

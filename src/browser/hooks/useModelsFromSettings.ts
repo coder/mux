@@ -3,10 +3,11 @@ import { readPersistedState, usePersistedState } from "./usePersistedState";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { migrateGatewayModel } from "./useGatewayModels";
 import { isValidProvider } from "@/common/constants/providers";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type { ProvidersConfigMap, EffectivePolicy } from "@/common/orpc/types";
 
 const HIDDEN_MODELS_KEY = "hidden-models";
 const DEFAULT_MODEL_KEY = "model-default";
@@ -14,6 +15,41 @@ const DEFAULT_MODEL_KEY = "model-default";
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
 const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
 
+function parseModelString(modelString: string): { provider: string; modelId: string } | null {
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex <= 0 || colonIndex === modelString.length - 1) {
+    return null;
+  }
+
+  return {
+    provider: modelString.slice(0, colonIndex),
+    modelId: modelString.slice(colonIndex + 1),
+  };
+}
+
+function isModelAllowedByPolicy(policy: EffectivePolicy | null, modelString: string): boolean {
+  const providerAccess = policy?.providerAccess;
+  if (providerAccess == null) {
+    return true;
+  }
+
+  const parsed = parseModelString(modelString);
+  if (!parsed) {
+    return true;
+  }
+
+  const providerPolicy = providerAccess.find((p) => p.id === parsed.provider);
+  if (!providerPolicy) {
+    return false;
+  }
+
+  const allowedModels = providerPolicy.allowedModels ?? null;
+  if (allowedModels === null) {
+    return true;
+  }
+
+  return allowedModels.includes(parsed.modelId);
+}
 function getCustomModels(config: ProvidersConfigMap | null): string[] {
   if (!config) return [];
   const models: string[] = [];
@@ -68,6 +104,9 @@ export function getDefaultModel(): string {
  * discoverable/manageable there.
  */
 export function useModelsFromSettings() {
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
   const { api } = useAPI();
   const { config, refresh } = useProvidersConfig();
 
@@ -81,14 +120,15 @@ export function useModelsFromSettings() {
     listener: true,
   });
 
-  const customModels = useMemo(
-    () => filterHiddenModels(getCustomModels(config), hiddenModels),
-    [config, hiddenModels]
-  );
-  const models = useMemo(
-    () => filterHiddenModels(getSuggestedModels(config), hiddenModels),
-    [config, hiddenModels]
-  );
+  const customModels = useMemo(() => {
+    const next = filterHiddenModels(getCustomModels(config), hiddenModels);
+    return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
+  }, [config, hiddenModels, effectivePolicy]);
+
+  const models = useMemo(() => {
+    const next = filterHiddenModels(getSuggestedModels(config), hiddenModels);
+    return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
+  }, [config, hiddenModels, effectivePolicy]);
 
   /**
    * If a model is selected that isn't built-in, persist it as a provider custom model.
@@ -100,6 +140,10 @@ export function useModelsFromSettings() {
       const canonical = migrateGatewayModel(modelString).trim();
       if (!canonical) return;
       if (BUILT_IN_MODEL_SET.has(canonical)) return;
+
+      if (!isModelAllowedByPolicy(effectivePolicy, canonical)) {
+        return;
+      }
 
       const colonIndex = canonical.indexOf(":");
       if (colonIndex === -1) return;
@@ -123,7 +167,7 @@ export function useModelsFromSettings() {
         // Ignore failures - user can still manage models via Settings
       });
     },
-    [api, config, refresh]
+    [api, config, refresh, effectivePolicy]
   );
 
   const hideModel = useCallback(

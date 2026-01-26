@@ -1,0 +1,344 @@
+import { EventEmitter } from "events";
+import * as vm from "node:vm";
+import { readFile } from "node:fs/promises";
+import { log } from "@/node/services/log";
+import {
+  PolicyFileSchema,
+  type EffectivePolicy,
+  type PolicyGetResponse,
+  type PolicyRuntimeId,
+} from "@/common/orpc/schemas/policy";
+import type { ProviderName } from "@/common/constants/providers";
+import type { RuntimeConfig } from "@/common/types/runtime";
+import type { MCPServerTransport } from "@/common/types/mcp";
+import type { CoderService } from "@/node/services/coderService";
+import { compareVersions } from "@/node/services/coderService";
+
+import packageJson from "../../../package.json";
+
+const POLICY_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const POLICY_EVAL_TIMEOUT_MS = 250;
+
+function stableNormalize(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableNormalize);
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.keys(obj)
+        .sort()
+        .map((key) => [key, stableNormalize(obj[key])])
+    );
+  }
+  return value;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(stableNormalize(value));
+}
+
+async function getClientVersion(): Promise<string> {
+  // Prefer Electron's app version when available (authoritative in packaged apps).
+  if (process.versions.electron) {
+    try {
+      // Intentionally lazy import to keep CLI/server mode light.
+      // eslint-disable-next-line no-restricted-syntax
+      const { app } = await import("electron");
+      return app.getVersion();
+    } catch {
+      // Ignore and fall back.
+    }
+  }
+
+  // Fallback for CLI/headless.
+  if (typeof packageJson.version === "string") {
+    return packageJson.version;
+  }
+
+  return "0.0.0";
+}
+
+function normalizeForcedBaseUrl(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+interface PolicyUserContext {
+  user: {
+    email: string | null;
+  };
+}
+
+function evaluatePolicyFile(text: string, context: PolicyUserContext): unknown {
+  // Treat the file as a JS expression returning the policy object.
+  // Wrapping in parentheses allows the file to start with `{ ... }`.
+  const wrapped = `(${text}\n)`;
+  return vm.runInNewContext(wrapped, context, { timeout: POLICY_EVAL_TIMEOUT_MS });
+}
+
+export type PolicyStatus =
+  | { state: "disabled" }
+  | { state: "enforced" }
+  | { state: "blocked"; reason: string };
+
+export class PolicyService {
+  private readonly emitter = new EventEmitter();
+  private refreshInterval: ReturnType<typeof setInterval> | null = null;
+
+  private status: PolicyStatus = { state: "disabled" };
+  private effectivePolicy: EffectivePolicy | null = null;
+  private signature: string = stableStringify({
+    status: this.status,
+    policy: this.effectivePolicy,
+  });
+
+  constructor(private readonly coderService: CoderService) {
+    // Multiple windows can subscribe.
+    this.emitter.setMaxListeners(50);
+  }
+
+  async initialize(): Promise<void> {
+    await this.refreshPolicy({ isStartup: true });
+
+    if (!this.refreshInterval) {
+      this.refreshInterval = setInterval(() => {
+        void this.refreshPolicy({ isStartup: false });
+      }, POLICY_REFRESH_INTERVAL_MS);
+      this.refreshInterval.unref?.();
+    }
+  }
+
+  dispose(): void {
+    if (this.refreshInterval) {
+      clearInterval(this.refreshInterval);
+      this.refreshInterval = null;
+    }
+  }
+
+  onPolicyChanged(callback: () => void): () => void {
+    this.emitter.on("policyChanged", callback);
+    return () => this.emitter.off("policyChanged", callback);
+  }
+
+  private emitPolicyChanged(): void {
+    this.emitter.emit("policyChanged");
+  }
+
+  getPolicyGetResponse(): PolicyGetResponse {
+    return {
+      status: this.toSchemaStatus(this.status),
+      policy: this.effectivePolicy,
+    };
+  }
+
+  getEffectivePolicy(): EffectivePolicy | null {
+    return this.effectivePolicy;
+  }
+
+  getStatus(): PolicyStatus {
+    return this.status;
+  }
+
+  isEnforced(): boolean {
+    return this.status.state === "enforced";
+  }
+
+  isProviderAllowed(provider: ProviderName): boolean {
+    const access = this.effectivePolicy?.providerAccess;
+    if (access == null) {
+      return true;
+    }
+
+    return access.some((p) => p.id === provider);
+  }
+
+  getForcedBaseUrl(provider: ProviderName): string | undefined {
+    return this.effectivePolicy?.providerAccess?.find((p) => p.id === provider)?.forcedBaseUrl;
+  }
+
+  isModelAllowed(provider: ProviderName, modelId: string): boolean {
+    const access = this.effectivePolicy?.providerAccess;
+    if (access == null) {
+      return true;
+    }
+
+    const providerPolicy = access.find((p) => p.id === provider);
+    if (!providerPolicy) {
+      return false;
+    }
+
+    const allowedModels = providerPolicy.allowedModels ?? null;
+    if (allowedModels === null) {
+      return true;
+    }
+
+    return allowedModels.includes(modelId);
+  }
+
+  isMcpTransportAllowed(transport: MCPServerTransport): boolean {
+    const policy = this.effectivePolicy;
+    if (!policy) {
+      return true;
+    }
+
+    const allow = policy.mcp.allowUserDefined;
+    if (transport === "stdio") {
+      return allow.stdio;
+    }
+
+    // http/sse/auto are all remote.
+    return allow.remote;
+  }
+
+  isRuntimeAllowed(runtimeConfig: RuntimeConfig | undefined): boolean {
+    const runtimes = this.effectivePolicy?.runtimes;
+    if (runtimes == null) {
+      return true;
+    }
+
+    const runtimeId = this.getPolicyRuntimeId(runtimeConfig);
+    return runtimeId != null && runtimes.includes(runtimeId);
+  }
+
+  getPolicyRuntimeId(runtimeConfig: RuntimeConfig | undefined): PolicyRuntimeId | null {
+    if (!runtimeConfig) {
+      // This matches the server default in workspaceService.create().
+      return "worktree";
+    }
+
+    // Legacy local+srcBaseDir is treated as worktree.
+    if (runtimeConfig.type === "local" && "srcBaseDir" in runtimeConfig) {
+      return "worktree";
+    }
+
+    if (runtimeConfig.type === "ssh") {
+      return runtimeConfig.coder ? "ssh+coder" : "ssh";
+    }
+
+    return runtimeConfig.type;
+  }
+
+  private async refreshPolicy(options: { isStartup: boolean }): Promise<void> {
+    const filePath = process.env.MUX_POLICY_FILE?.trim();
+    if (!filePath) {
+      // Policy is opt-in.
+      this.updateState({ state: "disabled" }, null);
+      return;
+    }
+
+    try {
+      const [clientVersion, email, fileText] = await Promise.all([
+        getClientVersion(),
+        this.coderService.getSignedInEmail().catch(() => null),
+        readFile(filePath, "utf8"),
+      ]);
+
+      const raw = evaluatePolicyFile(fileText, { user: { email } });
+      const parsed = PolicyFileSchema.parse(raw);
+
+      // Version gates
+      if (parsed.minimum_client_version) {
+        const min = parsed.minimum_client_version;
+        if (compareVersions(clientVersion, min) < 0) {
+          this.updateState(
+            {
+              state: "blocked",
+              reason: `Mux ${clientVersion} is below required minimum_client_version ${min}`,
+            },
+            null
+          );
+          return;
+        }
+      }
+
+      const providerAccess = (() => {
+        const list = parsed.provider_access;
+        if (!list || list.length === 0) {
+          return null;
+        }
+
+        return list.map((p) => {
+          const forcedBaseUrl = normalizeForcedBaseUrl(p.base_url);
+
+          const models = p.model_access;
+          if (!models || models.length === 0) {
+            return { id: p.id, forcedBaseUrl, allowedModels: null };
+          }
+
+          const allowedModels: string[] = [];
+          for (const rule of models) {
+            const match = rule.match;
+            if (Array.isArray(match)) {
+              allowedModels.push(...match);
+            } else {
+              allowedModels.push(match);
+            }
+          }
+
+          // Normalize + drop empties.
+          const normalized = allowedModels.map((m) => m.trim()).filter(Boolean);
+
+          return { id: p.id, forcedBaseUrl, allowedModels: normalized };
+        });
+      })();
+
+      const allowUserDefined = parsed.tools?.allow_user_defined_mcp;
+      const effective: EffectivePolicy = {
+        policyFormatVersion: "0.1",
+        serverVersion: parsed.server_version,
+        minimumClientVersion: parsed.minimum_client_version,
+
+        providerAccess,
+
+        mcp: {
+          allowUserDefined: {
+            stdio: allowUserDefined?.stdio ?? true,
+            remote: allowUserDefined?.remote ?? true,
+          },
+        },
+
+        runtimes:
+          parsed.runtimes && parsed.runtimes.length > 0 ? parsed.runtimes.map((r) => r.id) : null,
+      };
+
+      this.updateState({ state: "enforced" }, effective);
+    } catch (error) {
+      if (options.isStartup) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.updateState({ state: "blocked", reason: `Failed to load policy: ${message}` }, null);
+        return;
+      }
+
+      // Refresh failures should not unlock the user; keep last-known-good.
+      log.warn("Policy refresh failed; keeping last-known-good policy", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private updateState(status: PolicyStatus, policy: EffectivePolicy | null): void {
+    const nextSignature = stableStringify({ status, policy });
+    if (nextSignature === this.signature) {
+      return;
+    }
+
+    this.status = status;
+    this.effectivePolicy = policy;
+    this.signature = nextSignature;
+    this.emitPolicyChanged();
+  }
+
+  private toSchemaStatus(status: PolicyStatus): PolicyGetResponse["status"] {
+    if (status.state === "disabled") {
+      return { state: "disabled" };
+    }
+    if (status.state === "enforced") {
+      return { state: "enforced" };
+    }
+    return { state: "blocked", reason: status.reason };
+  }
+}
