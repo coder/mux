@@ -9,7 +9,6 @@ import { ConnectionStatusToast } from "../ConnectionStatusToast";
 import { ChatInputToast } from "../ChatInputToast";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { ConfirmationModal } from "../ConfirmationModal";
-import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import {
   readPersistedState,
@@ -22,7 +21,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
 import { ModelSettings } from "../ModelSettings";
-import { useAPI, type APIClient } from "@/browser/contexts/API";
+import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
@@ -72,7 +71,7 @@ import {
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
-import { SendHorizontal, X } from "lucide-react";
+import { SendHorizontal } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
 import { ChatAttachments, type ChatAttachment } from "../ChatAttachments";
 import {
@@ -84,19 +83,16 @@ import {
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import type { ParsedRuntime } from "@/common/types/runtime";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
-import {
-  buildAgentSkillMetadata,
-  type MuxFrontendMetadata,
-  prepareUserMessageForSend,
-} from "@/common/types/message";
+import { type MuxFrontendMetadata, prepareUserMessageForSend } from "@/common/types/message";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
+import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
+import type { ChatInputProps, ChatInputAPI } from "./types";
 import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
@@ -108,7 +104,14 @@ import {
   readPersistedChatAttachments,
 } from "./draftAttachmentsStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
-import { ReviewBlockFromData } from "../shared/ReviewBlock";
+import { AttachedReviewsPanel } from "./AttachedReviewsPanel";
+import {
+  buildSkillInvocationMetadata,
+  parseCommandWithSkillInvocation,
+  validateCreationRuntime,
+  filePartsToChatAttachments,
+  type SkillResolutionTarget,
+} from "./utils";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -134,168 +137,6 @@ function estimateBase64DataUrlBytes(dataUrl: string): number | null {
 }
 const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
-// Unknown slash commands are used for agent-skill invocations (/{skillName} ...).
-type UnknownSlashCommand = Extract<ParsedCommand, { type: "unknown-command" }>;
-
-function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashCommand {
-  return value !== null && value.type === "unknown-command";
-}
-
-// Import types from local types file
-import type { ChatInputProps, ChatInputAPI } from "./types";
-import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
-
-type CreationRuntimeValidationError =
-  | { mode: "docker"; kind: "missingImage" }
-  | { mode: "ssh"; kind: "missingHost" }
-  | { mode: "ssh"; kind: "missingCoderWorkspace" }
-  | { mode: "ssh"; kind: "missingCoderTemplate" }
-  | { mode: "ssh"; kind: "missingCoderPreset" };
-
-interface SkillInvocation {
-  descriptor: AgentSkillDescriptor;
-  userText: string;
-}
-
-type SkillResolutionTarget =
-  | { kind: "project"; projectPath: string }
-  | { kind: "workspace"; workspaceId: string; disableWorkspaceAgents?: boolean };
-
-function buildSkillInvocationMetadata(
-  rawCommand: string,
-  descriptor: AgentSkillDescriptor
-): MuxFrontendMetadata {
-  return buildAgentSkillMetadata({
-    rawCommand,
-    commandPrefix: `/${descriptor.name}`,
-    skillName: descriptor.name,
-    scope: descriptor.scope,
-  });
-}
-
-async function resolveSkillInvocation(options: {
-  messageText: string;
-  parsed: ParsedCommand;
-  agentSkillDescriptors: AgentSkillDescriptor[];
-  api: APIClient | null;
-  discovery: SkillResolutionTarget | null;
-}): Promise<SkillInvocation | null> {
-  if (!isUnknownSlashCommand(options.parsed)) {
-    return null;
-  }
-
-  const command = options.parsed.command;
-  const prefix = `/${command}`;
-  const afterPrefix = options.messageText.slice(prefix.length);
-  const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
-
-  if (!hasSeparator) {
-    return null;
-  }
-
-  let skill: AgentSkillDescriptor | undefined = options.agentSkillDescriptors.find(
-    (candidate) => candidate.name === command
-  );
-
-  if (!skill && options.api && options.discovery) {
-    try {
-      const pkg =
-        options.discovery.kind === "project"
-          ? await options.api.agentSkills.get({
-              projectPath: options.discovery.projectPath,
-              skillName: command,
-            })
-          : await options.api.agentSkills.get({
-              workspaceId: options.discovery.workspaceId,
-              disableWorkspaceAgents: options.discovery.disableWorkspaceAgents,
-              skillName: command,
-            });
-      skill = {
-        name: pkg.frontmatter.name,
-        description: pkg.frontmatter.description,
-        scope: pkg.scope,
-      };
-    } catch {
-      // Not a skill (or not available yet) - fall through.
-    }
-  }
-
-  if (!skill) {
-    return null;
-  }
-
-  return {
-    descriptor: skill,
-    userText: formatSkillInvocationText(skill.name, afterPrefix.trimStart()),
-  };
-}
-async function parseCommandWithSkillInvocation(options: {
-  messageText: string;
-  agentSkillDescriptors: AgentSkillDescriptor[];
-  api: APIClient | null;
-  discovery: SkillResolutionTarget | null;
-}): Promise<{ parsed: ParsedCommand; skillInvocation: SkillInvocation | null }> {
-  const parsed = parseCommand(options.messageText);
-  const skillInvocation = await resolveSkillInvocation({
-    messageText: options.messageText,
-    parsed,
-    agentSkillDescriptors: options.agentSkillDescriptors,
-    api: options.api,
-    discovery: options.discovery,
-  });
-
-  return { parsed: skillInvocation ? null : parsed, skillInvocation };
-}
-/**
- * Format user message text for skill invocation.
- * Makes it explicit to the model that a skill was invoked.
- */
-function formatSkillInvocationText(skillName: string, userMessage: string): string {
-  return userMessage ? `Using skill ${skillName}: ${userMessage}` : `Use skill ${skillName}`;
-}
-
-function validateCreationRuntime(
-  runtime: ParsedRuntime,
-  coderPresetCount: number
-): CreationRuntimeValidationError | null {
-  if (runtime.mode === "docker") {
-    return runtime.image.trim() ? null : { mode: "docker", kind: "missingImage" };
-  }
-
-  if (runtime.mode === "ssh") {
-    if (runtime.coder) {
-      if (runtime.coder.existingWorkspace) {
-        // Existing mode: workspace name is required
-        if (!(runtime.coder.workspaceName ?? "").trim()) {
-          return { mode: "ssh", kind: "missingCoderWorkspace" };
-        }
-      } else {
-        // New mode: template is required
-        if (!(runtime.coder.template ?? "").trim()) {
-          return { mode: "ssh", kind: "missingCoderTemplate" };
-        }
-        // Preset required when 2+ presets exist
-        const requiresPreset = coderPresetCount >= 2;
-        if (requiresPreset && !(runtime.coder.preset ?? "").trim()) {
-          return { mode: "ssh", kind: "missingCoderPreset" };
-        }
-      }
-      return null;
-    }
-
-    return runtime.host.trim() ? null : { mode: "ssh", kind: "missingHost" };
-  }
-
-  return null;
-}
-function filePartsToChatAttachments(fileParts: FilePart[], idPrefix: string): ChatAttachment[] {
-  return fileParts.map((part, index) => ({
-    id: `${idPrefix}-${index}`,
-    url: part.url,
-    mediaType: part.mediaType,
-    filename: part.filename,
-  }));
-}
 export type { ChatInputProps, ChatInputAPI };
 
 const ChatInputInner: React.FC<ChatInputProps> = (props) => {
@@ -2362,50 +2203,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
           {/* Attached reviews preview - show styled blocks with remove/edit buttons */}
           {/* Hide during send to avoid duplicate display with the sent message */}
-          {variant === "workspace" && attachedReviews.length > 0 && !hideReviewsDuringSend && (
-            <div className="border-border max-h-[50vh] space-y-2 overflow-y-auto border-b px-1.5 py-1.5">
-              {/* Header with count and clear all button */}
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted font-medium">
-                  {attachedReviews.length} review{attachedReviews.length !== 1 && "s"} attached
-                </span>
-                {props.onDetachAllReviews && attachedReviews.length > 1 && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={props.onDetachAllReviews}
-                        className="text-muted hover:text-error flex items-center gap-1 text-xs transition-colors"
-                      >
-                        <X className="size-3" />
-                        Clear all
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>Remove all reviews from message</TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
-              {attachedReviews.map((review) => (
-                <ReviewBlockFromData
-                  key={review.id}
-                  data={review.data}
-                  onComplete={
-                    props.onCheckReview ? () => props.onCheckReview!(review.id) : undefined
-                  }
-                  onDetach={
-                    props.onDetachReview ? () => props.onDetachReview!(review.id) : undefined
-                  }
-                  onDelete={
-                    props.onDeleteReview ? () => props.onDeleteReview!(review.id) : undefined
-                  }
-                  onEditComment={
-                    props.onUpdateReviewNote
-                      ? (newNote) => props.onUpdateReviewNote!(review.id, newNote)
-                      : undefined
-                  }
-                />
-              ))}
-            </div>
+          {variant === "workspace" && !hideReviewsDuringSend && (
+            <AttachedReviewsPanel
+              reviews={attachedReviews}
+              onDetachAll={props.onDetachAllReviews}
+              onDetach={props.onDetachReview}
+              onCheck={props.onCheckReview}
+              onDelete={props.onDeleteReview}
+              onUpdateNote={props.onUpdateReviewNote}
+            />
           )}
 
           {/* Creation header controls - shown above textarea for creation variant */}
