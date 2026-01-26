@@ -1,14 +1,16 @@
 import React from "react";
+import { FileText } from "lucide-react";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
-import type { ImagePart } from "@/common/orpc/schemas";
+import type { FilePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
+import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface UserMessageContentProps {
   content: string;
   commandPrefix?: string;
   reviews?: ReviewNoteDataForDisplay[];
-  imageParts?: ImagePart[];
+  fileParts?: FilePart[];
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
   variant: "sent" | "queued";
 }
@@ -37,39 +39,71 @@ const imageContainerStyles = {
 
 const markdownClassName = "user-message-markdown";
 
+function dataUrlToBlob(dataUrl: string): Blob | null {
+  if (!dataUrl.startsWith("data:")) return null;
+
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) return null;
+
+  const header = dataUrl.slice("data:".length, commaIndex);
+  if (!header.includes(";base64")) return null;
+
+  const mimeType = header.split(";")[0] ?? "application/octet-stream";
+
+  try {
+    const base64 = dataUrl.slice(commaIndex + 1);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mimeType });
+  } catch {
+    return null;
+  }
+}
+
+function getBaseMediaType(mediaType: string): string {
+  return mediaType.toLowerCase().trim().split(";")[0];
+}
+
+const fileAttachmentStyles = {
+  sent: "flex max-w-80 items-center gap-2 rounded-xl border border-[var(--color-attachment-border)] px-3 py-2 text-sm text-[var(--color-subtle)]",
+  queued:
+    "border-border-light flex max-w-80 items-center gap-2 rounded border px-2 py-1 text-xs text-[var(--color-subtle)]",
+} as const;
 const imageStyles = {
   sent: "max-h-[300px] max-w-72 rounded-xl border border-[var(--color-attachment-border)] object-cover",
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
 } as const;
 
 /** Styled command prefix (e.g., "/compact" or "/skill-name") */
-const CommandPrefixBadge: React.FC<{ prefix: string }> = ({ prefix }) => (
+const CommandPrefixBadge: React.FC<{ prefix: string }> = (props) => (
   <span className="font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]">
-    {prefix}
+    {props.prefix}
   </span>
 );
 
 /**
  * Shared content renderer for user messages (sent and queued).
- * Handles reviews, text content, and image attachments.
+ * Handles reviews, text content, and attachments.
  */
-export const UserMessageContent: React.FC<UserMessageContentProps> = ({
-  content,
-  commandPrefix,
-  reviews,
-  imageParts,
-  variant,
-}) => {
-  const hasReviews = reviews && reviews.length > 0;
+export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => {
+  const reviews = props.reviews ?? [];
+  const fileParts = props.fileParts ?? [];
+
+  const hasReviews = reviews.length > 0;
 
   // Strip review tags from text when displaying alongside review blocks
   const textContent = hasReviews
-    ? content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
-    : content;
+    ? props.content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
+    : props.content;
 
   // Check if content starts with the command prefix
   const shouldHighlightPrefix =
-    commandPrefix && textContent.startsWith(commandPrefix) ? commandPrefix : undefined;
+    props.commandPrefix && textContent.startsWith(props.commandPrefix)
+      ? props.commandPrefix
+      : undefined;
 
   // Content after the prefix (if highlighting)
   const remainingContent = shouldHighlightPrefix
@@ -86,7 +120,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
         <MarkdownRenderer
           content={textContent}
           className={markdownClassName}
-          style={markdownStyles[variant]}
+          style={markdownStyles[props.variant]}
         />
       );
     }
@@ -106,7 +140,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
           <MarkdownRenderer
             content={remainingContent.trim()}
             className={markdownClassName}
-            style={markdownStyles[variant]}
+            style={markdownStyles[props.variant]}
           />
         )}
       </div>
@@ -125,16 +159,71 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = ({
       ) : (
         renderTextContent()
       )}
-      {imageParts && imageParts.length > 0 && (
-        <div className={imageContainerStyles[variant]}>
-          {imageParts.map((img, idx) => (
-            <img
-              key={idx}
-              src={img.url}
-              alt={`Attachment ${idx + 1}`}
-              className={imageStyles[variant]}
-            />
-          ))}
+      {fileParts.length > 0 && (
+        <div className={imageContainerStyles[props.variant]}>
+          {fileParts.map((part, idx) => {
+            const baseMediaType = getBaseMediaType(part.mediaType);
+            if (baseMediaType.startsWith("image/")) {
+              return (
+                <img
+                  key={idx}
+                  src={part.url}
+                  alt={`Attachment ${idx + 1}`}
+                  className={imageStyles[props.variant]}
+                />
+              );
+            }
+
+            const label =
+              part.filename ??
+              (baseMediaType === "application/pdf"
+                ? "PDF attachment"
+                : `Attachment (${baseMediaType})`);
+
+            return (
+              <a
+                key={idx}
+                href={part.url}
+                target="_blank"
+                rel="noreferrer"
+                className={fileAttachmentStyles[props.variant]}
+                onClick={(event) => {
+                  const blob = dataUrlToBlob(part.url);
+                  if (!blob) {
+                    return;
+                  }
+
+                  event.preventDefault();
+
+                  const blobUrl = URL.createObjectURL(blob);
+
+                  if (isDesktopMode()) {
+                    // In desktop mode, new windows are routed via shell.openExternal.
+                    // blob: URLs are tied to this renderer and won't resolve externally,
+                    // so download the file in-app instead.
+                    const link = document.createElement("a");
+                    link.href = blobUrl;
+                    link.download =
+                      part.filename ??
+                      (baseMediaType === "application/pdf" ? "attachment.pdf" : "attachment");
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+                    return;
+                  }
+
+                  window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+                  // Keep the blob URL alive long enough for the new tab to load.
+                  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+                }}
+              >
+                <FileText className="h-4 w-4 shrink-0" />
+                <span className="truncate">{label}</span>
+              </a>
+            );
+          })}
         </div>
       )}
     </>

@@ -6,7 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { ImagePart } from "@/common/orpc/schemas";
+import type { FilePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
   /**
@@ -16,10 +16,8 @@ export const CUSTOM_EVENTS = {
   THINKING_LEVEL_TOAST: "mux:thinkingLevelToast",
 
   /**
-   * Event to update the chat input text
-   * - mode "append": inserts text at cursor (default)
-   * - mode "replace": overwrites entire input (ignored if user is editing a message)
-   * Detail: { text: string, mode?: "replace" | "append", imageParts?: ImagePart[] }
+   * Event to insert text into the chat input
+   * Detail: { text: string, mode?: "replace" | "append", fileParts?: FilePart[] }
    */
   UPDATE_CHAT_INPUT: "mux:updateChatInput",
 
@@ -96,7 +94,7 @@ export interface CustomEventPayloads {
   [CUSTOM_EVENTS.UPDATE_CHAT_INPUT]: {
     text: string;
     mode?: "replace" | "append";
-    imageParts?: ImagePart[];
+    fileParts?: FilePart[];
   };
   [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload

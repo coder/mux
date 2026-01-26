@@ -72,7 +72,7 @@ export const QueuedMessage: React.FC<QueuedMessageProps> = ({
       <UserMessageContent
         content={content}
         reviews={message.reviews}
-        imageParts={message.imageParts}
+        fileParts={message.fileParts}
         variant="queued"
       />
     </MessageWindow>

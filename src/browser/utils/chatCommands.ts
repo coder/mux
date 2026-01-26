@@ -8,7 +8,7 @@
 
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
-import type { SendMessageOptions, ImagePart } from "@/common/orpc/types";
+import type { SendMessageOptions, FilePart } from "@/common/orpc/types";
 import {
   type MuxFrontendMetadata,
   type CompactionRequestData,
@@ -33,7 +33,7 @@ import {
   resolveCompactionModel,
   isValidModelFormat,
 } from "@/browser/utils/messages/compactionModelPreference";
-import type { ImageAttachment } from "../components/ImageAttachments";
+import type { ChatAttachment } from "../components/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 import {
@@ -793,12 +793,12 @@ export interface CommandHandlerContext {
   api: RouterClient<AppRouter>;
   workspaceId: string;
   sendMessageOptions: SendMessageOptions;
-  imageParts?: ImagePart[];
+  fileParts?: FilePart[];
   /** Reviews attached to the message (from code review panel) */
   reviews?: ReviewNoteData[];
   editMessageId?: string;
   setInput: (value: string) => void;
-  setImageAttachments: (images: ImageAttachment[]) => void;
+  setAttachments: (attachments: ChatAttachment[]) => void;
   /** Increment/decrement the sending counter. Pass true to increment, false to decrement. */
   setSendingState: (increment: boolean) => void;
   setToast: (toast: Toast) => void;
@@ -923,7 +923,7 @@ export async function handleCompactCommand(
     sendMessageOptions,
     editMessageId,
     setInput,
-    setImageAttachments,
+    setAttachments,
     setSendingState,
     setToast,
     onCancelEdit,
@@ -936,17 +936,17 @@ export async function handleCompactCommand(
   }
 
   setInput("");
-  setImageAttachments([]);
+  setAttachments([]);
   setSendingState(true);
 
   try {
     // Build followUpContent directly from parsed command + context
     const hasContent =
-      parsed.continueMessage ?? context.imageParts?.length ?? context.reviews?.length;
+      parsed.continueMessage ?? context.fileParts?.length ?? context.reviews?.length;
     const followUpContent: CompactionFollowUpInput | undefined = hasContent
       ? {
           text: parsed.continueMessage ?? "",
-          imageParts: context.imageParts,
+          fileParts: context.fileParts,
           reviews: context.reviews,
         }
       : undefined;

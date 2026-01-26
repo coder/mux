@@ -35,7 +35,7 @@ import type { PostCompactionExclusions } from "@/common/types/attachment";
 import type {
   SendMessageOptions,
   DeleteMessage,
-  ImagePart,
+  FilePart,
   WorkspaceChatMessage,
 } from "@/common/orpc/types";
 
@@ -1592,7 +1592,7 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     message: string,
     options: SendMessageOptions & {
-      imageParts?: ImagePart[];
+      fileParts?: FilePart[];
     },
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {

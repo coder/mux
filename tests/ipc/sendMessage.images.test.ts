@@ -74,7 +74,7 @@ describeIntegration("sendMessage image handling tests", () => {
             "This is a small solid-color image. What color is it? Answer with just the color name.",
             {
               model: modelString(provider, model),
-              imageParts: [RED_PIXEL],
+              fileParts: [RED_PIXEL],
             }
           );
 
@@ -116,7 +116,7 @@ describeIntegration("sendMessage image handling tests", () => {
           // Send message with multiple image attachments
           const result = await sendMessage(env, workspaceId, "What colors are these two images?", {
             model: modelString(provider, model),
-            imageParts: [RED_PIXEL, BLUE_PIXEL],
+            fileParts: [RED_PIXEL, BLUE_PIXEL],
           });
 
           // Debug: log if sendMessage failed
@@ -154,7 +154,7 @@ describeIntegration("sendMessage image handling tests", () => {
           // Send first message with image
           const result1 = await sendMessage(env, workspaceId, "Remember this image", {
             model: modelString("openai", OPENAI_VISION_MODEL),
-            imageParts: [RED_PIXEL],
+            fileParts: [RED_PIXEL],
           });
 
           expect(result1.success).toBe(true);

@@ -1,7 +1,7 @@
 import type {
   MuxMessage,
   MuxMetadata,
-  MuxImagePart,
+  MuxFilePart,
   DisplayedMessage,
   CompactionRequestData,
   CompactionFollowUpRequest,
@@ -1789,21 +1789,18 @@ export class StreamingMessageAggregator {
     }
 
     if (message.role === "user") {
-      // User messages: combine all text parts into single block, extract images
+      // User messages: combine all text parts into single block, extract attachments
       const partsContent = message.parts
         .filter((p) => p.type === "text")
         .map((p) => p.text)
         .join("");
 
-      const imageParts = message.parts
-        .filter((p): p is MuxImagePart => {
-          // Accept both new "file" type and legacy "image" type (from before PR #308)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
-          return p.type === "file" || (p as any).type === "image";
-        })
+      const fileParts = message.parts
+        .filter((p): p is MuxFilePart => p.type === "file")
         .map((p) => ({
           url: typeof p.url === "string" ? p.url : "",
           mediaType: p.mediaType,
+          filename: p.filename,
         }));
 
       // Extract slash command from muxMetadata (present for /compact, /skill, etc.)
@@ -1859,7 +1856,7 @@ export class StreamingMessageAggregator {
         historyId: message.id,
         content,
         commandPrefix,
-        imageParts: imageParts.length > 0 ? imageParts : undefined,
+        fileParts: fileParts.length > 0 ? fileParts : undefined,
         historySequence,
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,
         timestamp: baseTimestamp,

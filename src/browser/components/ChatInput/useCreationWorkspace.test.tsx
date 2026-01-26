@@ -3,7 +3,7 @@ import type { DraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSe
 import {
   getAgentIdKey,
   getInputKey,
-  getInputImagesKey,
+  getInputAttachmentsKey,
   getModelKey,
   getPendingScopeId,
   getProjectScopeId,
@@ -501,7 +501,7 @@ describe("useCreationWorkspace", () => {
 
     const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
     const pendingInputKey = getInputKey(pendingScopeId);
-    const pendingImagesKey = getInputImagesKey(pendingScopeId);
+    const pendingImagesKey = getInputAttachmentsKey(pendingScopeId);
     // Thinking is workspace-scoped, but this test doesn't set a project-scoped thinking preference.
     expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);

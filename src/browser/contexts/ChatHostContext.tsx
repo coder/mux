@@ -1,6 +1,6 @@
 import React, { createContext, useContext } from "react";
 
-import type { ImagePart } from "@/common/orpc/types";
+import type { FilePart } from "@/common/orpc/types";
 import {
   CHAT_UI_FEATURE_IDS,
   type ChatUiFeatureId,
@@ -9,7 +9,7 @@ import {
 import type { ReviewNoteData } from "@/common/types/review";
 
 export interface ChatHostActions {
-  editUserMessage?: (messageId: string, content: string, imageParts?: ImagePart[]) => void;
+  editUserMessage?: (messageId: string, content: string, fileParts?: FilePart[]) => void;
   addReviewNote?: (data: ReviewNoteData) => void;
   sendBashToBackground?: (toolCallId: string) => void;
   openCommandPalette?: () => void;

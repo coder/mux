@@ -171,19 +171,19 @@ describe("MessageQueue", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       const addedFirst = queue.addOnce(
         "Follow up",
-        { model: "gpt-4", agentId: "exec", imageParts: [image] },
+        { model: "gpt-4", agentId: "exec", fileParts: [image] },
         "follow-up"
       );
       const addedSecond = queue.addOnce(
         "Follow up",
-        { model: "gpt-4", agentId: "exec", imageParts: [image] },
+        { model: "gpt-4", agentId: "exec", fileParts: [image] },
         "follow-up"
       );
 
       expect(addedFirst).toBe(true);
       expect(addedSecond).toBe(false);
       expect(queue.getMessages()).toEqual(["Follow up"]);
-      expect(queue.getImageParts()).toEqual([image]);
+      expect(queue.getFileParts()).toEqual([image]);
     });
   });
 
@@ -285,23 +285,31 @@ describe("MessageQueue", () => {
       const image1 = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       const image2 = { url: "data:image/jpeg;base64,def", mediaType: "image/jpeg" };
 
-      queue.add("Message with image", { model: "gpt-4", agentId: "exec", imageParts: [image1] });
+      queue.add("Message with image", {
+        model: "gpt-4",
+        agentId: "exec",
+        fileParts: [image1],
+      });
       queue.add("Follow-up without image");
-      queue.add("Another with image", { model: "gpt-4", agentId: "exec", imageParts: [image2] });
+      queue.add("Another with image", {
+        model: "gpt-4",
+        agentId: "exec",
+        fileParts: [image2],
+      });
 
       expect(queue.getMessages()).toEqual([
         "Message with image",
         "Follow-up without image",
         "Another with image",
       ]);
-      expect(queue.getImageParts()).toEqual([image1, image2]);
+      expect(queue.getFileParts()).toEqual([image1, image2]);
       expect(queue.getDisplayText()).toBe(
         "Message with image\nFollow-up without image\nAnother with image"
       );
     });
   });
 
-  describe("getImageParts", () => {
+  describe("getFileParts", () => {
     it("should return accumulated images from multiple messages", () => {
       const image1 = {
         url: "data:image/png;base64,abc",
@@ -316,20 +324,24 @@ describe("MessageQueue", () => {
         mediaType: "image/gif",
       };
 
-      queue.add("First message", { model: "gpt-4", agentId: "exec", imageParts: [image1] });
+      queue.add("First message", {
+        model: "gpt-4",
+        agentId: "exec",
+        fileParts: [image1],
+      });
       queue.add("Second message", {
         model: "gpt-4",
         agentId: "exec",
-        imageParts: [image2, image3],
+        fileParts: [image2, image3],
       });
 
-      const images = queue.getImageParts();
+      const images = queue.getFileParts();
       expect(images).toEqual([image1, image2, image3]);
     });
 
     it("should return empty array when no images", () => {
       queue.add("Text only message");
-      expect(queue.getImageParts()).toEqual([]);
+      expect(queue.getFileParts()).toEqual([]);
     });
 
     it("should return copy of images array", () => {
@@ -338,10 +350,10 @@ describe("MessageQueue", () => {
         url: "data:image/png;base64,abc",
         mediaType: "image/png",
       };
-      queue.add("Message", { model: "gpt-4", agentId: "exec", imageParts: [image] });
+      queue.add("Message", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
-      const images1 = queue.getImageParts();
-      const images2 = queue.getImageParts();
+      const images1 = queue.getFileParts();
+      const images2 = queue.getFileParts();
 
       expect(images1).toEqual(images2);
       expect(images1).not.toBe(images2); // Different array instances
@@ -352,22 +364,22 @@ describe("MessageQueue", () => {
         url: "data:image/png;base64,abc",
         mediaType: "image/png",
       };
-      queue.add("Message", { model: "gpt-4", agentId: "exec", imageParts: [image] });
+      queue.add("Message", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
-      expect(queue.getImageParts()).toHaveLength(1);
+      expect(queue.getFileParts()).toHaveLength(1);
 
       queue.clear();
-      expect(queue.getImageParts()).toEqual([]);
+      expect(queue.getFileParts()).toEqual([]);
     });
   });
 
   describe("image-only messages", () => {
     it("should accept image-only messages (empty text with images)", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
       expect(queue.getMessages()).toEqual([]);
-      expect(queue.getImageParts()).toEqual([image]);
+      expect(queue.getFileParts()).toEqual([image]);
       expect(queue.isEmpty()).toBe(false);
     });
 
@@ -376,42 +388,42 @@ describe("MessageQueue", () => {
 
       expect(queue.isEmpty()).toBe(true);
       expect(queue.getMessages()).toEqual([]);
-      expect(queue.getImageParts()).toEqual([]);
+      expect(queue.getFileParts()).toEqual([]);
     });
 
     it("should handle mixed text and image-only messages", () => {
       const image1 = { url: "data:image/png;base64,abc", mediaType: "image/png" };
       const image2 = { url: "data:image/jpeg;base64,def", mediaType: "image/jpeg" };
 
-      queue.add("Text message", { model: "gpt-4", agentId: "exec", imageParts: [image1] });
-      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image2] }); // Image-only
+      queue.add("Text message", { model: "gpt-4", agentId: "exec", fileParts: [image1] });
+      queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image2] }); // Image-only
 
       expect(queue.getMessages()).toEqual(["Text message"]);
-      expect(queue.getImageParts()).toEqual([image1, image2]);
+      expect(queue.getFileParts()).toEqual([image1, image2]);
       expect(queue.isEmpty()).toBe(false);
     });
 
     it("should consider queue non-empty when only images present", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
       expect(queue.isEmpty()).toBe(false);
     });
 
     it("should produce correct message for image-only queue", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
       const { message, options } = queue.produceMessage();
 
       expect(message).toBe("");
-      expect(options?.imageParts).toEqual([image]);
+      expect(options?.fileParts).toEqual([image]);
       expect(options?.model).toBe("gpt-4");
     });
 
     it("should return empty string for getDisplayText with image-only", () => {
       const image = { url: "data:image/png;base64,abc", mediaType: "image/png" };
-      queue.add("", { model: "gpt-4", agentId: "exec", imageParts: [image] });
+      queue.add("", { model: "gpt-4", agentId: "exec", fileParts: [image] });
 
       expect(queue.getDisplayText()).toBe("");
     });

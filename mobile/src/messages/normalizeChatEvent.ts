@@ -1,5 +1,5 @@
 import type { DisplayedMessage, WorkspaceChatEvent } from "../types";
-import type { MuxMessage, MuxTextPart, MuxImagePart } from "@/common/types/message";
+import type { MuxMessage, MuxTextPart, MuxFilePart } from "@/common/types/message";
 import type { DynamicToolPart } from "@/common/types/toolParts";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { isMuxMessage } from "@/common/orpc/types";
@@ -70,11 +70,12 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
       .map((p) => p.text)
       .join("");
 
-    const imageParts = message.parts
-      .filter((p): p is MuxImagePart => p.type === "file")
+    const fileParts = message.parts
+      .filter((p): p is MuxFilePart => p.type === "file")
       .map((p) => ({
         url: p.url,
         mediaType: p.mediaType,
+        filename: p.filename,
       }));
 
     displayed.push({
@@ -82,7 +83,7 @@ function transformMuxToDisplayed(message: MuxMessage): DisplayedMessage[] {
       id: message.id,
       historyId: message.id,
       content,
-      imageParts: imageParts.length > 0 ? imageParts : undefined,
+      fileParts: fileParts.length > 0 ? fileParts : undefined,
       historySequence,
       timestamp: baseTimestamp,
     });
@@ -249,18 +250,25 @@ export function createChatEventExpander(): ChatEventExpander {
     const displayed = transformMuxToDisplayed(message);
 
     return displayed.map((msg, index) => {
-      if ("isStreaming" in msg) {
-        (msg as any).isStreaming = options.isStreaming;
-      }
-      if ("isPartial" in msg) {
-        (msg as any).isPartial = options.isStreaming;
-      }
-      (msg as any).isLastPartOfMessage = index === displayed.length - 1;
+      const isLastPartOfMessage = index === displayed.length - 1;
 
-      // Fix: Running tools show as "interrupted" because they are partial.
-      // If the stream is active, they should be "executing".
-      if (msg.type === "tool" && msg.status === "interrupted" && options.isStreaming) {
-        (msg as any).status = "executing";
+      if (msg.type === "assistant" || msg.type === "reasoning") {
+        msg.isStreaming = options.isStreaming;
+        msg.isPartial = options.isStreaming;
+        msg.isLastPartOfMessage = isLastPartOfMessage;
+        return msg;
+      }
+
+      if (msg.type === "tool") {
+        msg.isPartial = options.isStreaming;
+        msg.isLastPartOfMessage = isLastPartOfMessage;
+
+        // Fix: Running tools show as "interrupted" because they are partial.
+        // If the stream is active, they should be "executing".
+        if (msg.status === "interrupted" && options.isStreaming) {
+          msg.status = "executing";
+        }
+        return msg;
       }
 
       return msg;

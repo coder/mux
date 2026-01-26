@@ -1,6 +1,6 @@
 import type { IpcRenderer } from "electron";
 import type {
-  ImagePart,
+  FilePart,
   SendMessageOptions,
   WorkspaceChatMessage,
   WorkspaceInitEvent,
@@ -98,7 +98,7 @@ type SendMessageOptionsWithAgentFallback = Omit<SendMessageOptions, "agentId"> &
 };
 
 type SendMessageWithModelOptions = Omit<SendMessageOptionsWithAgentFallback, "model"> & {
-  imageParts?: Array<{ url: string; mediaType: string }>;
+  fileParts?: Array<{ url: string; mediaType: string }>;
 };
 
 const DEFAULT_MODEL_ID = KNOWN_MODELS.SONNET.id;
@@ -108,12 +108,12 @@ export async function sendMessage(
   source: OrpcSource,
   workspaceId: string,
   message: string,
-  options?: SendMessageOptionsWithAgentFallback & { imageParts?: ImagePart[] }
+  options?: SendMessageOptionsWithAgentFallback & { fileParts?: FilePart[] }
 ): Promise<Result<void, SendMessageError>> {
   const client = resolveOrpcClient(source);
 
   // options is now required by the oRPC schema; build with defaults if not provided
-  const resolvedOptions: SendMessageOptions & { imageParts?: ImagePart[] } = {
+  const resolvedOptions: SendMessageOptions & { fileParts?: FilePart[] } = {
     model: options?.model ?? WORKSPACE_DEFAULTS.model,
     agentId: options?.agentId ?? WORKSPACE_DEFAULTS.agentId,
     ...options,
@@ -516,7 +516,7 @@ export async function readChatHistory(
 /**
  * Test image fixtures (1x1 pixel PNGs)
  */
-export const TEST_IMAGES: Record<string, ImagePart> = {
+export const TEST_IMAGES: Record<string, FilePart> = {
   RED_PIXEL: {
     url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==",
     mediaType: "image/png",
@@ -644,8 +644,8 @@ export async function buildLargeHistory(
     textPrefix?: string;
   } = {}
 ): Promise<void> {
-  // HistoryService only needs getSessionDir, so we can cast the partial config
-  const historyService = new HistoryService(config as any);
+  // HistoryService only needs getSessionDir.
+  const historyService = new HistoryService(config);
 
   const messageSize = options.messageSize ?? 50_000;
   const messageCount = options.messageCount ?? 80;

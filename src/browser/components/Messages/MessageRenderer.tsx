@@ -1,5 +1,5 @@
 import React from "react";
-import type { ImagePart } from "@/common/orpc/types";
+import type { FilePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
 import type { ReviewNoteData } from "@/common/types/review";
@@ -16,7 +16,7 @@ import { removeEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 interface MessageRendererProps {
   message: DisplayedMessage;
   className?: string;
-  onEditUserMessage?: (messageId: string, content: string, imageParts?: ImagePart[]) => void;
+  onEditUserMessage?: (messageId: string, content: string, fileParts?: FilePart[]) => void;
   onEditQueuedMessage?: () => void;
   workspaceId?: string;
   isCompacting?: boolean;

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   copyWorkspaceStorage,
   deleteWorkspaceStorage,
-  getInputImagesKey,
+  getInputAttachmentsKey,
 } from "@/common/constants/storage";
 
 class MemoryStorage implements Storage {
@@ -52,16 +52,16 @@ describe("storage workspace-scoped keys", () => {
     }
   });
 
-  test("getInputImagesKey formats key", () => {
-    expect(getInputImagesKey("ws-123")).toBe("inputImages:ws-123");
+  test("getInputAttachmentsKey formats key", () => {
+    expect(getInputAttachmentsKey("ws-123")).toBe("inputAttachments:ws-123");
   });
 
-  test("copyWorkspaceStorage copies inputImages key", () => {
+  test("copyWorkspaceStorage copies inputAttachments key", () => {
     const source = "ws-source";
     const dest = "ws-dest";
 
-    const sourceKey = getInputImagesKey(source);
-    const destKey = getInputImagesKey(dest);
+    const sourceKey = getInputAttachmentsKey(source);
+    const destKey = getInputAttachmentsKey(dest);
 
     const value = JSON.stringify([
       { id: "img-1", url: "data:image/png;base64,AAA", mediaType: "image/png" },
@@ -73,9 +73,9 @@ describe("storage workspace-scoped keys", () => {
     expect(localStorage.getItem(destKey)).toBe(value);
   });
 
-  test("deleteWorkspaceStorage removes inputImages key", () => {
+  test("deleteWorkspaceStorage removes inputAttachments key", () => {
     const workspaceId = "ws-delete";
-    const key = getInputImagesKey(workspaceId);
+    const key = getInputAttachmentsKey(workspaceId);
 
     localStorage.setItem(key, "value");
     deleteWorkspaceStorage(workspaceId);

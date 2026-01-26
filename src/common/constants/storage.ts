@@ -114,14 +114,14 @@ export function getInputKey(workspaceId: string): string {
 }
 
 /**
- * Get the localStorage key for the input image attachments for a workspace.
- * Format: "inputImages:{scopeId}"
+ * Get the localStorage key for the input attachments for a scope.
+ * Format: "inputAttachments:{scopeId}"
  *
  * Note: The input key functions accept any string scope ID. For normal workspaces
  * this is the workspaceId; for creation mode it's a pending scope ID.
  */
-export function getInputImagesKey(scopeId: string): string {
-  return `inputImages:${scopeId}`;
+export function getInputAttachmentsKey(scopeId: string): string {
+  return `inputAttachments:${scopeId}`;
 }
 
 /**
@@ -487,7 +487,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getWorkspaceAISettingsByAgentKey,
   getModelKey,
   getInputKey,
-  getInputImagesKey,
+  getInputAttachmentsKey,
   getAgentIdKey,
   getPinnedAgentIdKey,
   getThinkingLevelKey,
@@ -535,7 +535,7 @@ const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> 
 
 /**
  * Copy all workspace-specific localStorage keys from source to destination workspace.
- * Includes keys listed in PERSISTENT_WORKSPACE_KEY_FUNCTIONS (model, draft input text/images, etc).
+ * Includes keys listed in PERSISTENT_WORKSPACE_KEY_FUNCTIONS (model, draft input text/attachments, etc).
  */
 export function copyWorkspaceStorage(sourceWorkspaceId: string, destWorkspaceId: string): void {
   for (const getKey of PERSISTENT_WORKSPACE_KEY_FUNCTIONS) {

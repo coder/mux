@@ -40,7 +40,7 @@ void mock.module("./ChatInput/index", () => ({
       restoreText: (text: string) => void;
       appendText: (text: string) => void;
       prependText: (text: string) => void;
-      restoreImages: (images: unknown[]) => void;
+      restoreAttachments: (images: unknown[]) => void;
     }) => void;
   }) => {
     useEffect(() => {
@@ -56,7 +56,7 @@ void mock.module("./ChatInput/index", () => ({
         restoreText: () => undefined,
         appendText: () => undefined,
         prependText: () => undefined,
-        restoreImages: () => undefined,
+        restoreAttachments: () => undefined,
       });
     }, [props]);
 

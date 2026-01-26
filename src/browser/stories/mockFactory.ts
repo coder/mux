@@ -14,13 +14,13 @@ import type {
   MuxFrontendMetadata,
   MuxTextPart,
   MuxReasoningPart,
-  MuxImagePart,
+  MuxFilePart,
   MuxToolPart,
 } from "@/common/types/message";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 
 /** Part type for message construction */
-type MuxPart = MuxTextPart | MuxReasoningPart | MuxImagePart | MuxToolPart;
+type MuxPart = MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart;
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 

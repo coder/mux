@@ -31,7 +31,7 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getInputKey,
-  getInputImagesKey,
+  getInputAttachmentsKey,
   AGENT_AI_DEFAULTS_KEY,
   VIM_ENABLED_KEY,
   getProjectScopeId,
@@ -74,13 +74,13 @@ import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal, X } from "lucide-react";
 import { VimTextArea } from "../VimTextArea";
-import { ImageAttachments, type ImageAttachment } from "../ImageAttachments";
+import { ChatAttachments, type ChatAttachment } from "../ChatAttachments";
 import {
-  extractImagesFromClipboard,
-  extractImagesFromDrop,
-  imageAttachmentsToImageParts,
-  processImageFiles,
-} from "@/browser/utils/imageHandling";
+  extractAttachmentsFromClipboard,
+  extractAttachmentsFromDrop,
+  chatAttachmentsToFileParts,
+  processAttachmentFiles,
+} from "@/browser/utils/attachmentsHandling";
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -91,7 +91,8 @@ import {
   type MuxFrontendMetadata,
   prepareUserMessageForSend,
 } from "@/common/types/message";
-import { MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
+import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
 import { CreationCenterContent } from "./CreationCenterContent";
@@ -103,15 +104,35 @@ import { useTutorial } from "@/browser/contexts/TutorialContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import {
-  estimatePersistedImageAttachmentsChars,
-  readPersistedImageAttachments,
-} from "./draftImagesStorage";
+  estimatePersistedChatAttachmentsChars,
+  readPersistedChatAttachments,
+} from "./draftAttachmentsStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
-const MAX_PERSISTED_IMAGE_DRAFT_CHARS = 4_000_000;
+
+const PDF_MEDIA_TYPE = "application/pdf";
+
+function getBaseMediaType(mediaType: string): string {
+  return mediaType.toLowerCase().trim().split(";")[0];
+}
+
+function estimateBase64DataUrlBytes(dataUrl: string): number | null {
+  if (!dataUrl.startsWith("data:")) return null;
+
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) return null;
+
+  const header = dataUrl.slice("data:".length, commaIndex);
+  if (!header.includes(";base64")) return null;
+
+  const base64 = dataUrl.slice(commaIndex + 1);
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
+}
+const MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS = 4_000_000;
 
 // Unknown slash commands are used for agent-skill invocations (/{skillName} ...).
 type UnknownSlashCommand = Extract<ParsedCommand, { type: "unknown-command" }>;
@@ -122,7 +143,7 @@ function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashComma
 
 // Import types from local types file
 import type { ChatInputProps, ChatInputAPI } from "./types";
-import type { ImagePart, SendMessageOptions } from "@/common/orpc/types";
+import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 type CreationRuntimeValidationError =
   | { mode: "docker"; kind: "missingImage" }
@@ -267,11 +288,12 @@ function validateCreationRuntime(
 
   return null;
 }
-function imagePartsToAttachments(imageParts: ImagePart[], idPrefix: string): ImageAttachment[] {
-  return imageParts.map((img, index) => ({
+function filePartsToChatAttachments(fileParts: FilePart[], idPrefix: string): ChatAttachment[] {
+  return fileParts.map((part, index) => ({
     id: `${idPrefix}-${index}`,
-    url: img.url,
-    mediaType: img.mediaType,
+    url: part.url,
+    mediaType: part.mediaType,
+    filename: part.filename,
   }));
 }
 export type { ChatInputProps, ChatInputAPI };
@@ -300,13 +322,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const pendingScopeId = getPendingScopeId(props.projectPath);
       return {
         inputKey: getInputKey(pendingScopeId),
-        imagesKey: getInputImagesKey(pendingScopeId),
+        attachmentsKey: getInputAttachmentsKey(pendingScopeId),
         modelKey: getModelKey(getProjectScopeId(props.projectPath)),
       };
     }
     return {
       inputKey: getInputKey(props.workspaceId),
-      imagesKey: getInputImagesKey(props.workspaceId),
+      attachmentsKey: getInputAttachmentsKey(props.workspaceId),
       modelKey: getModelKey(props.workspaceId),
     };
   })();
@@ -347,56 +369,59 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setToast(null);
   }, []);
 
-  const imageDraftTooLargeToastKeyRef = useRef<string | null>(null);
+  const attachmentDraftTooLargeToastKeyRef = useRef<string | null>(null);
 
-  const [imageAttachments, setImageAttachmentsState] = useState<ImageAttachment[]>(() => {
-    return readPersistedImageAttachments(storageKeys.imagesKey);
+  const [attachments, setAttachmentsState] = useState<ChatAttachment[]>(() => {
+    return readPersistedChatAttachments(storageKeys.attachmentsKey);
   });
-  const persistImageAttachments = useCallback(
-    (nextImages: ImageAttachment[]) => {
-      if (nextImages.length === 0) {
-        imageDraftTooLargeToastKeyRef.current = null;
-        updatePersistedState<ImageAttachment[] | undefined>(storageKeys.imagesKey, undefined);
+  const persistAttachments = useCallback(
+    (nextAttachments: ChatAttachment[]) => {
+      if (nextAttachments.length === 0) {
+        attachmentDraftTooLargeToastKeyRef.current = null;
+        updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
         return;
       }
 
-      const estimatedChars = estimatePersistedImageAttachmentsChars(nextImages);
-      if (estimatedChars > MAX_PERSISTED_IMAGE_DRAFT_CHARS) {
-        // Clear persisted value to avoid restoring stale images on restart.
-        updatePersistedState<ImageAttachment[] | undefined>(storageKeys.imagesKey, undefined);
+      const estimatedChars = estimatePersistedChatAttachmentsChars(nextAttachments);
+      if (estimatedChars > MAX_PERSISTED_ATTACHMENT_DRAFT_CHARS) {
+        // Clear persisted value to avoid restoring stale attachments on restart.
+        updatePersistedState<ChatAttachment[] | undefined>(storageKeys.attachmentsKey, undefined);
 
-        if (imageDraftTooLargeToastKeyRef.current !== storageKeys.imagesKey) {
-          imageDraftTooLargeToastKeyRef.current = storageKeys.imagesKey;
+        if (attachmentDraftTooLargeToastKeyRef.current !== storageKeys.attachmentsKey) {
+          attachmentDraftTooLargeToastKeyRef.current = storageKeys.attachmentsKey;
           pushToast({
             type: "error",
             message:
-              "This draft image is too large to save. It will be lost when you switch workspaces or restart.",
+              "This draft attachment is too large to save. It will be lost when you switch workspaces or restart.",
             duration: 5000,
           });
         }
         return;
       }
 
-      imageDraftTooLargeToastKeyRef.current = null;
-      updatePersistedState<ImageAttachment[] | undefined>(storageKeys.imagesKey, nextImages);
+      attachmentDraftTooLargeToastKeyRef.current = null;
+      updatePersistedState<ChatAttachment[] | undefined>(
+        storageKeys.attachmentsKey,
+        nextAttachments
+      );
     },
-    [storageKeys.imagesKey, pushToast]
+    [storageKeys.attachmentsKey, pushToast]
   );
 
-  // Keep image drafts in sync when the storage scope changes (e.g. switching creation projects).
+  // Keep attachment drafts in sync when the storage scope changes (e.g. switching creation projects).
   useEffect(() => {
-    imageDraftTooLargeToastKeyRef.current = null;
-    setImageAttachmentsState(readPersistedImageAttachments(storageKeys.imagesKey));
-  }, [storageKeys.imagesKey]);
-  const setImageAttachments = useCallback(
-    (value: ImageAttachment[] | ((prev: ImageAttachment[]) => ImageAttachment[])) => {
-      setImageAttachmentsState((prev) => {
+    attachmentDraftTooLargeToastKeyRef.current = null;
+    setAttachmentsState(readPersistedChatAttachments(storageKeys.attachmentsKey));
+  }, [storageKeys.attachmentsKey]);
+  const setAttachments = useCallback(
+    (value: ChatAttachment[] | ((prev: ChatAttachment[]) => ChatAttachment[])) => {
+      setAttachmentsState((prev) => {
         const next = value instanceof Function ? value(prev) : value;
-        persistImageAttachments(next);
+        persistAttachments(next);
         return next;
       });
     },
-    [persistImageAttachments]
+    [persistAttachments]
   );
   // Attached reviews come from parent via props (persisted in pendingReviews state)
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
@@ -419,24 +444,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setAtMentionCursorNonce((n) => n + 1);
   }, [input.length]);
 
-  // Draft state combines text input and image attachments
+  // Draft state combines text input and attachments
   // Reviews are managed separately via props (persisted in pendingReviews state)
   interface DraftState {
     text: string;
-    images: ImageAttachment[];
+    attachments: ChatAttachment[];
   }
   const getDraft = useCallback(
-    (): DraftState => ({ text: input, images: imageAttachments }),
-    [input, imageAttachments]
+    (): DraftState => ({ text: input, attachments }),
+    [input, attachments]
   );
   const setDraft = useCallback(
     (draft: DraftState) => {
       setInput(draft.text);
-      setImageAttachments(draft.images);
+      setAttachments(draft.attachments);
     },
-    [setInput, setImageAttachments]
+    [setInput, setAttachments]
   );
-  const preEditDraftRef = useRef<DraftState>({ text: "", images: [] });
+  const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
   const { open } = useSettings();
   const { selectedWorkspace } = useWorkspaceContext();
   const { agentId, currentAgent } = useAgent();
@@ -740,7 +765,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         } satisfies React.ComponentProps<typeof CreationControls>)
       : null;
   const hasTypedText = input.trim().length > 0;
-  const hasImages = imageAttachments.length > 0;
+  const hasImages = attachments.length > 0;
   const hasReviews = attachedReviews.length > 0;
   // Disable send while Coder presets are loading (user could bypass preset validation)
   const coderPresetsLoading =
@@ -846,17 +871,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [focusMessageInput, setInput]
   );
 
-  // Method to restore images to input (used by queued message edit)
+  // Method to restore attachments to input (used by queued message edit)
 
   const handleSendRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const send = useCallback(() => {
     return handleSendRef.current();
   }, []);
-  const restoreImages = useCallback(
-    (images: ImagePart[]) => {
-      setImageAttachments(imagePartsToAttachments(images, `restored-${Date.now()}`));
+  const restoreAttachments = useCallback(
+    (fileParts: FilePart[]) => {
+      setAttachments(filePartsToChatAttachments(fileParts, `restored-${Date.now()}`));
     },
-    [setImageAttachments]
+    [setAttachments]
   );
 
   const onReady = props.onReady;
@@ -870,10 +895,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         restoreText,
         appendText,
         prependText,
-        restoreImages,
+        restoreAttachments,
       });
     }
-  }, [onReady, focusMessageInput, send, restoreText, appendText, prependText, restoreImages]);
+  }, [onReady, focusMessageInput, send, restoreText, appendText, prependText, restoreAttachments]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
@@ -910,10 +935,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     if (editingMessage) {
       preEditDraftRef.current = getDraft();
-      const images = editingMessage.imageParts
-        ? imagePartsToAttachments(editingMessage.imageParts, `edit-${editingMessage.id}`)
+      const editAttachments = editingMessage.fileParts
+        ? filePartsToChatAttachments(editingMessage.fileParts, `edit-${editingMessage.id}`)
         : [];
-      setDraft({ text: editingMessage.content, images });
+      setDraft({ text: editingMessage.content, attachments: editAttachments });
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -1188,10 +1213,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const customEvent = e as CustomEvent<{
         text: string;
         mode?: "append" | "replace";
-        imageParts?: ImagePart[];
+        fileParts?: FilePart[];
       }>;
 
-      const { text, mode = "append", imageParts } = customEvent.detail;
+      const { text, mode = "append", fileParts } = customEvent.detail;
 
       if (mode === "replace") {
         if (editingMessage) {
@@ -1202,14 +1227,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         appendText(text);
       }
 
-      if (imageParts && imageParts.length > 0) {
-        restoreImages(imageParts);
+      if (fileParts && fileParts.length > 0) {
+        restoreAttachments(fileParts);
       }
     };
     window.addEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
-  }, [appendText, restoreText, restoreImages, editingMessage]);
+  }, [appendText, restoreText, restoreAttachments, editingMessage]);
 
   // Allow external components to open the Model Selector
   useEffect(() => {
@@ -1330,45 +1355,48 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     };
   }, [variant, workspaceIdForFocus, focusMessageInput, setChatInputAutoFocusState]);
 
-  // Handle paste events to extract images
+  // Handle paste events to extract attachments
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const items = e.clipboardData?.items;
       if (!items) return;
 
-      const imageFiles = extractImagesFromClipboard(items);
-      if (imageFiles.length === 0) return;
+      const attachmentFiles = extractAttachmentsFromClipboard(items);
+      if (attachmentFiles.length === 0) return;
 
       // When editing an existing message, we only allow changing the text.
       // Don't preventDefault here so any clipboard text can still paste normally.
       if (editingMessage) {
-        pushToast({ type: "error", message: "Images cannot be added while editing a message." });
+        pushToast({
+          type: "error",
+          message: "Attachments cannot be added while editing a message.",
+        });
         return;
       }
 
-      e.preventDefault(); // Prevent default paste behavior for images
+      e.preventDefault(); // Prevent default paste behavior for attachments
 
-      processImageFiles(imageFiles)
-        .then((attachments) => {
-          setImageAttachments((prev) => [...prev, ...attachments]);
+      processAttachmentFiles(attachmentFiles)
+        .then((nextAttachments) => {
+          setAttachments((prev) => [...prev, ...nextAttachments]);
         })
         .catch((error) => {
-          console.error("Failed to process pasted image:", error);
+          console.error("Failed to process pasted attachment:", error);
           pushToast({
             type: "error",
-            message: error instanceof Error ? error.message : "Failed to process image",
+            message: error instanceof Error ? error.message : "Failed to process attachment",
           });
         });
     },
-    [editingMessage, pushToast, setImageAttachments]
+    [editingMessage, pushToast, setAttachments]
   );
 
-  // Handle removing an image attachment
-  const handleRemoveImage = useCallback(
+  // Handle removing an attachment
+  const handleRemoveAttachment = useCallback(
     (id: string) => {
-      setImageAttachments((prev) => prev.filter((img) => img.id !== id));
+      setAttachments((prev) => prev.filter((img) => img.id !== id));
     },
-    [setImageAttachments]
+    [setAttachments]
   );
 
   // Handle destructive command confirmation
@@ -1423,32 +1451,35 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [editingMessage]
   );
 
-  // Handle drop to extract images
+  // Handle drop to extract attachments
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLTextAreaElement>) => {
       e.preventDefault();
 
-      const imageFiles = extractImagesFromDrop(e.dataTransfer);
-      if (imageFiles.length === 0) return;
+      const attachmentFiles = extractAttachmentsFromDrop(e.dataTransfer);
+      if (attachmentFiles.length === 0) return;
 
       if (editingMessage) {
-        pushToast({ type: "error", message: "Images cannot be added while editing a message." });
+        pushToast({
+          type: "error",
+          message: "Attachments cannot be added while editing a message.",
+        });
         return;
       }
 
-      processImageFiles(imageFiles)
-        .then((attachments) => {
-          setImageAttachments((prev) => [...prev, ...attachments]);
+      processAttachmentFiles(attachmentFiles)
+        .then((nextAttachments) => {
+          setAttachments((prev) => [...prev, ...nextAttachments]);
         })
         .catch((error) => {
-          console.error("Failed to process dropped image:", error);
+          console.error("Failed to process dropped attachment:", error);
           pushToast({
             type: "error",
-            message: error instanceof Error ? error.message : "Failed to process image",
+            message: error instanceof Error ? error.message : "Failed to process attachment",
           });
         });
     },
-    [editingMessage, pushToast, setImageAttachments]
+    [editingMessage, pushToast, setAttachments]
   );
 
   // Handle suggestion selection
@@ -1555,15 +1586,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       // Creation variant: simple message send + workspace creation
-      const creationImageParts = imageAttachmentsToImageParts(imageAttachments);
+      const creationFileParts = chatAttachmentsToFileParts(attachments);
       const ok = await creationState.handleSend(
         creationMessageTextForSend,
-        creationImageParts.length > 0 ? creationImageParts : undefined,
+        creationFileParts.length > 0 ? creationFileParts : undefined,
         creationOptionsOverride
       );
       if (ok) {
         setInput("");
-        setImageAttachments([]);
+        setAttachments([]);
         // Height is managed by VimTextArea's useLayoutEffect - clear inline style
         // to let CSS min-height take over
         if (inputRef.current) {
@@ -1659,7 +1690,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           workspaceId: props.workspaceId,
           sendMessageOptions,
           setInput,
-          setImageAttachments,
+          setAttachments,
           setSendingState: (increment: boolean) =>
             increment ? setSendingCount((c) => c + 1) : setSendingCount((c) => c - 1),
           setToast,
@@ -1869,6 +1900,48 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
       setSendingCount((c) => c + 1);
 
+      // Preflight: if the message includes PDFs, ensure the selected model can accept them.
+      const pdfAttachments = attachments.filter(
+        (attachment) => getBaseMediaType(attachment.mediaType) === PDF_MEDIA_TYPE
+      );
+      if (pdfAttachments.length > 0) {
+        const caps = getModelCapabilities(baseModel);
+        if (caps && !caps.supportsPdfInput) {
+          const pdfCapableExamples = Object.values(KNOWN_MODELS)
+            .map((m) => m.id)
+            .filter((model) => getModelCapabilities(model)?.supportsPdfInput)
+            .slice(0, 3);
+
+          pushToast({
+            type: "error",
+            title: "PDF not supported",
+            message:
+              `Model ${baseModel} does not support PDF input.` +
+              (pdfCapableExamples.length > 0
+                ? ` Try: ${pdfCapableExamples.join(", ")}.`
+                : " Choose a model with PDF support."),
+          });
+          setSendingCount((c) => c - 1);
+          return;
+        }
+
+        if (caps?.maxPdfSizeMb !== undefined) {
+          const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
+          for (const attachment of pdfAttachments) {
+            const bytes = estimateBase64DataUrlBytes(attachment.url);
+            if (bytes !== null && bytes > maxBytes) {
+              const actualMb = (bytes / (1024 * 1024)).toFixed(1);
+              pushToast({
+                type: "error",
+                title: "PDF too large",
+                message: `${attachment.filename ?? "PDF"} is ${actualMb}MB, but ${baseModel} allows up to ${caps.maxPdfSizeMb}MB per PDF.`,
+              });
+              setSendingCount((c) => c - 1);
+              return;
+            }
+          }
+        }
+      }
       // Save current draft state for restoration on error
       const preSendDraft = getDraft();
 
@@ -1884,11 +1957,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           hasQueuedCompaction
         )
       ) {
-        // Prepare image parts for the continue message
-        const imageParts = imageAttachments.map((img) => ({
-          url: img.url,
-          mediaType: img.mediaType,
-        }));
+        // Prepare file parts for the continue message
+        const fileParts = chatAttachmentsToFileParts(attachments);
 
         // Prepare reviews data for the continue message
         const reviewsData =
@@ -1904,7 +1974,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...sendMessageOptions,
         };
 
-        setImageAttachments([]);
+        setAttachments([]);
         setHideReviewsDuringSend(true);
 
         try {
@@ -1913,7 +1983,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             workspaceId: props.workspaceId,
             followUpContent: {
               text: messageTextForSend,
-              imageParts,
+              fileParts,
               reviews: reviewsData,
               muxMetadata: skillMuxMetadata,
             },
@@ -1957,12 +2027,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       try {
-        // Prepare image parts if any
-        const imageParts = imageAttachmentsToImageParts(imageAttachments, { validate: true });
-        const sendImageParts = editingMessage
-          ? imageParts
-          : imageParts.length > 0
-            ? imageParts
+        // Prepare file parts if any
+        const fileParts = chatAttachmentsToFileParts(attachments, { validate: true });
+        const sendFileParts = editingMessage
+          ? fileParts
+          : fileParts.length > 0
+            ? fileParts
             : undefined;
 
         // Prepare reviews data (used for both compaction continueMessage and normal send)
@@ -1985,13 +2055,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               api,
               workspaceId: props.workspaceId,
               maxOutputTokens: parsed.maxOutputTokens,
-              // Include current attachments (images, reviews) in followUpContent so they're
-              // queued after compaction completes, not just attached to the compaction request.
+              // Include current attachments + reviews in followUpContent so they're queued
+              // after compaction completes, not just attached to the compaction request.
               followUpContent:
-                parsed.continueMessage || imageParts?.length || reviewsData?.length
+                parsed.continueMessage || sendFileParts?.length || reviewsData?.length
                   ? {
                       text: parsed.continueMessage ?? "",
-                      imageParts,
+                      fileParts: sendFileParts,
                       reviews: reviewsData,
                     }
                   : undefined,
@@ -2023,7 +2093,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         // Text/images are restored if send fails; reviews remain "attached" in state
         // so they'll reappear naturally on failure (we only call onCheckReviews on success)
         setInput("");
-        setImageAttachments([]);
+        setAttachments([]);
         setHideReviewsDuringSend(true);
         // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
         if (inputRef.current) {
@@ -2038,7 +2108,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             ...compactionOptions,
             additionalSystemInstructions,
             editMessageId: editingMessage?.id,
-            imageParts: sendImageParts,
+            fileParts: sendFileParts,
             muxMetadata,
           },
         });
@@ -2431,8 +2501,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             )}
           </div>
 
-          {/* Image attachments */}
-          <ImageAttachments images={imageAttachments} onRemove={handleRemoveImage} />
+          {/* Attachments */}
+          <ChatAttachments attachments={attachments} onRemove={handleRemoveAttachment} />
 
           <div className="flex flex-col gap-0.5" data-component="ChatModeToggles">
             {/* Editing indicator - workspace only */}

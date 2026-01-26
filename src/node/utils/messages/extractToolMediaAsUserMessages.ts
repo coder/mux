@@ -1,4 +1,4 @@
-import type { MuxImagePart, MuxMessage } from "@/common/types/message";
+import type { MuxFilePart, MuxMessage } from "@/common/types/message";
 
 /**
  * Provider-request-only rewrite to avoid sending huge base64 blobs inside tool-result JSON.
@@ -11,7 +11,7 @@ import type { MuxImagePart, MuxMessage } from "@/common/types/message";
  * - detects tool outputs shaped like { type: "content", value: [{ type: "media", data, mediaType }, ...] }
  * - replaces media items in the tool output with small text placeholders
  * - emits a synthetic *user* message immediately after the assistant message, attaching the images
- *   as proper multimodal file parts (MuxImagePart)
+ *   as proper multimodal file parts (MuxFilePart)
  *
  * NOTE: This is request-only: it should be applied to the in-memory message list right before
  * convertToModelMessages(...). Persisted history and UI still keep the original tool output.
@@ -25,7 +25,7 @@ export function extractToolMediaAsUserMessages(messages: MuxMessage[]): MuxMessa
       continue;
     }
 
-    let extractedImages: MuxImagePart[] = [];
+    let extractedImages: MuxFilePart[] = [];
     let changed = false;
 
     const newParts = msg.parts.map((part) => {
@@ -123,7 +123,7 @@ function isMediaPart(v: unknown): v is AISDKMediaPart {
 
 function extractImagesFromToolOutput(
   output: unknown
-): { newOutput: unknown; images: MuxImagePart[] } | null {
+): { newOutput: unknown; images: MuxFilePart[] } | null {
   if (isJsonContainer(output)) {
     const inner = extractImagesFromToolOutput(output.value);
     if (!inner) return null;
@@ -137,7 +137,7 @@ function extractImagesFromToolOutput(
     return null;
   }
 
-  const images: MuxImagePart[] = [];
+  const images: MuxFilePart[] = [];
   const newValue: AISDKContent[] = [];
 
   for (const item of output.value) {
