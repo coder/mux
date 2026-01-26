@@ -43,6 +43,14 @@ function parseMultilineCommand(rawInput: string): {
 // Re-export MODEL_ABBREVIATIONS from constants for backwards compatibility
 export { MODEL_ABBREVIATIONS };
 
+const PROVIDER_SLASH_COMMAND_BLOCKLIST = new Set(["mux-gateway"]);
+
+function isProviderSlashCommandBlocked(provider: string | undefined): boolean {
+  // Mux Gateway settings are configured in the Settings UI; don't allow slash command updates.
+  if (!provider) return false;
+  return PROVIDER_SLASH_COMMAND_BLOCKLIST.has(provider.trim().toLowerCase());
+}
+
 // Provider configuration data
 const DEFAULT_PROVIDER_NAMES: SuggestionDefinition[] = [
   {
@@ -60,10 +68,6 @@ const DEFAULT_PROVIDER_NAMES: SuggestionDefinition[] = [
   {
     key: "bedrock",
     description: "Amazon Bedrock provider (AWS)",
-  },
-  {
-    key: "mux-gateway",
-    description: "Mux Gateway provider",
   },
 ];
 
@@ -114,12 +118,6 @@ const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
     {
       key: "secretAccessKey",
       description: "AWS Secret Access Key (use with accessKeyId)",
-    },
-  ],
-  "mux-gateway": [
-    {
-      key: "couponCode",
-      description: "Coupon code for Mux Gateway access",
     },
   ],
   default: [
@@ -309,6 +307,8 @@ const compactCommandDefinition: SlashCommandDefinition = {
   },
 };
 
+const PROVIDERS_SET_USAGE = "/providers set <provider> <key> <value>";
+
 const providersSetCommandDefinition: SlashCommandDefinition = {
   key: "set",
   description: "Set a provider configuration value",
@@ -322,6 +322,16 @@ const providersSetCommandDefinition: SlashCommandDefinition = {
     }
 
     const [provider, key, ...valueParts] = cleanRemainingTokens;
+
+    if (isProviderSlashCommandBlocked(provider)) {
+      return {
+        type: "command-invalid-args",
+        command: "providers set",
+        input: provider,
+        usage: PROVIDERS_SET_USAGE,
+      };
+    }
+
     const value = valueParts.join(" ");
     const keyPath = key.split(".");
 
@@ -335,12 +345,16 @@ const providersSetCommandDefinition: SlashCommandDefinition = {
   suggestions: ({ stage, partialToken, completedTokens, context }) => {
     // Stage 2: /providers set [provider]
     if (stage === 2) {
-      const dynamicDefinitions = (context.providerNames ?? []).map((name) => ({
-        key: name,
-        description: `${name} provider configuration`,
-      }));
+      const dynamicDefinitions = (context.providerNames ?? [])
+        .filter((name) => !isProviderSlashCommandBlocked(name))
+        .map((name) => ({
+          key: name,
+          description: `${name} provider configuration`,
+        }));
 
-      const combined = dedupeDefinitions([...dynamicDefinitions, ...DEFAULT_PROVIDER_NAMES]);
+      const combined = dedupeDefinitions([...dynamicDefinitions, ...DEFAULT_PROVIDER_NAMES]).filter(
+        (definition) => !isProviderSlashCommandBlocked(definition.key)
+      );
 
       return filterAndMapSuggestions(combined, partialToken, (definition) => ({
         id: `command:providers:set:${definition.key}`,
@@ -353,6 +367,11 @@ const providersSetCommandDefinition: SlashCommandDefinition = {
     // Stage 3: /providers set <provider> [key]
     if (stage === 3) {
       const providerName = completedTokens[2];
+
+      if (isProviderSlashCommandBlocked(providerName)) {
+        return [];
+      }
+
       // Use provider-specific keys if defined, otherwise fall back to defaults
       const definitions =
         providerName && DEFAULT_PROVIDER_KEYS[providerName]

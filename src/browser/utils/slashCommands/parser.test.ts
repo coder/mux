@@ -63,6 +63,15 @@ describe("commandParser", () => {
       );
     });
 
+    it("rejects mux-gateway provider for /providers set", () => {
+      expectParse("/providers set mux-gateway couponCode abc123", {
+        type: "command-invalid-args",
+        command: "providers set",
+        input: "mux-gateway",
+        usage: "/providers set <provider> <key> <value>",
+      });
+    });
+
     it("should handle quoted arguments", () => {
       expectProvidersSet(
         '/providers set anthropic apiKey "my key with spaces"',
