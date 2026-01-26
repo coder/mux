@@ -125,6 +125,15 @@ export function getInputAttachmentsKey(scopeId: string): string {
 }
 
 /**
+ * Get the localStorage key for pending initial send errors after workspace creation.
+ * Stored so the workspace view can surface a toast after navigation.
+ * Format: "pendingSendError:{workspaceId}"
+ */
+export function getPendingWorkspaceSendErrorKey(workspaceId: string): string {
+  return `pendingSendError:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for auto-retry preference for a workspace
  */
 export function getAutoRetryKey(workspaceId: string): string {
@@ -529,6 +538,7 @@ export function getPostCompactionStateKey(workspaceId: string): string {
  */
 const EPHEMERAL_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string> = [
   getCancelledCompactionKey,
+  getPendingWorkspaceSendErrorKey,
   getPlanContentKey, // Cache only, no need to preserve on fork
   getPostCompactionStateKey, // Cache only, no need to preserve on fork
 ];

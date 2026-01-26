@@ -21,8 +21,10 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getPendingScopeId,
+  getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
 } from "@/common/constants/storage";
+import type { SendMessageError } from "@/common/types/errors";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
@@ -36,6 +38,8 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
+
+export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
@@ -141,7 +145,7 @@ interface UseCreationWorkspaceReturn {
     message: string,
     fileParts?: FilePart[],
     optionsOverride?: Partial<SendMessageOptions>
-  ) => Promise<boolean>;
+  ) => Promise<CreationSendResult>;
   /** Workspace name/title generation state and actions (for CreationControls) */
   nameState: WorkspaceNameState;
   /** The confirmed identity being used for creation (null until generation resolves) */
@@ -262,8 +266,10 @@ export function useCreationWorkspace({
       messageText: string,
       fileParts?: FilePart[],
       optionsOverride?: Partial<SendMessageOptions>
-    ): Promise<boolean> => {
-      if (!messageText.trim() || isSending || !api) return false;
+    ): Promise<CreationSendResult> => {
+      if (!messageText.trim() || isSending || !api) {
+        return { success: false };
+      }
 
       // Build runtime config early (used later for workspace creation)
       let runtimeSelection = settings.selectedRuntime;
@@ -280,7 +286,7 @@ export function useCreationWorkspace({
             type: "error",
             message: "Select a devcontainer configuration before creating the workspace.",
           });
-          return false;
+          return { success: false };
         }
 
         // Update selection with resolved config if different (persist the resolved value)
@@ -305,7 +311,7 @@ export function useCreationWorkspace({
         const identity = await waitForGeneration();
         if (!identity) {
           setIsSending(false);
-          return false;
+          return { success: false };
         }
 
         // Set the confirmed identity for splash UI display
@@ -344,7 +350,7 @@ export function useCreationWorkspace({
                   : " Choose a model with PDF support."),
             });
             setIsSending(false);
-            return false;
+            return { success: false };
           }
 
           if (caps?.maxPdfSizeMb !== undefined) {
@@ -360,7 +366,7 @@ export function useCreationWorkspace({
                   message: `${part.filename ?? "PDF"} is ${actualMb}MB, but ${baseModel} allows up to ${caps.maxPdfSizeMb}MB per PDF.`,
                 });
                 setIsSending(false);
-                return false;
+                return { success: false };
               }
             }
           }
@@ -383,7 +389,7 @@ export function useCreationWorkspace({
             message: createResult.error,
           });
           setIsSending(false);
-          return false;
+          return { success: false };
         }
 
         const { metadata } = createResult;
@@ -435,8 +441,12 @@ export function useCreationWorkspace({
         });
 
         if (!sendResult.success) {
+          if (sendResult.error) {
+            // Persist the failure so the workspace view can surface a toast after navigation.
+            updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), sendResult.error);
+          }
           // Preserve draft input/attachments so the user can retry later.
-          return false;
+          return { success: false, error: sendResult.error };
         }
 
         if (pendingScopeId) {
@@ -444,7 +454,7 @@ export function useCreationWorkspace({
           updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
         }
 
-        return true;
+        return { success: true };
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         setToast({
@@ -453,7 +463,7 @@ export function useCreationWorkspace({
           message: `Failed to create workspace: ${errorMessage}`,
         });
         setIsSending(false);
-        return false;
+        return { success: false };
       }
     },
     [

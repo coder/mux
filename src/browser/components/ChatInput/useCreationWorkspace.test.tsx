@@ -6,10 +6,10 @@ import {
   getInputAttachmentsKey,
   getModelKey,
   getPendingScopeId,
+  getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
   getThinkingLevelKey,
 } from "@/common/constants/storage";
-import type { SendMessageError as _SendMessageError } from "@/common/types/errors";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { RuntimeMode, ParsedRuntime } from "@/common/types/runtime";
 import type {
@@ -19,7 +19,7 @@ import type {
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { useCreationWorkspace } from "./useCreationWorkspace";
+import { useCreationWorkspace, type CreationSendResult } from "./useCreationWorkspace";
 
 const readPersistedStateCalls: Array<[string, unknown]> = [];
 let persistedPreferences: Record<string, unknown> = {};
@@ -467,9 +467,12 @@ describe("useCreationWorkspace", () => {
     // Wait for name generation to trigger (happens on debounce)
     await waitFor(() => expect(nameGenerationApi.generate.mock.calls.length).toBe(1));
 
+    let handleSendResult: CreationSendResult | undefined;
     await act(async () => {
-      await getHook().handleSend("launch workspace");
+      handleSendResult = await getHook().handleSend("launch workspace");
     });
+
+    expect(handleSendResult).toEqual({ success: true });
 
     // workspace.create should be called with the generated name
     expect(workspaceApi.create.mock.calls.length).toBe(1);
@@ -507,7 +510,7 @@ describe("useCreationWorkspace", () => {
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
   });
 
-  test("handleSend returns false when sendMessage fails and keeps draft", async () => {
+  test("handleSend returns failure when sendMessage fails and keeps draft", async () => {
     const listBranchesMock = mock(
       (): Promise<BranchListResult> =>
         Promise.resolve({
@@ -515,11 +518,12 @@ describe("useCreationWorkspace", () => {
           recommendedTrunk: "main",
         })
     );
+    const sendError = { type: "api_key_not_found", provider: "openai" } as const;
     const sendMessageMock = mock(
       (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
         Promise.resolve({
           success: false,
-          error: { type: "api_key_not_found", provider: "openai" },
+          error: sendError,
         } as WorkspaceSendMessageResult)
     );
     const createMock = mock(
@@ -554,19 +558,21 @@ describe("useCreationWorkspace", () => {
 
     await waitFor(() => expect(getHook().branches).toEqual(["main"]));
 
-    let handleSendResult: boolean | undefined;
+    let handleSendResult: CreationSendResult | undefined;
     await act(async () => {
       handleSendResult = await getHook().handleSend("test message");
     });
 
-    expect(handleSendResult).toBe(false);
+    expect(handleSendResult).toEqual({ success: false, error: sendError });
     expect(onWorkspaceCreated.mock.calls.length).toBe(1);
 
     const pendingScopeId = getPendingScopeId(TEST_PROJECT_PATH);
     const pendingInputKey = getInputKey(pendingScopeId);
     const pendingImagesKey = getInputAttachmentsKey(pendingScopeId);
+    const pendingErrorKey = getPendingWorkspaceSendErrorKey(TEST_WORKSPACE_ID);
     expect(updatePersistedStateCalls.some(([key]) => key === pendingInputKey)).toBe(false);
     expect(updatePersistedStateCalls.some(([key]) => key === pendingImagesKey)).toBe(false);
+    expect(updatePersistedStateCalls).toContainEqual([pendingErrorKey, sendError]);
   });
   test("onWorkspaceCreated is called before sendMessage resolves (no blocking)", async () => {
     // This test ensures we don't regress #1146 - the fix that makes workspace creation
@@ -618,7 +624,7 @@ describe("useCreationWorkspace", () => {
 
     await waitFor(() => expect(getHook().branches).toEqual(["main"]));
 
-    let handleSendPromise!: Promise<boolean>;
+    let handleSendPromise!: Promise<CreationSendResult>;
     act(() => {
       handleSendPromise = getHook().handleSend("test message");
     });
@@ -628,7 +634,7 @@ describe("useCreationWorkspace", () => {
 
     resolveSend({ success: true, data: {} });
     const handleSendResult = await handleSendPromise;
-    expect(handleSendResult).toBe(true);
+    expect(handleSendResult).toEqual({ success: true });
   });
 
   test("handleSend surfaces backend errors and resets state", async () => {

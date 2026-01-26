@@ -7,6 +7,7 @@ import {
 import type { Toast } from "../ChatInputToast";
 import { ConnectionStatusToast } from "../ConnectionStatusToast";
 import { ChatInputToast } from "../ChatInputToast";
+import type { SendMessageError } from "@/common/types/errors";
 import { createCommandToast, createErrorToast } from "../ChatInputToasts";
 import { ConfirmationModal } from "../ConfirmationModal";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
@@ -36,6 +37,7 @@ import {
   VIM_ENABLED_KEY,
   getProjectScopeId,
   getPendingScopeId,
+  getPendingWorkspaceSendErrorKey,
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
@@ -365,6 +367,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     },
     [setToast]
   );
+  useEffect(() => {
+    if (variant !== "workspace" || !workspaceId) {
+      return;
+    }
+
+    const pendingErrorKey = getPendingWorkspaceSendErrorKey(workspaceId);
+    const pendingError = readPersistedState<SendMessageError | null>(pendingErrorKey, null);
+    if (!pendingError) {
+      return;
+    }
+
+    // Workspace creation can fail after navigation; surface the initial send error here.
+    setToast(createErrorToast(pendingError));
+    updatePersistedState<SendMessageError | undefined>(pendingErrorKey, undefined);
+  }, [variant, workspaceId]);
+
   const handleToastDismiss = useCallback(() => {
     setToast(null);
   }, []);
@@ -1594,12 +1612,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // Creation variant: simple message send + workspace creation
       const creationFileParts = chatAttachmentsToFileParts(attachments);
-      const ok = await creationState.handleSend(
+      const creationResult = await creationState.handleSend(
         creationMessageTextForSend,
         creationFileParts.length > 0 ? creationFileParts : undefined,
         creationOptionsOverride
       );
-      if (ok && isMountedRef.current) {
+      if (creationResult.success && isMountedRef.current) {
         setInput("");
         setAttachments([]);
         // Height is managed by VimTextArea's useLayoutEffect - clear inline style
