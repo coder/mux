@@ -71,19 +71,19 @@ export function getModelCapabilities(modelString: string): ModelCapabilities | n
   const normalized = normalizeGatewayModel(modelString);
   const lookupKeys = generateLookupKeys(normalized);
 
-  // Check models-extra.ts first (overrides for models with incorrect upstream data)
-  for (const key of lookupKeys) {
-    const data = (modelsExtra as unknown as Record<string, RawModelCapabilitiesData>)[key];
-    if (data) {
-      return extractModelCapabilities(data);
-    }
-  }
+  const modelsExtraRecord = modelsExtra as unknown as Record<string, RawModelCapabilitiesData>;
+  const modelsDataRecord = modelsData as unknown as Record<string, RawModelCapabilitiesData>;
 
-  // Fall back to main models.json
+  // Merge models.json (upstream) + models-extra.ts (local overrides). Extras win.
+  // This avoids wiping capabilities (e.g. PDF support) when modelsExtra only overrides
+  // pricing/token limits.
   for (const key of lookupKeys) {
-    const data = (modelsData as unknown as Record<string, RawModelCapabilitiesData>)[key];
-    if (data) {
-      return extractModelCapabilities(data);
+    const base = modelsDataRecord[key];
+    const extra = modelsExtraRecord[key];
+
+    if (base || extra) {
+      const merged: RawModelCapabilitiesData = { ...(base ?? {}), ...(extra ?? {}) };
+      return extractModelCapabilities(merged);
     }
   }
 

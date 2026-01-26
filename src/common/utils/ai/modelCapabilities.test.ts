@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { getModelCapabilities, getSupportedInputMediaTypes } from "./modelCapabilities";
 
 describe("getModelCapabilities", () => {
@@ -7,6 +7,20 @@ describe("getModelCapabilities", () => {
     expect(caps).not.toBeNull();
     expect(caps?.supportsPdfInput).toBe(true);
     expect(caps?.supportsVision).toBe(true);
+  });
+
+  it("merges models.json + modelsExtra so overrides don't wipe capabilities", () => {
+    // claude-opus-4-5 exists in both sources; modelsExtra intentionally overrides
+    // pricing/token limits, but it should not wipe upstream capability flags.
+    const caps = getModelCapabilities("anthropic:claude-opus-4-5");
+    expect(caps).not.toBeNull();
+    expect(caps?.supportsPdfInput).toBe(true);
+  });
+
+  it("returns capabilities for models present only in models-extra", () => {
+    // This model is defined in models-extra.ts but not (yet) in upstream models.json.
+    const caps = getModelCapabilities("openrouter:z-ai/glm-4.6");
+    expect(caps).not.toBeNull();
   });
 
   it("returns maxPdfSizeMb when present in model metadata", () => {

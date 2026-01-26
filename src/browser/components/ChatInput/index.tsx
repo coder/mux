@@ -1907,10 +1907,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (pdfAttachments.length > 0) {
         const caps = getModelCapabilities(baseModel);
         if (caps && !caps.supportsPdfInput) {
-          const pdfCapableExamples = Object.values(KNOWN_MODELS)
+          const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
             .map((m) => m.id)
-            .filter((model) => getModelCapabilities(model)?.supportsPdfInput)
-            .slice(0, 3);
+            .filter((model) => getModelCapabilities(model)?.supportsPdfInput);
+          const pdfCapableExamples = pdfCapableKnownModels.slice(0, 3);
+          const examplesSuffix =
+            pdfCapableKnownModels.length > pdfCapableExamples.length ? ", and others." : ".";
 
           pushToast({
             type: "error",
@@ -1918,7 +1920,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             message:
               `Model ${baseModel} does not support PDF input.` +
               (pdfCapableExamples.length > 0
-                ? ` Try: ${pdfCapableExamples.join(", ")}.`
+                ? ` Try e.g.: ${pdfCapableExamples.join(", ")}${examplesSuffix}`
                 : " Choose a model with PDF support."),
           });
           setSendingCount((c) => c - 1);
