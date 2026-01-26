@@ -9,6 +9,7 @@ import {
 describe("bashCompactionPolicy", () => {
   describe("isBashOutputAlreadyTargeted", () => {
     it("detects common output-slicing commands", () => {
+      expect(isBashOutputAlreadyTargeted("sudo head -n 1 some.log")).toBe(true);
       expect(isBashOutputAlreadyTargeted("rg foo . | head -n 50")).toBe(true);
       expect(isBashOutputAlreadyTargeted("tail -n 100 some.log")).toBe(true);
       expect(isBashOutputAlreadyTargeted("sed -n '1,200p' file.txt")).toBe(true);
@@ -18,6 +19,7 @@ describe("bashCompactionPolicy", () => {
     it("returns false for non-targeted scripts", () => {
       expect(isBashOutputAlreadyTargeted("ls -la")).toBe(false);
       expect(isBashOutputAlreadyTargeted("rg foo .")).toBe(false);
+      expect(isBashOutputAlreadyTargeted("git rev-parse HEAD")).toBe(false);
     });
   });
 

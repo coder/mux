@@ -14,8 +14,38 @@ export function isBashOutputAlreadyTargeted(script: string): boolean {
 
   // If the script already limits output to a slice (head/tail/line ranges), further denoising is
   // likely to drop exactly what the caller asked to see.
-  if (/(^|[|;&]\s*|\s)(head|tail)\b/i.test(trimmed)) {
-    return true;
+  //
+  // NOTE: Avoid false positives like `git rev-parse HEAD`.
+  const statementSegments = trimmed
+    .split(/(?:\r?\n|&&|;)+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const slicingCommands = new Set(["head", "tail"]);
+  for (const statement of statementSegments) {
+    const pipeSegments = statement
+      .split("|")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    for (const pipeSegment of pipeSegments) {
+      const tokens = pipeSegment.split(/\s+/).filter(Boolean);
+      if (tokens.length === 0) {
+        continue;
+      }
+
+      const cmd0 = (tokens[0] ?? "").toLowerCase();
+      const cmd1 = (tokens[1] ?? "").toLowerCase();
+
+      if (slicingCommands.has(cmd0)) {
+        return true;
+      }
+
+      // Common wrapper: `sudo head ...`.
+      if ((cmd0 === "sudo" || cmd0 === "command") && slicingCommands.has(cmd1)) {
+        return true;
+      }
+    }
   }
 
   if (/\bsed\b[^\n]*\s-n\s+['"]?\d+\s*,\s*\d+\s*p['"]?/i.test(trimmed)) {
