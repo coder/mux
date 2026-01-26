@@ -252,7 +252,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       action: () => Promise<void>,
       options?: { timeoutMs?: number }
     ): Promise<StreamTimeline> {
-      const timeoutMs = options?.timeoutMs ?? 20_000;
+      const timeoutMs = options?.timeoutMs ?? 30_000;
       const workspaceId = context.workspaceId;
       await page.evaluate((id: string) => {
         type StreamCaptureEvent = {

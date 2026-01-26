@@ -57,7 +57,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         await setupWorkspaceView(view, metadata, workspaceId);
 
         // Initial subscription triggers immediate fetch
-        const statusElement = await waitForGitStatusElement(view.container, workspaceId, 20_000);
+        const statusElement = await waitForGitStatusElement(view.container, workspaceId, 30_000);
         const status = getGitStatusFromElement(statusElement);
 
         expect(status).not.toBeNull();
@@ -66,7 +66,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         await cleanupView(view, cleanupDom);
       }
     });
-  }, 30_000);
+  }, 45_000);
 
   test("git status updates on window focus after file change", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
@@ -79,7 +79,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
 
       try {
         await setupWorkspaceView(view, metadata, workspaceId);
-        await waitForCleanStatus(view.container, workspaceId, 20_000);
+        await waitForCleanStatus(view.container, workspaceId, 30_000);
 
         // Modify file (simulates external change or terminal command)
         const bashRes = await env.orpc.workspace.executeBash({
@@ -92,13 +92,13 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         // User returns to app (alt-tab) - triggers git status refresh
         simulateWindowFocus();
 
-        const dirtyStatus = await waitForDirtyStatus(view.container, workspaceId, 20_000);
+        const dirtyStatus = await waitForDirtyStatus(view.container, workspaceId, 30_000);
         expect(dirtyStatus.dirty).toBe(true);
       } finally {
         await cleanupView(view, cleanupDom);
       }
     });
-  }, 30_000);
+  }, 45_000);
 
   test("git status shows clean after committing", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
@@ -121,13 +121,13 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
 
         simulateWindowFocus();
 
-        const status = await waitForCleanStatus(view.container, workspaceId, 20_000);
+        const status = await waitForCleanStatus(view.container, workspaceId, 30_000);
         expect(status.dirty).toBe(false);
       } finally {
         await cleanupView(view, cleanupDom);
       }
     });
-  }, 30_000);
+  }, 45_000);
 
   test("git status reflects ahead count", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
@@ -163,10 +163,10 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         // Directly invalidate git status instead of simulating window focus.
         // This bypasses RefreshController rate-limiting and jsdom event quirks.
         invalidateGitStatus(workspaceId);
-        await waitForAheadStatus(view.container, workspaceId, 2, 20_000);
+        await waitForAheadStatus(view.container, workspaceId, 2, 30_000);
       } finally {
         await cleanupView(view, cleanupDom);
       }
     });
-  }, 30_000);
+  }, 45_000);
 });

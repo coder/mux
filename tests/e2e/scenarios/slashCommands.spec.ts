@@ -133,8 +133,10 @@ test.describe("slash command flows", () => {
   }) => {
     await ui.projects.openFirstWorkspace();
 
-    await ui.chat.sendMessage("/providers set anthropic baseUrl https://custom.endpoint");
-    await ui.chat.expectStatusMessageContains("Provider anthropic updated");
+    await ui.chat.sendCommandAndExpectStatus(
+      "/providers set anthropic baseUrl https://custom.endpoint",
+      "Provider anthropic updated"
+    );
 
     const providersPath = path.join(workspace.configRoot, "providers.jsonc");
     await expect

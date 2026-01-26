@@ -72,17 +72,20 @@ describeIntegration("sendMessage context handling tests", () => {
           await collector.waitForEvent("stream-end", 15000);
 
           // Check that response mentions the name.
-          // Some provider/model combinations may emit no stream-delta events and only include
-          // assistant text in the final stream-end message parts.
-          const finalMessage = collector.getFinalMessage() as unknown as
-            | { parts?: Array<{ type?: string; text?: string }> }
+          // Some provider/model combinations may emit no stream-delta events, and return
+          // assistant text only in the final stream-end payload.
+          const finalMessage = collector.getFinalMessage() as
+            | { content?: unknown; parts?: Array<{ type?: unknown; text?: unknown }> }
             | undefined;
 
-          const responseText =
-            (finalMessage?.parts ?? [])
-              .filter((part) => part.type === "text" && typeof part.text === "string")
-              .map((part) => part.text)
-              .join("") || collector.getStreamContent();
+          const textFromContent =
+            typeof finalMessage?.content === "string" ? finalMessage.content : "";
+          const textFromParts = (finalMessage?.parts ?? [])
+            .filter((part) => part.type === "text" && typeof part.text === "string")
+            .map((part) => part.text)
+            .join("");
+
+          const responseText = textFromContent || textFromParts || collector.getStreamContent();
 
           expect(responseText.toLowerCase()).toContain("testuser");
         });
