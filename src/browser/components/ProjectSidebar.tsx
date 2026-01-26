@@ -7,7 +7,12 @@ import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
-import { EXPANDED_PROJECTS_KEY, getDraftScopeId, getInputKey } from "@/common/constants/storage";
+import {
+  EXPANDED_PROJECTS_KEY,
+  getDraftScopeId,
+  getInputKey,
+  getWorkspaceNameStateKey,
+} from "@/common/constants/storage";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
 import { useDrag, useDrop, useDragLayer } from "react-dnd";
@@ -190,15 +195,41 @@ interface DraftWorkspaceListItemProps {
 
 function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
   const scopeId = getDraftScopeId(props.projectPath, props.draftId);
+
   const [draftPrompt] = usePersistedState<string>(getInputKey(scopeId), "", {
     listener: true,
   });
+
+  const [workspaceNameState] = usePersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null, {
+    listener: true,
+  });
+
+  const workspaceName = (() => {
+    if (!workspaceNameState || typeof workspaceNameState !== "object") {
+      return "";
+    }
+
+    const record = workspaceNameState as Record<string, unknown>;
+    const autoGenerate = record.autoGenerate !== false;
+
+    if (autoGenerate) {
+      const generatedIdentity = record.generatedIdentity;
+      if (!generatedIdentity || typeof generatedIdentity !== "object") {
+        return "";
+      }
+
+      const generatedRecord = generatedIdentity as Record<string, unknown>;
+      return typeof generatedRecord.name === "string" ? generatedRecord.name : "";
+    }
+
+    return typeof record.manualName === "string" ? record.manualName : "";
+  })();
 
   // Collapse whitespace so multi-line prompts show up nicely as a single-line preview.
   const promptPreview =
     typeof draftPrompt === "string" ? draftPrompt.trim().replace(/\s+/g, " ") : "";
 
-  const titleText = promptPreview.length > 0 ? promptPreview : "Draft workspace";
+  const titleText = workspaceName.trim().length > 0 ? workspaceName.trim() : "Draft workspace";
 
   return (
     <div
@@ -242,6 +273,9 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="text-foreground block truncate text-left text-[14px]">{titleText}</span>
+        {promptPreview.length > 0 && (
+          <span className="text-muted block truncate text-left text-xs">{promptPreview}</span>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getWorkspaceNameStateKey } from "@/common/constants/storage";
 
 export interface UseWorkspaceNameOptions {
   /** The user's message to generate a name for */
@@ -8,6 +10,13 @@ export interface UseWorkspaceNameOptions {
   debounceMs?: number;
   /** User's selected model to try after preferred models (for Ollama/Bedrock/custom providers) */
   userModel?: string;
+  /**
+   * Optional storage scope for persisting draft name-generation state.
+   *
+   * When provided (e.g. a draft scopeId), each draft keeps its own auto-naming/manual name state so
+   * switching between drafts doesn't share a single generator or manual-edit mode.
+   */
+  scopeId?: string | null;
 }
 
 /** Generated workspace identity (name + title) */
@@ -41,6 +50,20 @@ export interface UseWorkspaceNameReturn extends WorkspaceNameState {
   waitForGeneration: () => Promise<WorkspaceIdentity | null>;
 }
 
+interface WorkspaceNamePersistedState {
+  generatedIdentity: WorkspaceIdentity | null;
+  manualName: string;
+  autoGenerate: boolean;
+  lastGeneratedFor: string;
+}
+
+const DEFAULT_PERSISTED_STATE: WorkspaceNamePersistedState = {
+  generatedIdentity: null,
+  manualName: "",
+  autoGenerate: true,
+  lastGeneratedFor: "",
+};
+
 /**
  * Hook for managing workspace name generation with debouncing.
  *
@@ -49,19 +72,30 @@ export interface UseWorkspaceNameReturn extends WorkspaceNameState {
  * auto-generation resumes.
  */
 export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspaceNameReturn {
-  const { message, debounceMs = 500, userModel } = options;
+  const { message, debounceMs = 500, userModel, scopeId } = options;
   const { api } = useAPI();
 
-  // Generated identity (name + title) from AI
-  const [generatedIdentity, setGeneratedIdentity] = useState<WorkspaceIdentity | null>(null);
-  // Manual name (user-editable during creation)
-  const [manualName, setManualName] = useState("");
-  const [autoGenerate, setAutoGenerate] = useState(true);
+  // Always call usePersistedState, but only *use* it when scopeId is provided.
+  // This prevents draft switching from leaking name state across different creation drafts.
+  const anonymousScopeIdRef = useRef(`__workspaceNameAnon__${Math.random().toString(36).slice(2)}`);
+  const persistedKey = getWorkspaceNameStateKey(scopeId ?? anonymousScopeIdRef.current);
+
+  const [persistedState, setPersistedState] = usePersistedState<WorkspaceNamePersistedState>(
+    persistedKey,
+    DEFAULT_PERSISTED_STATE,
+    { listener: true }
+  );
+  const [localState, setLocalState] =
+    useState<WorkspaceNamePersistedState>(DEFAULT_PERSISTED_STATE);
+
+  const stored = scopeId ? persistedState : localState;
+  const setStored = scopeId ? setPersistedState : setLocalState;
+
+  const { generatedIdentity, manualName, autoGenerate, lastGeneratedFor } = stored;
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Track the message that was used for the last successful generation
-  const lastGeneratedForRef = useRef<string>("");
   // Debounce timer
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Message pending in debounce timer (captured at schedule time)
@@ -97,6 +131,13 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
       setIsGenerating(false);
     }
   }, []);
+
+  // When switching between draft scopes, ensure the "in flight" generation UI doesn't leak.
+  useEffect(() => {
+    cancelPendingGeneration();
+    setIsGenerating(false);
+    setError(null);
+  }, [persistedKey, cancelPendingGeneration]);
 
   const generateIdentity = useCallback(
     async (forMessage: string): Promise<WorkspaceIdentity | null> => {
@@ -139,19 +180,24 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
             name: result.data.name,
             title: result.data.title,
           };
-          setGeneratedIdentity(identity);
-          lastGeneratedForRef.current = forMessage;
+
+          setStored((prev) => ({
+            ...prev,
+            generatedIdentity: identity,
+            lastGeneratedFor: forMessage,
+          }));
+
           safeResolve(identity);
           return identity;
-        } else {
-          const errorMsg =
-            result.error.type === "unknown" && "raw" in result.error
-              ? result.error.raw
-              : `Generation failed: ${result.error.type}`;
-          setError(errorMsg);
-          safeResolve(null);
-          return null;
         }
+
+        const errorMsg =
+          result.error.type === "unknown" && "raw" in result.error
+            ? result.error.raw
+            : `Generation failed: ${result.error.type}`;
+        setError(errorMsg);
+        safeResolve(null);
+        return null;
       } catch (err) {
         if (requestId !== requestIdRef.current) {
           return null;
@@ -167,7 +213,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         }
       }
     },
-    [api, userModel]
+    [api, setStored, userModel]
   );
 
   // Debounced generation effect
@@ -176,7 +222,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     // - Auto-generation is disabled
     // - Message is empty
     // - Already generated for this message
-    if (!autoGenerate || !message.trim() || lastGeneratedForRef.current === message) {
+    if (!autoGenerate || !message.trim() || lastGeneratedFor === message) {
       // Clear any pending timer since conditions changed
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
@@ -207,31 +253,43 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         pendingMessageRef.current = "";
       }
     };
-  }, [message, autoGenerate, debounceMs, generateIdentity, cancelPendingGeneration]);
+  }, [
+    message,
+    autoGenerate,
+    lastGeneratedFor,
+    debounceMs,
+    generateIdentity,
+    cancelPendingGeneration,
+  ]);
 
   // When auto-generate is toggled, handle name preservation
   const handleSetAutoGenerate = useCallback(
     (enabled: boolean) => {
       if (enabled) {
         // Switching to auto: reset so debounced generation will trigger
-        lastGeneratedForRef.current = "";
+        setStored((prev) => ({ ...prev, autoGenerate: true, lastGeneratedFor: "" }));
         setError(null);
-      } else {
-        // Switching to manual: copy generated name as starting point for editing
-        if (generatedIdentity?.name) {
-          setManualName(generatedIdentity.name);
-        }
+        return;
       }
-      setAutoGenerate(enabled);
+
+      // Switching to manual: copy generated name as starting point for editing
+      setStored((prev) => ({
+        ...prev,
+        autoGenerate: false,
+        manualName: prev.generatedIdentity?.name ?? prev.manualName,
+      }));
     },
-    [generatedIdentity]
+    [setStored]
   );
 
-  const setNameManual = useCallback((newName: string) => {
-    setManualName(newName);
-    // Clear error when user starts typing
-    setError(null);
-  }, []);
+  const setNameManual = useCallback(
+    (newName: string) => {
+      setStored((prev) => ({ ...prev, manualName: newName }));
+      // Clear error when user starts typing
+      setError(null);
+    },
+    [setStored]
+  );
 
   const waitForGeneration = useCallback(async (): Promise<WorkspaceIdentity | null> => {
     // If auto-generate is off, user has provided a manual name
@@ -273,7 +331,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     }
 
     // If we have an identity that was generated for the current message, use it
-    if (generatedIdentity && lastGeneratedForRef.current === message) {
+    if (generatedIdentity && lastGeneratedFor === message) {
       return generatedIdentity;
     }
 
@@ -283,7 +341,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
     }
 
     return null;
-  }, [autoGenerate, manualName, generatedIdentity, message, generateIdentity]);
+  }, [autoGenerate, manualName, generatedIdentity, lastGeneratedFor, message, generateIdentity]);
 
   return useMemo(
     () => ({

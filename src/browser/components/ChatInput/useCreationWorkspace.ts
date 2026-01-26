@@ -198,6 +198,15 @@ export function useCreationWorkspace({
   const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch } =
     useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
+  // Persist draft workspace name generation state per draft (so multiple drafts don't share a
+  // single auto-naming/manual-name state).
+  const workspaceNameScopeId =
+    projectPath.trim().length > 0
+      ? typeof draftId === "string" && draftId.trim().length > 0
+        ? getDraftScopeId(projectPath, draftId)
+        : getPendingScopeId(projectPath)
+      : null;
+
   // Project scope ID for reading send options at send time
   const projectScopeId = getProjectScopeId(projectPath);
 
@@ -207,6 +216,7 @@ export function useCreationWorkspace({
     message,
     debounceMs: 500,
     userModel,
+    scopeId: workspaceNameScopeId,
   });
 
   // Destructure name state functions for use in callbacks

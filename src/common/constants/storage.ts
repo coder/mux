@@ -134,6 +134,18 @@ export function getInputKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for persisted workspace name-generation state.
+ *
+ * This is used by the workspace creation flow so drafts can preserve their
+ * auto-generated (or manually edited) workspace name independently.
+ *
+ * Format: "workspaceNameState:{scopeId}"
+ */
+export function getWorkspaceNameStateKey(scopeId: string): string {
+  return `workspaceNameState:${scopeId}`;
+}
+
+/**
  * Get the localStorage key for the input attachments for a scope.
  * Format: "inputAttachments:{scopeId}"
  *
@@ -516,6 +528,7 @@ const PERSISTENT_WORKSPACE_KEY_FUNCTIONS: Array<(workspaceId: string) => string>
   getWorkspaceAISettingsByAgentKey,
   getModelKey,
   getInputKey,
+  getWorkspaceNameStateKey,
   getInputAttachmentsKey,
   getAgentIdKey,
   getPinnedAgentIdKey,
