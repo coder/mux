@@ -94,6 +94,37 @@ describe("bashCompactionPolicy", () => {
       expect(decision.skipReason).toBe("exploration_output_small");
     });
 
+    it("skips compaction for conflict-marker searches when output is within tool limits", () => {
+      const decision = decideBashOutputCompaction({
+        toolName: "bash",
+        script: 'rg "<<<<<<<|=======|>>>>>>>" .',
+        totalLines: 150,
+        totalBytes: 10_000,
+        minLines: 10,
+        minTotalBytes: 4 * 1024,
+        maxKeptLines: 40,
+      });
+
+      expect(decision.shouldCompact).toBe(false);
+      expect(decision.skipReason).toBe("conflict_marker_search_within_limits");
+    });
+
+    it("boosts maxKeptLines for conflict-marker searches when output exceeds tool limits", () => {
+      const decision = decideBashOutputCompaction({
+        toolName: "bash",
+        script: 'rg "<<<<<<<|=======|>>>>>>>" .',
+        totalLines: 400,
+        totalBytes: 20_000,
+        minLines: 10,
+        minTotalBytes: 4 * 1024,
+        maxKeptLines: 40,
+      });
+
+      expect(decision.shouldCompact).toBe(true);
+      expect(decision.skipReason).toBeUndefined();
+      expect(decision.effectiveMaxKeptLines).toBe(300);
+    });
+
     it("respects user maxKeptLines for small exploration output", () => {
       const decision = decideBashOutputCompaction({
         toolName: "bash",

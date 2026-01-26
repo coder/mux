@@ -58,6 +58,8 @@ export function formatNumberedLinesForSystem1(lines: string[]): string {
   return lines.map((line, index) => `${String(index + 1).padStart(4, "0")}| ${line}`).join("\n");
 }
 
+const GIT_CONFLICT_MARKER_REGEX = /(<{7}|={7}|>{7}|\|{7})/;
+
 const HEURISTIC_IMPORTANT_LINE_REGEX =
   /(^|\b)(error|failed|failure|fatal|panic|exception|traceback|warning|assertion failed|npm err!|err!|exited with code|exit code)(\b|$)/i;
 
@@ -101,15 +103,24 @@ export function getHeuristicKeepRangesForBashOutput(params: {
     }
 
     const line = params.lines[idx];
-    if (!HEURISTIC_IMPORTANT_LINE_REGEX.test(line)) {
+    const isConflictMarkerLine = GIT_CONFLICT_MARKER_REGEX.test(line);
+    const isImportantLine = HEURISTIC_IMPORTANT_LINE_REGEX.test(line);
+
+    if (!isConflictMarkerLine && !isImportantLine) {
       continue;
     }
 
-    const lineNo = idx + 1;
-    const start = Math.max(1, lineNo - HEURISTIC_CONTEXT_LINES);
-    const end = Math.min(totalLines, lineNo + HEURISTIC_CONTEXT_LINES);
+    const contextLines = isConflictMarkerLine ? 0 : HEURISTIC_CONTEXT_LINES;
 
-    ranges.push({ start, end, reason: "match" });
+    const lineNo = idx + 1;
+    const start = Math.max(1, lineNo - contextLines);
+    const end = Math.min(totalLines, lineNo + contextLines);
+
+    ranges.push({
+      start,
+      end,
+      reason: isConflictMarkerLine ? "conflict_marker" : "match",
+    });
     matchRanges += 1;
   }
 

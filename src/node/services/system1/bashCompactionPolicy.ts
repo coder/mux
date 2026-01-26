@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import { BASH_HARD_MAX_LINES } from "@/common/constants/toolLimits";
+import { BASH_HARD_MAX_LINES, BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 
 export type BashOutputIntent = "exploration" | "logs" | "unknown";
@@ -133,10 +133,37 @@ export function classifyBashIntent(params: {
   return "unknown";
 }
 
+function isGitConflictMarkerSearch(script: string): boolean {
+  assert(typeof script === "string", "script must be a string");
+
+  const trimmed = script.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  const literalNeedles = ["<<<<<<<", ">>>>>>>", "=======", "|||||||"];
+  for (const needle of literalNeedles) {
+    if (trimmed.includes(needle)) {
+      return true;
+    }
+  }
+
+  // Common regex quantifier forms (used in `rg`/`grep` patterns).
+  const quantifierNeedles = ["<{7}", ">{7}", "={7}", "|{7}"];
+  for (const needle of quantifierNeedles) {
+    if (trimmed.includes(needle)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export type BashOutputCompactionSkipReason =
   | "below_threshold"
   | "already_targeted_script"
-  | "exploration_output_small";
+  | "exploration_output_small"
+  | "conflict_marker_search_within_limits";
 
 export interface BashOutputCompactionDecision {
   shouldCompact: boolean;
@@ -239,6 +266,25 @@ export function decideBashOutputCompaction(params: {
       params.minTotalBytes === defaultMinTotalBytes &&
       params.maxKeptLines === defaultMaxKeptLines;
 
+    const isConflictMarkerSearch = isGitConflictMarkerSearch(params.script);
+
+    if (
+      isDefaultCompactionConfig &&
+      isConflictMarkerSearch &&
+      params.totalLines <= BASH_HARD_MAX_LINES &&
+      params.totalBytes <= BASH_MAX_TOTAL_BYTES
+    ) {
+      return {
+        shouldCompact: false,
+        skipReason: "conflict_marker_search_within_limits",
+        triggeredByLines,
+        triggeredByBytes,
+        alreadyTargeted,
+        intent,
+        effectiveMaxKeptLines,
+      };
+    }
+
     if (
       intent === "exploration" &&
       params.totalLines <= EXPLORATION_SKIP_MAX_LINES &&
@@ -260,11 +306,15 @@ export function decideBashOutputCompaction(params: {
     }
 
     // Guardrail: only override when the caller still uses the default budget and thresholds.
-    if (intent === "exploration" && isDefaultCompactionConfig) {
-      effectiveMaxKeptLines = Math.min(
-        BASH_HARD_MAX_LINES,
-        Math.max(params.maxKeptLines, EXPLORATION_BOOST_MAX_KEPT_LINES)
-      );
+    if (isDefaultCompactionConfig) {
+      if (isConflictMarkerSearch) {
+        effectiveMaxKeptLines = BASH_HARD_MAX_LINES;
+      } else if (intent === "exploration") {
+        effectiveMaxKeptLines = Math.min(
+          BASH_HARD_MAX_LINES,
+          Math.max(params.maxKeptLines, EXPLORATION_BOOST_MAX_KEPT_LINES)
+        );
+      }
     }
   }
 

@@ -35,6 +35,7 @@ Rules:
 - If intent is build/test/logs, prefer errors, stack traces, failing test summaries, and actionable warnings.
 - If the script already narrows output to a slice (e.g. `head`, `tail`, `sed -n` line ranges), avoid extra
   denoising: prefer keeping most/all lines within the budget.
+- Never filter out git merge conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`). If the command is searching for these markers (e.g. `rg`/`grep`), do not keep only representative matches; keep all matches within the budget.
 - Prefer high signal density: keep ranges tight around important lines plus minimal surrounding context.
 - Merge adjacent/overlapping ranges only when the lines between are also informative. Do NOT add noise just
   to reduce range count; it's OK to return many ranges when denoising (e.g., > 8).

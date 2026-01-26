@@ -75,6 +75,33 @@ describe("bashOutputFiltering", () => {
       expect(applied?.keptLines).toBeLessThanOrEqual(3);
       expect(applied?.filteredOutput).toContain("ERROR:");
     });
+
+    it("treats git conflict markers as important lines", () => {
+      const rawOutput = [
+        "start",
+        "src/foo.ts:1:<<<<<<< HEAD",
+        "src/foo.ts:2:=======",
+        "src/foo.ts:3:>>>>>>> main",
+        "end",
+      ].join("\n");
+
+      const lines = splitBashOutputLines(rawOutput);
+      const keepRanges = getHeuristicKeepRangesForBashOutput({
+        lines,
+        maxKeptLines: 10,
+      });
+
+      const applied = applySystem1KeepRangesToOutput({
+        rawOutput,
+        keepRanges,
+        maxKeptLines: 10,
+      });
+
+      expect(applied).toBeDefined();
+      expect(applied?.filteredOutput).toContain("<<<<<<<");
+      expect(applied?.filteredOutput).toContain("=======");
+      expect(applied?.filteredOutput).toContain(">>>>>>>");
+    });
   });
 
   describe("applySystem1KeepRangesToOutput", () => {
