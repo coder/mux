@@ -29,6 +29,8 @@ import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
+import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
+import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
 import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
 import type { PostCompactionExclusions } from "@/common/types/attachment";
@@ -971,6 +973,58 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Get devcontainer info for deep link generation.
+   * Returns null if not a devcontainer workspace or container is not running.
+   *
+   * This queries Docker for the container name (on-demand discovery) and
+   * calls ensureReady to get the container workspace path.
+   */
+  async getDevcontainerInfo(workspaceId: string): Promise<{
+    containerName: string;
+    containerWorkspacePath: string;
+    hostWorkspacePath: string;
+  } | null> {
+    const metadata = await this.getInfo(workspaceId);
+    if (metadata?.runtimeConfig?.type !== "devcontainer") {
+      return null;
+    }
+
+    const workspace = this.config.findWorkspace(workspaceId);
+    if (!workspace) {
+      return null;
+    }
+
+    // Get the host workspace path
+    const runtimeConfig = metadata.runtimeConfig;
+    const runtime = createRuntime(runtimeConfig, {
+      projectPath: metadata.projectPath,
+      workspaceName: metadata.name,
+    });
+
+    const hostWorkspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+    // Query Docker for container name (on-demand discovery)
+    const containerName = await getDevcontainerContainerName(hostWorkspacePath);
+    if (!containerName) {
+      return null; // Container not running
+    }
+
+    // Get container workspace path via ensureReady (idempotent if already running)
+    const readyResult = await runtime.ensureReady();
+    if (!readyResult.ready) {
+      return null;
+    }
+
+    // Access the cached remoteWorkspaceFolder from DevcontainerRuntime
+    const devRuntime = runtime as DevcontainerRuntime;
+    const containerWorkspacePath = devRuntime.getRemoteWorkspaceFolder();
+    if (!containerWorkspacePath) {
+      return null;
+    }
+
+    return { containerName, containerWorkspacePath, hostWorkspacePath };
+  }
   async getInfo(workspaceId: string): Promise<FrontendWorkspaceMetadata | null> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
     return allMetadata.find((m) => m.id === workspaceId) ?? null;

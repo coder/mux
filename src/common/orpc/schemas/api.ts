@@ -496,6 +496,16 @@ export const workspace = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  getDevcontainerInfo: {
+    input: z.object({ workspaceId: z.string() }),
+    output: z
+      .object({
+        containerName: z.string(),
+        containerWorkspacePath: z.string(),
+        hostWorkspacePath: z.string(),
+      })
+      .nullable(),
+  },
   getInfo: {
     input: z.object({ workspaceId: z.string() }),
     output: FrontendWorkspaceMetadataSchema.nullable(),

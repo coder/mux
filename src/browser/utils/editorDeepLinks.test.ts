@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getEditorDeepLink, isLocalhost } from "./editorDeepLinks";
+import { getEditorDeepLink, getDevcontainerDeepLink, isLocalhost } from "./editorDeepLinks";
 
 describe("getEditorDeepLink", () => {
   describe("local paths", () => {
@@ -140,6 +140,103 @@ describe("getEditorDeepLink", () => {
       });
       expect(url).toBe("cursor://vscode-remote/ssh-remote+devbox/home/user/project/file.ts:42:10");
     });
+  });
+});
+
+describe("getDevcontainerDeepLink", () => {
+  test("generates vscode:// URL for devcontainer", () => {
+    const url = getDevcontainerDeepLink({
+      editor: "vscode",
+      containerName: "jovial_newton",
+      hostPath: "/Users/me/projects/myapp",
+      containerPath: "/workspaces/myapp",
+    });
+    expect(url).not.toBeNull();
+    expect(url).toMatch(/^vscode:\/\/vscode-remote\/dev-container\+[0-9a-f]+\/workspaces\/myapp$/);
+  });
+
+  test("generates cursor:// URL for devcontainer", () => {
+    const url = getDevcontainerDeepLink({
+      editor: "cursor",
+      containerName: "jovial_newton",
+      hostPath: "/Users/me/projects/myapp",
+      containerPath: "/workspaces/myapp",
+    });
+    expect(url).not.toBeNull();
+    expect(url).toMatch(/^cursor:\/\/vscode-remote\/dev-container\+[0-9a-f]+\/workspaces\/myapp$/);
+  });
+
+  test("returns null for zed (unsupported)", () => {
+    const url = getDevcontainerDeepLink({
+      editor: "zed",
+      containerName: "jovial_newton",
+      hostPath: "/Users/me/projects/myapp",
+      containerPath: "/workspaces/myapp",
+    });
+    expect(url).toBeNull();
+  });
+
+  test("normalizes container path formatting", () => {
+    const url = getDevcontainerDeepLink({
+      editor: "vscode",
+      containerName: "jovial_newton",
+      hostPath: "/Users/me/projects/myapp",
+      containerPath: "workspaces\\myapp",
+    });
+    expect(url).not.toBeNull();
+    expect(url).toMatch(/^vscode:\/\/vscode-remote\/dev-container\+[0-9a-f]+\/workspaces\/myapp$/);
+  });
+  test("includes config file path when provided", () => {
+    const url = getDevcontainerDeepLink({
+      editor: "vscode",
+      containerName: "jovial_newton",
+      hostPath: "/Users/me/projects/myapp",
+      containerPath: "/workspaces/myapp",
+      configFilePath: "/Users/me/projects/myapp/.devcontainer/devcontainer.json",
+    });
+    expect(url).not.toBeNull();
+    // The hex-encoded JSON should contain configFile
+    expect(url).toMatch(/^vscode:\/\/vscode-remote\/dev-container\+[0-9a-f]+\/workspaces\/myapp$/);
+  });
+
+  test("hex-encodes JSON config with container name prefixed with /", () => {
+    const url = getDevcontainerDeepLink({
+      editor: "vscode",
+      containerName: "my_container",
+      hostPath: "/home/user/project",
+      containerPath: "/workspace",
+    });
+    expect(url).not.toBeNull();
+    // Extract hex portion and decode to verify format
+    const hexMatch = /dev-container\+([0-9a-f]+)/.exec(url!);
+    expect(hexMatch).not.toBeNull();
+    const hex = hexMatch![1];
+    const decoded = Buffer.from(hex, "hex").toString("utf8");
+    const config = JSON.parse(decoded) as {
+      containerName: string;
+      hostPath: string;
+      localDocker: boolean;
+    };
+    expect(config.containerName).toBe("/my_container");
+    expect(config.hostPath).toBe("/home/user/project");
+    expect(config.localDocker).toBe(false);
+  });
+  test("correctly encodes non-ASCII characters in paths as UTF-8", () => {
+    const url = getDevcontainerDeepLink({
+      editor: "vscode",
+      containerName: "test_container",
+      hostPath: "/Users/José/projects/myapp",
+      containerPath: "/workspaces/myapp",
+    });
+    expect(url).not.toBeNull();
+    // Extract hex portion and decode to verify UTF-8 encoding
+    const hexMatch = /dev-container\+([0-9a-f]+)/.exec(url!);
+    expect(hexMatch).not.toBeNull();
+    const hex = hexMatch![1];
+    const decoded = Buffer.from(hex, "hex").toString("utf8");
+    const config = JSON.parse(decoded) as { hostPath: string };
+    // José should be preserved (é = U+00E9, UTF-8: 0xC3 0xA9)
+    expect(config.hostPath).toBe("/Users/José/projects/myapp");
   });
 });
 

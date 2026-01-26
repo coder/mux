@@ -1279,6 +1279,12 @@ export const router = (authToken?: string) => {
           }
           return { success: true, data: undefined };
         }),
+      getDevcontainerInfo: t
+        .input(schemas.workspace.getDevcontainerInfo.input)
+        .output(schemas.workspace.getDevcontainerInfo.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.getDevcontainerInfo(input.workspaceId);
+        }),
       getInfo: t
         .input(schemas.workspace.getInfo.input)
         .output(schemas.workspace.getInfo.output)
