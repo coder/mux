@@ -183,6 +183,11 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       });
       await expect(input).toBeVisible();
       await input.fill(message);
+      // Slash commands open a suggestion menu; dismiss it before sending so Enter
+      // doesn't accept a completion instead of submitting the message.
+      if (message.startsWith("/")) {
+        await page.keyboard.press("Escape");
+      }
       await page.keyboard.press("Enter");
     },
 
@@ -233,8 +238,10 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         timeout: 30_000,
       });
 
-      // Send the command
+      // Send the command. Dismiss suggestion menu first so Enter sends instead of
+      // accepting a completion.
       await input.fill(command);
+      await page.keyboard.press("Escape");
       await page.keyboard.press("Enter");
 
       // Wait for the toast we started watching for

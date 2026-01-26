@@ -5,10 +5,8 @@ import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import { FileIcon } from "@/browser/components/FileIcon";
 
 // Keys for navigating slash command suggestions.
-//
-// IMPORTANT: Do NOT treat Enter as a suggestion key here. Enter should submit the slash command
-// ("send message"). Autocomplete selection should be via Tab.
-export const COMMAND_SUGGESTION_KEYS = ["Tab", "ArrowUp", "ArrowDown", "Escape"];
+// Enter or Tab accepts the highlighted suggestion; Shift+Enter inserts a newline.
+export const COMMAND_SUGGESTION_KEYS = ["Tab", "Enter", "ArrowUp", "ArrowDown", "Escape"];
 
 // Keys for navigating file path (@mention) suggestions.
 //
@@ -197,8 +195,6 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           }
           break;
         case "Enter":
-          // For slash commands, Enter should submit the command (send message), not autocomplete.
-          if (!isFileSuggestion) break;
           if (!e.shiftKey && suggestions.length > 0) {
             e.preventDefault();
             onSelectSuggestion(suggestions[selectedIndex]);
@@ -206,6 +202,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           break;
         case "Escape":
           e.preventDefault();
+          e.stopPropagation();
           onDismiss();
           break;
       }

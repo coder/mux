@@ -2255,9 +2255,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const hasAtMentionSuggestionMenu = showAtMentionSuggestions && atMentionSuggestions.length > 0;
 
     // Don't handle keys if suggestions are visible.
-    //
-    // NOTE: For slash command suggestions, Enter should still submit the command.
-    // For file (@mention) suggestions, Enter accepts the selection.
+    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for both slash and @mention menus.
     if (
       (hasCommandSuggestionMenu && COMMAND_SUGGESTION_KEYS.includes(e.key)) ||
       (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
