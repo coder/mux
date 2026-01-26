@@ -367,21 +367,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     },
     [setToast]
   );
+  // Subscribe to pending send errors from creation flow. Uses listener: true so
+  // late failures (e.g., slow devcontainer startup) still surface a toast.
+  const pendingErrorKey =
+    variant === "workspace" && workspaceId ? getPendingWorkspaceSendErrorKey(workspaceId) : null;
+  const [pendingError, setPendingError] = usePersistedState<SendMessageError | null>(
+    pendingErrorKey ?? "__unused__",
+    null,
+    { listener: true }
+  );
   useEffect(() => {
-    if (variant !== "workspace" || !workspaceId) {
-      return;
-    }
-
-    const pendingErrorKey = getPendingWorkspaceSendErrorKey(workspaceId);
-    const pendingError = readPersistedState<SendMessageError | null>(pendingErrorKey, null);
-    if (!pendingError) {
-      return;
-    }
-
-    // Workspace creation can fail after navigation; surface the initial send error here.
+    if (!pendingErrorKey || !pendingError) return;
     setToast(createErrorToast(pendingError));
-    updatePersistedState<SendMessageError | undefined>(pendingErrorKey, undefined);
-  }, [variant, workspaceId]);
+    setPendingError(null);
+  }, [pendingErrorKey, pendingError, setPendingError]);
 
   const handleToastDismiss = useCallback(() => {
     setToast(null);
