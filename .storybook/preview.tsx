@@ -5,6 +5,7 @@ import "../src/browser/styles/globals.css";
 import {
   TUTORIAL_STATE_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
+  EXPANDED_PROJECTS_KEY,
   type TutorialState,
 } from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/mockFactory";
@@ -58,6 +59,13 @@ function collapseRightSidebar() {
     localStorage.setItem(RIGHT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
   }
 }
+// Collapse projects by default to ensure deterministic snapshots.
+// Some stories explicitly expand projects via expandProjects() in their setup.
+function collapseProjects() {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([]));
+  }
+}
 
 const preview: Preview = {
   globalTypes: {
@@ -107,6 +115,10 @@ const preview: Preview = {
       // Collapse right sidebar by default for deterministic snapshots
       // Stories can expand via expandRightSidebar() in setup after this runs
       collapseRightSidebar();
+
+      // Collapse projects by default so one story doesn't leak expanded state into the next.
+      // Stories that want expanded projects should call expandProjects() in setup.
+      collapseProjects();
 
       return (
         <ThemeProvider forcedTheme={mode}>
