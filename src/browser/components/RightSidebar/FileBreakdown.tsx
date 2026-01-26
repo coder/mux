@@ -1,5 +1,6 @@
 import React from "react";
 import { FileIcon } from "@/browser/components/FileIcon";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 
 // Format token display - show k for thousands with 1 decimal
 const formatTokens = (tokens: number) =>
@@ -26,7 +27,14 @@ const FileBreakdownComponent: React.FC<FileBreakdownProps> = ({ files, totalToke
         return (
           <div key={file.path} className="flex items-center gap-1.5">
             <FileIcon filePath={file.path} className="text-secondary shrink-0 text-xs" />
-            <span className="text-foreground min-w-0 flex-1 truncate text-xs">{displayPath}</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-foreground direction-rtl min-w-0 flex-1 truncate text-left text-xs">
+                  {displayPath}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{displayPath}</TooltipContent>
+            </Tooltip>
             <span className="text-muted shrink-0 text-[11px]">
               {formatTokens(file.tokens)} ({percentage.toFixed(1)}%)
             </span>
