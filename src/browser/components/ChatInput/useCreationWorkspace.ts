@@ -31,7 +31,7 @@ import {
   type WorkspaceNameState,
   type WorkspaceIdentity,
 } from "@/browser/hooks/useWorkspaceName";
-import { createErrorToast } from "@/browser/components/ChatInputToasts";
+
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
@@ -403,6 +403,18 @@ export function useCreationWorkspace({
             // Ignore - sendMessage will persist AI settings as a fallback.
           });
 
+        const pendingScopeId = projectPath ? getPendingScopeId(projectPath) : null;
+
+        // Sync preferences before switching (keeps workspace settings consistent).
+        syncCreationPreferences(projectPath, metadata.id);
+
+        // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
+        // The user sees the workspace UI while sendMessage kicks off the stream.
+        onWorkspaceCreated(metadata);
+        setIsSending(false);
+
+        // Fire sendMessage in the background - stream errors will be shown in the workspace UI
+        // via the normal stream-error event handling. We don't await this.
         const additionalSystemInstructions = [
           sendMessageOptions.additionalSystemInstructions,
           optionsOverride?.additionalSystemInstructions,
@@ -410,37 +422,29 @@ export function useCreationWorkspace({
           .filter((part) => typeof part === "string" && part.trim().length > 0)
           .join("\n\n");
 
-        const sendResult = await api.workspace.sendMessage({
-          workspaceId: metadata.id,
-          message: messageText,
-          options: {
-            ...sendMessageOptions,
-            ...optionsOverride,
-            additionalSystemInstructions: additionalSystemInstructions.length
-              ? additionalSystemInstructions
-              : undefined,
-            fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
-          },
-        });
-
-        if (!sendResult.success) {
-          setToast(createErrorToast(sendResult.error));
-          setIsSending(false);
-          return false;
-        }
-
-        // Sync preferences only after the initial send succeeds (otherwise we'd clear the draft
-        // and the user would lose their attachments).
-        syncCreationPreferences(projectPath, metadata.id);
-        if (projectPath) {
-          const pendingScopeId = getPendingScopeId(projectPath);
-          updatePersistedState(getInputKey(pendingScopeId), "");
-          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
-        }
-
-        // Switch to the workspace after creation + initial send succeeds.
-        onWorkspaceCreated(metadata);
-        setIsSending(false);
+        void api.workspace
+          .sendMessage({
+            workspaceId: metadata.id,
+            message: messageText,
+            options: {
+              ...sendMessageOptions,
+              ...optionsOverride,
+              additionalSystemInstructions: additionalSystemInstructions.length
+                ? additionalSystemInstructions
+                : undefined,
+              fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
+            },
+          })
+          .then((sendResult) => {
+            if (!sendResult.success || !pendingScopeId) {
+              return;
+            }
+            updatePersistedState(getInputKey(pendingScopeId), "");
+            updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
+          })
+          .catch(() => {
+            // Best-effort: if sending fails (e.g., disconnected), the user can retry in the workspace.
+          });
 
         return true;
       } catch (err) {

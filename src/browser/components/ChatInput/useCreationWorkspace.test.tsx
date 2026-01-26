@@ -507,6 +507,67 @@ describe("useCreationWorkspace", () => {
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
   });
 
+  test("onWorkspaceCreated is called before sendMessage resolves (no blocking)", async () => {
+    // This test ensures we don't regress #1146 - the fix that makes workspace creation
+    // navigate immediately without waiting for sendMessage to complete.
+    // Regression occurred in #1896 when sendMessage became awaited again.
+    const listBranchesMock = mock(
+      (): Promise<BranchListResult> =>
+        Promise.resolve({
+          branches: ["main"],
+          recommendedTrunk: "main",
+        })
+    );
+    // sendMessage returns a promise that NEVER resolves - simulates slow init (devcontainer/SSH)
+    const sendMessageMock = mock(
+      (_args: WorkspaceSendMessageArgs): Promise<WorkspaceSendMessageResult> =>
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        new Promise(() => {})
+    );
+    const createMock = mock(
+      (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
+        Promise.resolve({
+          success: true,
+          metadata: TEST_METADATA,
+        } as WorkspaceCreateResult)
+    );
+    const nameGenerationMock = mock(
+      (_args: NameGenerationArgs): Promise<NameGenerationResult> =>
+        Promise.resolve({
+          success: true,
+          data: { name: "generated-name", modelUsed: "anthropic:claude-haiku-4-5" },
+        } as NameGenerationResult)
+    );
+    setupWindow({
+      listBranches: listBranchesMock,
+      sendMessage: sendMessageMock,
+      create: createMock,
+      nameGeneration: nameGenerationMock,
+    });
+
+    draftSettingsState = createDraftSettingsHarness({ trunkBranch: "main" });
+    const onWorkspaceCreated = mock((metadata: FrontendWorkspaceMetadata) => metadata);
+
+    const getHook = renderUseCreationWorkspace({
+      projectPath: TEST_PROJECT_PATH,
+      onWorkspaceCreated,
+      message: "test message",
+    });
+
+    await waitFor(() => expect(getHook().branches).toEqual(["main"]));
+
+    // handleSend should return true immediately after create, NOT wait for sendMessage
+    let handleSendResult: boolean | undefined;
+    await act(async () => {
+      handleSendResult = await getHook().handleSend("test message");
+    });
+
+    expect(handleSendResult).toBe(true);
+    // onWorkspaceCreated should be called even though sendMessage hasn't resolved
+    expect(onWorkspaceCreated.mock.calls.length).toBe(1);
+    expect(onWorkspaceCreated.mock.calls[0][0]).toEqual(TEST_METADATA);
+  });
+
   test("handleSend surfaces backend errors and resets state", async () => {
     const createMock = mock(
       (_args: WorkspaceCreateArgs): Promise<WorkspaceCreateResult> =>
