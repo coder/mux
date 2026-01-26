@@ -492,6 +492,26 @@ export const TOOL_DEFINITIONS = {
         .describe("Number of lines to return from offset (optional, returns all if not specified)"),
     }),
   },
+  mux_global_agents_read: {
+    description:
+      "Read the global AGENTS.md file (mux-wide agent instructions) from the mux home directory.",
+    schema: z.object({}).strict(),
+  },
+  mux_global_agents_write: {
+    description:
+      "Write the global AGENTS.md file (mux-wide agent instructions) in the mux home directory. " +
+      "Requires explicit confirmation via confirm: true.",
+    schema: z
+      .object({
+        newContent: z.string().describe("The full new contents of the global AGENTS.md file"),
+        confirm: z
+          .boolean()
+          .describe(
+            "Must be true to apply the write. The agent should ask the user for confirmation first."
+          ),
+      })
+      .strict(),
+  },
   agent_skill_read: {
     description:
       "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
@@ -994,6 +1014,38 @@ export const BashBackgroundTerminateResultSchema = z.union([
 ]);
 
 /**
+ * mux_global_agents_read tool result.
+ */
+export const MuxGlobalAgentsReadToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    content: z.string(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
+/**
+ * mux_global_agents_write tool result.
+ */
+export const MuxGlobalAgentsWriteToolResultSchema = z.union([
+  z
+    .object({
+      success: z.literal(true),
+      diff: z.string(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+  z
+    .object({
+      success: z.literal(false),
+      error: z.string(),
+    })
+    .extend(ToolOutputUiOnlyFieldSchema),
+]);
+
+/**
  * File read tool result - content or error.
  */
 export const FileReadToolResultSchema = z.union([
@@ -1161,7 +1213,7 @@ export function getToolSchemas(): Record<string, ToolSchema> {
  */
 export function getAvailableTools(
   modelString: string,
-  options?: { enableAgentReport?: boolean }
+  options?: { enableAgentReport?: boolean; enableMuxGlobalAgentsTools?: boolean }
 ): string[] {
   const [provider] = modelString.split(":");
   const enableAgentReport = options?.enableAgentReport ?? true;
@@ -1169,6 +1221,9 @@ export function getAvailableTools(
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const baseTools = [
+    ...(options?.enableMuxGlobalAgentsTools
+      ? ["mux_global_agents_read", "mux_global_agents_write"]
+      : []),
     "file_read",
     "agent_skill_read",
     "agent_skill_read_file",

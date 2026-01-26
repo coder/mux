@@ -1,4 +1,5 @@
 import React from "react";
+import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useDragLayer } from "react-dnd";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 import { RuntimeBadge } from "./RuntimeBadge";
@@ -49,7 +50,9 @@ export const WorkspaceDragLayer: React.FC = () => {
             "bg-sidebar border-border border shadow-lg"
           )}
         >
-          <RuntimeBadge runtimeConfig={workspaceItem.runtimeConfig} isWorking={false} />
+          {workspaceItem.workspaceId !== MUX_CHAT_WORKSPACE_ID && (
+            <RuntimeBadge runtimeConfig={workspaceItem.runtimeConfig} isWorking={false} />
+          )}
           <span className="text-foreground truncate text-sm">{displayTitle}</span>
         </div>
       </div>

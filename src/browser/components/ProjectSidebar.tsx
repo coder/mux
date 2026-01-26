@@ -38,6 +38,7 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, KeyRound } from "lucide-react";
+import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
@@ -218,6 +219,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 }) => {
   // Get workspace state and operations from context
   const {
+    workspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
     archiveWorkspace: onArchiveWorkspace,
@@ -269,6 +271,32 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [onAddWorkspace, collapsed, onToggleCollapsed]
   );
 
+  const handleOpenMuxChat = useCallback(() => {
+    const meta = workspaceMetadata.get(MUX_CHAT_WORKSPACE_ID);
+
+    handleSelectWorkspace(
+      meta
+        ? {
+            workspaceId: meta.id,
+            projectPath: meta.projectPath,
+            projectName: meta.projectName,
+            namedWorkspacePath: meta.namedWorkspacePath,
+          }
+        : {
+            // Fallback: navigate by ID; metadata will fill in once refreshed.
+            workspaceId: MUX_CHAT_WORKSPACE_ID,
+            projectPath: "",
+            projectName: "Mux",
+            namedWorkspacePath: "",
+          }
+    );
+
+    if (!meta) {
+      refreshWorkspaceMetadata().catch((error) => {
+        console.error("Failed to refresh workspace metadata", error);
+      });
+    }
+  }, [handleSelectWorkspace, refreshWorkspaceMetadata, workspaceMetadata]);
   // Workspace-specific subscriptions moved to WorkspaceListItem component
 
   // Store as array in localStorage, convert to Set for usage
@@ -450,6 +478,18 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [projectPathsSignature, projectOrder]
   );
 
+  // Hide the built-in Chat with Mux system project from the normal projects list.
+  // We still render the mux-chat workspace as a dedicated pinned row above projects.
+  const muxChatMetadata = workspaceMetadata.get(MUX_CHAT_WORKSPACE_ID);
+  const muxChatProjectPath = muxChatMetadata?.projectPath ?? null;
+  const visibleProjectPaths = React.useMemo(
+    () =>
+      muxChatProjectPath
+        ? sortedProjectPaths.filter((projectPath) => projectPath !== muxChatProjectPath)
+        : sortedProjectPaths,
+    [sortedProjectPaths, muxChatProjectPath]
+  );
+
   const handleReorder = useCallback(
     (draggedPath: string, targetPath: string) => {
       const next = reorderProjects(projectOrder, projects, draggedPath, targetPath);
@@ -464,6 +504,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       // Create new workspace for the project of the selected workspace
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
+        if (selectedWorkspace.workspaceId === MUX_CHAT_WORKSPACE_ID) {
+          return;
+        }
         handleAddWorkspace(selectedWorkspace.projectPath);
       } else if (matchesKeybind(e, KEYBINDS.ARCHIVE_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
@@ -493,7 +536,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           {!collapsed && (
             <>
               <div className="border-dark flex items-center justify-between border-b py-3 pr-3 pl-4">
-                <MuxLogo className="h-5 w-[44px]" aria-label="Projects" />
+                <button
+                  onClick={handleOpenMuxChat}
+                  className="cursor-pointer border-none bg-transparent p-0"
+                  aria-label="Open Chat with Mux"
+                >
+                  <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
+                </button>
                 <button
                   onClick={onAddProject}
                   aria-label="Add project"
@@ -504,7 +553,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {projects.size === 0 ? (
+                {muxChatMetadata && (
+                  <div className="border-hover border-b">
+                    <WorkspaceListItem
+                      metadata={muxChatMetadata}
+                      projectPath={muxChatMetadata.projectPath}
+                      projectName={muxChatMetadata.projectName}
+                      isSelected={selectedWorkspace?.workspaceId === muxChatMetadata.id}
+                      isArchiving={archivingWorkspaceIds.has(muxChatMetadata.id)}
+                      onSelectWorkspace={handleSelectWorkspace}
+                      onArchiveWorkspace={handleArchiveWorkspace}
+                      depth={0}
+                    />
+                  </div>
+                )}
+                {visibleProjectPaths.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>
                     <button
@@ -515,7 +578,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     </button>
                   </div>
                 ) : (
-                  sortedProjectPaths.map((projectPath) => {
+                  visibleProjectPaths.map((projectPath) => {
                     const config = projects.get(projectPath);
                     if (!config) return null;
                     const projectName = getProjectName(projectPath);

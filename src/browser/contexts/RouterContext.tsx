@@ -9,6 +9,7 @@ import {
 } from "react";
 import { MemoryRouter, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
@@ -58,7 +59,7 @@ function getInitialRoute(): string {
   if (savedWorkspace?.workspaceId) {
     return `/workspace/${encodeURIComponent(savedWorkspace.workspaceId)}`;
   }
-  return "/";
+  return `/workspace/${encodeURIComponent(MUX_CHAT_WORKSPACE_ID)}`;
 }
 
 /** Sync router state to browser URL (dev server only, not Electron/Storybook). */

@@ -1,4 +1,5 @@
 import { type Tool } from "ai";
+import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import assert from "@/common/utils/assert";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -19,6 +20,8 @@ import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
 import { createTaskListTool } from "@/node/services/tools/task_list";
 import { createAgentSkillReadTool } from "@/node/services/tools/agent_skill_read";
 import { createAgentSkillReadFileTool } from "@/node/services/tools/agent_skill_read_file";
+import { createMuxGlobalAgentsReadTool } from "@/node/services/tools/mux_global_agents_read";
+import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global_agents_write";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
@@ -297,6 +300,8 @@ export async function getToolsForModel(
   // Non-runtime tools execute immediately (no init wait needed)
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const nonRuntimeTools: Record<string, Tool> = {
+    mux_global_agents_read: createMuxGlobalAgentsReadTool(config),
+    mux_global_agents_write: createMuxGlobalAgentsWriteTool(config),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
@@ -370,7 +375,10 @@ export async function getToolsForModel(
   // Filter tools to the canonical allowlist so system prompt + toolset stay in sync.
   // Include MCP tools even if they're not in getAvailableTools().
   const allowlistedToolNames = new Set(
-    getAvailableTools(modelString, { enableAgentReport: config.enableAgentReport })
+    getAvailableTools(modelString, {
+      enableAgentReport: config.enableAgentReport,
+      enableMuxGlobalAgentsTools: workspaceId === MUX_CHAT_WORKSPACE_ID,
+    })
   );
   for (const toolName of Object.keys(mcpTools ?? {})) {
     allowlistedToolNames.add(toolName);

@@ -1,4 +1,5 @@
 import React from "react";
+import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { cn } from "@/common/lib/utils";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -683,12 +684,14 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                             className="h-4 w-4 rounded border-gray-600 bg-transparent"
                             aria-label={`Select ${displayTitle}`}
                           />
-                          <RuntimeBadge
-                            runtimeConfig={workspace.runtimeConfig}
-                            isWorking={false}
-                            workspacePath={workspace.namedWorkspacePath}
-                            workspaceName={workspaceNameForTooltip}
-                          />
+                          {workspace.id !== MUX_CHAT_WORKSPACE_ID && (
+                            <RuntimeBadge
+                              runtimeConfig={workspace.runtimeConfig}
+                              isWorking={false}
+                              workspacePath={workspace.namedWorkspacePath}
+                              workspaceName={workspaceNameForTooltip}
+                            />
+                          )}
                           <div className="min-w-0 flex-1">
                             <div className="text-foreground truncate text-sm font-medium">
                               {displayTitle}

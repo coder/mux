@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Bell, BellOff, Menu, Pencil, Server } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
+import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   getNotifyOnResponseKey,
@@ -58,6 +59,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 }) => {
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
+  const isMuxChat = workspaceId === MUX_CHAT_WORKSPACE_ID;
   const gitStatus = useGitStatus(workspaceId);
   const { canInterrupt, isStarting, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
@@ -174,24 +176,28 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             <Menu className="h-4 w-4" />
           </Button>
         )}
-        <RuntimeBadge
-          runtimeConfig={runtimeConfig}
-          isWorking={isWorking}
-          workspacePath={namedWorkspacePath}
-          workspaceName={workspaceName}
-          tooltipSide="bottom"
-        />
-        <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
-        <div className="flex items-center gap-1">
-          <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
-          <GitStatusIndicator
-            gitStatus={gitStatus}
-            workspaceId={workspaceId}
-            projectPath={projectPath}
-            tooltipPosition="bottom"
+        {!isMuxChat && (
+          <RuntimeBadge
+            runtimeConfig={runtimeConfig}
             isWorking={isWorking}
+            workspacePath={namedWorkspacePath}
+            workspaceName={workspaceName}
+            tooltipSide="bottom"
           />
-        </div>
+        )}
+        <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
+        {!isMuxChat && (
+          <div className="flex items-center gap-1">
+            <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
+            <GitStatusIndicator
+              gitStatus={gitStatus}
+              workspaceId={workspaceId}
+              projectPath={projectPath}
+              tooltipPosition="bottom"
+              isWorking={isWorking}
+            />
+          </div>
+        )}
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />

@@ -1,5 +1,6 @@
 import { Menu } from "lucide-react";
 import { useEffect, useCallback, useRef } from "react";
+import { useRouter } from "./contexts/RouterContext";
 import { useNavigate } from "react-router-dom";
 import "./styles/globals.css";
 import { useWorkspaceContext, toWorkspaceSelection } from "./contexts/WorkspaceContext";
@@ -71,6 +72,7 @@ function AppInner() {
   // Get workspace state from context
   const {
     workspaceMetadata,
+    loading,
     setWorkspaceMetadata,
     removeWorkspace,
     renameWorkspace,
@@ -80,6 +82,7 @@ function AppInner() {
     pendingNewWorkspaceSectionId,
     beginWorkspaceCreation,
   } = useWorkspaceContext();
+  const { currentWorkspaceId } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
   const { open: openSettings, isOpen: isSettingsOpen } = useSettings();
   const setThemePreference = useCallback(
@@ -111,9 +114,10 @@ function AppInner() {
     document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
   }, [sidebarCollapsed]);
   const defaultProjectPath = getFirstProjectPath(projects);
-  const creationProjectPath = !selectedWorkspace
-    ? (pendingNewWorkspaceProject ?? defaultProjectPath)
-    : null;
+  const creationProjectPath =
+    !selectedWorkspace && !currentWorkspaceId
+      ? (pendingNewWorkspaceProject ?? defaultProjectPath)
+      : null;
 
   // History navigation (back/forward)
   const navigate = useNavigate();
@@ -896,9 +900,15 @@ function AppInner() {
                   }}
                 >
                   <h2 style={{ fontSize: "clamp(24px, 5vw, 36px)", letterSpacing: "-1px" }}>
-                    Welcome to Mux
+                    {currentWorkspaceId ? "Opening workspace…" : "Welcome to Mux"}
                   </h2>
-                  <p>Add a project from the sidebar to get started.</p>
+                  <p>
+                    {currentWorkspaceId
+                      ? loading
+                        ? "Loading workspace metadata…"
+                        : "Workspace not found."
+                      : "Add a project from the sidebar to get started."}
+                  </p>
                 </div>
               </div>
             )}

@@ -2,6 +2,8 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import assert from "@/common/utils/assert";
+import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { getMuxChatProjectPath } from "@/node/constants/muxChat";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -576,6 +578,11 @@ export class WorkspaceService extends EventEmitter {
     runtimeConfig?: RuntimeConfig,
     sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
+    // Chat with Mux is a built-in system workspace; it cannot host additional workspaces.
+    if (projectPath === getMuxChatProjectPath(this.config.rootDir)) {
+      return Err("Cannot create workspaces in the Chat with Mux system project");
+    }
+
     // Validate workspace name
     const validation = validateWorkspaceName(branchName);
     if (!validation.valid) {
@@ -764,6 +771,10 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
+    if (workspaceId === MUX_CHAT_WORKSPACE_ID) {
+      return Err("Cannot remove the Chat with Mux system workspace");
+    }
+
     // Idempotent: if already removing, return success to prevent race conditions
     if (this.removingWorkspaces.has(workspaceId)) {
       return Ok(undefined);
@@ -1183,8 +1194,11 @@ export class WorkspaceService extends EventEmitter {
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page. Safe and reversible.
    */
-
   async archive(workspaceId: string): Promise<Result<void>> {
+    if (workspaceId === MUX_CHAT_WORKSPACE_ID) {
+      return Err("Cannot archive the Chat with Mux system workspace");
+    }
+
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -1241,6 +1255,10 @@ export class WorkspaceService extends EventEmitter {
    * Unarchive a workspace. Restores it to the main sidebar view.
    */
   async unarchive(workspaceId: string): Promise<Result<void>> {
+    if (workspaceId === MUX_CHAT_WORKSPACE_ID) {
+      return Err("Cannot unarchive the Chat with Mux system workspace");
+    }
+
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -1484,6 +1502,10 @@ export class WorkspaceService extends EventEmitter {
     newName: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
+      if (sourceWorkspaceId === MUX_CHAT_WORKSPACE_ID) {
+        return Err("Cannot fork the Chat with Mux system workspace");
+      }
+
       const validation = validateWorkspaceName(newName);
       if (!validation.valid) {
         return Err(validation.error ?? "Invalid workspace name");

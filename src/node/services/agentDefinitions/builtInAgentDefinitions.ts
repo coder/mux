@@ -20,6 +20,7 @@ const BUILT_IN_SOURCES: BuiltInSource[] = [
   { id: "compact", content: BUILTIN_AGENT_CONTENT.compact },
   { id: "explore", content: BUILTIN_AGENT_CONTENT.explore },
   { id: "system1_bash", content: BUILTIN_AGENT_CONTENT.system1_bash },
+  { id: "mux", content: BUILTIN_AGENT_CONTENT.mux },
 ];
 
 let cachedPackages: AgentDefinitionPackage[] | null = null;
