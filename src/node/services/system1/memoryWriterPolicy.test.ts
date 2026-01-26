@@ -1,3 +1,4 @@
+import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import { describe, expect, it } from "bun:test";
 
 import type { MuxMessage } from "@/common/types/message";
@@ -30,22 +31,21 @@ describe("MemoryWriterPolicy", () => {
     const policy = new MemoryWriterPolicy(
       {
         loadConfigOrDefault: () => ({
-          taskSettings: {
-            memoryWriterIntervalMessages: 2,
-          },
+          projects: new Map(),
+          taskSettings: { ...DEFAULT_TASK_SETTINGS, memoryWriterIntervalMessages: 2 },
         }),
       },
       {
-        getHistory: async (): Promise<
+        getHistory: (): Promise<
           { success: true; data: MuxMessage[] } | { success: false; error: string }
         > => {
           getHistoryCalls += 1;
-          return { success: true, data: [] };
+          return Promise.resolve({ success: true, data: [] });
         },
       },
-      async () => {
+      () => {
         createModelCalls += 1;
-        return undefined;
+        return Promise.resolve(undefined);
       }
     );
 
@@ -62,15 +62,18 @@ describe("MemoryWriterPolicy", () => {
   });
 
   it("dedupes while a run is in-flight", async () => {
-    let resolveHistory: (() => void) | null = null;
+    let resolveHistory!: () => void;
+    const historyBarrier = new Promise<void>((resolve) => {
+      resolveHistory = () => resolve();
+    });
+
     let getHistoryCalls = 0;
 
     const policy = new MemoryWriterPolicy(
       {
         loadConfigOrDefault: () => ({
-          taskSettings: {
-            memoryWriterIntervalMessages: 1,
-          },
+          projects: new Map(),
+          taskSettings: { ...DEFAULT_TASK_SETTINGS, memoryWriterIntervalMessages: 1 },
         }),
       },
       {
@@ -80,30 +83,28 @@ describe("MemoryWriterPolicy", () => {
           getHistoryCalls += 1;
 
           if (getHistoryCalls === 1) {
-            await new Promise<void>((resolve) => {
-              resolveHistory = resolve;
-            });
+            await historyBarrier;
           }
 
           return { success: true, data: [] };
         },
       },
-      async () => undefined
+      () => Promise.resolve(undefined)
     );
 
     const first = policy.onAssistantStreamEnd(createContext({ messageId: "msg_1" }));
     expect(first).toBeDefined();
 
-    // Allow the async runner to reach getHistory and publish the resolver.
+    // Allow the async runner to reach getHistory.
     await Promise.resolve();
-    expect(resolveHistory).toBeTruthy();
+    expect(getHistoryCalls).toBe(1);
 
     const second = policy.onAssistantStreamEnd(createContext({ messageId: "msg_2" }));
     expect(second).toBeUndefined();
 
     expect(getHistoryCalls).toBe(1);
 
-    resolveHistory?.();
+    resolveHistory();
     await first;
 
     const third = policy.onAssistantStreamEnd(createContext({ messageId: "msg_3" }));
@@ -117,16 +118,21 @@ describe("MemoryWriterPolicy", () => {
     let getHistoryCalls = 0;
 
     const policy = new MemoryWriterPolicy(
-      { loadConfigOrDefault: () => ({ taskSettings: { memoryWriterIntervalMessages: 1 } }) },
       {
-        getHistory: async (): Promise<
+        loadConfigOrDefault: () => ({
+          projects: new Map(),
+          taskSettings: { ...DEFAULT_TASK_SETTINGS, memoryWriterIntervalMessages: 1 },
+        }),
+      },
+      {
+        getHistory: (): Promise<
           { success: true; data: MuxMessage[] } | { success: false; error: string }
         > => {
           getHistoryCalls += 1;
-          return { success: true, data: [] };
+          return Promise.resolve({ success: true, data: [] });
         },
       },
-      async () => undefined
+      () => Promise.resolve(undefined)
     );
 
     const result = policy.onAssistantStreamEnd(createContext({ system1Enabled: false }));

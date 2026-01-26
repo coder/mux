@@ -4,7 +4,7 @@ import type { ToolCallOptions } from "ai";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { createMemoryWriteTool } from "./memory_write";
+import { createMemoryWriteTool, type MemoryWriteToolResult } from "./memory_write";
 import { getMemoryFilePathForProject } from "./memoryCommon";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
@@ -47,10 +47,10 @@ describe("memory_write tool", () => {
     const config = createConfig(muxRoot.path, projectPath);
 
     const tool = createMemoryWriteTool(config);
-    const result = await tool.execute!(
+    const result = (await tool.execute!(
       { old_string: "", new_string: "hello", replace_count: 1 },
       mockToolCallOptions
-    );
+    )) as MemoryWriteToolResult;
 
     expect(result).toEqual({ success: true });
 
@@ -67,16 +67,16 @@ describe("memory_write tool", () => {
 
     const tool = createMemoryWriteTool(config);
 
-    const first = await tool.execute!(
+    const first = (await tool.execute!(
       { old_string: "", new_string: "first", replace_count: 1 },
       mockToolCallOptions
-    );
+    )) as MemoryWriteToolResult;
     expect(first).toEqual({ success: true });
 
-    const second = await tool.execute!(
+    const second = (await tool.execute!(
       { old_string: "", new_string: "second", replace_count: 1 },
       mockToolCallOptions
-    );
+    )) as MemoryWriteToolResult;
 
     expect(second).toEqual({
       success: false,
@@ -100,10 +100,10 @@ describe("memory_write tool", () => {
     const config = createConfig(muxRoot.path, projectPath);
     const tool = createMemoryWriteTool(config);
 
-    const result = await tool.execute!(
+    const result = (await tool.execute!(
       { old_string: "beta", new_string: "gamma" },
       mockToolCallOptions
-    );
+    )) as MemoryWriteToolResult;
     expect(result).toEqual({ success: true });
 
     expect(await fs.readFile(memoryPath, "utf8")).toBe("alpha\ngamma\n");
@@ -121,10 +121,10 @@ describe("memory_write tool", () => {
     const config = createConfig(muxRoot.path, projectPath);
     const tool = createMemoryWriteTool(config);
 
-    const result = await tool.execute!(
+    const result = (await tool.execute!(
       { old_string: "not found", new_string: "ok" },
       mockToolCallOptions
-    );
+    )) as MemoryWriteToolResult;
 
     expect(result).toEqual({
       success: false,
@@ -144,10 +144,10 @@ describe("memory_write tool", () => {
     const config = createConfig(muxRoot.path, projectPath);
     const tool = createMemoryWriteTool(config);
 
-    const result = await tool.execute!(
+    const result = (await tool.execute!(
       { old_string: "a", new_string: "b", replace_count: 1 },
       mockToolCallOptions
-    );
+    )) as MemoryWriteToolResult;
 
     expect(result).toEqual({
       success: false,
@@ -165,10 +165,10 @@ describe("memory_write tool", () => {
 
     const tool = createMemoryWriteTool(config);
 
-    const [a, b] = await Promise.all([
+    const [a, b] = (await Promise.all([
       tool.execute!({ old_string: "", new_string: "one" }, mockToolCallOptions),
       tool.execute!({ old_string: "", new_string: "two" }, mockToolCallOptions),
-    ]);
+    ])) as [MemoryWriteToolResult, MemoryWriteToolResult];
 
     const successes = [a, b].filter((result): result is { success: true } =>
       Boolean(
