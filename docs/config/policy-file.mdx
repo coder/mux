@@ -1,0 +1,179 @@
+---
+title: Policy File
+description: Admin-enforced restrictions for providers, models, MCP, and runtimes
+---
+
+Mux supports an **admin-controlled policy file** that can restrict what users can do in the app.
+
+- It is **opt-in** (no behavior changes unless enabled).
+- It is **enforced server-side** (users can’t bypass it via the UI, slash commands, or manual edits).
+- It is loaded at startup and **refreshed every 15 minutes**.
+
+## Enable the policy file
+
+Set `MUX_POLICY_FILE` to an absolute path on the machine running Mux:
+
+```bash
+export MUX_POLICY_FILE="/etc/mux/policy.js"
+```
+
+If `MUX_POLICY_FILE` is set but the file can’t be read/evaluated/validated, Mux will **block startup** with an error.
+
+## File format
+
+The policy file is evaluated as a **trusted JavaScript expression** that returns an object.
+
+- This allows comments and dynamic rules.
+- The evaluated result is **strictly validated**; unknown fields are rejected.
+
+Example skeleton:
+
+```js
+({
+  policy_format_version: "0.1",
+
+  // Optional: block running older clients.
+  minimum_client_version: "1.0.0",
+
+  // Optional: provider/model restrictions.
+  provider_access: [
+    {
+      id: "openai",
+      base_url: "https://api.openai.com/v1", // optional, forces base URL
+      model_access: [{ match: ["gpt-5.2", "gpt-5.2-codex"] }], // optional
+    },
+  ],
+
+  // Optional: MCP restrictions.
+  tools: {
+    allow_user_defined_mcp: {
+      stdio: true,
+      remote: false,
+    },
+  },
+
+  // Optional: runtime allowlist.
+  runtimes: [{ id: "worktree" }, { id: "ssh+coder" }],
+});
+```
+
+## Evaluation context
+
+The policy file is evaluated with a sandbox global named `user`:
+
+- `user.email`: the signed-in Coder user email when available, otherwise `null`.
+
+This enables dynamic JS expressions like:
+
+```js
+({
+  policy_format_version: "0.1",
+  provider_access: [
+    {
+      id: "openai",
+      model_access: [
+        {
+          match: user.email === "admin@example.com" ? ["gpt-5.2"] : ["gpt-5.2-codex-mini"],
+        },
+      ],
+    },
+  ],
+});
+```
+
+## Provider and model access (`provider_access`)
+
+If `provider_access` is **omitted** or an **empty array**, all providers are allowed.
+
+If `provider_access` is present, only providers listed there are allowed.
+
+Each entry supports:
+
+- `id` (required): provider ID (matches what you see in Settings → Providers)
+- `base_url` (optional): if set to a non-empty string, Mux forces that provider base URL
+- `model_access` (optional): a list of rules; the allowed model set is the **union** of all `match` values
+
+`model_access.match` may be either:
+
+- a single model ID string, or
+- an array of model ID strings
+
+If `model_access` is omitted or an empty array, all models for that provider are allowed.
+
+### Mux Gateway models
+
+The Mux Gateway provider ID is `mux-gateway`. Gateway model IDs use the form:
+
+- `anthropic/<modelId>`
+- `openai/<modelId>`
+- `google/<modelId>`
+- `xai/<modelId>`
+
+Example:
+
+```js
+({
+  policy_format_version: "0.1",
+  provider_access: [
+    {
+      id: "mux-gateway",
+      model_access: [{ match: ["openai/gpt-5.2", "anthropic/claude-sonnet-4-5"] }],
+    },
+  ],
+});
+```
+
+## MCP restrictions (`tools.allow_user_defined_mcp`)
+
+Control whether users can add/edit MCP servers themselves:
+
+```js
+({
+  policy_format_version: "0.1",
+  tools: {
+    allow_user_defined_mcp: {
+      stdio: false,
+      remote: false,
+    },
+  },
+});
+```
+
+- `stdio` applies to local `stdio` MCP servers.
+- `remote` applies to remote transports (`http`, `sse`, and `auto`).
+
+If `allow_user_defined_mcp` is omitted, both are allowed.
+
+## Runtime restrictions (`runtimes`)
+
+If `runtimes` is **omitted** or an **empty array**, all runtimes are allowed.
+
+If `runtimes` is present, only the listed runtime IDs are allowed:
+
+- `local`
+- `worktree`
+- `ssh`
+- `ssh+coder`
+- `docker`
+- `devcontainer`
+
+Example: allow only worktrees and Coder-managed SSH:
+
+```js
+({
+  policy_format_version: "0.1",
+  runtimes: [{ id: "worktree" }, { id: "ssh+coder" }],
+});
+```
+
+## Operational behavior
+
+- The policy is loaded at startup and refreshed every **15 minutes**.
+- If a refresh fails, Mux keeps the **last-known-good** policy (it does not fall back to allow-all).
+- If the policy changes to disallow the currently selected provider/model/runtime, Mux will **block the action** (it will not auto-switch).
+
+## Troubleshooting
+
+- **Mux won’t start and mentions policy**: fix the policy file, or temporarily unset `MUX_POLICY_FILE`.
+- **Changes aren’t visible yet**: policy reloads every 15 minutes (or restart Mux to reload immediately).
+- **Need help finding provider IDs**: see [Providers](/config/providers) and [Models](/config/models).

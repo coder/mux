@@ -84,6 +84,7 @@ Use this index to find a page's:
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx` — Tips and tricks for getting the most out of your AI agents
   - **Configuration**
     - MCP Servers (`/config/mcp-servers`) → `references/docs/config/mcp-servers.mdx` — Extend agent capabilities with Model Context Protocol servers
+    - Policy File (`/config/policy-file`) → `references/docs/config/policy-file.mdx` — Admin-enforced restrictions for providers, models, MCP, and runtimes
     - Project Secrets (`/config/project-secrets`) → `references/docs/config/project-secrets.mdx` — Manage environment variables and API keys for your projects
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx` — Configure a separate Git identity for AI-generated commits
     - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx` — Complete keyboard shortcut reference for Mux
