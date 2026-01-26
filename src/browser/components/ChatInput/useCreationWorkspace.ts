@@ -31,6 +31,10 @@ import {
   type WorkspaceNameState,
   type WorkspaceIdentity,
 } from "@/browser/hooks/useWorkspaceName";
+import { createErrorToast } from "@/browser/components/ChatInputToasts";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 
 interface UseCreationWorkspaceOptions {
@@ -95,6 +99,26 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   if (autoEnableNotifications) {
     updatePersistedState(getNotifyOnResponseKey(workspaceId), true);
   }
+}
+
+const PDF_MEDIA_TYPE = "application/pdf";
+
+function getBaseMediaType(mediaType: string): string {
+  return mediaType.toLowerCase().trim().split(";")[0];
+}
+
+function estimateBase64DataUrlBytes(dataUrl: string): number | null {
+  if (!dataUrl.startsWith("data:")) return null;
+
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) return null;
+
+  const header = dataUrl.slice("data:".length, commaIndex);
+  if (!header.includes(";base64")) return null;
+
+  const base64 = dataUrl.slice(commaIndex + 1);
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return Math.floor((base64.length * 3) / 4) - padding;
 }
 
 interface UseCreationWorkspaceReturn {
@@ -291,6 +315,54 @@ export function useCreationWorkspace({
         // race conditions with React state updates (requestAnimationFrame batching
         // in usePersistedState can delay state updates after model selection)
         const sendMessageOptions = getSendOptionsFromStorage(projectScopeId);
+        const effectiveModel = optionsOverride?.model ?? sendMessageOptions.model;
+        const baseModel = normalizeGatewayModel(effectiveModel);
+
+        // Preflight: if the first message includes PDFs, ensure the selected model can accept them.
+        // This prevents creating an empty workspace when the initial send is rejected.
+        const pdfFileParts = (fileParts ?? []).filter(
+          (part) => getBaseMediaType(part.mediaType) === PDF_MEDIA_TYPE
+        );
+        if (pdfFileParts.length > 0) {
+          const caps = getModelCapabilities(baseModel);
+          if (caps && !caps.supportsPdfInput) {
+            const pdfCapableExamples = Object.values(KNOWN_MODELS)
+              .map((m) => m.id)
+              .filter((model) => getModelCapabilities(model)?.supportsPdfInput)
+              .slice(0, 3);
+
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              title: "PDF not supported",
+              message:
+                `Model ${baseModel} does not support PDF input.` +
+                (pdfCapableExamples.length > 0
+                  ? ` Try: ${pdfCapableExamples.join(", ")}.`
+                  : " Choose a model with PDF support."),
+            });
+            setIsSending(false);
+            return false;
+          }
+
+          if (caps?.maxPdfSizeMb !== undefined) {
+            const maxBytes = caps.maxPdfSizeMb * 1024 * 1024;
+            for (const part of pdfFileParts) {
+              const bytes = estimateBase64DataUrlBytes(part.url);
+              if (bytes !== null && bytes > maxBytes) {
+                const actualMb = (bytes / (1024 * 1024)).toFixed(1);
+                setToast({
+                  id: Date.now().toString(),
+                  type: "error",
+                  title: "PDF too large",
+                  message: `${part.filename ?? "PDF"} is ${actualMb}MB, but ${baseModel} allows up to ${caps.maxPdfSizeMb}MB per PDF.`,
+                });
+                setIsSending(false);
+                return false;
+              }
+            }
+          }
+        }
 
         // Create the workspace with the generated name and title
         const createResult = await api.workspace.create({
@@ -328,21 +400,7 @@ export function useCreationWorkspace({
           .catch(() => {
             // Ignore - sendMessage will persist AI settings as a fallback.
           });
-        // Sync preferences immediately (before switching)
-        syncCreationPreferences(projectPath, metadata.id);
-        if (projectPath) {
-          const pendingScopeId = getPendingScopeId(projectPath);
-          updatePersistedState(getInputKey(pendingScopeId), "");
-          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
-        }
 
-        // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
-        // The user sees the workspace UI while sendMessage kicks off the stream.
-        onWorkspaceCreated(metadata);
-        setIsSending(false);
-
-        // Fire sendMessage in the background - stream errors will be shown in the workspace UI
-        // via the normal stream-error event handling. We don't await this.
         const additionalSystemInstructions = [
           sendMessageOptions.additionalSystemInstructions,
           optionsOverride?.additionalSystemInstructions,
@@ -350,22 +408,37 @@ export function useCreationWorkspace({
           .filter((part) => typeof part === "string" && part.trim().length > 0)
           .join("\n\n");
 
-        api.workspace
-          .sendMessage({
-            workspaceId: metadata.id,
-            message: messageText,
-            options: {
-              ...sendMessageOptions,
-              ...optionsOverride,
-              additionalSystemInstructions: additionalSystemInstructions.length
-                ? additionalSystemInstructions
-                : undefined,
-              fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
-            },
-          })
-          .catch(() => {
-            // Best-effort: if sending fails (e.g., disconnected), the user can retry in the workspace.
-          });
+        const sendResult = await api.workspace.sendMessage({
+          workspaceId: metadata.id,
+          message: messageText,
+          options: {
+            ...sendMessageOptions,
+            ...optionsOverride,
+            additionalSystemInstructions: additionalSystemInstructions.length
+              ? additionalSystemInstructions
+              : undefined,
+            fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
+          },
+        });
+
+        if (!sendResult.success) {
+          setToast(createErrorToast(sendResult.error));
+          setIsSending(false);
+          return false;
+        }
+
+        // Sync preferences only after the initial send succeeds (otherwise we'd clear the draft
+        // and the user would lose their attachments).
+        syncCreationPreferences(projectPath, metadata.id);
+        if (projectPath) {
+          const pendingScopeId = getPendingScopeId(projectPath);
+          updatePersistedState(getInputKey(pendingScopeId), "");
+          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
+        }
+
+        // Switch to the workspace after creation + initial send succeeds.
+        onWorkspaceCreated(metadata);
+        setIsSending(false);
 
         return true;
       } catch (err) {
