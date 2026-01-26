@@ -425,6 +425,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   // Attached reviews come from parent via props (persisted in pendingReviews state)
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
+  // Creation sends can resolve after navigation; guard draft clears on unmounted inputs.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
   const [atMentionCursorNonce, setAtMentionCursorNonce] = useState(0);
@@ -1592,7 +1599,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         creationFileParts.length > 0 ? creationFileParts : undefined,
         creationOptionsOverride
       );
-      if (ok) {
+      if (ok && isMountedRef.current) {
         setInput("");
         setAttachments([]);
         // Height is managed by VimTextArea's useLayoutEffect - clear inline style

@@ -413,8 +413,7 @@ export function useCreationWorkspace({
         onWorkspaceCreated(metadata);
         setIsSending(false);
 
-        // Fire sendMessage in the background - stream errors will be shown in the workspace UI
-        // via the normal stream-error event handling. We don't await this.
+        // Wait for the initial send result so the creation flow can preserve drafts on failure.
         const additionalSystemInstructions = [
           sendMessageOptions.additionalSystemInstructions,
           optionsOverride?.additionalSystemInstructions,
@@ -422,29 +421,28 @@ export function useCreationWorkspace({
           .filter((part) => typeof part === "string" && part.trim().length > 0)
           .join("\n\n");
 
-        void api.workspace
-          .sendMessage({
-            workspaceId: metadata.id,
-            message: messageText,
-            options: {
-              ...sendMessageOptions,
-              ...optionsOverride,
-              additionalSystemInstructions: additionalSystemInstructions.length
-                ? additionalSystemInstructions
-                : undefined,
-              fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
-            },
-          })
-          .then((sendResult) => {
-            if (!sendResult.success || !pendingScopeId) {
-              return;
-            }
-            updatePersistedState(getInputKey(pendingScopeId), "");
-            updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
-          })
-          .catch(() => {
-            // Best-effort: if sending fails (e.g., disconnected), the user can retry in the workspace.
-          });
+        const sendResult = await api.workspace.sendMessage({
+          workspaceId: metadata.id,
+          message: messageText,
+          options: {
+            ...sendMessageOptions,
+            ...optionsOverride,
+            additionalSystemInstructions: additionalSystemInstructions.length
+              ? additionalSystemInstructions
+              : undefined,
+            fileParts: fileParts && fileParts.length > 0 ? fileParts : undefined,
+          },
+        });
+
+        if (!sendResult.success) {
+          // Preserve draft input/attachments so the user can retry later.
+          return false;
+        }
+
+        if (pendingScopeId) {
+          updatePersistedState(getInputKey(pendingScopeId), "");
+          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
+        }
 
         return true;
       } catch (err) {
