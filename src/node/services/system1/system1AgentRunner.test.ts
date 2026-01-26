@@ -56,6 +56,57 @@ describe("system1AgentRunner", () => {
     });
   });
 
+  it("includes display name in the user message when provided", async () => {
+    const runtime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
+
+    let calls = 0;
+
+    const result = await runSystem1KeepRangesForBashOutput({
+      runtime,
+      agentDiscoveryPath: process.cwd(),
+      runtimeTempDir: os.tmpdir(),
+      model: {} as unknown as LanguageModel,
+      modelString: "openai:gpt-5.1-codex-mini",
+      providerOptions: {},
+      displayName: "List files",
+      script: "ls",
+      numberedOutput: "0001| a\n0002| b\n0003| c",
+      maxKeptLines: 10,
+      timeoutMs: 5_000,
+      generateTextImpl: async (args) => {
+        calls += 1;
+
+        const messages = (args as { messages?: unknown }).messages as
+          | Array<{ content?: unknown }>
+          | undefined;
+        expect(Array.isArray(messages)).toBe(true);
+
+        const firstContent = messages?.[0]?.content;
+        expect(typeof firstContent).toBe("string");
+        expect(firstContent as string).toContain("Display name:");
+        expect(firstContent as string).toContain("List files");
+
+        const tools = (args as { tools?: unknown }).tools as Record<string, unknown> | undefined;
+
+        // Simulate the model calling the tool.
+        const keepRangesTool = tools!.system1_keep_ranges as {
+          execute: (input: unknown, options: unknown) => unknown;
+        };
+
+        await keepRangesTool.execute({ keep_ranges: [{ start: 1, end: 1, reason: "first" }] }, {});
+
+        return { finishReason: "stop" };
+      },
+    });
+
+    expect(calls).toBe(1);
+    expect(result).toEqual({
+      keepRanges: [{ start: 1, end: 1, reason: "first" }],
+      finishReason: "stop",
+      timedOut: false,
+    });
+  });
+
   it("ignores project overrides of the internal system1_bash agent prompt", async () => {
     const runtime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
 

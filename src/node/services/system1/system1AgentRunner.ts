@@ -21,6 +21,10 @@ export interface RunSystem1KeepRangesParams {
   modelString: string;
   providerOptions?: Record<string, unknown>;
 
+  // Optional short label describing what the bash command is doing (intent hint).
+  // This is intentionally lightweight to avoid bloating the System 1 prompt.
+  displayName?: string;
+
   script: string;
   numberedOutput: string;
   maxKeptLines: number;
@@ -50,6 +54,10 @@ export async function runSystem1KeepRangesForBashOutput(
   );
   assert(params.model, "model is required");
   assert(
+    params.displayName === undefined || typeof params.displayName === "string",
+    "displayName must be a string when provided"
+  );
+  assert(
     typeof params.modelString === "string" && params.modelString.length > 0,
     "modelString must be a non-empty string"
   );
@@ -78,13 +86,23 @@ export async function runSystem1KeepRangesForBashOutput(
     { skipScopesAbove: "global" }
   );
 
-  const userMessage = [
-    `maxKeptLines: ${params.maxKeptLines}`,
-    "",
+  const userMessageParts = [`maxKeptLines: ${params.maxKeptLines}`, ""];
+
+  const displayName =
+    typeof params.displayName === "string" && params.displayName.trim().length > 0
+      ? params.displayName.trim()
+      : undefined;
+  if (displayName) {
+    userMessageParts.push(`Display name:\n${displayName}`, "");
+  }
+
+  userMessageParts.push(
     `Bash script:\n${params.script}`,
     "",
-    `Numbered output:\n${params.numberedOutput}`,
-  ].join("\n");
+    `Numbered output:\n${params.numberedOutput}`
+  );
+
+  const userMessage = userMessageParts.join("\n");
 
   const system1AbortController = new AbortController();
   const unlink = linkAbortSignal(params.abortSignal, system1AbortController);

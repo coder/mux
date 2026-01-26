@@ -1,0 +1,254 @@
+import assert from "@/common/utils/assert";
+import { BASH_HARD_MAX_LINES } from "@/common/constants/toolLimits";
+import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
+
+export type BashOutputIntent = "exploration" | "logs" | "unknown";
+
+export function isBashOutputAlreadyTargeted(script: string): boolean {
+  assert(typeof script === "string", "script must be a string");
+
+  const trimmed = script.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  // If the script already limits output to a slice (head/tail/line ranges), further denoising is
+  // likely to drop exactly what the caller asked to see.
+  if (/(^|[|;&]\s*|\s)(head|tail)\b/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/\bsed\b[^\n]*\s-n\s+['"]?\d+\s*,\s*\d+\s*p['"]?/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/\bawk\b[^\n]*\bNR\s*(==|!=|>=|<=|>|<)\s*\d+/i.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeDisplayName(displayName: string | undefined): string | undefined {
+  if (typeof displayName !== "string") {
+    return undefined;
+  }
+
+  const trimmed = displayName.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getFirstNonTrivialCommand(script: string): { cmd: string; args: string[] } | undefined {
+  const segments = script
+    .split(/(?:\r?\n|&&|;)+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const ignoredCommands = new Set(["cd", "pushd", "popd", "export", "set"]);
+
+  for (const segment of segments) {
+    const tokens = segment.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) {
+      continue;
+    }
+
+    const rawCmd = tokens[0] ?? "";
+    const cmd = rawCmd.replace(/^\\/, "");
+
+    if (!cmd || ignoredCommands.has(cmd)) {
+      continue;
+    }
+
+    return { cmd, args: tokens.slice(1) };
+  }
+
+  return undefined;
+}
+
+export function classifyBashIntent(params: {
+  script: string;
+  displayName?: string;
+}): BashOutputIntent {
+  assert(params, "params is required");
+  assert(typeof params.script === "string", "script must be a string");
+
+  const displayName = normalizeDisplayName(params.displayName);
+  if (displayName) {
+    const normalized = displayName.toLowerCase();
+    if (/\b(list|explore|search|scan)\b/.test(normalized)) {
+      return "exploration";
+    }
+  }
+
+  const first = getFirstNonTrivialCommand(params.script);
+  if (first) {
+    const cmd = first.cmd.toLowerCase();
+    const arg0 = first.args[0]?.toLowerCase();
+
+    const explorationCommands = new Set(["ls", "find", "fd", "tree", "rg", "grep"]);
+    if (explorationCommands.has(cmd)) {
+      return "exploration";
+    }
+
+    if (cmd === "git" && (arg0 === "ls-files" || arg0 === "status")) {
+      return "exploration";
+    }
+
+    const logCommands = new Set(["make", "bun", "npm", "yarn", "pnpm"]);
+    if (logCommands.has(cmd)) {
+      return "logs";
+    }
+  }
+
+  return "unknown";
+}
+
+export type BashOutputCompactionSkipReason =
+  | "below_threshold"
+  | "already_targeted_script"
+  | "exploration_output_small";
+
+export interface BashOutputCompactionDecision {
+  shouldCompact: boolean;
+  skipReason?: BashOutputCompactionSkipReason;
+
+  triggeredByLines: boolean;
+  triggeredByBytes: boolean;
+
+  alreadyTargeted: boolean;
+  intent: BashOutputIntent;
+
+  effectiveMaxKeptLines: number;
+}
+
+const EXPLORATION_SKIP_MAX_LINES = 120;
+const EXPLORATION_SKIP_MAX_BYTES = 12 * 1024;
+const EXPLORATION_BOOST_MAX_KEPT_LINES = 120;
+
+export function decideBashOutputCompaction(params: {
+  toolName: string;
+  script: string;
+  displayName?: string;
+
+  totalLines: number;
+  totalBytes: number;
+
+  minLines: number;
+  minTotalBytes: number;
+  maxKeptLines: number;
+}): BashOutputCompactionDecision {
+  assert(params, "params is required");
+  assert(
+    typeof params.toolName === "string" && params.toolName.length > 0,
+    "toolName must be a non-empty string"
+  );
+  assert(typeof params.script === "string", "script must be a string");
+  assert(
+    Number.isInteger(params.totalLines) && params.totalLines >= 0,
+    "totalLines must be a non-negative integer"
+  );
+  assert(
+    Number.isInteger(params.totalBytes) && params.totalBytes >= 0,
+    "totalBytes must be a non-negative integer"
+  );
+  assert(Number.isInteger(params.minLines) && params.minLines >= 0, "minLines must be >= 0");
+  assert(
+    Number.isInteger(params.minTotalBytes) && params.minTotalBytes >= 0,
+    "minTotalBytes must be >= 0"
+  );
+  assert(
+    Number.isInteger(params.maxKeptLines) && params.maxKeptLines > 0,
+    "maxKeptLines must be a positive integer"
+  );
+
+  const triggeredByLines = params.totalLines > params.minLines;
+  const triggeredByBytes = params.totalBytes > params.minTotalBytes;
+
+  let intent: BashOutputIntent = "unknown";
+  let alreadyTargeted = false;
+  let effectiveMaxKeptLines = params.maxKeptLines;
+
+  if (!triggeredByLines && !triggeredByBytes) {
+    return {
+      shouldCompact: false,
+      skipReason: "below_threshold",
+      triggeredByLines,
+      triggeredByBytes,
+      alreadyTargeted,
+      intent,
+      effectiveMaxKeptLines,
+    };
+  }
+
+  if (params.toolName === "bash") {
+    alreadyTargeted = isBashOutputAlreadyTargeted(params.script);
+    intent = classifyBashIntent({ script: params.script, displayName: params.displayName });
+
+    if (alreadyTargeted) {
+      return {
+        shouldCompact: false,
+        skipReason: "already_targeted_script",
+        triggeredByLines,
+        triggeredByBytes,
+        alreadyTargeted,
+        intent,
+        effectiveMaxKeptLines,
+      };
+    }
+
+    const defaultMinLines =
+      SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default;
+    const defaultMinTotalBytes =
+      SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default;
+    const defaultMaxKeptLines =
+      SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default;
+
+    // If a user has customized compaction settings, respect those limits even for exploration output.
+    const isDefaultCompactionConfig =
+      params.minLines === defaultMinLines &&
+      params.minTotalBytes === defaultMinTotalBytes &&
+      params.maxKeptLines === defaultMaxKeptLines;
+
+    if (
+      intent === "exploration" &&
+      params.totalLines <= EXPLORATION_SKIP_MAX_LINES &&
+      params.totalBytes <= EXPLORATION_SKIP_MAX_BYTES
+    ) {
+      // Skip the System1 call only when compaction settings are at their defaults. This avoids
+      // bypassing explicit user limits (e.g. when they've lowered max-kept-lines or forced compaction).
+      if (isDefaultCompactionConfig) {
+        return {
+          shouldCompact: false,
+          skipReason: "exploration_output_small",
+          triggeredByLines,
+          triggeredByBytes,
+          alreadyTargeted,
+          intent,
+          effectiveMaxKeptLines,
+        };
+      }
+    }
+
+    // Guardrail: only override when the caller still uses the default budget and thresholds.
+    if (intent === "exploration" && isDefaultCompactionConfig) {
+      effectiveMaxKeptLines = Math.min(
+        BASH_HARD_MAX_LINES,
+        Math.max(params.maxKeptLines, EXPLORATION_BOOST_MAX_KEPT_LINES)
+      );
+    }
+  }
+
+  assert(
+    Number.isInteger(effectiveMaxKeptLines) && effectiveMaxKeptLines > 0,
+    "effectiveMaxKeptLines must be a positive integer"
+  );
+
+  return {
+    shouldCompact: true,
+    triggeredByLines,
+    triggeredByBytes,
+    alreadyTargeted,
+    intent,
+    effectiveMaxKeptLines,
+  };
+}

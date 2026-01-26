@@ -15,6 +15,7 @@ import {
   getHeuristicKeepRangesForBashOutput,
   splitBashOutputLines,
 } from "@/node/services/system1/bashOutputFiltering";
+import { decideBashOutputCompaction } from "@/node/services/system1/bashCompactionPolicy";
 import { runSystem1KeepRangesForBashOutput } from "@/node/services/system1/system1AgentRunner";
 import {
   formatBashOutputReport,
@@ -2155,6 +2156,7 @@ export class AIService extends EventEmitter {
                 toolName: string;
                 output: string;
                 script: string;
+                displayName?: string;
                 toolCallId?: string;
                 abortSignal?: AbortSignal;
               }): Promise<{ filteredOutput: string; notice: string } | undefined> => {
@@ -2171,7 +2173,7 @@ export class AIService extends EventEmitter {
                   const minTotalBytes =
                     taskSettings.bashOutputCompactionMinTotalBytes ??
                     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinTotalBytes.default;
-                  const maxKeptLines =
+                  const userMaxKeptLines =
                     taskSettings.bashOutputCompactionMaxKeptLines ??
                     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default;
                   const heuristicFallbackEnabled =
@@ -2185,22 +2187,62 @@ export class AIService extends EventEmitter {
 
                   const lines = splitBashOutputLines(params.output);
                   const bytes = Buffer.byteLength(params.output, "utf-8");
-                  const triggeredByLines = lines.length > minLines;
-                  const triggeredByBytes = bytes > minTotalBytes;
+
+                  const decision = decideBashOutputCompaction({
+                    toolName: params.toolName,
+                    script: params.script,
+                    displayName: params.displayName,
+                    totalLines: lines.length,
+                    totalBytes: bytes,
+                    minLines,
+                    minTotalBytes,
+                    maxKeptLines: userMaxKeptLines,
+                  });
+
+                  const triggeredByLines = decision.triggeredByLines;
+                  const triggeredByBytes = decision.triggeredByBytes;
 
                   if (!triggeredByLines && !triggeredByBytes) {
                     return undefined;
                   }
 
+                  if (!decision.shouldCompact) {
+                    log.debug("[system1] Skipping bash output compaction", {
+                      workspaceId,
+                      toolName: params.toolName,
+                      skipReason: decision.skipReason,
+                      intent: decision.intent,
+                      alreadyTargeted: decision.alreadyTargeted,
+                      displayName: params.displayName,
+                      totalLines: lines.length,
+                      totalBytes: bytes,
+                      triggeredByLines,
+                      triggeredByBytes,
+                      minLines,
+                      minTotalBytes,
+                      userMaxKeptLines,
+                      heuristicFallbackEnabled,
+                      timeoutMs,
+                    });
+
+                    return undefined;
+                  }
+
+                  const maxKeptLines = decision.effectiveMaxKeptLines;
+
                   log.debug("[system1] Bash output compaction triggered", {
                     workspaceId,
                     toolName: params.toolName,
+                    intent: decision.intent,
+                    alreadyTargeted: decision.alreadyTargeted,
+                    displayName: params.displayName,
                     totalLines: lines.length,
                     totalBytes: bytes,
                     triggeredByLines,
                     triggeredByBytes,
                     minLines,
                     minTotalBytes,
+                    userMaxKeptLines,
                     maxKeptLines,
                     heuristicFallbackEnabled,
                     timeoutMs,
@@ -2271,6 +2313,7 @@ export class AIService extends EventEmitter {
                       model: system1.model,
                       modelString: system1.modelString,
                       providerOptions: system1ProviderOptions,
+                      displayName: params.displayName,
                       script: params.script,
                       numberedOutput,
                       maxKeptLines,
@@ -2359,6 +2402,11 @@ export class AIService extends EventEmitter {
                   log.debug("[system1] Filtered bash tool output", {
                     workspaceId,
                     toolName: params.toolName,
+                    intent: decision.intent,
+                    alreadyTargeted: decision.alreadyTargeted,
+                    displayName: params.displayName,
+                    userMaxKeptLines,
+                    maxKeptLines,
                     system1Model: system1.modelString,
                     filterMethod,
                     keepRangesCount,
@@ -2413,6 +2461,12 @@ export class AIService extends EventEmitter {
                     return result;
                   }
 
+                  const displayName =
+                    typeof (args as { display_name?: unknown } | undefined)?.display_name ===
+                    "string"
+                      ? String((args as { display_name?: unknown }).display_name).trim() ||
+                        undefined
+                      : undefined;
                   const script =
                     typeof (args as { script?: unknown } | undefined)?.script === "string"
                       ? String((args as { script?: unknown }).script)
@@ -2428,6 +2482,7 @@ export class AIService extends EventEmitter {
                     toolName: "bash",
                     output,
                     script,
+                    displayName,
                     toolCallId,
                     abortSignal: (options as { abortSignal?: AbortSignal } | undefined)
                       ?.abortSignal,
