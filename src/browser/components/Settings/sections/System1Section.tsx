@@ -23,6 +23,7 @@ import {
 import {
   DEFAULT_TASK_SETTINGS,
   SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
+  SYSTEM1_MEMORY_WRITER_LIMITS,
   normalizeTaskSettings,
   type TaskSettings,
 } from "@/common/types/tasks";
@@ -272,6 +273,15 @@ export function System1Section() {
       })
     );
   };
+  const setMemoryWriterIntervalMessages = (rawValue: string) => {
+    const parsed = Number(rawValue);
+    setTaskSettings((prev) =>
+      normalizeTaskSettings({
+        ...prev,
+        memoryWriterIntervalMessages: parsed,
+      })
+    );
+  };
 
   if (!loaded || providersLoading || !providersConfig) {
     return (
@@ -304,6 +314,10 @@ export function System1Section() {
 
   const bashOutputCompactionMinTotalKb = Math.floor(bashOutputCompactionMinTotalBytes / 1024);
   const bashOutputCompactionTimeoutSeconds = Math.floor(bashOutputCompactionTimeoutMs / 1000);
+
+  const memoryWriterIntervalMessages =
+    taskSettings.memoryWriterIntervalMessages ??
+    SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.default;
 
   return (
     <div className="space-y-6">
@@ -355,6 +369,33 @@ export function System1Section() {
         </div>
       </div>
 
+      {/* Memories */}
+      <div>
+        <h3 className="text-foreground mb-4 text-sm font-medium">Memories</h3>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Write Interval (messages)</div>
+              <div className="text-muted text-xs">
+                Run the background memory writer every N assistant messages. Range{" "}
+                {SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.min}–
+                {SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.max}.
+              </div>
+            </div>
+            <Input
+              type="number"
+              value={memoryWriterIntervalMessages}
+              min={SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.min}
+              max={SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.max}
+              step={1}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setMemoryWriterIntervalMessages(e.target.value)
+              }
+              className="border-border-medium bg-background-secondary h-9 w-28"
+            />
+          </div>
+        </div>
+      </div>
       {/* Bash output compaction */}
       <div>
         <h3 className="text-foreground mb-4 text-sm font-medium">Bash Output Compaction</h3>
@@ -481,6 +522,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
     a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
     a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
     a.bashOutputCompactionTimeoutMs === b.bashOutputCompactionTimeoutMs &&
-    a.bashOutputCompactionHeuristicFallback === b.bashOutputCompactionHeuristicFallback
+    a.bashOutputCompactionHeuristicFallback === b.bashOutputCompactionHeuristicFallback &&
+    a.memoryWriterIntervalMessages === b.memoryWriterIntervalMessages
   );
 }

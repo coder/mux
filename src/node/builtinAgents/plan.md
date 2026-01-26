@@ -11,6 +11,12 @@ tools:
     # Use tools.remove in child agents to restrict specific tools
     - .*
   # Note: file_edit_* tools ARE available but restricted to plan file only at runtime
+  remove:
+    # Internal-only tools
+    - system1_keep_ranges
+    - memory_read
+    - memory_write
+
   # Note: task tools ARE enabled - Plan delegates to Explore sub-agents
 ---
 
