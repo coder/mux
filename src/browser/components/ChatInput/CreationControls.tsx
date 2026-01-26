@@ -161,13 +161,14 @@ function SectionPicker(props: SectionPickerProps) {
 }
 
 function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
-  const availabilityMap =
-    props.runtimeAvailabilityState?.status === "loaded"
-      ? props.runtimeAvailabilityState.data
-      : null;
+  const state = props.runtimeAvailabilityState;
+  const availabilityMap = state?.status === "loaded" ? state.data : null;
+
+  // Hide only during loading (prevents flash), show on failed (allows fallback selection)
   const hideDevcontainer =
-    availabilityMap?.devcontainer?.available === false &&
-    availabilityMap.devcontainer.reason === "No devcontainer.json found";
+    state?.status === "loading" ||
+    (availabilityMap?.devcontainer?.available === false &&
+      availabilityMap.devcontainer.reason === "No devcontainer.json found");
 
   const runtimeOptions = hideDevcontainer
     ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
