@@ -19,6 +19,7 @@ import { Button } from "../ui/button";
 import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
+import { createMuxMessage } from "@/common/types/message";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { cn } from "@/common/lib/utils";
 import { useAPI } from "@/browser/contexts/API";
@@ -131,7 +132,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
   const [isImplementing, setIsImplementing] = useState(false);
+  const [implementReplacesChatHistory, setImplementReplacesChatHistory] = useState(false);
   const isImplementingRef = useRef(false);
+  const isMountedRef = useRef(true);
   const { api } = useAPI();
   const openInEditor = useOpenInEditor();
   const workspaceContext = useOptionalWorkspaceContext();
@@ -156,6 +159,37 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
   const [freshContent, setFreshContent] = useState<string | null>(cached?.content ?? null);
   const [freshPath, setFreshPath] = useState<string | null>(cached?.path ?? null);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!api) return;
+    if (isEphemeralPreview) return;
+    if (!isLatest) return;
+    if (status !== "completed") return;
+
+    let cancelled = false;
+
+    void api.config
+      .getConfig()
+      .then((cfg) => {
+        if (cancelled) return;
+        setImplementReplacesChatHistory(
+          cfg.taskSettings.proposePlanImplementReplacesChatHistory ?? false
+        );
+      })
+      .catch(() => {
+        // Ignore failures (we'll default to old behavior).
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, isEphemeralPreview, isLatest, status]);
 
   // Fetch fresh plan content for the latest plan
   // Re-fetches on mount, when window regains focus, and when tool completes
@@ -256,29 +290,70 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     sourceAgentId: "plan",
   });
 
-  const handleImplement = () => {
+  const handleImplement = async () => {
     if (!workspaceId || !api) return;
     if (isImplementingRef.current) return;
 
     isImplementingRef.current = true;
-    setIsImplementing(true);
+    if (isMountedRef.current) {
+      setIsImplementing(true);
+    }
 
-    // Switch to exec before sending so send options (agentId/mode) match.
-    updatePersistedState(getAgentIdKey(workspaceId), "exec");
+    try {
+      let shouldReplaceChatHistory = false;
 
-    api.workspace
-      .sendMessage({
+      try {
+        const cfg = await api.config.getConfig();
+        shouldReplaceChatHistory =
+          cfg.taskSettings.proposePlanImplementReplacesChatHistory ?? false;
+      } catch {
+        // Ignore config read errors (we'll default to old behavior).
+      }
+
+      if (shouldReplaceChatHistory) {
+        try {
+          const summaryMessage = createMuxMessage(
+            `start-here-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            "assistant",
+            startHereContent,
+            {
+              timestamp: Date.now(),
+              compacted: "user",
+              // Preserve the source agent so exec can detect a plan→exec transition.
+              agentId: "plan",
+            }
+          );
+
+          const result = await api.workspace.replaceChatHistory({
+            workspaceId,
+            summaryMessage,
+            deletePlanFile: false,
+          });
+
+          if (!result.success) {
+            console.error("Failed to replace chat history before implementing:", result.error);
+          }
+        } catch (err) {
+          console.error("Failed to replace chat history before implementing:", err);
+        }
+      }
+
+      // Switch to exec before sending so send options (agentId/mode) match.
+      updatePersistedState(getAgentIdKey(workspaceId), "exec");
+
+      await api.workspace.sendMessage({
         workspaceId,
         message: "Implement the plan",
         options: buildSendMessageOptions(workspaceId),
-      })
-      .catch(() => {
-        // Best-effort: user can retry manually if sending fails.
-      })
-      .finally(() => {
-        isImplementingRef.current = false;
-        setIsImplementing(false);
       });
+    } catch {
+      // Best-effort: user can retry manually if sending fails.
+    } finally {
+      isImplementingRef.current = false;
+      if (isMountedRef.current) {
+        setIsImplementing(false);
+      }
+    }
   };
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
@@ -352,10 +427,12 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     if (status === "completed" && !errorMessage && isLatest) {
       actionButtons.push({
         label: "Implement",
-        onClick: handleImplement,
+        onClick: () => void handleImplement(),
         disabled: !api || isImplementing,
         icon: <Play />,
-        tooltip: "Switch to Exec and start implementing",
+        tooltip: implementReplacesChatHistory
+          ? "Replace chat history with this plan, switch to Exec, and start implementing"
+          : "Switch to Exec and start implementing",
       });
     }
   }

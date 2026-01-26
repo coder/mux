@@ -3,6 +3,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { Input } from "@/browser/components/ui/input";
+import { Switch } from "@/browser/components/ui/switch";
 import { ModelSelector } from "@/browser/components/ModelSelector";
 import {
   Select,
@@ -195,6 +196,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
   return (
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
     a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
+    a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
     a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
     a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
     a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
@@ -432,6 +434,12 @@ export function TasksSection() {
   const setMaxTaskNestingDepth = (rawValue: string) => {
     const parsed = Number(rawValue);
     setTaskSettings((prev) => normalizeTaskSettings({ ...prev, maxTaskNestingDepth: parsed }));
+  };
+
+  const setProposePlanImplementReplacesChatHistory = (value: boolean) => {
+    setTaskSettings((prev) =>
+      normalizeTaskSettings({ ...prev, proposePlanImplementReplacesChatHistory: value })
+    );
   };
 
   const setAgentModel = (agentId: string, value: string) => {
@@ -715,6 +723,21 @@ export function TasksSection() {
                 setMaxTaskNestingDepth(e.target.value)
               }
               className="border-border-medium bg-background-secondary h-9 w-28"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Plan: Implement replaces chat history</div>
+              <div className="text-muted text-xs">
+                When enabled, clicking Implement in a propose_plan message clears the chat to the
+                plan before switching to Exec.
+              </div>
+            </div>
+            <Switch
+              checked={taskSettings.proposePlanImplementReplacesChatHistory ?? false}
+              onCheckedChange={setProposePlanImplementReplacesChatHistory}
+              aria-label="Toggle plan Implement replaces chat history"
             />
           </div>
         </div>

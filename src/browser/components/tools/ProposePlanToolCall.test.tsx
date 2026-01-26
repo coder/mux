@@ -21,9 +21,29 @@ type GetPlanContentResult =
   | { success: true; data: { content: string; path: string } }
   | { success: false; error: string };
 
+type ResultVoid = { success: true; data: undefined } | { success: false; error: string };
+
+interface GetConfigResult {
+  taskSettings: {
+    maxParallelAgentTasks: number;
+    maxTaskNestingDepth: number;
+    proposePlanImplementReplacesChatHistory?: boolean;
+  };
+  agentAiDefaults: Record<string, unknown>;
+  subagentAiDefaults: Record<string, unknown>;
+}
+
 interface MockApi {
+  config: {
+    getConfig: () => Promise<GetConfigResult>;
+  };
   workspace: {
     getPlanContent: () => Promise<GetPlanContentResult>;
+    replaceChatHistory: (args: {
+      workspaceId: string;
+      summaryMessage: unknown;
+      deletePlanFile?: boolean;
+    }) => Promise<ResultVoid>;
     sendMessage: (args: SendMessageArgs) => Promise<{ success: true; data: undefined }>;
   };
 }
@@ -42,7 +62,7 @@ const useStartHereMock = mock(
     workspaceId: string | undefined,
     content: string,
     isCompacted: boolean,
-    options?: { deletePlanFile?: boolean; sourceMode?: string }
+    options?: { deletePlanFile?: boolean; sourceAgentId?: string }
   ) => {
     startHereCalls.push({ workspaceId, content, isCompacted, options });
     return {
@@ -139,12 +159,21 @@ describe("ProposePlanToolCall", () => {
     const sendMessageCalls: SendMessageArgs[] = [];
 
     mockApi = {
+      config: {
+        getConfig: () =>
+          Promise.resolve({
+            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+            agentAiDefaults: {},
+            subagentAiDefaults: {},
+          }),
+      },
       workspace: {
         getPlanContent: () =>
           Promise.resolve({
             success: true,
             data: { content: "# My Plan\n\nDo the thing.", path: planPath },
           }),
+        replaceChatHistory: (_args) => Promise.resolve({ success: true, data: undefined }),
         sendMessage: (args: SendMessageArgs) => {
           sendMessageCalls.push(args);
           return Promise.resolve({ success: true, data: undefined });
@@ -185,5 +214,89 @@ describe("ProposePlanToolCall", () => {
     } else {
       expect(JSON.parse(window.localStorage.getItem(agentKey)!)).toBe("exec");
     }
+  });
+
+  test("replaces chat history before implementing when setting enabled", async () => {
+    const workspaceId = "ws-123";
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    // Start in plan mode.
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
+
+    const calls: Array<"replaceChatHistory" | "sendMessage"> = [];
+    const replaceChatHistoryCalls: Array<{
+      workspaceId: string;
+      summaryMessage: unknown;
+      deletePlanFile?: boolean;
+    }> = [];
+    const sendMessageCalls: SendMessageArgs[] = [];
+
+    mockApi = {
+      config: {
+        getConfig: () =>
+          Promise.resolve({
+            taskSettings: {
+              maxParallelAgentTasks: 3,
+              maxTaskNestingDepth: 3,
+              proposePlanImplementReplacesChatHistory: true,
+            },
+            agentAiDefaults: {},
+            subagentAiDefaults: {},
+          }),
+      },
+      workspace: {
+        getPlanContent: () =>
+          Promise.resolve({
+            success: true,
+            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
+          }),
+        replaceChatHistory: (args) => {
+          calls.push("replaceChatHistory");
+          replaceChatHistoryCalls.push(args);
+          return Promise.resolve({ success: true, data: undefined });
+        },
+        sendMessage: (args: SendMessageArgs) => {
+          calls.push("sendMessage");
+          sendMessageCalls.push(args);
+          return Promise.resolve({ success: true, data: undefined });
+        },
+      },
+    };
+
+    const view = render(
+      <TooltipProvider>
+        <ProposePlanToolCall
+          args={{}}
+          status="completed"
+          result={{
+            success: true,
+            planPath,
+            planContent: "# My Plan\n\nDo the thing.",
+          }}
+          workspaceId={workspaceId}
+          isLatest={true}
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Implement" }));
+
+    await waitFor(() => expect(sendMessageCalls.length).toBe(1));
+    expect(replaceChatHistoryCalls.length).toBe(1);
+    expect(calls).toEqual(["replaceChatHistory", "sendMessage"]);
+
+    const replaceArgs = replaceChatHistoryCalls[0];
+    expect(replaceArgs?.deletePlanFile).toBe(false);
+
+    const summaryMessage = replaceArgs?.summaryMessage as {
+      role?: string;
+      metadata?: { agentId?: string };
+      parts?: Array<{ type?: string; text?: string }>;
+    };
+
+    expect(summaryMessage.role).toBe("assistant");
+    expect(summaryMessage.metadata?.agentId).toBe("plan");
+    expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
+    expect(summaryMessage.parts?.[0]?.text).toContain(planPath);
   });
 });

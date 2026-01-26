@@ -5,6 +5,12 @@ export interface TaskSettings {
   maxParallelAgentTasks: number;
   maxTaskNestingDepth: number;
 
+  /**
+   * When enabled, clicking "Implement" in propose_plan first replaces chat history with the plan
+   * (same behavior as "Start Here").
+   */
+  proposePlanImplementReplacesChatHistory?: boolean;
+
   // System 1: bash output compaction (log filtering)
   bashOutputCompactionMinLines?: number;
   bashOutputCompactionMinTotalBytes?: number;
@@ -28,6 +34,7 @@ export const SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS = {
 export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
+  proposePlanImplementReplacesChatHistory: false,
 
   bashOutputCompactionMinLines:
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
@@ -104,6 +111,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
     TASK_SETTINGS_LIMITS.maxTaskNestingDepth.max
   );
 
+  const proposePlanImplementReplacesChatHistory =
+    typeof record.proposePlanImplementReplacesChatHistory === "boolean"
+      ? record.proposePlanImplementReplacesChatHistory
+      : (DEFAULT_TASK_SETTINGS.proposePlanImplementReplacesChatHistory ?? false);
+
   const bashOutputCompactionMinLines = clampInt(
     record.bashOutputCompactionMinLines,
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default,
@@ -138,6 +150,7 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   const result: TaskSettings = {
     maxParallelAgentTasks,
     maxTaskNestingDepth,
+    proposePlanImplementReplacesChatHistory,
     bashOutputCompactionMinLines,
     bashOutputCompactionMinTotalBytes,
     bashOutputCompactionMaxKeptLines,
@@ -152,6 +165,11 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
   assert(
     Number.isInteger(maxTaskNestingDepth),
     "normalizeTaskSettings: maxTaskNestingDepth must be an integer"
+  );
+
+  assert(
+    typeof proposePlanImplementReplacesChatHistory === "boolean",
+    "normalizeTaskSettings: proposePlanImplementReplacesChatHistory must be a boolean"
   );
 
   assert(

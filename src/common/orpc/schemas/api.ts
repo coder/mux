@@ -951,6 +951,7 @@ export const config = {
       taskSettings: z.object({
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
+        proposePlanImplementReplacesChatHistory: z.boolean().optional(),
         bashOutputCompactionMinLines: z.number().int().optional(),
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
@@ -969,6 +970,7 @@ export const config = {
       taskSettings: z.object({
         maxParallelAgentTasks: z.number().int(),
         maxTaskNestingDepth: z.number().int(),
+        proposePlanImplementReplacesChatHistory: z.boolean().optional(),
         bashOutputCompactionMinLines: z.number().int().optional(),
         bashOutputCompactionMinTotalBytes: z.number().int().optional(),
         bashOutputCompactionMaxKeptLines: z.number().int().optional(),
