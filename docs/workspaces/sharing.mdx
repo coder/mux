@@ -28,6 +28,9 @@ Mux looks for a signing key in these locations (first match wins):
 2. `~/.ssh/id_ed25519` — standard SSH Ed25519 key
 3. `~/.ssh/id_ecdsa` — standard SSH ECDSA key
 
+Mux can also sign using keys loaded in your SSH agent when `SSH_AUTH_SOCK` is set (for example,
+1Password's SSH agent). Agent-backed keys are preferred over the default `~/.ssh/id_*` files.
+
 <Tip>
   To reuse an existing key without copying it:
 
@@ -42,7 +45,7 @@ ln -s ~/.ssh/id_ed25519 ~/.mux/message_signing_key
 - **Ed25519** (recommended) — fast, secure, 32-byte keys
 - **ECDSA** — P-256, P-384, and P-521 curves supported
 
-Encrypted keys (passphrase-protected) are skipped automatically.
+Encrypted key files (passphrase-protected) are skipped automatically unless the key is available via ssh-agent.
 
 ### GitHub identity detection
 
@@ -61,7 +64,7 @@ If you're logged in with `gh auth login`, your GitHub username appears on mux.md
 
 ### Enabling/disabling signing
 
-Click the pen icon (✏️) in the share popover to toggle signing on or off. This setting persists across sessions.
+Click the pen icon in the share popover to toggle signing on or off. This setting persists across sessions.
 
 When signing is disabled (or no key is found), shares are still encrypted—they just won’t include a signature.
 

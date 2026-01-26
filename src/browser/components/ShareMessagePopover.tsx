@@ -31,7 +31,7 @@ import {
   uploadToMuxMd,
   deleteFromMuxMd,
   updateMuxMdExpiration,
-  type SignOptions,
+  type SignatureEnvelope,
 } from "@/common/lib/muxMd";
 import {
   getShareData,
@@ -153,7 +153,8 @@ const SigningBadge = ({
       {/* Encrypted key warning message */}
       {!hasKey && hasEncryptedKey && (
         <p className="text-muted-foreground text-[10px]">
-          Create an unencrypted key at ~/.mux/message_signing_key or use ssh-add
+          Use an unencrypted key file, or ensure your SSH agent (e.g. 1Password) is running and
+          SSH_AUTH_SOCK is set
           {onRetryKeyDetection && (
             <>
               {" · "}
@@ -400,22 +401,13 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       const ms = expirationToMs(preferred);
       const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
 
-      // Get sign credentials when key is available and signing is enabled
-      let sign: SignOptions | undefined;
+      // Request a mux.md signature envelope from the backend when signing is enabled.
+      let signature: SignatureEnvelope | undefined;
       if (signingEnabled && signingCapabilities?.publicKey && api) {
         try {
-          const creds = await api.signing.getSignCredentials({});
-          // Decode base64 private key bytes
-          const privateKeyBytes = Uint8Array.from(atob(creds.privateKeyBase64), (c) =>
-            c.charCodeAt(0)
-          );
-          sign = {
-            privateKey: privateKeyBytes,
-            publicKey: creds.publicKey,
-            githubUser: creds.githubUser ?? undefined,
-          };
+          signature = await api.signing.signMessage({ content });
         } catch (signErr) {
-          console.warn("Failed to get signing credentials, uploading without signature:", signErr);
+          console.warn("Failed to sign share content, uploading without signature:", signErr);
           // Continue without signature - don't fail the upload
         }
       }
@@ -429,7 +421,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           model,
           thinking,
         },
-        { expiresAt, sign }
+        { expiresAt, signature }
       );
 
       const data: ShareData = {
@@ -438,7 +430,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         mutateKey: result.mutateKey,
         expiresAt: result.expiresAt,
         cachedAt: Date.now(),
-        signed: Boolean(sign),
+        signed: Boolean(signature),
       };
 
       // Cache the share data
@@ -530,19 +522,11 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         await deleteFromMuxMd(shareData.id, shareData.mutateKey);
         removeShareData(content);
 
-        // Get sign credentials if signing is now enabled
-        let sign: SignOptions | undefined;
+        // Request a mux.md signature envelope from the backend if signing is now enabled.
+        let signature: SignatureEnvelope | undefined;
         if (newSigningEnabled && signingCapabilities?.publicKey && api) {
           try {
-            const creds = await api.signing.getSignCredentials({});
-            const privateKeyBytes = Uint8Array.from(atob(creds.privateKeyBase64), (c) =>
-              c.charCodeAt(0)
-            );
-            sign = {
-              privateKey: privateKeyBytes,
-              publicKey: creds.publicKey,
-              githubUser: creds.githubUser ?? undefined,
-            };
+            signature = await api.signing.signMessage({ content });
           } catch {
             // Continue without signature
           }
@@ -562,7 +546,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
             model,
             thinking,
           },
-          { expiresAt, sign }
+          { expiresAt, signature }
         );
 
         const data: ShareData = {
@@ -571,7 +555,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           mutateKey: result.mutateKey,
           expiresAt: result.expiresAt,
           cachedAt: Date.now(),
-          signed: Boolean(sign),
+          signed: Boolean(signature),
         };
 
         setShareData(content, data);
