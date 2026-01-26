@@ -301,6 +301,9 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       )}
                       {/* ChatInput for workspace creation - includes section selector */}
                       <ChatInput
+                        // Key by draft so switching drafts fully resets ephemeral UI state (and avoids
+                        // draft A's "creating workspace" overlay leaking into draft B).
+                        key={pendingDraftId ?? "__pending__"}
                         variant="creation"
                         projectPath={projectPath}
                         projectName={projectName}
