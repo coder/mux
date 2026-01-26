@@ -443,6 +443,36 @@ export class WorkspaceService extends EventEmitter {
     this.sessions.delete(trimmed);
   }
 
+  private async getPersistedPostCompactionDiffPaths(workspaceId: string): Promise<string[] | null> {
+    const postCompactionPath = path.join(
+      this.config.getSessionDir(workspaceId),
+      "post-compaction.json"
+    );
+
+    try {
+      const raw = await fsPromises.readFile(postCompactionPath, "utf-8");
+      const parsed: unknown = JSON.parse(raw);
+      const diffsRaw = (parsed as { diffs?: unknown }).diffs;
+      if (!Array.isArray(diffsRaw)) {
+        return null;
+      }
+
+      const result: string[] = [];
+      for (const diff of diffsRaw) {
+        if (!diff || typeof diff !== "object") continue;
+        const p = (diff as { path?: unknown }).path;
+        if (typeof p !== "string") continue;
+        const trimmed = p.trim();
+        if (trimmed.length === 0) continue;
+        result.push(trimmed);
+      }
+
+      return result;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Get post-compaction context state for a workspace.
    * Returns info about what will be injected after compaction.
@@ -499,6 +529,17 @@ export class WorkspaceService extends EventEmitter {
     if (pendingPaths) {
       // Filter out both new and legacy plan file paths
       const trackedFilePaths = pendingPaths.filter((p) => !isPlanPath(p));
+      return {
+        planPath: activePlanPath,
+        trackedFilePaths,
+        excludedItems: exclusions.excludedItems,
+      };
+    }
+
+    // Fallback (crash-safe): if a post-compaction snapshot exists on disk, use it.
+    const persistedPaths = await this.getPersistedPostCompactionDiffPaths(workspaceId);
+    if (persistedPaths !== null) {
+      const trackedFilePaths = persistedPaths.filter((p) => !isPlanPath(p));
       return {
         planPath: activePlanPath,
         trackedFilePaths,
@@ -1727,25 +1768,8 @@ export class WorkspaceService extends EventEmitter {
       // - If userOverridable && frontend provides a value (explicit override) → use frontend value
       // - Else if remote evaluation enabled → use PostHog assignment
       // - Else → use frontend value (dev fallback) or default
-      const postCompactionExperiment = EXPERIMENTS[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT];
-      const postCompactionFrontendValue = options?.experiments?.postCompactionContext;
-
       const system1Experiment = EXPERIMENTS[EXPERIMENT_IDS.SYSTEM_1];
       const system1FrontendValue = options?.experiments?.system1;
-
-      let postCompactionContextEnabled: boolean | undefined;
-      if (postCompactionExperiment.userOverridable && postCompactionFrontendValue !== undefined) {
-        // User-overridable: trust frontend value (user's explicit choice)
-        postCompactionContextEnabled = postCompactionFrontendValue;
-      } else if (this.experimentsService?.isRemoteEvaluationEnabled() === true) {
-        // Remote evaluation: use PostHog assignment
-        postCompactionContextEnabled = this.experimentsService.isExperimentEnabled(
-          EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
-        );
-      } else {
-        // Fallback to frontend value (dev mode or telemetry disabled)
-        postCompactionContextEnabled = postCompactionFrontendValue;
-      }
 
       let system1Enabled: boolean | undefined;
       if (system1Experiment.userOverridable && system1FrontendValue !== undefined) {
@@ -1760,9 +1784,6 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const resolvedExperiments: Record<string, boolean> = {};
-      if (postCompactionContextEnabled !== undefined) {
-        resolvedExperiments.postCompactionContext = postCompactionContextEnabled;
-      }
       if (system1Enabled !== undefined) {
         resolvedExperiments.system1 = system1Enabled;
       }

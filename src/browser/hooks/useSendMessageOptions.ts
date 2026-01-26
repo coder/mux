@@ -36,7 +36,6 @@ function applyGatewayTransform(modelId: string, gateway: GatewayState): string {
 }
 
 interface ExperimentValues {
-  postCompactionContext: boolean | undefined;
   programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
   system1: boolean | undefined;
@@ -93,7 +92,6 @@ function constructSendMessageOptions(
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
     experiments: {
-      postCompactionContext: experimentValues.postCompactionContext,
       programmaticToolCalling: experimentValues.programmaticToolCalling,
       programmaticToolCallingExclusive: experimentValues.programmaticToolCallingExclusive,
       system1: experimentValues.system1,
@@ -139,7 +137,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
 
   // Subscribe to local override state so toggles apply immediately.
   // If undefined, the backend will apply the PostHog assignment.
-  const postCompactionContext = useExperimentOverrideValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
   const programmaticToolCalling = useExperimentOverrideValue(
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING
   );
@@ -177,7 +174,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     providerOptions,
     defaultModel,
     gateway,
-    { postCompactionContext, programmaticToolCalling, programmaticToolCallingExclusive, system1 },
+    { programmaticToolCalling, programmaticToolCallingExclusive, system1 },
     system1Model,
     system1ThinkingLevel
   );

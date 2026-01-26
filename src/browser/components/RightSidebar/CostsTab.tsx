@@ -22,8 +22,6 @@ import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSett
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
-import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 
 /**
@@ -59,8 +57,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
 
-  // Post-compaction context state for UI display (gated by experiment)
-  const postCompactionEnabled = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+  // Post-compaction context state for UI display
   const postCompactionState = usePostCompactionState(workspaceId);
 
   // Get runtimeConfig for SSH-aware editor opening
@@ -136,16 +133,14 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               );
             })()}
           </div>
-          {postCompactionEnabled && (
-            <PostCompactionSection
-              workspaceId={workspaceId}
-              planPath={postCompactionState.planPath}
-              trackedFilePaths={postCompactionState.trackedFilePaths}
-              excludedItems={postCompactionState.excludedItems}
-              onToggleExclusion={postCompactionState.toggleExclusion}
-              runtimeConfig={runtimeConfig}
-            />
-          )}
+          <PostCompactionSection
+            workspaceId={workspaceId}
+            planPath={postCompactionState.planPath}
+            trackedFilePaths={postCompactionState.trackedFilePaths}
+            excludedItems={postCompactionState.excludedItems}
+            onToggleExclusion={postCompactionState.toggleExclusion}
+            runtimeConfig={runtimeConfig}
+          />
         </div>
       )}
 

@@ -7,7 +7,8 @@ import type { ModelMessage, AssistantModelMessage, ToolModelMessage } from "ai";
 import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
-import { renderAttachmentsToContent } from "./attachmentRenderer";
+import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
+import { renderAttachmentsToContentWithBudget } from "./attachmentRenderer";
 
 /**
  * Filter out assistant messages that are empty or only contain reasoning parts.
@@ -318,7 +319,14 @@ export function injectPostCompactionAttachments(
     const syntheticMessage: MuxMessage = {
       id: `post-compaction-${Date.now()}`,
       role: "user",
-      parts: [{ type: "text", text: renderAttachmentsToContent(attachments) }],
+      parts: [
+        {
+          type: "text",
+          text: renderAttachmentsToContentWithBudget(attachments, {
+            maxChars: MAX_POST_COMPACTION_INJECTION_CHARS,
+          }),
+        },
+      ],
       metadata: {
         timestamp: Date.now(),
         synthetic: true,
@@ -331,7 +339,14 @@ export function injectPostCompactionAttachments(
   const syntheticMessage: MuxMessage = {
     id: `post-compaction-${Date.now()}`,
     role: "user",
-    parts: [{ type: "text", text: renderAttachmentsToContent(attachments) }],
+    parts: [
+      {
+        type: "text",
+        text: renderAttachmentsToContentWithBudget(attachments, {
+          maxChars: MAX_POST_COMPACTION_INJECTION_CHARS,
+        }),
+      },
+    ],
     metadata: {
       timestamp: messages[compactionIndex].metadata?.timestamp ?? Date.now(),
       synthetic: true,

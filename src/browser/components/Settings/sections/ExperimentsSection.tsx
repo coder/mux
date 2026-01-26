@@ -23,7 +23,6 @@ import type { ApiServerStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/ui/input";
 import { useAPI } from "@/browser/contexts/API";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
 interface ExperimentRowProps {
@@ -485,7 +484,6 @@ function StatsTabRow() {
 
 export function ExperimentsSection() {
   const allExperiments = getExperimentList();
-  const { refreshWorkspaceMetadata } = useWorkspaceContext();
   const { api } = useAPI();
 
   // Only show user-overridable experiments (non-overridable ones are hidden since users can't change them)
@@ -494,13 +492,6 @@ export function ExperimentsSection() {
       allExperiments.filter((exp) => exp.showInSettings !== false && exp.userOverridable === true),
     [allExperiments]
   );
-
-  // When post-compaction experiment is toggled, refresh metadata to fetch/clear bundled state
-  const handlePostCompactionToggle = useCallback(() => {
-    refreshWorkspaceMetadata().catch(() => {
-      // ignore
-    });
-  }, [refreshWorkspaceMetadata]);
 
   const handleConfigurableBindUrlToggle = useCallback(
     (enabled: boolean) => {
@@ -531,11 +522,9 @@ export function ExperimentsSection() {
               name={exp.name}
               description={exp.description}
               onToggle={
-                exp.id === EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
-                  ? handlePostCompactionToggle
-                  : exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL
-                    ? handleConfigurableBindUrlToggle
-                    : undefined
+                exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL
+                  ? handleConfigurableBindUrlToggle
+                  : undefined
               }
             />
             {exp.id === EXPERIMENT_IDS.CONFIGURABLE_BIND_URL && <ConfigurableBindUrlControls />}

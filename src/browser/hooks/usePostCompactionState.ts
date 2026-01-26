@@ -2,8 +2,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getPostCompactionStateKey } from "@/common/constants/storage";
-import { useExperimentValue } from "@/browser/hooks/useExperiments";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
 interface PostCompactionState {
   planPath: string | null;
@@ -35,12 +33,11 @@ function loadFromCache(wsId: string) {
  * Hook to get post-compaction context state for a workspace.
  * Fetches lazily from the backend API and caches in localStorage.
  * This avoids the expensive runtime.stat calls during workspace.list().
- * Only fetches when the POST_COMPACTION_CONTEXT experiment is enabled.
+ *
+ * Always enabled: post-compaction context is a stable feature (not an experiment).
  */
 export function usePostCompactionState(workspaceId: string): PostCompactionState {
   const { api } = useAPI();
-  const experimentEnabled = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
-
   const [state, setState] = useState(() => loadFromCache(workspaceId));
 
   // Track which workspaceId the current state belongs to.
@@ -51,9 +48,9 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
     setState(loadFromCache(workspaceId));
   }
 
-  // Fetch fresh data when workspaceId changes (only if experiment enabled)
+  // Fetch fresh data when workspaceId changes
   useEffect(() => {
-    if (!api || !experimentEnabled) return;
+    if (!api) return;
 
     let cancelled = false;
     const fetchState = async () => {
@@ -84,11 +81,11 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
     return () => {
       cancelled = true;
     };
-  }, [api, workspaceId, experimentEnabled]);
+  }, [api, workspaceId]);
 
   const toggleExclusion = useCallback(
     async (itemId: string) => {
-      if (!api || !experimentEnabled) return;
+      if (!api) return;
       const isCurrentlyExcluded = state.excludedItems.has(itemId);
       const result = await api.workspace.setPostCompactionExclusion({
         workspaceId,
@@ -117,7 +114,7 @@ export function usePostCompactionState(workspaceId: string): PostCompactionState
         });
       }
     },
-    [api, workspaceId, state.excludedItems, experimentEnabled]
+    [api, workspaceId, state.excludedItems]
   );
 
   return { ...state, toggleExclusion };

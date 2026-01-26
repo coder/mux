@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { CompactionHandler } from "./compactionHandler";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
+import * as fsPromises from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+
 import type { EventEmitter } from "events";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { StreamEndEvent } from "@/common/types/stream";
@@ -121,10 +125,11 @@ describe("CompactionHandler", () => {
   let mockEmitter: EventEmitter;
   let telemetryCapture: ReturnType<typeof mock>;
   let telemetryService: TelemetryService;
+  let sessionDir: string;
   let emittedEvents: EmittedEvent[];
   const workspaceId = "test-workspace";
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const { emitter, events } = createMockEmitter();
     mockEmitter = emitter;
     emittedEvents = events;
@@ -134,14 +139,17 @@ describe("CompactionHandler", () => {
     });
     telemetryService = { capture: telemetryCapture } as unknown as TelemetryService;
 
+    sessionDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-compaction-handler-"));
+
     mockHistoryService = createMockHistoryService();
     mockPartialService = createMockPartialService();
 
     handler = new CompactionHandler({
       workspaceId,
       historyService: mockHistoryService as unknown as HistoryService,
-      telemetryService,
       partialService: mockPartialService as unknown as PartialService,
+      sessionDir,
+      telemetryService,
       emitter: mockEmitter,
     });
   });
@@ -201,6 +209,68 @@ describe("CompactionHandler", () => {
       });
     });
 
+    it("persists pending diffs to disk and reloads them on restart", async () => {
+      const compactionReq = createCompactionRequest();
+
+      const fileEditMessage: MuxMessage = {
+        id: "assistant-edit",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "t1",
+            toolName: "file_edit_replace_string",
+            state: "output-available",
+            input: { file_path: "/tmp/foo.ts" },
+            output: { success: true, diff: "@@ -1 +1 @@\n-foo\n+bar\n" },
+          },
+        ],
+        metadata: { timestamp: 1234 },
+      };
+
+      setupSuccessfulCompaction(mockHistoryService, [fileEditMessage, compactionReq]);
+
+      const event = createStreamEndEvent("Summary");
+      const handled = await handler.handleCompletion(event);
+      expect(handled).toBe(true);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const raw = await fsPromises.readFile(persistedPath, "utf-8");
+      const parsed = JSON.parse(raw) as { version?: unknown; diffs?: unknown };
+      expect(parsed.version).toBe(1);
+
+      const diffs = (parsed as { diffs?: Array<{ path: string; diff: string }> }).diffs;
+      expect(Array.isArray(diffs)).toBe(true);
+      if (Array.isArray(diffs)) {
+        expect(diffs[0]?.path).toBe("/tmp/foo.ts");
+        expect(diffs[0]?.diff).toContain("@@ -1 +1 @@");
+      }
+
+      // Simulate a restart: create a new handler and load from disk.
+      const { emitter: newEmitter } = createMockEmitter();
+      const reloaded = new CompactionHandler({
+        workspaceId,
+        historyService: mockHistoryService as unknown as HistoryService,
+        partialService: mockPartialService as unknown as PartialService,
+        sessionDir,
+        telemetryService,
+        emitter: newEmitter,
+      });
+
+      const pending = await reloaded.peekPendingDiffs();
+      expect(pending).not.toBeNull();
+      expect(pending?.[0]?.path).toBe("/tmp/foo.ts");
+
+      await reloaded.ackPendingDiffsConsumed();
+
+      let exists = true;
+      try {
+        await fsPromises.stat(persistedPath);
+      } catch {
+        exists = false;
+      }
+      expect(exists).toBe(false);
+    });
     it("should return true when successful", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));

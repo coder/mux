@@ -8,8 +8,10 @@ import {
   injectAgentTransition,
   filterEmptyAssistantMessages,
   injectFileChangeNotifications,
+  injectPostCompactionAttachments,
   stripOrphanedToolCalls,
 } from "./modelMessageTransform";
+import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
 import type { MuxMessage } from "@/common/types/message";
 
 describe("modelMessageTransform", () => {
@@ -1554,5 +1556,51 @@ describe("injectFileChangeNotifications", () => {
     expect(text).toContain("src/bar.ts was modified");
     expect(text).toContain("diff1");
     expect(text).toContain("diff2");
+  });
+});
+
+describe("injectPostCompactionAttachments", () => {
+  it("inserts after the compaction summary and enforces a size budget", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "compaction-summary",
+        role: "assistant",
+        parts: [{ type: "text", text: "Compacted summary" }],
+        metadata: { timestamp: 1000, compacted: "user" },
+      },
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+        metadata: { timestamp: 1100 },
+      },
+    ];
+
+    const attachments = [
+      {
+        type: "edited_files_reference" as const,
+        files: [
+          {
+            path: "src/huge.ts",
+            diff: "x".repeat(MAX_POST_COMPACTION_INJECTION_CHARS + 10_000),
+            truncated: false,
+          },
+        ],
+      },
+    ];
+
+    const result = injectPostCompactionAttachments(messages, attachments);
+
+    expect(result).toHaveLength(3);
+    expect(result[0].id).toBe("compaction-summary");
+    expect(result[2].id).toBe("user-1");
+
+    const injected = result[1];
+    expect(injected.role).toBe("user");
+    expect(injected.metadata?.synthetic).toBe(true);
+
+    const text = (injected.parts[0] as { type: "text"; text: string }).text;
+    expect(text.length).toBeLessThanOrEqual(MAX_POST_COMPACTION_INJECTION_CHARS);
+    expect(text).toContain("post-compaction context truncated");
   });
 });

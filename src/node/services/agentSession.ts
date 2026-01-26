@@ -178,6 +178,13 @@ export class AgentSession {
    * Used to enable the cooldown-based attachment injection.
    */
   private compactionOccurred = false;
+
+  /**
+   * When true, clear any persisted post-compaction state after the next successful non-compaction stream.
+   *
+   * This is intentionally delayed until stream-end so a crash mid-stream doesn't lose the diffs.
+   */
+  private ackPendingPostCompactionStateOnStreamEnd = false;
   /**
    * Cache the last-known experiment state so we don't spam metadata refresh
    * when post-compaction context is disabled.
@@ -187,12 +194,31 @@ export class AgentSession {
   /**
    * Active compaction request metadata for retry decisions (cleared on stream end/abort).
    */
+
+  /** Tracks the user message id that initiated the currently active stream (for retry guards). */
+  private activeStreamUserMessageId?: string;
+
+  /** Track user message ids that already retried without post-compaction injection. */
+  private readonly postCompactionRetryAttempts = new Set<string>();
+
+  /** True once we see any model/tool output for the current stream (retry guard). */
+  private activeStreamHadAnyDelta = false;
+
+  /** Tracks whether the current stream included post-compaction attachments. */
+  private activeStreamHadPostCompactionInjection = false;
+
+  /** Context needed to retry the current stream (cleared on stream end/abort/error). */
+  private activeStreamContext?: {
+    modelString: string;
+    options?: SendMessageOptions;
+    openaiTruncationModeOverride?: "auto" | "disabled";
+  };
+
   private activeCompactionRequest?: {
     id: string;
     modelString: string;
     options?: SendMessageOptions;
   };
-  private postCompactionContextEnabled = false;
 
   constructor(options: AgentSessionOptions) {
     assert(options, "AgentSession requires options");
@@ -226,8 +252,9 @@ export class AgentSession {
     this.compactionHandler = new CompactionHandler({
       workspaceId: this.workspaceId,
       historyService: this.historyService,
-      telemetryService,
       partialService: this.partialService,
+      sessionDir: this.config.getSessionDir(this.workspaceId),
+      telemetryService,
       emitter: this.emitter,
       onCompactionComplete,
     });
@@ -852,11 +879,23 @@ export class AgentSession {
   private async streamWithHistory(
     modelString: string,
     options?: SendMessageOptions,
-    openaiTruncationModeOverride?: "auto" | "disabled"
+    openaiTruncationModeOverride?: "auto" | "disabled",
+    disablePostCompactionAttachments?: boolean
   ): Promise<Result<void, SendMessageError>> {
     if (this.disposed) {
       return Ok(undefined);
     }
+
+    // Reset per-stream flags (used for retries / crash-safe bookkeeping).
+    this.ackPendingPostCompactionStateOnStreamEnd = false;
+    this.activeStreamHadAnyDelta = false;
+    this.activeStreamHadPostCompactionInjection = false;
+    this.activeStreamContext = {
+      modelString,
+      options,
+      openaiTruncationModeOverride,
+    };
+    this.activeStreamUserMessageId = undefined;
 
     const commitResult = await this.partialService.commitToHistory(this.workspaceId);
     if (!commitResult.success) {
@@ -864,13 +903,13 @@ export class AgentSession {
     }
 
     const historyResult = await this.historyService.getHistory(this.workspaceId);
-    // Cache whether post-compaction context is enabled for this session.
-    // Used to decide whether tool-call-end should trigger metadata refresh.
-    this.postCompactionContextEnabled = Boolean(options?.experiments?.postCompactionContext);
-
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
+    // Capture the current user message id so retries are stable across assistant message ids.
+    const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
+    this.activeStreamUserMessageId = lastUserMessage?.id;
+
     if (historyResult.data.length === 0) {
       return Err(
         createUnknownSendMessageError(
@@ -888,10 +927,13 @@ export class AgentSession {
     // Check for external file edits (timestamp-based polling)
     const changedFileAttachments = await this.fileChangeTracker.getChangedAttachments();
 
-    // Check if post-compaction attachments should be injected (gated by experiment)
-    const postCompactionAttachments = options?.experiments?.postCompactionContext
-      ? await this.getPostCompactionAttachmentsIfNeeded()
-      : null;
+    // Check if post-compaction attachments should be injected.
+    const postCompactionAttachments =
+      disablePostCompactionAttachments === true
+        ? null
+        : await this.getPostCompactionAttachmentsIfNeeded();
+    this.activeStreamHadPostCompactionInjection =
+      postCompactionAttachments !== null && postCompactionAttachments.length > 0;
 
     // Enforce thinking policy for the specified model (single source of truth)
     // This ensures model-specific requirements are met regardless of where the request originates
@@ -963,25 +1005,16 @@ export class AgentSession {
     return undefined;
   }
 
-  private async finalizeCompactionRetry(messageId: string): Promise<void> {
-    this.activeCompactionRequest = undefined;
-    this.emitChatEvent({
-      type: "stream-abort",
-      workspaceId: this.workspaceId,
-      messageId,
-    });
-    await this.clearFailedCompaction(messageId);
-  }
-
-  private async clearFailedCompaction(messageId: string): Promise<void> {
+  private async clearFailedAssistantMessage(messageId: string, reason: string): Promise<void> {
     const [partialResult, deleteMessageResult] = await Promise.all([
       this.partialService.deletePartial(this.workspaceId),
       this.historyService.deleteMessage(this.workspaceId, messageId),
     ]);
 
     if (!partialResult.success) {
-      log.warn("Failed to clear partial before compaction retry", {
+      log.warn("Failed to clear partial before retry", {
         workspaceId: this.workspaceId,
+        reason,
         error: partialResult.error,
       });
     }
@@ -993,11 +1026,23 @@ export class AgentSession {
         deleteMessageResult.error.includes("not found in history")
       )
     ) {
-      log.warn("Failed to delete failed compaction placeholder", {
+      log.warn("Failed to delete failed assistant placeholder", {
         workspaceId: this.workspaceId,
+        reason,
         error: deleteMessageResult.error,
       });
     }
+  }
+
+  private async finalizeCompactionRetry(messageId: string): Promise<void> {
+    this.activeCompactionRequest = undefined;
+    this.resetActiveStreamState();
+    this.emitChatEvent({
+      type: "stream-abort",
+      workspaceId: this.workspaceId,
+      messageId,
+    });
+    await this.clearFailedAssistantMessage(messageId, "compaction-retry");
   }
 
   private isSonnet45Model(modelString: string): boolean {
@@ -1107,6 +1152,95 @@ export class AgentSession {
     return true;
   }
 
+  private async maybeRetryWithoutPostCompactionOnContextExceeded(data: {
+    messageId: string;
+    errorType?: string;
+  }): Promise<boolean> {
+    if (data.errorType !== "context_exceeded") {
+      return false;
+    }
+
+    // Only retry if we actually injected post-compaction context.
+    if (!this.activeStreamHadPostCompactionInjection) {
+      return false;
+    }
+
+    // Guardrail: don't retry if we've already emitted any meaningful output.
+    if (this.activeStreamHadAnyDelta) {
+      return false;
+    }
+
+    const requestId = this.activeStreamUserMessageId;
+    const context = this.activeStreamContext;
+    if (!requestId || !context) {
+      return false;
+    }
+
+    if (this.postCompactionRetryAttempts.has(requestId)) {
+      return false;
+    }
+
+    this.postCompactionRetryAttempts.add(requestId);
+
+    log.info("Post-compaction context hit context limit; retrying once without it", {
+      workspaceId: this.workspaceId,
+      requestId,
+      model: context.modelString,
+    });
+
+    // The post-compaction diffs are likely the culprit; discard them so we don't loop.
+    try {
+      await this.compactionHandler.discardPendingDiffs("context_exceeded");
+      this.onPostCompactionStateChange?.();
+    } catch (error) {
+      log.warn("Failed to discard pending post-compaction state", {
+        workspaceId: this.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Abort the failed assistant placeholder and clean up persisted partial/history state.
+    this.resetActiveStreamState();
+    this.emitChatEvent({
+      type: "stream-abort",
+      workspaceId: this.workspaceId,
+      messageId: data.messageId,
+    });
+    await this.clearFailedAssistantMessage(data.messageId, "post-compaction-retry");
+
+    // Retry the same request, but without post-compaction injection.
+    this.streamStarting = true;
+    let retryResult: Result<void, SendMessageError>;
+    try {
+      retryResult = await this.streamWithHistory(
+        context.modelString,
+        context.options,
+        context.openaiTruncationModeOverride,
+        true
+      );
+    } finally {
+      this.streamStarting = false;
+    }
+
+    if (!retryResult.success) {
+      log.error("Post-compaction retry failed to start", {
+        workspaceId: this.workspaceId,
+        error: retryResult.error,
+      });
+      return false;
+    }
+
+    return true;
+  }
+
+  private resetActiveStreamState(): void {
+    this.activeStreamContext = undefined;
+    this.activeStreamUserMessageId = undefined;
+    this.activeStreamHadPostCompactionInjection = false;
+    this.activeStreamHadAnyDelta = false;
+    this.ackPendingPostCompactionStateOnStreamEnd = false;
+  }
+
   private async handleStreamError(data: StreamErrorPayload): Promise<void> {
     const hadCompactionRequest = this.activeCompactionRequest !== undefined;
     if (
@@ -1118,7 +1252,17 @@ export class AgentSession {
       return;
     }
 
+    if (
+      await this.maybeRetryWithoutPostCompactionOnContextExceeded({
+        messageId: data.messageId,
+        errorType: data.errorType,
+      })
+    ) {
+      return;
+    }
+
     this.activeCompactionRequest = undefined;
+    this.resetActiveStreamState();
 
     if (hadCompactionRequest && !this.disposed) {
       this.clearQueue();
@@ -1149,30 +1293,45 @@ export class AgentSession {
     };
 
     forward("stream-start", (payload) => this.emitChatEvent(payload));
-    forward("stream-delta", (payload) => this.emitChatEvent(payload));
-    forward("tool-call-start", (payload) => this.emitChatEvent(payload));
-    forward("bash-output", (payload) => this.emitChatEvent(payload));
-    forward("tool-call-delta", (payload) => this.emitChatEvent(payload));
+    forward("stream-delta", (payload) => {
+      this.activeStreamHadAnyDelta = true;
+      this.emitChatEvent(payload);
+    });
+    forward("tool-call-start", (payload) => {
+      this.activeStreamHadAnyDelta = true;
+      this.emitChatEvent(payload);
+    });
+    forward("bash-output", (payload) => {
+      this.activeStreamHadAnyDelta = true;
+      this.emitChatEvent(payload);
+    });
+    forward("tool-call-delta", (payload) => {
+      this.activeStreamHadAnyDelta = true;
+      this.emitChatEvent(payload);
+    });
     forward("tool-call-end", (payload) => {
+      this.activeStreamHadAnyDelta = true;
       this.emitChatEvent(payload);
 
-      // If post-compaction context is enabled, certain tools can change what should
-      // be displayed/injected (plan writes, tracked file diffs). Trigger a metadata
-      // refresh so the right sidebar updates without requiring an experiment toggle.
+      // Post-compaction context state depends on plan writes + tracked file diffs.
+      // Trigger a metadata refresh so the right sidebar updates immediately.
       if (
-        this.postCompactionContextEnabled &&
         payload.type === "tool-call-end" &&
         (payload.toolName === "propose_plan" || payload.toolName.startsWith("file_edit_"))
       ) {
         this.onPostCompactionStateChange?.();
       }
     });
-    forward("reasoning-delta", (payload) => this.emitChatEvent(payload));
+    forward("reasoning-delta", (payload) => {
+      this.activeStreamHadAnyDelta = true;
+      this.emitChatEvent(payload);
+    });
     forward("reasoning-end", (payload) => this.emitChatEvent(payload));
     forward("usage-delta", (payload) => this.emitChatEvent(payload));
     forward("stream-abort", (payload) => {
       const hadCompactionRequest = this.activeCompactionRequest !== undefined;
       this.activeCompactionRequest = undefined;
+      this.resetActiveStreamState();
       if (hadCompactionRequest && !this.disposed) {
         this.clearQueue();
       }
@@ -1186,11 +1345,26 @@ export class AgentSession {
 
       if (!handled) {
         this.emitChatEvent(payload);
+
+        if (this.ackPendingPostCompactionStateOnStreamEnd) {
+          this.ackPendingPostCompactionStateOnStreamEnd = false;
+          try {
+            await this.compactionHandler.ackPendingDiffsConsumed();
+          } catch (error) {
+            log.warn("Failed to ack pending post-compaction state", {
+              workspaceId: this.workspaceId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          this.onPostCompactionStateChange?.();
+        }
       } else {
         // Compaction completed - notify to trigger metadata refresh
         // This allows the frontend to get updated postCompaction state
         this.onCompactionComplete?.();
       }
+
+      this.resetActiveStreamState();
 
       // Stream end: auto-send queued messages
       this.sendQueuedMessages();
@@ -1369,8 +1543,9 @@ export class AgentSession {
    */
   private async getPostCompactionAttachmentsIfNeeded(): Promise<PostCompactionAttachment[] | null> {
     // Check if compaction just occurred (immediate injection with cached diffs)
-    const pendingDiffs = this.compactionHandler.consumePendingDiffs();
+    const pendingDiffs = await this.compactionHandler.peekPendingDiffs();
     if (pendingDiffs !== null) {
+      this.ackPendingPostCompactionStateOnStreamEnd = true;
       this.compactionOccurred = true;
       this.turnsSinceLastAttachment = 0;
       // Clear file state cache since history context is gone

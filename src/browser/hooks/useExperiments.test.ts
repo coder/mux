@@ -24,30 +24,30 @@ describe("isExperimentEnabled", () => {
   });
 
   test("returns undefined when no local override exists for a user-overridable experiment", () => {
-    expect(isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)).toBeUndefined();
+    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBeUndefined();
   });
 
   test("returns boolean when local override exists", () => {
-    const key = getExperimentKey(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+    const key = getExperimentKey(EXPERIMENT_IDS.SYSTEM_1);
 
     globalThis.window.localStorage.setItem(key, JSON.stringify(true));
-    expect(isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)).toBe(true);
+    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBe(true);
 
     globalThis.window.localStorage.setItem(key, JSON.stringify(false));
-    expect(isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)).toBe(false);
+    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBe(false);
   });
 
   test('treats literal "undefined" as no override', () => {
-    const key = getExperimentKey(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+    const key = getExperimentKey(EXPERIMENT_IDS.SYSTEM_1);
 
     globalThis.window.localStorage.setItem(key, "undefined");
-    expect(isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)).toBeUndefined();
+    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBeUndefined();
   });
 
   test("treats non-boolean stored value as no override", () => {
-    const key = getExperimentKey(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+    const key = getExperimentKey(EXPERIMENT_IDS.SYSTEM_1);
 
     globalThis.window.localStorage.setItem(key, JSON.stringify("test"));
-    expect(isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)).toBeUndefined();
+    expect(isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBeUndefined();
   });
 });

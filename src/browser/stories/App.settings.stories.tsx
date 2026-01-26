@@ -20,7 +20,11 @@ import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
-import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
+import {
+  getExperimentKey,
+  EXPERIMENT_IDS,
+  type ExperimentId,
+} from "@/common/constants/experiments";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { TaskSettings } from "@/common/types/tasks";
 import type { LayoutPresetsConfig } from "@/common/types/uiLayouts";
@@ -54,7 +58,7 @@ function setupSettingsStory(options: {
   // Pre-set experiment states if provided
   if (options.experiments) {
     for (const [experimentId, enabled] of Object.entries(options.experiments)) {
-      const key = getExperimentKey(experimentId as typeof EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+      const key = getExperimentKey(experimentId as ExperimentId);
       window.localStorage.setItem(key, JSON.stringify(enabled));
     }
   }
@@ -483,7 +487,7 @@ export const ExperimentsToggleOn: AppStory = {
     <AppWithMocks
       setup={() =>
         setupSettingsStory({
-          experiments: { [EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]: true },
+          experiments: { [EXPERIMENT_IDS.SYSTEM_1]: true },
         })
       }
     />

@@ -8,6 +8,18 @@ import type { FileEditDiff } from "@/common/utils/messages/extractEditedFiles";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
+import { MAX_POST_COMPACTION_PLAN_CHARS } from "@/common/constants/attachments";
+
+const TRUNCATED_PLAN_NOTE = "\n\n...(truncated)\n";
+
+function truncatePlanContent(planContent: string): string {
+  if (planContent.length <= MAX_POST_COMPACTION_PLAN_CHARS) {
+    return planContent;
+  }
+
+  const sliceLength = Math.max(0, MAX_POST_COMPACTION_PLAN_CHARS - TRUNCATED_PLAN_NOTE.length);
+  return `${planContent.slice(0, sliceLength)}${TRUNCATED_PLAN_NOTE}`;
+}
 
 /**
  * Service for generating post-compaction attachments.
@@ -37,7 +49,7 @@ export class AttachmentService {
         return {
           type: "plan_file_reference",
           planFilePath,
-          planContent,
+          planContent: truncatePlanContent(planContent),
         };
       }
     } catch {
@@ -51,7 +63,7 @@ export class AttachmentService {
         return {
           type: "plan_file_reference",
           planFilePath: legacyPlanPath,
-          planContent,
+          planContent: truncatePlanContent(planContent),
         };
       }
     } catch {

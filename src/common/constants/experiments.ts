@@ -6,7 +6,6 @@
  */
 
 export const EXPERIMENT_IDS = {
-  POST_COMPACTION_CONTEXT: "post-compaction-context",
   PROGRAMMATIC_TOOL_CALLING: "programmatic-tool-calling",
   PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE: "programmatic-tool-calling-exclusive",
   CONFIGURABLE_BIND_URL: "configurable-bind-url",
@@ -38,14 +37,6 @@ export interface ExperimentDefinition {
  * Use Record<ExperimentId, ExperimentDefinition> to ensure exhaustive coverage.
  */
 export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
-  [EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]: {
-    id: EXPERIMENT_IDS.POST_COMPACTION_CONTEXT,
-    name: "Post-Compaction Context",
-    description: "Re-inject plan file and edited file diffs after compaction to preserve context",
-    enabledByDefault: false,
-    userOverridable: true, // User can opt-out via Settings
-    showInSettings: true,
-  },
   [EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING]: {
     id: EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
     name: "Programmatic Tool Calling",

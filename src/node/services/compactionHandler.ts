@@ -1,4 +1,8 @@
 import type { EventEmitter } from "events";
+import * as fsPromises from "fs/promises";
+import assert from "@/common/utils/assert";
+import * as path from "path";
+
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 
@@ -11,8 +15,10 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { createCompactionSummaryMessageId } from "@/node/services/utils/messageIds";
 import type { TelemetryService } from "@/node/services/telemetryService";
+import { MAX_EDITED_FILES, MAX_FILE_CONTENT_SIZE } from "@/common/constants/attachments";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { log } from "@/node/services/log";
+import { computeRecencyFromMessages } from "@/common/utils/recency";
 import {
   extractEditedFileDiffs,
   type FileEditDiff,
@@ -42,12 +48,83 @@ function looksLikeRawJsonObject(text: string): boolean {
   }
 }
 
-import { computeRecencyFromMessages } from "@/common/utils/recency";
+const POST_COMPACTION_STATE_FILENAME = "post-compaction.json";
+
+interface PersistedPostCompactionStateV1 {
+  version: 1;
+  createdAt: number;
+  diffs: FileEditDiff[];
+}
+
+function coerceFileEditDiffs(value: unknown): FileEditDiff[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const diffs: FileEditDiff[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const filePath = (item as { path?: unknown }).path;
+    const diff = (item as { diff?: unknown }).diff;
+    const truncated = (item as { truncated?: unknown }).truncated;
+
+    if (typeof filePath !== "string") continue;
+    const trimmedPath = filePath.trim();
+    if (trimmedPath.length === 0) continue;
+
+    if (typeof diff !== "string") continue;
+    if (typeof truncated !== "boolean") continue;
+
+    const clampedDiff =
+      diff.length > MAX_FILE_CONTENT_SIZE ? diff.slice(0, MAX_FILE_CONTENT_SIZE) : diff;
+
+    diffs.push({
+      path: trimmedPath,
+      diff: clampedDiff,
+      truncated: truncated || diff.length > MAX_FILE_CONTENT_SIZE,
+    });
+
+    if (diffs.length >= MAX_EDITED_FILES) {
+      break;
+    }
+  }
+
+  return diffs;
+}
+
+function coercePersistedPostCompactionState(value: unknown): PersistedPostCompactionStateV1 | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const version = (value as { version?: unknown }).version;
+  if (version !== 1) {
+    return null;
+  }
+
+  const createdAt = (value as { createdAt?: unknown }).createdAt;
+  if (typeof createdAt !== "number") {
+    return null;
+  }
+
+  const diffsRaw = (value as { diffs?: unknown }).diffs;
+  const diffs = coerceFileEditDiffs(diffsRaw);
+
+  return {
+    version: 1,
+    createdAt,
+    diffs,
+  };
+}
 
 interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
   partialService: PartialService;
+  sessionDir: string;
   telemetryService?: TelemetryService;
   emitter: EventEmitter;
   /** Called when compaction completes successfully (e.g., to clear idle compaction pending state) */
@@ -65,6 +142,9 @@ interface CompactionHandlerOptions {
 export class CompactionHandler {
   private readonly workspaceId: string;
   private readonly historyService: HistoryService;
+  private readonly sessionDir: string;
+  private readonly postCompactionStatePath: string;
+  private persistedPendingStateLoaded = false;
   private readonly partialService: PartialService;
   private readonly telemetryService?: TelemetryService;
   private readonly emitter: EventEmitter;
@@ -78,26 +158,134 @@ export class CompactionHandler {
   private cachedFileDiffs: FileEditDiff[] = [];
 
   constructor(options: CompactionHandlerOptions) {
+    assert(options, "CompactionHandler requires options");
+    assert(typeof options.sessionDir === "string", "sessionDir must be a string");
+    const trimmedSessionDir = options.sessionDir.trim();
+    assert(trimmedSessionDir.length > 0, "sessionDir must not be empty");
+
     this.workspaceId = options.workspaceId;
     this.historyService = options.historyService;
+    this.sessionDir = trimmedSessionDir;
+    this.postCompactionStatePath = path.join(trimmedSessionDir, POST_COMPACTION_STATE_FILENAME);
     this.partialService = options.partialService;
     this.telemetryService = options.telemetryService;
     this.emitter = options.emitter;
     this.onCompactionComplete = options.onCompactionComplete;
   }
 
+  private async loadPersistedPendingStateIfNeeded(): Promise<void> {
+    if (this.persistedPendingStateLoaded || this.postCompactionAttachmentsPending) {
+      return;
+    }
+
+    this.persistedPendingStateLoaded = true;
+
+    let raw: string;
+    try {
+      raw = await fsPromises.readFile(this.postCompactionStatePath, "utf-8");
+    } catch {
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      log.warn("Invalid post-compaction state JSON; ignoring", { workspaceId: this.workspaceId });
+      await this.deletePersistedPendingStateBestEffort();
+      return;
+    }
+
+    const state = coercePersistedPostCompactionState(parsed);
+    if (!state) {
+      log.warn("Invalid post-compaction state schema; ignoring", { workspaceId: this.workspaceId });
+      await this.deletePersistedPendingStateBestEffort();
+      return;
+    }
+
+    // Note: We intentionally do not validate against chat history here.
+    // The presence of this file is the source of truth that a compaction occurred (or at least started),
+    // and pre-compaction diffs may have been deleted from history.
+
+    this.cachedFileDiffs = state.diffs;
+    this.postCompactionAttachmentsPending = true;
+  }
+
   /**
-   * Consume pending post-compaction diffs and clear them.
+   * Peek pending post-compaction diffs without consuming them.
    * Returns null if no compaction occurred, otherwise returns the cached diffs.
    */
-  consumePendingDiffs(): FileEditDiff[] | null {
+  async peekPendingDiffs(): Promise<FileEditDiff[] | null> {
+    if (!this.postCompactionAttachmentsPending) {
+      await this.loadPersistedPendingStateIfNeeded();
+    }
+
     if (!this.postCompactionAttachmentsPending) {
       return null;
     }
+
+    return this.cachedFileDiffs;
+  }
+
+  /**
+   * Acknowledge that pending post-compaction state has been consumed successfully.
+   * Clears in-memory state and deletes the persisted snapshot from disk.
+   */
+  async ackPendingDiffsConsumed(): Promise<void> {
+    // If we never loaded persisted state but it exists, clear it anyway.
+    if (!this.postCompactionAttachmentsPending && !this.persistedPendingStateLoaded) {
+      await this.loadPersistedPendingStateIfNeeded();
+    }
+
     this.postCompactionAttachmentsPending = false;
-    const diffs = this.cachedFileDiffs;
     this.cachedFileDiffs = [];
-    return diffs;
+    await this.deletePersistedPendingStateBestEffort();
+  }
+
+  /**
+   * Drop pending post-compaction state (e.g., because it caused context_exceeded).
+   */
+  async discardPendingDiffs(reason: string): Promise<void> {
+    await this.loadPersistedPendingStateIfNeeded();
+
+    if (!this.postCompactionAttachmentsPending) {
+      return;
+    }
+
+    log.warn("Discarding pending post-compaction state", {
+      workspaceId: this.workspaceId,
+      reason,
+      trackedFiles: this.cachedFileDiffs.length,
+    });
+
+    await this.ackPendingDiffsConsumed();
+  }
+
+  private async deletePersistedPendingStateBestEffort(): Promise<void> {
+    try {
+      await fsPromises.unlink(this.postCompactionStatePath);
+    } catch {
+      // ignore
+    }
+  }
+
+  private async persistPendingStateBestEffort(diffs: FileEditDiff[]): Promise<void> {
+    try {
+      await fsPromises.mkdir(this.sessionDir, { recursive: true });
+
+      const persisted: PersistedPostCompactionStateV1 = {
+        version: 1,
+        createdAt: Date.now(),
+        diffs,
+      };
+
+      await fsPromises.writeFile(this.postCompactionStatePath, JSON.stringify(persisted));
+    } catch (error) {
+      log.warn("Failed to persist post-compaction state", {
+        workspaceId: this.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
@@ -255,6 +443,10 @@ export class CompactionHandler {
 
     // Extract diffs BEFORE clearing history (they'll be gone after clear)
     this.cachedFileDiffs = extractEditedFileDiffs(messages);
+
+    // Persist pending state BEFORE clearing history so pre-compaction diffs survive crashes/restarts.
+    // Best-effort: compaction must not fail just because persistence fails.
+    await this.persistPendingStateBestEffort(this.cachedFileDiffs);
 
     // Clear entire history and get deleted sequences
     const clearResult = await this.historyService.clearHistory(this.workspaceId);

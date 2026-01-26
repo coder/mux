@@ -316,7 +316,7 @@ export interface ErrorOccurredPayload {
  * This helps measure opt-out rates and understand user preferences
  */
 export interface ExperimentOverriddenPayload {
-  /** Experiment identifier (e.g., 'post-compaction-context') */
+  /** Experiment identifier (e.g., 'system-1') */
   experimentId: string;
   /** The variant PostHog assigned (null if not remote-controlled) */
   assignedVariant: string | boolean | null;

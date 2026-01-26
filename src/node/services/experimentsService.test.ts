@@ -26,7 +26,7 @@ describe("ExperimentsService", () => {
         {
           version: 1,
           experiments: {
-            [EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]: {
+            [EXPERIMENT_IDS.SYSTEM_1]: {
               value: "test",
               fetchedAtMs: Date.now(),
             },
@@ -58,15 +58,12 @@ describe("ExperimentsService", () => {
     await service.initialize();
 
     const values = service.getAll();
-    expect(values[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]).toEqual({
+    expect(values[EXPERIMENT_IDS.SYSTEM_1]).toEqual({
       value: "test",
       source: "cache",
     });
 
-    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
-      EXPERIMENT_IDS.POST_COMPACTION_CONTEXT,
-      "test"
-    );
+    expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.SYSTEM_1, "test");
   });
 
   test("refreshExperiment updates cache and writes it to disk", async () => {
@@ -88,9 +85,9 @@ describe("ExperimentsService", () => {
     });
 
     await service.initialize();
-    await service.refreshExperiment(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+    await service.refreshExperiment(EXPERIMENT_IDS.SYSTEM_1);
 
-    const value = service.getExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+    const value = service.getExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
     expect(value.value).toBe("test");
     expect(value.source).toBe("posthog");
 
@@ -100,13 +97,10 @@ describe("ExperimentsService", () => {
 
     expect((disk as { version: unknown }).version).toBe(1);
     expect((disk as { experiments: Record<string, unknown> }).experiments).toHaveProperty(
-      EXPERIMENT_IDS.POST_COMPACTION_CONTEXT
+      EXPERIMENT_IDS.SYSTEM_1
     );
 
-    expect(setFeatureFlagVariant).toHaveBeenCalledWith(
-      EXPERIMENT_IDS.POST_COMPACTION_CONTEXT,
-      "test"
-    );
+    expect(setFeatureFlagVariant).toHaveBeenCalledWith(EXPERIMENT_IDS.SYSTEM_1, "test");
   });
 
   test("returns disabled when telemetry is disabled", async () => {
@@ -120,11 +114,11 @@ describe("ExperimentsService", () => {
     await service.initialize();
 
     const values = service.getAll();
-    expect(values[EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]).toEqual({
+    expect(values[EXPERIMENT_IDS.SYSTEM_1]).toEqual({
       value: null,
       source: "disabled",
     });
 
-    expect(service.isExperimentEnabled(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT)).toBe(false);
+    expect(service.isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1)).toBe(false);
   });
 });

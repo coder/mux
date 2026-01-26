@@ -39,12 +39,12 @@ describe("ExperimentsProvider", () => {
 
       if (callCount === 1) {
         return Promise.resolve({
-          [EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]: { value: null, source: "cache" },
+          [EXPERIMENT_IDS.SYSTEM_1]: { value: null, source: "cache" },
         } satisfies Record<string, ExperimentValue>);
       }
 
       return Promise.resolve({
-        [EXPERIMENT_IDS.POST_COMPACTION_CONTEXT]: { value: "test", source: "posthog" },
+        [EXPERIMENT_IDS.SYSTEM_1]: { value: "test", source: "posthog" },
       } satisfies Record<string, ExperimentValue>);
     });
 
@@ -56,7 +56,7 @@ describe("ExperimentsProvider", () => {
     };
 
     function Observer() {
-      const enabled = useExperimentValue(EXPERIMENT_IDS.POST_COMPACTION_CONTEXT);
+      const enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
       return <div data-testid="enabled">{String(enabled)}</div>;
     }
 

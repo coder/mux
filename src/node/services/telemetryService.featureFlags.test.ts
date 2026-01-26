@@ -52,7 +52,7 @@ describe("TelemetryService feature flag properties", () => {
       // @ts-expect-error - Accessing private property for test
       telemetry.distinctId = "distinct-id";
 
-      telemetry.setFeatureFlagVariant("post-compaction-context", "test");
+      telemetry.setFeatureFlagVariant("system-1", "test");
 
       const payload: TelemetryEventPayload = {
         event: "message_sent",
@@ -78,7 +78,7 @@ describe("TelemetryService feature flag properties", () => {
         | { properties?: Record<string, unknown> }
         | undefined;
       expect(call?.properties).toBeDefined();
-      expect(call?.properties?.["$feature/post-compaction-context"]).toBe("test");
+      expect(call?.properties?.["$feature/system-1"]).toBe("test");
     } finally {
       // Restore all env vars
       for (const [key, value] of Object.entries(savedEnv)) {
