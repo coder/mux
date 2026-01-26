@@ -432,7 +432,12 @@ Rules:
 
 - Line numbers are 1-based indices into the numbered output.
 - Prefer errors, stack traces, failing test summaries, and actionable warnings.
-- Prefer fewer, wider ranges (return at most 8 ranges).
+- Prefer fewer, wider ranges; keep the number of ranges small (usually ≤ 8).
+- Denoise aggressively: omit duplicate/redundant lines and repeated messages with the same meaning
+  (e.g., repeated progress, retries, or identical stack traces). If the same error repeats, keep only
+  the most informative instance plus minimal surrounding context.
+- If there are many similar warnings/errors, keep only a few representative examples (prefer those
+  with file paths/line numbers) plus any summary/count.
 - Always keep at least 1 line if any output exists.
 - You will be given `maxKeptLines`; choose ranges that keep at most that many lines total (the caller may truncate).
 
