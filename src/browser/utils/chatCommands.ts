@@ -256,6 +256,15 @@ export async function processSlashCommand(
     const provider = canonicalModel.slice(0, canonicalSeparatorIndex);
     const modelId = canonicalModel.slice(canonicalSeparatorIndex + 1);
 
+    if (modelId.startsWith(":")) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: `Invalid model format: expected "provider:model"`,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
     try {
       // Validate provider is supported
       const { isValidProvider } = await import("@/common/constants/providers");
