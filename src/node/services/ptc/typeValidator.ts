@@ -101,8 +101,10 @@ function createProgramForCode(
   const originalFileExists = host.fileExists.bind(host);
   const originalReadFile = host.readFile.bind(host);
 
-  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
-    const target = languageVersion ?? scriptTarget;
+  host.getSourceFile = (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) => {
+    // languageVersionOrOptions can be ScriptTarget or CreateSourceFileOptions
+    const target =
+      typeof languageVersionOrOptions === "number" ? languageVersionOrOptions : scriptTarget;
     if (fileName === "agent.ts") return sourceFile;
     if (fileName === MUX_TYPES_FILE) return muxSourceFile;
 
@@ -118,7 +120,12 @@ function createProgramForCode(
       if (cached) return cached;
     }
 
-    return originalGetSourceFile(fileName, target, onError, shouldCreateNewSourceFile);
+    return originalGetSourceFile(
+      fileName,
+      languageVersionOrOptions,
+      onError,
+      shouldCreateNewSourceFile
+    );
   };
   host.fileExists = (fileName) => {
     if (fileName === "agent.ts" || fileName === MUX_TYPES_FILE) return true;
