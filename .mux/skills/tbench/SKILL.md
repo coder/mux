@@ -116,6 +116,8 @@ Results are saved to `runs/YYYY-MM-DD__HH-MM-SS/`:
 
 ## CI/CD Integration
 
+**Fast iteration:** When testing workflow changes, use `-f max_tasks="1"` to run a single task (~3-5 min) instead of the full suite.
+
 ## Querying Results from BigQuery
 
 Mux Terminal-Bench results are uploaded to BigQuery after CI runs. Query via `bq` CLI after authenticating with `gcloud auth login` and setting project to `mux-benchmarks`.
