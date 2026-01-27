@@ -10,6 +10,26 @@ import { Switch } from "./ui/switch";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 import { cn } from "@/common/lib/utils";
 
+// Selector for Radix portal wrappers - used to detect when clicks/interactions
+// originate from nested Radix components (like Tooltip inside the slider)
+const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
+
+/**
+ * Prevents Popover from dismissing when interaction occurs within a nested
+ * Radix portal (e.g., Tooltip inside the slider). Without this, clicking the
+ * slider's drag handle triggers onPointerDownOutside because the Tooltip
+ * renders to a separate portal outside the Popover's DOM tree.
+ */
+function preventDismissForRadixPortals(e: {
+  target: EventTarget | null;
+  preventDefault: () => void;
+}) {
+  const target = e.target;
+  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
+    e.preventDefault();
+  }
+}
+
 /** Compact threshold tick mark for the button view */
 const CompactThresholdIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
   if (threshold >= 100) return null;
@@ -176,10 +196,21 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
 }) => {
   const [isPinned, setIsPinned] = React.useState(false);
   const [isHovering, setIsHovering] = React.useState(false);
+  const [isInteracting, setIsInteracting] = React.useState(false);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const contentRef = React.useRef<HTMLDivElement | null>(null);
+  const closeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Keep the compaction slider draggable on hover and click by using a single popover.
   // Hover opens it; click pins it until the user clicks away.
+  // Close is delayed to allow pointer to travel between trigger and content.
+
+  // Cleanup timeout on unmount
+  React.useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+    };
+  }, []);
 
   const isAutoCompactionEnabled = autoCompaction && autoCompaction.threshold < 100;
   const idleHours = idleCompaction?.hours;
@@ -197,10 +228,28 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
 
   const isOpen = isPinned || isHovering;
 
+  const cancelPendingClose = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+  };
+
+  const scheduleClose = () => {
+    // Don't close if pinned or actively interacting (e.g., dragging slider)
+    if (isPinned || isInteracting) return;
+    cancelPendingClose();
+    closeTimeoutRef.current = setTimeout(() => {
+      setIsHovering(false);
+    }, 100); // 100ms grace period for pointer to travel between elements
+  };
+
   const handleOpenChange = (open: boolean) => {
     if (!open) {
+      cancelPendingClose();
       setIsPinned(false);
       setIsHovering(false);
+      setIsInteracting(false);
     }
   };
 
@@ -208,21 +257,37 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
     setIsPinned((prev) => !prev);
   };
 
+  const handleTriggerPointerEnter = () => {
+    cancelPendingClose();
+    setIsHovering(true);
+  };
+
   const handleTriggerPointerLeave = (event: React.PointerEvent<HTMLButtonElement>) => {
     const relatedTarget = event.relatedTarget;
+    // Don't schedule close if moving directly to content
     if (relatedTarget instanceof Node && contentRef.current?.contains(relatedTarget)) {
       return;
     }
-    setIsHovering(false);
+    scheduleClose();
+  };
+
+  const handleContentPointerEnter = () => {
+    cancelPendingClose();
+    setIsHovering(true);
   };
 
   const handleContentPointerLeave = (event: React.PointerEvent<HTMLDivElement>) => {
     const relatedTarget = event.relatedTarget;
+    // Don't schedule close if moving directly to trigger
     if (relatedTarget instanceof Node && triggerRef.current?.contains(relatedTarget)) {
       return;
     }
-    setIsHovering(false);
+    scheduleClose();
   };
+
+  // Track mousedown/mouseup to prevent close during drag interactions
+  const handleContentMouseDown = () => setIsInteracting(true);
+  const handleContentMouseUp = () => setIsInteracting(false);
 
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
@@ -235,7 +300,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           className="hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1"
           type="button"
           onClick={handleTriggerClick}
-          onPointerEnter={() => setIsHovering(true)}
+          onPointerEnter={handleTriggerPointerEnter}
           onPointerLeave={handleTriggerPointerLeave}
         >
           {/* Idle compaction badge - shows hourglass with hours when enabled */}
@@ -272,9 +337,14 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
         ref={contentRef}
         side="bottom"
         align="end"
-        className="bg-modal-bg border-separator-light w-80 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
-        onPointerEnter={() => setIsHovering(true)}
+        // Invisible hit-area bridge: before: pseudo-element extends 8px above content
+        // to cover the sideOffset gap, preventing pointer-leave when crossing the gap
+        className="bg-modal-bg border-separator-light w-80 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)] before:pointer-events-auto before:absolute before:-top-2 before:right-0 before:left-0 before:h-2 before:content-['']"
+        onPointerEnter={handleContentPointerEnter}
         onPointerLeave={handleContentPointerLeave}
+        onPointerDownOutside={preventDismissForRadixPortals}
+        onMouseDown={handleContentMouseDown}
+        onMouseUp={handleContentMouseUp}
       >
         <AutoCompactSettings data={data} usageConfig={autoCompaction} idleConfig={idleCompaction} />
       </PopoverContent>
