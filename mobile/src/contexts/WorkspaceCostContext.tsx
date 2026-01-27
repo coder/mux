@@ -293,7 +293,11 @@ export function WorkspaceCostProvider({
       }
 
       const model = getLastModel(messages) ?? "unknown";
-      const stats = await client.tokenizer.calculateStats({ messages, model });
+      const stats = await client.tokenizer.calculateStats({
+        workspaceId: workspaceId!,
+        messages,
+        model,
+      });
       setConsumers({ status: "ready", stats });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

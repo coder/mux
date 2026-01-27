@@ -90,7 +90,11 @@ export const tokenizer = {
     output: z.array(z.number()),
   },
   calculateStats: {
-    input: z.object({ messages: z.array(MuxMessageSchema), model: z.string() }),
+    input: z.object({
+      workspaceId: z.string(),
+      messages: z.array(MuxMessageSchema),
+      model: z.string(),
+    }),
     output: ChatStatsSchema,
   },
 };
