@@ -1,7 +1,6 @@
 import React from "react";
 import { Hourglass } from "lucide-react";
-import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
-import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
+import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
 import { TokenMeter } from "./RightSidebar/TokenMeter";
 import {
   HorizontalThresholdSlider,
@@ -175,10 +174,12 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
   autoCompaction,
   idleCompaction,
 }) => {
-  const [hoverOpen, setHoverOpen] = React.useState(false);
-  const [popoverOpen, setPopoverOpen] = React.useState(false);
-  // Keep hover-based settings interactive while still allowing click-to-pin.
-  // When the click popover is open, suppress the hover card to avoid dueling overlays.
+  const [isPinned, setIsPinned] = React.useState(false);
+  const [isHovering, setIsHovering] = React.useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const contentRef = React.useRef<HTMLDivElement | null>(null);
+  // Keep the compaction slider draggable on hover and click by using a single popover.
+  // Hover opens it; click pins it until the user clicks away.
 
   const isAutoCompactionEnabled = autoCompaction && autoCompaction.threshold < 100;
   const idleHours = idleCompaction?.hours;
@@ -194,81 +195,86 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       )}%)`
     : `Context usage: ${formatTokens(data.totalTokens)} (unknown limit)`;
 
-  const handlePopoverOpenChange = (open: boolean) => {
-    setPopoverOpen(open);
-    if (open) {
-      setHoverOpen(false);
+  const isOpen = isPinned || isHovering;
+
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      setIsPinned(false);
+      setIsHovering(false);
     }
   };
 
-  const handleHoverOpenChange = (open: boolean) => {
-    if (popoverOpen) return;
-    setHoverOpen(open);
+  const handleTriggerClick = () => {
+    setIsPinned((prev) => !prev);
+  };
+
+  const handleTriggerPointerLeave = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && contentRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    setIsHovering(false);
+  };
+
+  const handleContentPointerLeave = (event: React.PointerEvent<HTMLDivElement>) => {
+    const relatedTarget = event.relatedTarget;
+    if (relatedTarget instanceof Node && triggerRef.current?.contains(relatedTarget)) {
+      return;
+    }
+    setIsHovering(false);
   };
 
   return (
-    <Popover open={popoverOpen} onOpenChange={handlePopoverOpenChange}>
-      <HoverCard
-        open={popoverOpen ? false : hoverOpen}
-        onOpenChange={handleHoverOpenChange}
-        openDelay={200}
-        closeDelay={300}
-      >
-        <HoverCardTrigger asChild>
-          <PopoverTrigger asChild>
-            <button
-              aria-label={ariaLabel}
-              className="hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1"
-              type="button"
-            >
-              {/* Idle compaction badge - shows hourglass with hours when enabled */}
-              {isIdleCompactionEnabled && (
-                <div
-                  className="text-muted flex items-center gap-0.5 text-[10px]"
-                  title={`Auto-compact after ${idleHours}h idle`}
-                >
-                  <Hourglass className="h-3 w-3" />
-                  <span>{idleHours}h</span>
-                </div>
-              )}
-              {/* Show meter when there's usage, or show empty placeholder for settings access */}
-              {data.totalTokens > 0 ? (
-                <div className="relative h-2 w-20">
-                  <TokenMeter
-                    segments={data.segments}
-                    orientation="horizontal"
-                    className="h-2"
-                    trackClassName="bg-dark"
-                  />
-                  {isAutoCompactionEnabled && (
-                    <CompactThresholdIndicator threshold={autoCompaction.threshold} />
-                  )}
-                </div>
-              ) : (
-                /* Empty meter placeholder - allows access to settings with no usage */
-                <div className="bg-dark relative h-2 w-20 rounded-full" />
-              )}
-            </button>
-          </PopoverTrigger>
-        </HoverCardTrigger>
-
-        <HoverCardContent
-          side="bottom"
-          align="end"
-          className="bg-modal-bg border-separator-light w-80 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+    <Popover open={isOpen} onOpenChange={handleOpenChange}>
+      <PopoverAnchor asChild>
+        <button
+          ref={triggerRef}
+          aria-label={ariaLabel}
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
+          className="hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1"
+          type="button"
+          onClick={handleTriggerClick}
+          onPointerEnter={() => setIsHovering(true)}
+          onPointerLeave={handleTriggerPointerLeave}
         >
-          <AutoCompactSettings
-            data={data}
-            usageConfig={autoCompaction}
-            idleConfig={idleCompaction}
-          />
-        </HoverCardContent>
-      </HoverCard>
+          {/* Idle compaction badge - shows hourglass with hours when enabled */}
+          {isIdleCompactionEnabled && (
+            <div
+              className="text-muted flex items-center gap-0.5 text-[10px]"
+              title={`Auto-compact after ${idleHours}h idle`}
+            >
+              <Hourglass className="h-3 w-3" />
+              <span>{idleHours}h</span>
+            </div>
+          )}
+          {/* Show meter when there's usage, or show empty placeholder for settings access */}
+          {data.totalTokens > 0 ? (
+            <div className="relative h-2 w-20">
+              <TokenMeter
+                segments={data.segments}
+                orientation="horizontal"
+                className="h-2"
+                trackClassName="bg-dark"
+              />
+              {isAutoCompactionEnabled && (
+                <CompactThresholdIndicator threshold={autoCompaction.threshold} />
+              )}
+            </div>
+          ) : (
+            /* Empty meter placeholder - allows access to settings with no usage */
+            <div className="bg-dark relative h-2 w-20 rounded-full" />
+          )}
+        </button>
+      </PopoverAnchor>
 
       <PopoverContent
+        ref={contentRef}
         side="bottom"
         align="end"
         className="bg-modal-bg border-separator-light w-80 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+        onPointerEnter={() => setIsHovering(true)}
+        onPointerLeave={handleContentPointerLeave}
       >
         <AutoCompactSettings data={data} usageConfig={autoCompaction} idleConfig={idleCompaction} />
       </PopoverContent>
