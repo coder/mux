@@ -1,5 +1,8 @@
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
+import { installStdioErrorHandlers } from "@/node/services/log";
+
+installStdioErrorHandlers();
 
 // Fix PATH on macOS when launched from Finder (not terminal).
 // GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.

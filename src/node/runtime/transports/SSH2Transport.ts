@@ -4,6 +4,8 @@ import { PassThrough } from "stream";
 import type { ClientChannel } from "ssh2";
 import { RuntimeError as RuntimeErrorClass } from "../Runtime";
 import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
+import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
 import { expandTildeForSSH } from "../tildeExpansion";
 import { ssh2ConnectionPool } from "../SSH2ConnectionPool";
 import type { SpawnResult } from "../RemoteRuntime";
@@ -122,10 +124,58 @@ class SSH2ChildProcess extends EventEmitter {
 }
 
 class SSH2Pty implements PtyHandle {
-  constructor(private readonly channel: ClientChannel) {}
+  private closed = false;
+
+  constructor(private readonly channel: ClientChannel) {
+    this.channel.on("close", () => {
+      this.closed = true;
+    });
+
+    const closeChannel = () => {
+      this.closed = true;
+      try {
+        this.channel.close();
+      } catch {
+        // Ignore close errors.
+      }
+    };
+
+    // PTY channels can emit socket errors when sessions exit early.
+    attachStreamErrorHandler(this.channel, "ssh2-pty-channel", {
+      logger: log,
+      onIgnorable: closeChannel,
+      onUnexpected: closeChannel,
+    });
+
+    if (this.channel.stderr) {
+      attachStreamErrorHandler(this.channel.stderr, "ssh2-pty-stderr", {
+        logger: log,
+        onIgnorable: closeChannel,
+        onUnexpected: closeChannel,
+      });
+    }
+  }
 
   write(data: string): void {
-    this.channel.write(data);
+    if (this.closed || this.channel.destroyed || this.channel.writableEnded) {
+      return;
+    }
+
+    try {
+      this.channel.write(data);
+    } catch (error) {
+      if (isIgnorableStreamError(error)) {
+        return;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      const code =
+        error && typeof error === "object" && "code" in error && typeof error.code === "string"
+          ? error.code
+          : undefined;
+
+      log.warn("SSH2 PTY write failed", { code, message });
+    }
   }
 
   resize(cols: number, rows: number): void {
@@ -133,6 +183,7 @@ class SSH2Pty implements PtyHandle {
   }
 
   kill(): void {
+    this.closed = true;
     this.channel.close();
   }
 

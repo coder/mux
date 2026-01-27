@@ -14,6 +14,8 @@ import { spawn, type ChildProcess } from "child_process";
 import { Duplex } from "stream";
 import { Client } from "ssh2";
 import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
+import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import type { SSHConnectionConfig } from "./sshConnectionPool";
 import { resolveSSHConfig, type ResolvedSSHConfig } from "./sshConfigParser";
 
@@ -505,6 +507,37 @@ export class SSH2ConnectionPool {
               proxy.process.kill();
             }
           };
+
+          const cleanupProxySocket = () => {
+            if (proxy?.sock && !proxy.sock.destroyed) {
+              proxy.sock.destroy();
+            }
+            cleanupProxy();
+          };
+
+          if (proxy) {
+            // ProxyCommand streams can emit EPIPE/ECONNRESET; handle to avoid crashes.
+            const attach = (emitter: NodeJS.EventEmitter, label: string) => {
+              attachStreamErrorHandler(emitter, label, {
+                logger: log,
+                onIgnorable: cleanupProxySocket,
+                onUnexpected: cleanupProxySocket,
+              });
+            };
+
+            attach(proxy.process, "ssh2-proxy-process");
+            attach(proxy.sock, "ssh2-proxy-socket");
+
+            if (proxy.process.stdin) {
+              attach(proxy.process.stdin, "ssh2-proxy-stdin");
+            }
+            if (proxy.process.stdout) {
+              attach(proxy.process.stdout, "ssh2-proxy-stdout");
+            }
+            if (proxy.process.stderr) {
+              attach(proxy.process.stderr, "ssh2-proxy-stderr");
+            }
+          }
 
           const onClose = () => {
             if (entry.idleTimer) {

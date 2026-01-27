@@ -32,6 +32,7 @@ import type {
 import { RuntimeError } from "./Runtime";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { log } from "@/node/services/log";
+import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { DisposableProcess } from "@/node/utils/disposableExec";
 import { streamToString, shescape } from "./streamUtils";
@@ -137,6 +138,13 @@ export abstract class RemoteRuntime implements Runtime {
     // Spawn the remote process (SSH or Docker)
     // For SSH, this awaits connection pool backoff before spawning
     const { process: childProcess } = await this.spawnRemoteProcess(fullCommand, options);
+
+    // Short-lived commands can close stdin before writes/close complete.
+    if (childProcess.stdin) {
+      attachStreamErrorHandler(childProcess.stdin, `${this.commandPrefix} stdin`, {
+        logger: log,
+      });
+    }
 
     // Wrap in DisposableProcess for cleanup
     const disposable = new DisposableProcess(childProcess);
@@ -246,7 +254,29 @@ export abstract class RemoteRuntime implements Runtime {
         }
 
         await new Promise<void>((resolve) => {
-          nodeStdin.end(() => resolve());
+          const onError = () => {
+            cleanup();
+            resolve();
+          };
+
+          const onFinish = () => {
+            cleanup();
+            resolve();
+          };
+
+          const cleanup = () => {
+            nodeStdin.removeListener("error", onError);
+            nodeStdin.removeListener("finish", onFinish);
+          };
+
+          nodeStdin.once("error", onError);
+          nodeStdin.once("finish", onFinish);
+
+          try {
+            nodeStdin.end();
+          } catch {
+            onError();
+          }
         });
       },
       abort: () => {

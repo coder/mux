@@ -23,6 +23,7 @@ import { extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
+import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -442,8 +443,34 @@ export async function createOrpcServer({
   // Create HTTP server
   const httpServer = http.createServer(app);
 
+  // Avoid process crashes from unhandled socket/server errors.
+  attachStreamErrorHandler(httpServer, "orpc-http-server", { logger: log });
+
+  httpServer.on("clientError", (error, socket) => {
+    if (isIgnorableStreamError(error)) {
+      socket.destroy();
+      return;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    const code =
+      error && typeof error === "object" && "code" in error && typeof error.code === "string"
+        ? error.code
+        : undefined;
+
+    log.warn("ORPC HTTP client error", { code, message });
+
+    try {
+      socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+    } catch {
+      socket.destroy();
+    }
+  });
+
   // oRPC WebSocket handler
   const wsServer = new WebSocketServer({ server: httpServer, path: "/orpc/ws" });
+
+  attachStreamErrorHandler(wsServer, "orpc-ws-server", { logger: log });
 
   // WebSocket heartbeat: proactively terminate half-open connections (common with NAT/proxy setups).
   // When a client is unresponsive, closing the socket forces the browser to reconnect.
@@ -467,7 +494,21 @@ export async function createOrpcServer({
   const orpcWsHandler = new ORPCWebSocketServerHandler(orpcRouter, {
     interceptors: [onError(onOrpcError)],
   });
+
   wsServer.on("connection", (ws, req) => {
+    const terminate = () => {
+      try {
+        ws.terminate();
+      } catch {
+        // Best-effort.
+      }
+    };
+
+    attachStreamErrorHandler(ws, "orpc-ws-connection", {
+      logger: log,
+      onIgnorable: terminate,
+      onUnexpected: terminate,
+    });
     const socket = ws as AliveWebSocket;
     socket.isAlive = true;
     ws.on("pong", () => {
@@ -479,8 +520,17 @@ export async function createOrpcServer({
   });
 
   // Start listening
-  await new Promise<void>((resolve) => {
-    httpServer.listen(port, host, () => resolve());
+  await new Promise<void>((resolve, reject) => {
+    const onListenError = (error: Error) => {
+      httpServer.removeListener("error", onListenError);
+      reject(error);
+    };
+
+    httpServer.once("error", onListenError);
+    httpServer.listen(port, host, () => {
+      httpServer.removeListener("error", onListenError);
+      resolve();
+    });
   });
 
   // Get actual port (useful when port=0)
