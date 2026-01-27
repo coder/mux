@@ -834,7 +834,9 @@ export class AgentSession {
     const { model } = options;
     assert(typeof model === "string" && model.trim().length > 0, "resumeStream requires a model");
 
-    if (this.aiService.isStreaming(this.workspaceId)) {
+    // Guard against auto-retry starting a second stream while the initial send is
+    // still waiting for init hooks to complete.
+    if (this.streamStarting || this.aiService.isStreaming(this.workspaceId)) {
       return Ok(undefined);
     }
 
