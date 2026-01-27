@@ -248,6 +248,13 @@ jobs:
           python scripts/upload-tbench-results.py
           rm -f /tmp/gcp-sa.json
 
+      - name: Fix artifact permissions
+        if: always()
+        run: |
+          # Verifier containers may create files with restrictive permissions
+          # Make all files readable so upload-artifact can zip them
+          chmod -R a+r jobs/ 2>/dev/null || true
+
       - name: Upload benchmark results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
