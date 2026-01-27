@@ -1,5 +1,3 @@
-import { fireEvent } from "@testing-library/react";
-
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
   cleanupSharedRepo,
@@ -30,7 +28,15 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
  * GitStatusStore refreshes on window focus to catch external changes.
  */
 function simulateWindowFocus(): void {
-  fireEvent.focus(window);
+  const originalDateNow = Date.now;
+  try {
+    const baseNow = originalDateNow();
+    // Avoid real sleeps: bump time just past the focus debounce so the event isn't dropped.
+    Date.now = () => baseNow + 600;
+    window.dispatchEvent(new Event("focus"));
+  } finally {
+    Date.now = originalDateNow;
+  }
 }
 
 describeIntegration("GitStatus (UI + ORPC)", () => {

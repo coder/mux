@@ -279,7 +279,10 @@ describeIntegration("Runtime Bash Execution", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      // SSH runtime shares a single container; run this stdin regression sequentially to avoid contention.
+      const runStdinTest = type === "ssh" ? test : test.concurrent;
+
+      runStdinTest(
         "should not hang on commands that read stdin without input",
         async () => {
           const env = await createTestEnvironment();
