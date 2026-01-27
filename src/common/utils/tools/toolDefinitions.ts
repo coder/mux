@@ -1264,6 +1264,7 @@ export type BridgeableToolName =
   | "web_fetch"
   | "task"
   | "task_await"
+  | "task_apply_git_patch"
   | "task_list"
   | "task_terminate";
 
@@ -1286,6 +1287,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   web_fetch: WebFetchToolResultSchema,
   task: TaskToolResultSchema,
   task_await: TaskAwaitToolResultSchema,
+  task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
   task_terminate: TaskTerminateToolResultSchema,
 };
