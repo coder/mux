@@ -14,6 +14,7 @@ import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
+import type { EffectivePolicy } from "@/common/orpc/types";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
@@ -23,6 +24,33 @@ import {
   PREFERRED_COMPACTION_MODEL_KEY,
 } from "@/common/constants/storage";
 import { ModelRow } from "./ModelRow";
+
+function isModelAllowedByPolicy(policy: EffectivePolicy | null, modelString: string): boolean {
+  const providerAccess = policy?.providerAccess;
+  if (providerAccess == null) {
+    return true;
+  }
+
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex <= 0 || colonIndex === modelString.length - 1) {
+    return true;
+  }
+
+  const provider = modelString.slice(0, colonIndex);
+  const modelId = modelString.slice(colonIndex + 1);
+
+  const providerPolicy = providerAccess.find((p) => p.id === provider);
+  if (!providerPolicy) {
+    return false;
+  }
+
+  const allowedModels = providerPolicy.allowedModels ?? null;
+  if (allowedModels === null) {
+    return true;
+  }
+
+  return allowedModels.includes(modelId);
+}
 
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
@@ -80,8 +108,13 @@ export function ModelsSection() {
     { listener: true }
   );
 
-  // All models (including hidden) for the settings dropdowns
+  // All models (including hidden) for the settings dropdowns.
+  // PolicyService enforces model access on the backend, but we also filter here so users can't
+  // select models that will be denied at send time.
   const allModels = getSuggestedModels(config);
+  const selectableModels = effectivePolicy
+    ? allModels.filter((model) => isModelAllowedByPolicy(effectivePolicy, model))
+    : allModels;
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -232,7 +265,7 @@ export function ModelsSection() {
               <SearchableModelSelect
                 value={defaultModel}
                 onChange={setDefaultModel}
-                models={allModels}
+                models={selectableModels}
                 placeholder="Select model"
               />
             </div>
@@ -247,7 +280,7 @@ export function ModelsSection() {
               <SearchableModelSelect
                 value={compactionModel}
                 onChange={setCompactionModel}
-                models={allModels}
+                models={selectableModels}
                 emptyOption={{ value: "", label: "Use workspace model" }}
               />
             </div>
