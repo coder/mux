@@ -32,6 +32,7 @@ If you need investigation (codebase exploration, tracing callsites, locating pat
 - Use \`agentId: "explore"\` for read-only repo/code exploration and optional web lookups when relevant.
 - In each task prompt, specify explicit deliverables (what questions to answer, what files/symbols to locate, and the exact output format you want back).
 - Prefer running multiple Explore tasks in parallel with \`run_in_background: true\`, then use \`task_await\` (optionally with \`task_ids\`) until all spawned tasks are \`completed\`.
+- Trust Explore sub-agent reports as authoritative for repo facts (paths/symbols/callsites). Do not redo the same investigation yourself; only re-check if the report is ambiguous or contradicts other evidence.
 - While Explore tasks run, do NOT perform broad repo exploration yourself. Wait for the reports, then synthesize the plan in this session.
 - Do NOT call \`propose_plan\` until you have awaited and incorporated sub-agent reports.
 

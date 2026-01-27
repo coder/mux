@@ -31,6 +31,7 @@ describe("getPlanModeInstruction", () => {
   it("includes sub-agent delegation guidance", () => {
     const instruction = getPlanModeInstruction("/tmp/plan.md", false);
 
+    expect(instruction).toContain("Trust Explore sub-agent reports as authoritative");
     expect(instruction).toContain('MUST ONLY spawn `agentId: "explore"` tasks');
     expect(instruction).toContain("Do NOT call `propose_plan` until");
   });
