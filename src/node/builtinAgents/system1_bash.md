@@ -36,6 +36,11 @@ Rules:
 - If the script already narrows output to a slice (e.g. `head`, `tail`, `sed -n` line ranges), avoid extra
   denoising: prefer keeping most/all lines within the budget.
 - Never filter out git merge conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`). If the command is searching for these markers (e.g. `rg`/`grep`), do not keep only representative matches; keep all matches within the budget.
+- Prefer omitting tool-generated advisory blocks (especially git lines starting with `hint:`) that only suggest
+  next-step commands or point to docs/help. Keep the underlying `error:`/`fatal:`/`CONFLICT` lines, file paths,
+  and conflict markers instead.
+- Exception: keep `hint:` blocks when the script is explicitly searching for them (e.g. `rg '^hint:'`) or when
+  the hint is the only clue explaining a blocking state.
 - Prefer high signal density: keep ranges tight around important lines plus minimal surrounding context.
 - Merge adjacent/overlapping ranges only when the lines between are also informative. Do NOT add noise just
   to reduce range count; it's OK to return many ranges when denoising (e.g., > 8).
