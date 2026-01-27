@@ -60,5 +60,8 @@ export const AppWithMocks: FC<AppWithMocksProps> = ({ setup }) => {
 
   clientRef.current ??= setup();
 
-  return <AppLoader client={clientRef.current} />;
+  // Key by storyId to force full remount between stories.
+  // Without this, RouterProvider keeps its initial route and APIProvider
+  // doesn't re-initialize, causing flaky "loading page vs left screen" states.
+  return <AppLoader key={storyId} client={clientRef.current} />;
 };
