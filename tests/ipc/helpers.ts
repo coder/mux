@@ -284,18 +284,48 @@ export async function sendMessageAndWait(
   const collector = createStreamCollector(env.orpc, workspaceId);
   collector.start();
 
+  // sendMessage() blocks until the stream finishes (AgentSession.await streamWithHistory).
+  // Tests need a hard upper bound on total time spent waiting for a stream; otherwise
+  // CI load can cause Jest to time out before our helpers report useful diagnostics.
+  //
+  // This helper:
+  // - Starts sendMessage() without awaiting it
+  // - Waits for stream-end (bounded by timeoutMs)
+  // - Interrupts the stream on timeout to avoid leaking in-flight work
+  // - Awaits sendMessage() with a short grace timeout to prevent unhandled rejections
+
+  // Track sendMessage() errors even if we stop awaiting it after a timeout.
+  let sendMessageError: unknown = null;
+
+  const awaitWithTimeout = async <T>(
+    promise: Promise<T>,
+    waitMs: number
+  ): Promise<{ status: "ok"; value: T } | { status: "timeout" }> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        promise.then((value) => ({ status: "ok" as const, value })),
+        new Promise<{ status: "timeout" }>((resolve) => {
+          timer = setTimeout(() => resolve({ status: "timeout" as const }), waitMs);
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  };
+
   try {
-    // Wait for subscription to be established before sending message
-    // This prevents race conditions where events are emitted before collector is ready
-    // The subscription is ready once we receive the first event (history replay)
+    // Wait for subscription to be established before sending message.
+    // This prevents race conditions where events are emitted before collector is ready.
     await collector.waitForSubscription();
 
-    // Additional small delay to ensure the generator loop is stable
-    // This helps with concurrent test execution where system load causes timing issues
+    // Small delay to ensure the generator loop is stable. This helps with concurrent
+    // test execution where system load causes timing issues.
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Send message
-    const result = await env.orpc.workspace.sendMessage({
+    const sendPromise: Promise<WorkspaceSendMessageOutput> = env.orpc.workspace.sendMessage({
       workspaceId,
       message,
       options: {
@@ -306,15 +336,103 @@ export async function sendMessageAndWait(
       },
     });
 
-    if (!result.success) {
-      throw new Error(`Failed to send message: ${JSON.stringify(result, null, 2)}`);
+    void sendPromise.catch((err) => {
+      sendMessageError = err;
+    });
+
+    const streamEndPromise = collector.waitForEvent("stream-end", timeoutMs);
+
+    const first = await Promise.race([
+      sendPromise
+        .then((result) => ({ kind: "send" as const, result }))
+        .catch((error) => ({ kind: "send-error" as const, error })),
+      streamEndPromise.then((streamEnd) => ({ kind: "stream" as const, streamEnd })),
+    ]);
+
+    if (first.kind === "send-error") {
+      collector.logEventDiagnostics("sendMessage() threw before stream-end");
+      throw first.error instanceof Error ? first.error : new Error(String(first.error));
     }
 
-    // Wait for stream completion
-    const streamEnd = await collector.waitForEvent("stream-end", timeoutMs);
-    if (!streamEnd) {
-      throw new Error(`Stream timeout after ${timeoutMs}ms waiting for stream-end`);
+    if (first.kind === "send") {
+      if (!first.result.success) {
+        collector.logEventDiagnostics("sendMessage() returned success:false");
+        throw new Error(`Failed to send message: ${JSON.stringify(first.result, null, 2)}`);
+      }
+
+      // sendMessage() completing implies the stream has ended, but the stream-end event
+      // can arrive slightly after the RPC resolves.
+      if (!collector.hasStreamEnd()) {
+        const streamEnd = await collector.waitForEvent("stream-end", 5000);
+        if (!streamEnd) {
+          collector.logEventDiagnostics("sendMessage() completed but stream-end never arrived");
+          throw new Error("sendMessage() completed but stream-end event is missing");
+        }
+      }
+
+      return collector.getEvents();
     }
+
+    // first.kind === "stream"
+    if (!first.streamEnd) {
+      const eventsSoFar = collector.getEvents();
+      const toolCallStartCount = eventsSoFar.filter(
+        (e) => "type" in e && e.type === "tool-call-start"
+      ).length;
+      const toolCallEndCount = eventsSoFar.filter(
+        (e) => "type" in e && e.type === "tool-call-end"
+      ).length;
+
+      collector.logEventDiagnostics(
+        `Stream timeout after ${timeoutMs}ms waiting for stream-end (tool-call-start: ${toolCallStartCount}, tool-call-end: ${toolCallEndCount})`
+      );
+
+      // Best-effort interrupt so we don't leak streams across concurrent tests.
+      try {
+        await env.orpc.workspace.interruptStream({
+          workspaceId,
+          options: { abandonPartial: true },
+        });
+      } catch (err) {
+        console.error("Failed to interrupt stream after timeout:", err);
+      }
+
+      // Give sendMessage() a short grace window to settle after the interrupt.
+      const sendResult = await awaitWithTimeout(sendPromise, 5000);
+
+      const sendDetails = (() => {
+        if (sendMessageError) {
+          const msg =
+            sendMessageError instanceof Error ? sendMessageError.message : String(sendMessageError);
+          return `sendMessage() rejected: ${msg}`;
+        }
+        if (sendResult.status === "timeout") {
+          return "sendMessage() still pending after interrupt";
+        }
+        if (!sendResult.value.success) {
+          return `sendMessage() returned success:false: ${JSON.stringify(sendResult.value, null, 2)}`;
+        }
+        return "sendMessage() resolved (success:true)";
+      })();
+
+      throw new Error(
+        `Stream timeout after ${timeoutMs}ms waiting for stream-end ` +
+          `(tool-call-start: ${toolCallStartCount}, tool-call-end: ${toolCallEndCount}). ` +
+          sendDetails
+      );
+    }
+
+    // stream-end received; sendMessage() should resolve quickly afterwards.
+    const sendResult = await awaitWithTimeout(sendPromise, 5000);
+    if (sendResult.status === "timeout") {
+      collector.logEventDiagnostics("stream-end received but sendMessage() did not resolve");
+      throw new Error("stream-end received but sendMessage() did not resolve within 5000ms");
+    }
+
+    if (!sendResult.value.success) {
+      throw new Error(`Failed to send message: ${JSON.stringify(sendResult.value, null, 2)}`);
+    }
+
     return collector.getEvents();
   } finally {
     collector.stop();

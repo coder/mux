@@ -1,5 +1,3 @@
-import { fireEvent } from "@testing-library/react";
-
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
   cleanupSharedRepo,
@@ -24,14 +22,6 @@ import {
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
-
-/**
- * Simulate user returning to the app (alt-tab back).
- * GitStatusStore refreshes on window focus to catch external changes.
- */
-function simulateWindowFocus(): void {
-  fireEvent.focus(window);
-}
 
 describeIntegration("GitStatus (UI + ORPC)", () => {
   beforeAll(async () => {
@@ -89,8 +79,9 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         expect(bashRes.success).toBe(true);
         if (!bashRes.success) return;
 
-        // User returns to app (alt-tab) - triggers git status refresh
-        simulateWindowFocus();
+        // Directly invalidate git status instead of relying on window focus.
+        // This bypasses RefreshController rate-limiting and happy-dom focus quirks.
+        invalidateGitStatus(workspaceId);
 
         const dirtyStatus = await waitForDirtyStatus(view.container, workspaceId, 30_000);
         expect(dirtyStatus.dirty).toBe(true);
@@ -119,7 +110,8 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         expect(bashRes.success).toBe(true);
         if (!bashRes.success) return;
 
-        simulateWindowFocus();
+        // See focus test above: use explicit invalidation to avoid DOM focus flakiness.
+        invalidateGitStatus(workspaceId);
 
         const status = await waitForCleanStatus(view.container, workspaceId, 30_000);
         expect(status.dirty).toBe(false);

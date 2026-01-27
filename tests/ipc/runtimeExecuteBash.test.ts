@@ -24,6 +24,8 @@ import {
   HAIKU_MODEL,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
+  STREAM_TIMEOUT_LOCAL_MS,
+  STREAM_TIMEOUT_SSH_MS,
 } from "./helpers";
 import {
   isDockerAvailable,
@@ -138,7 +140,10 @@ describeIntegration("Runtime Bash Execution", () => {
         return undefined; // undefined = defaults to local
       };
 
-      test.concurrent(
+      const testForRuntime = type === "ssh" ? test : test.concurrent;
+      const streamTimeout = type === "ssh" ? STREAM_TIMEOUT_SSH_MS : STREAM_TIMEOUT_LOCAL_MS;
+
+      testForRuntime(
         "should execute simple bash command",
         async () => {
           const env = await createTestEnvironment();
@@ -171,7 +176,8 @@ describeIntegration("Runtime Bash Execution", () => {
                 workspaceId,
                 'Use the bash tool with args: { script: "echo Hello World", timeout_secs: 30, run_in_background: false, display_name: "echo-hello" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                BASH_ONLY
+                BASH_ONLY,
+                streamTimeout
               );
 
               // Extract response text
@@ -207,7 +213,7 @@ describeIntegration("Runtime Bash Execution", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      testForRuntime(
         "should handle bash command with environment variables",
         async () => {
           const env = await createTestEnvironment();
@@ -240,7 +246,8 @@ describeIntegration("Runtime Bash Execution", () => {
                 workspaceId,
                 'Use the bash tool with args: { script: "export TEST_VAR=test123 && echo Value:$TEST_VAR", timeout_secs: 30, run_in_background: false, display_name: "env-var" }. Do not spawn a sub-agent.',
                 HAIKU_MODEL,
-                BASH_ONLY
+                BASH_ONLY,
+                streamTimeout
               );
 
               // Extract response text
@@ -279,7 +286,7 @@ describeIntegration("Runtime Bash Execution", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      testForRuntime(
         "should not hang on commands that read stdin without input",
         async () => {
           const env = await createTestEnvironment();
@@ -359,7 +366,7 @@ describeIntegration("Runtime Bash Execution", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      testForRuntime(
         "should not hang on grep | head pattern over SSH",
         async () => {
           const env = await createTestEnvironment();
