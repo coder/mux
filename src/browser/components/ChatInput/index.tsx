@@ -8,8 +8,9 @@ import type { Toast } from "../ChatInputToast";
 import { ConnectionStatusToast } from "../ConnectionStatusToast";
 import { ChatInputToast } from "../ChatInputToast";
 import type { SendMessageError } from "@/common/types/errors";
-import { createCommandToast, createErrorToast } from "../ChatInputToasts";
+import { createErrorToast } from "../ChatInputToasts";
 import { ConfirmationModal } from "../ConfirmationModal";
+import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import {
   readPersistedState,
@@ -40,17 +41,13 @@ import {
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
 import {
-  handleNewCommand,
-  handleCompactCommand,
-  handlePlanShowCommand,
-  handlePlanOpenCommand,
-  forkWorkspace,
-  prepareCompactionMessage,
   executeCompaction,
-  type CommandHandlerContext,
+  prepareCompactionMessage,
+  processSlashCommand,
+  type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
-import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
 import {
   getSlashCommandSuggestions,
@@ -1264,41 +1261,89 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setAttachments]
   );
 
+  // Shared slash command execution for creation + workspace inputs.
+  const commandWorkspaceId = variant === "workspace" ? props.workspaceId : undefined;
+  const commandProjectPath =
+    variant === "creation" ? props.projectPath : (selectedWorkspace?.projectPath ?? null);
+  const commandOnCancelEdit = variant === "workspace" ? props.onCancelEdit : undefined;
+
+  // Keep this helper as a plain function so command wiring stays readable without a giant
+  // dependency list; the React Compiler already handles memoization.
+  const executeParsedCommand = async (
+    parsed: ParsedCommand | null,
+    restoreInput: string,
+    options?: { skipConfirmation?: boolean }
+  ): Promise<boolean> => {
+    if (!parsed) {
+      return false;
+    }
+
+    const isDestructive = parsed.type === "clear" || parsed.type === "truncate";
+    if (isDestructive && variant === "workspace" && !options?.skipConfirmation) {
+      setPendingDestructiveCommand({
+        type: parsed.type,
+        percentage: parsed.type === "truncate" ? parsed.percentage : undefined,
+      });
+      return true;
+    }
+
+    const reviewsData = attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
+    const commandContext: SlashCommandContext = {
+      api,
+      variant,
+      workspaceId: commandWorkspaceId,
+      projectPath: commandProjectPath,
+      openSettings: open,
+      sendMessageOptions,
+      setInput,
+      setAttachments,
+      setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
+      setToast,
+      onProviderConfig: props.onProviderConfig,
+      onModelChange: props.onModelChange,
+      setPreferredModel,
+      setVimEnabled,
+      onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
+      resetInputHeight: () => {
+        if (inputRef.current) {
+          inputRef.current.style.height = "";
+        }
+      },
+      editMessageId: editingMessage?.id,
+      onCancelEdit: commandOnCancelEdit,
+      reviews: reviewsData,
+    };
+
+    const result = await processSlashCommand(parsed, commandContext);
+
+    if (!result.clearInput) {
+      setInput(restoreInput);
+    } else if (variant === "workspace" && parsed.type === "compact") {
+      if (reviewsData && reviewsData.length > 0) {
+        const sentReviewIds = attachedReviews.map((r) => r.id);
+        props.onCheckReviews?.(sentReviewIds);
+      }
+      props.onMessageSent?.();
+    }
+
+    return true;
+  };
+
   // Handle destructive command confirmation
-  const handleDestructiveCommandConfirm = useCallback(async () => {
+  const handleDestructiveCommandConfirm = async () => {
     if (!pendingDestructiveCommand || variant !== "workspace") return;
 
-    const { type, percentage } = pendingDestructiveCommand;
+    const parsedCommand: ParsedCommand =
+      pendingDestructiveCommand.type === "clear"
+        ? { type: "clear" }
+        : {
+            type: "truncate",
+            percentage: pendingDestructiveCommand.percentage ?? 0,
+          };
+
     setPendingDestructiveCommand(null);
-
-    // Save the original input in case we need to restore on error
-    const originalInput = input;
-    setInput("");
-    if (inputRef.current) {
-      inputRef.current.style.height = "";
-    }
-
-    try {
-      if (type === "clear") {
-        await props.onTruncateHistory(1.0);
-        pushToast({ type: "success", message: "Chat history cleared" });
-      } else if (type === "truncate" && percentage !== undefined) {
-        await props.onTruncateHistory(percentage);
-        pushToast({
-          type: "success",
-          message: `Chat history truncated by ${Math.round(percentage * 100)}%`,
-        });
-      }
-    } catch (error) {
-      console.error("Failed to execute destructive command:", error);
-      pushToast({
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to modify chat history",
-      });
-      // Restore the input so user can retry
-      setInput(originalInput);
-    }
-  }, [pendingDestructiveCommand, variant, props, pushToast, setInput, input]);
+    await executeParsedCommand(parsedCommand, input, { skipConfirmation: true });
+  };
 
   const handleDestructiveCommandCancel = useCallback(() => {
     setPendingDestructiveCommand(null);
@@ -1419,6 +1464,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     // Route to creation handler for creation variant
     if (variant === "creation") {
+      const commandHandled = await executeParsedCommand(parsed, input);
+      if (commandHandled) {
+        return;
+      }
+
       let creationMessageTextForSend = messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
@@ -1473,284 +1523,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (variant !== "workspace") return; // Type guard
 
     try {
-      if (parsed) {
-        // Handle /clear command - show confirmation modal
-        if (parsed.type === "clear") {
-          setPendingDestructiveCommand({ type: "clear" });
-          return;
-        }
-
-        // Handle /truncate command - show confirmation modal
-        if (parsed.type === "truncate") {
-          setPendingDestructiveCommand({ type: "truncate", percentage: parsed.percentage });
-          return;
-        }
-
-        // Handle /providers set command
-        if (parsed.type === "providers-set" && props.onProviderConfig) {
-          setSendingCount((c) => c + 1);
-          setInput(""); // Clear input immediately
-
-          try {
-            await props.onProviderConfig(parsed.provider, parsed.keyPath, parsed.value);
-            // Success - show toast
-            pushToast({
-              type: "success",
-              message: `Provider ${parsed.provider} updated`,
-            });
-          } catch (error) {
-            console.error("Failed to update provider config:", error);
-            pushToast({
-              type: "error",
-              message: error instanceof Error ? error.message : "Failed to update provider",
-            });
-            setInput(messageText); // Restore input on error
-          } finally {
-            setSendingCount((c) => c - 1);
-          }
-          return;
-        }
-
-        // Handle /model command
-        if (parsed.type === "model-set") {
-          setInput(""); // Clear input immediately
-          setPreferredModel(parsed.modelString);
-          props.onModelChange?.(parsed.modelString);
-          pushToast({ type: "success", message: `Model changed to ${parsed.modelString}` });
-          return;
-        }
-
-        if (parsed.type === "mcp-open") {
-          setInput("");
-          open("projects");
-          return;
-        }
-
-        if (parsed.type === "debug-llm-request") {
-          setInput("");
-          window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST));
-          return;
-        }
-
-        if (parsed.type === "vim-toggle") {
-          setInput(""); // Clear input immediately
-          setVimEnabled((prev) => !prev);
-          return;
-        }
-
-        // Handle other non-API commands (help, invalid args, etc)
-        const commandToast = createCommandToast(parsed);
-        if (commandToast) {
-          setToast(commandToast);
-          return;
-        }
-
-        if (!api) {
-          pushToast({ type: "error", message: "Not connected to server" });
-          return;
-        }
-
-        const commandHandlerContextBase: CommandHandlerContext = {
-          api,
-          workspaceId: props.workspaceId,
-          sendMessageOptions,
-          setInput,
-          setAttachments,
-          setSendingState: (increment: boolean) =>
-            increment ? setSendingCount((c) => c + 1) : setSendingCount((c) => c - 1),
-          setToast,
-        };
-
-        if (
-          parsed.type === "mcp-add" ||
-          parsed.type === "mcp-edit" ||
-          parsed.type === "mcp-remove"
-        ) {
-          if (!selectedWorkspace?.projectPath) {
-            pushToast({ type: "error", message: "Select a workspace to manage MCP servers" });
-            return;
-          }
-
-          setSendingCount((c) => c + 1);
-          setInput("");
-          try {
-            const projectPath = selectedWorkspace.projectPath;
-            const result =
-              parsed.type === "mcp-add" || parsed.type === "mcp-edit"
-                ? await api.projects.mcp.add({
-                    projectPath,
-                    name: parsed.name,
-                    command: parsed.command,
-                  })
-                : await api.projects.mcp.remove({ projectPath, name: parsed.name });
-
-            if (!result.success) {
-              pushToast({
-                type: "error",
-                message: result.error ?? "Failed to update MCP servers",
-              });
-              setInput(messageText);
-            } else {
-              const successMessage =
-                parsed.type === "mcp-add"
-                  ? `Added MCP server ${parsed.name}`
-                  : parsed.type === "mcp-edit"
-                    ? `Updated MCP server ${parsed.name}`
-                    : `Removed MCP server ${parsed.name}`;
-              pushToast({ type: "success", message: successMessage });
-            }
-          } catch (error) {
-            console.error("Failed to update MCP servers", error);
-            pushToast({
-              type: "error",
-              message: error instanceof Error ? error.message : "Failed to update MCP servers",
-            });
-            setInput(messageText);
-          } finally {
-            setSendingCount((c) => c - 1);
-          }
-
-          return;
-        }
-
-        // Handle /compact command
-        if (parsed.type === "compact") {
-          // Include attached reviews in the context so they're queued after compaction
-          const reviewsData =
-            attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
-
-          const context: CommandHandlerContext = {
-            ...commandHandlerContextBase,
-            editMessageId: editingMessage?.id,
-            onCancelEdit: props.onCancelEdit,
-            reviews: reviewsData,
-          };
-
-          const result = await handleCompactCommand(parsed, context);
-          if (!result.clearInput) {
-            setInput(messageText); // Restore input on error
-          } else {
-            if (reviewsData && reviewsData.length > 0) {
-              // Mark attached reviews as checked on success
-              const sentReviewIds = attachedReviews.map((r) => r.id);
-              props.onCheckReviews?.(sentReviewIds);
-            }
-            props.onMessageSent?.();
-          }
-          return;
-        }
-
-        // Handle /fork command
-        if (parsed.type === "fork") {
-          setInput(""); // Clear input immediately
-          setSendingCount((c) => c + 1);
-
-          try {
-            const forkResult = await forkWorkspace({
-              client: api,
-              sourceWorkspaceId: props.workspaceId,
-              newName: parsed.newName,
-              startMessage: parsed.startMessage,
-              sendMessageOptions,
-            });
-
-            if (!forkResult.success) {
-              const errorMsg = forkResult.error ?? "Failed to fork workspace";
-              console.error("Failed to fork workspace:", errorMsg);
-              pushToast({ type: "error", title: "Fork Failed", message: errorMsg });
-              setInput(messageText); // Restore input on error
-            } else {
-              pushToast({
-                type: "success",
-                message: `Forked to workspace "${parsed.newName}"`,
-              });
-            }
-          } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : "Failed to fork workspace";
-            console.error("Fork error:", error);
-            pushToast({ type: "error", title: "Fork Failed", message: errorMsg });
-            setInput(messageText); // Restore input on error
-          }
-
-          setSendingCount((c) => c - 1);
-          return;
-        }
-
-        // Handle /new command
-        if (parsed.type === "new") {
-          const context = commandHandlerContextBase;
-
-          const result = await handleNewCommand(parsed, context);
-          if (!result.clearInput) {
-            setInput(messageText); // Restore input on error
-          }
-          return;
-        }
-
-        // Handle /plan command
-        if (parsed.type === "plan-show" || parsed.type === "plan-open") {
-          const context = commandHandlerContextBase;
-
-          const handler =
-            parsed.type === "plan-show" ? handlePlanShowCommand : handlePlanOpenCommand;
-          const result = await handler(context);
-          if (!result.clearInput) {
-            setInput(messageText); // Restore input on error
-          }
-          return;
-        }
-        // Handle /idle command
-        if (parsed.type === "idle-compaction") {
-          if (!api) {
-            setToast({
-              id: Date.now().toString(),
-              type: "error",
-              message: "Not connected to server",
-            });
-            return;
-          }
-          if (!selectedWorkspace?.projectPath) {
-            setToast({
-              id: Date.now().toString(),
-              type: "error",
-              message: "No project selected",
-            });
-            return;
-          }
-          setInput(""); // Clear input immediately
-
-          try {
-            const result = await api.projects.idleCompaction.set({
-              projectPath: selectedWorkspace.projectPath,
-              hours: parsed.hours,
-            });
-
-            if (!result.success) {
-              setToast({
-                id: Date.now().toString(),
-                type: "error",
-                message: result.error ?? "Failed to update setting",
-              });
-              setInput(messageText); // Restore input on error
-            } else {
-              setToast({
-                id: Date.now().toString(),
-                type: "success",
-                message: parsed.hours
-                  ? `Idle compaction set to ${parsed.hours} hours`
-                  : "Idle compaction disabled",
-              });
-            }
-          } catch (error) {
-            setToast({
-              id: Date.now().toString(),
-              type: "error",
-              message: error instanceof Error ? error.message : "Failed to update setting",
-            });
-            setInput(messageText); // Restore input on error
-          }
-          return;
-        }
+      const commandHandled = await executeParsedCommand(parsed, input);
+      if (commandHandled) {
+        return;
       }
 
       // Regular message - send directly via API

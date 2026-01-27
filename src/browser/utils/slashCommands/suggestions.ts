@@ -13,7 +13,7 @@ import type {
 
 export type { SlashSuggestion } from "./types";
 
-import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
+import { WORKSPACE_ONLY_COMMAND_KEYS } from "@/constants/slashCommands";
 
 const COMMAND_DEFINITIONS = getSlashCommandDefinitions();
 
@@ -53,7 +53,7 @@ function buildTopLevelSuggestions(
       };
     },
     // In creation mode, filter out workspace-only commands
-    isCreation ? (definition) => !WORKSPACE_ONLY_COMMANDS.has(definition.key) : undefined
+    isCreation ? (definition) => !WORKSPACE_ONLY_COMMAND_KEYS.has(definition.key) : undefined
   );
 
   const formatScopeLabel = (scope: string): string => {
@@ -139,7 +139,7 @@ export function getSlashCommandSuggestions(
   }
 
   // In creation mode, don't show subcommand suggestions for workspace-only commands
-  if (context.variant === "creation" && WORKSPACE_ONLY_COMMANDS.has(rootKey)) {
+  if (context.variant === "creation" && WORKSPACE_ONLY_COMMAND_KEYS.has(rootKey)) {
     return [];
   }
 
