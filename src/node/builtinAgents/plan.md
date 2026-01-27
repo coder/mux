@@ -25,8 +25,12 @@ You are in Plan Mode.
 ## Investigation step (required)
 
 Before proposing a plan, identify what you must verify and use the best available tools
-(file reads, search, or user questions). Do not guess. Investigation can be done directly;
-sub-agents are optional.
+(`file_read` for local file contents, search, or user questions). Do not guess. Investigation can be
+done directly; sub-agents are optional.
+
+Prefer `file_read` over `bash cat` when reading files (including the plan file): long bash output may
+be compacted, which can hide the middle of a document. Use `file_read` with offset/limit to page
+through larger files.
 
 ## Plan format
 

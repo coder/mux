@@ -1,3 +1,5 @@
+import { homedir } from "os";
+
 import assert from "@/common/utils/assert";
 import { BASH_HARD_MAX_LINES, BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
@@ -159,9 +161,75 @@ function isGitConflictMarkerSearch(script: string): boolean {
   return false;
 }
 
+function scriptMentionsPlanFile(script: string, planFilePath: string | undefined): boolean {
+  assert(typeof script === "string", "script must be a string");
+
+  if (typeof planFilePath !== "string") {
+    return false;
+  }
+
+  const trimmedPlanFilePath = planFilePath.trim();
+  if (trimmedPlanFilePath.length === 0) {
+    return false;
+  }
+
+  const needles = new Set<string>();
+
+  const addNeedle = (needle: string): void => {
+    const trimmed = needle.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    needles.add(trimmed);
+  };
+
+  const addNeedleVariants = (needle: string): void => {
+    addNeedle(needle);
+    addNeedle(needle.replaceAll("\\\\", "/"));
+  };
+
+  addNeedleVariants(trimmedPlanFilePath);
+
+  const home = homedir();
+  const homePosix = home.replaceAll("\\\\", "/");
+
+  if (trimmedPlanFilePath === "~") {
+    addNeedleVariants(home);
+    addNeedleVariants(homePosix);
+  } else if (trimmedPlanFilePath.startsWith("~/") || trimmedPlanFilePath.startsWith("~\\\\")) {
+    const suffix = trimmedPlanFilePath.slice(1);
+    addNeedleVariants(`${home}${suffix}`);
+    addNeedleVariants(`${homePosix}${suffix.replaceAll("\\\\", "/")}`);
+  }
+
+  // Also match the `~` form when the configured plan path is already expanded.
+  for (const candidateHome of [home, homePosix]) {
+    if (!trimmedPlanFilePath.startsWith(candidateHome)) {
+      continue;
+    }
+
+    const suffix = trimmedPlanFilePath.slice(candidateHome.length);
+    if (suffix.length > 0 && !suffix.startsWith("/") && !suffix.startsWith("\\\\")) {
+      continue;
+    }
+
+    addNeedleVariants(`~${suffix}`);
+  }
+
+  for (const needle of needles) {
+    if (script.includes(needle)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export type BashOutputCompactionSkipReason =
   | "below_threshold"
   | "already_targeted_script"
+  | "plan_file_in_script"
   | "exploration_output_small"
   | "conflict_marker_search_within_limits";
 
@@ -186,6 +254,7 @@ export function decideBashOutputCompaction(params: {
   toolName: string;
   script: string;
   displayName?: string;
+  planFilePath?: string;
 
   totalLines: number;
   totalBytes: number;
@@ -200,6 +269,10 @@ export function decideBashOutputCompaction(params: {
     "toolName must be a non-empty string"
   );
   assert(typeof params.script === "string", "script must be a string");
+  assert(
+    typeof params.planFilePath === "string" || typeof params.planFilePath === "undefined",
+    "planFilePath must be a string if provided"
+  );
   assert(
     Number.isInteger(params.totalLines) && params.totalLines >= 0,
     "totalLines must be a non-negative integer"
@@ -240,6 +313,20 @@ export function decideBashOutputCompaction(params: {
   if (params.toolName === "bash") {
     alreadyTargeted = isBashOutputAlreadyTargeted(params.script);
     intent = classifyBashIntent({ script: params.script, displayName: params.displayName });
+
+    if (scriptMentionsPlanFile(params.script, params.planFilePath)) {
+      // Plan Mode invariant: the plan file is the source of truth. System1 compaction can drop
+      // the middle of the document, forcing extra tool calls and/or leading to incorrect plans.
+      return {
+        shouldCompact: false,
+        skipReason: "plan_file_in_script",
+        triggeredByLines,
+        triggeredByBytes,
+        alreadyTargeted,
+        intent,
+        effectiveMaxKeptLines,
+      };
+    }
 
     if (alreadyTargeted) {
       return {

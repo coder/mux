@@ -2231,6 +2231,7 @@ export class AIService extends EventEmitter {
                     toolName: params.toolName,
                     script: params.script,
                     displayName: params.displayName,
+                    planFilePath: effectiveMode === "plan" ? planFilePath : undefined,
                     totalLines: lines.length,
                     totalBytes: bytes,
                     minLines,

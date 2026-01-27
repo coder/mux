@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { homedir } from "os";
 
 import {
   classifyBashIntent,
@@ -76,6 +77,86 @@ describe("bashCompactionPolicy", () => {
 
       expect(decision.shouldCompact).toBe(false);
       expect(decision.skipReason).toBe("already_targeted_script");
+    });
+
+    it("skips compaction when script reads the configured plan file", () => {
+      const planFilePath = "~/.mux/plans/my-project/my-workspace.md";
+      const scripts = [
+        `cat ${planFilePath}`,
+        `bat ${planFilePath}`,
+        `python -c "print(open('${planFilePath}').read())"`,
+      ];
+
+      for (const script of scripts) {
+        const decision = decideBashOutputCompaction({
+          toolName: "bash",
+          script,
+          planFilePath,
+          totalLines: 200,
+          totalBytes: 10_000,
+          minLines: 10,
+          minTotalBytes: 4 * 1024,
+          maxKeptLines: 40,
+        });
+
+        expect(decision.shouldCompact).toBe(false);
+        expect(decision.skipReason).toBe("plan_file_in_script");
+      }
+    });
+
+    it("skips compaction when script and planFilePath use different home path forms", () => {
+      const homePosix = homedir().replaceAll("\\\\", "/");
+      const tildePlanFilePath = "~/.mux/plans/my-project/my-workspace.md";
+      const expandedPlanFilePath = `${homePosix}/.mux/plans/my-project/my-workspace.md`;
+
+      const tildeDecision = decideBashOutputCompaction({
+        toolName: "bash",
+        script: `cat ${tildePlanFilePath}`,
+        planFilePath: expandedPlanFilePath,
+        totalLines: 200,
+        totalBytes: 10_000,
+        minLines: 10,
+        minTotalBytes: 4 * 1024,
+        maxKeptLines: 40,
+      });
+
+      expect(tildeDecision.shouldCompact).toBe(false);
+      expect(tildeDecision.skipReason).toBe("plan_file_in_script");
+
+      const expandedDecision = decideBashOutputCompaction({
+        toolName: "bash",
+        script: `cat ${expandedPlanFilePath}`,
+        planFilePath: tildePlanFilePath,
+        totalLines: 200,
+        totalBytes: 10_000,
+        minLines: 10,
+        minTotalBytes: 4 * 1024,
+        maxKeptLines: 40,
+      });
+
+      expect(expandedDecision.shouldCompact).toBe(false);
+      expect(expandedDecision.skipReason).toBe("plan_file_in_script");
+    });
+
+    it("keeps default compaction behavior for non-plan file scripts", () => {
+      const planFilePath = "~/.mux/plans/my-project/my-workspace.md";
+      const scripts = ["cat ./stdout.log", "cat file | rg needle"];
+
+      for (const script of scripts) {
+        const decision = decideBashOutputCompaction({
+          toolName: "bash",
+          script,
+          planFilePath,
+          totalLines: 200,
+          totalBytes: 10_000,
+          minLines: 10,
+          minTotalBytes: 4 * 1024,
+          maxKeptLines: 40,
+        });
+
+        expect(decision.shouldCompact).toBe(true);
+        expect(decision.skipReason).toBeUndefined();
+      }
     });
 
     it("skips compaction for small exploration output", () => {

@@ -32,4 +32,5 @@ You are in Explore mode (read-only).
 - You MUST NOT create temporary files anywhere (including /tmp).
 - You MUST NOT use redirect operators (>, >>, |) or heredocs to write to files.
 - You MUST NOT run commands that change system state (rm, mv, cp, mkdir, touch, git add/commit, installs, etc.).
-- Use bash only for read-only operations (rg, ls, cat, git diff/show/log, etc.).
+- Prefer `file_read` for reading file contents (supports offset/limit paging).
+- Use bash only for read-only operations (rg, ls, git diff/show/log, etc.), or when you need piping/processing.
