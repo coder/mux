@@ -74,7 +74,8 @@ interface ActiveStreamState {
   lastEventTimestampMs: number;
 }
 
-function getModelKey(model: string, mode: AgentMode | undefined): string {
+function getModelKey(model: string, mode: AgentMode | undefined, agentId?: string): string {
+  if (agentId) return `${model}:${agentId}`;
   return mode ? `${model}:${mode}` : model;
 }
 
@@ -305,11 +306,12 @@ export class SessionTimingService {
     file.session.totalOutputTokens += completed.outputTokens;
     file.session.totalReasoningTokens += completed.reasoningTokens;
 
-    const key = getModelKey(completed.model, completed.mode);
+    const key = getModelKey(completed.model, completed.mode, completed.agentId);
     const existing = file.session.byModel[key];
     const base = existing ?? {
       model: completed.model,
       mode: completed.mode,
+      agentId: completed.agentId,
       totalDurationMs: 0,
       totalToolExecutionMs: 0,
       totalStreamingMs: 0,
@@ -319,6 +321,10 @@ export class SessionTimingService {
       totalOutputTokens: 0,
       totalReasoningTokens: 0,
     };
+
+    // Upgrade legacy entries (mode-only) as we observe agent ids.
+    base.mode ??= completed.mode;
+    base.agentId ??= completed.agentId;
 
     base.totalDurationMs += completed.totalDurationMs;
     base.totalToolExecutionMs += completed.toolExecutionMs;
@@ -334,11 +340,7 @@ export class SessionTimingService {
     file.session.byModel[key] = base;
   }
 
-  private queuePersistCompletedStream(
-    workspaceId: string,
-    completed: CompletedStreamStats,
-    agentId?: string
-  ): void {
+  private queuePersistCompletedStream(workspaceId: string, completed: CompletedStreamStats): void {
     const epoch = this.writeEpoch.get(workspaceId) ?? 0;
 
     const previous = this.pendingWrites.get(workspaceId) ?? Promise.resolve();
@@ -373,7 +375,7 @@ export class SessionTimingService {
               )
             : 0;
 
-        const telemetryAgentId = agentId ?? completed.mode ?? "exec";
+        const telemetryAgentId = completed.agentId ?? completed.mode ?? "exec";
 
         this.telemetryService.capture({
           event: "stream_timing_computed",
@@ -484,11 +486,12 @@ export class SessionTimingService {
       parentTiming.session.totalReasoningTokens += childTiming.session.totalReasoningTokens;
 
       for (const childEntry of Object.values(childTiming.session.byModel)) {
-        const key = getModelKey(childEntry.model, childEntry.mode);
+        const key = getModelKey(childEntry.model, childEntry.mode, childEntry.agentId);
         const existing = parentTiming.session.byModel[key];
         const base = existing ?? {
           model: childEntry.model,
           mode: childEntry.mode,
+          agentId: childEntry.agentId,
           totalDurationMs: 0,
           totalToolExecutionMs: 0,
           totalStreamingMs: 0,
@@ -499,17 +502,24 @@ export class SessionTimingService {
           totalReasoningTokens: 0,
         };
 
+        // Upgrade legacy entries (mode-only) as we observe agent ids.
+        base.mode ??= childEntry.mode;
+        base.agentId ??= childEntry.agentId;
+
         // Defensive: key mismatches should not crash; prefer child data as source of truth.
-        if (
-          existing &&
-          (existing.model !== childEntry.model || existing.mode !== childEntry.mode)
-        ) {
+        const existingSplit = existing?.agentId ?? existing?.mode;
+        const incomingSplit = childEntry.agentId ?? childEntry.mode;
+        if (existing && (existing.model !== childEntry.model || existingSplit !== incomingSplit)) {
           log.warn("Session timing byModel entry mismatch during roll-up", {
             parentWorkspaceId,
             childWorkspaceId,
             key,
-            existing: { model: existing.model, mode: existing.mode },
-            incoming: { model: childEntry.model, mode: childEntry.mode },
+            existing: { model: existing.model, mode: existing.mode, agentId: existing.agentId },
+            incoming: {
+              model: childEntry.model,
+              mode: childEntry.mode,
+              agentId: childEntry.agentId,
+            },
           });
         }
 
@@ -576,6 +586,7 @@ export class SessionTimingService {
       messageId: state.messageId,
       model: state.model,
       mode: state.mode,
+      agentId: state.agentId,
       elapsedMs,
       ttftMs,
       toolExecutionMs,
@@ -833,6 +844,7 @@ export class SessionTimingService {
       messageId: params.messageId,
       model: state.model,
       mode: state.mode,
+      agentId: state.agentId,
       totalDurationMs: params.durationMs,
       ttftMs,
       toolExecutionMs,
@@ -885,7 +897,7 @@ export class SessionTimingService {
       this.applyCompletedStreamToFile(cached, completedValidated);
     }
 
-    this.queuePersistCompletedStream(data.workspaceId, completedValidated, state.agentId);
+    this.queuePersistCompletedStream(data.workspaceId, completedValidated);
 
     this.emitChange(data.workspaceId);
   }
@@ -918,7 +930,7 @@ export class SessionTimingService {
       this.applyCompletedStreamToFile(cached, completedValidated);
     }
 
-    this.queuePersistCompletedStream(data.workspaceId, completedValidated, state.agentId);
+    this.queuePersistCompletedStream(data.workspaceId, completedValidated);
 
     this.emitChange(data.workspaceId);
   }

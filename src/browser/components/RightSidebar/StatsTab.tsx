@@ -35,10 +35,20 @@ const VIEW_MODE_OPTIONS: Array<ToggleOption<ViewMode>> = [
   { value: "last-request", label: "Last Request" },
 ];
 
+// Exported for unit tests.
+export function formatModelBreakdownLabel(entry: {
+  model: string;
+  mode?: string;
+  agentId?: string;
+}): string {
+  const splitLabel = entry.agentId ?? entry.mode;
+  return splitLabel ? `${entry.model} (${splitLabel})` : entry.model;
+}
 interface ModelBreakdownEntry {
   key: string;
   model: string;
   mode?: string;
+  agentId?: string;
   totalDurationMs: number;
   totalToolExecutionMs: number;
   totalStreamingMs: number;
@@ -189,7 +199,7 @@ export function StatsTab(props: { workspaceId: string }) {
     return Object.entries(session.byModel).map(([key, entry]) => ({ key, ...entry }));
   })();
 
-  const hasModeData = modelEntries.some((e) => e.mode !== undefined);
+  const hasSplitData = modelEntries.some((e) => e.agentId !== undefined || e.mode !== undefined);
 
   const consolidatedByModel: ModelBreakdownEntry[] = (() => {
     const byModel = new Map<string, ModelBreakdownEntry>();
@@ -201,6 +211,7 @@ export function StatsTab(props: { workspaceId: string }) {
           ...entry,
           key: entry.model,
           mode: undefined,
+          agentId: undefined,
         });
         continue;
       }
@@ -219,7 +230,9 @@ export function StatsTab(props: { workspaceId: string }) {
   })();
 
   const breakdownToShow =
-    viewMode === "session" && hasModeData && showModeBreakdown ? modelEntries : consolidatedByModel;
+    viewMode === "session" && hasSplitData && showModeBreakdown
+      ? modelEntries
+      : consolidatedByModel;
 
   breakdownToShow.sort((a, b) => b.totalDurationMs - a.totalDurationMs);
 
@@ -340,14 +353,14 @@ export function StatsTab(props: { workspaceId: string }) {
         <div className="mb-2">
           <div className="flex items-center justify-between">
             <span className="text-foreground text-xs font-medium">By model</span>
-            {hasModeData && (
+            {hasSplitData && (
               <label className="text-muted flex items-center gap-2 text-xs select-none">
                 <input
                   type="checkbox"
                   checked={showModeBreakdown}
                   onChange={(e) => setShowModeBreakdown(e.target.checked)}
                 />
-                Split by mode
+                Split by agent
               </label>
             )}
           </div>
@@ -363,12 +376,7 @@ export function StatsTab(props: { workspaceId: string }) {
                 null
               );
 
-              const label =
-                entry.mode === "plan"
-                  ? `${entry.model} (plan)`
-                  : entry.mode === "exec"
-                    ? `${entry.model} (exec)`
-                    : entry.model;
+              const label = formatModelBreakdownLabel(entry);
 
               return (
                 <div key={entry.key} className="bg-border-light/30 rounded-md px-3 py-2">

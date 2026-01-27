@@ -1,8 +1,12 @@
 import { z } from "zod";
 import { AgentModeSchema } from "../../types/mode";
+import { AgentIdSchema } from "./agentDefinition";
 
 // Mode is an enum, but we defensively drop unknown values when replaying old history.
 const ModeSchema = AgentModeSchema.optional().catch(undefined);
+// Agent IDs should already be safe (they come from filenames), but defensively drop unknown values
+// when replaying old history.
+const AgentIdStatsSchema = AgentIdSchema.optional().catch(undefined);
 
 export const TimingAnomalySchema = z.enum([
   "negative_duration",
@@ -16,6 +20,7 @@ export const ActiveStreamStatsSchema = z.object({
   messageId: z.string(),
   model: z.string(),
   mode: ModeSchema,
+  agentId: AgentIdStatsSchema,
 
   elapsedMs: z.number(),
   ttftMs: z.number().nullable(),
@@ -39,6 +44,7 @@ export const CompletedStreamStatsSchema = z.object({
   messageId: z.string(),
   model: z.string(),
   mode: ModeSchema,
+  agentId: AgentIdStatsSchema,
 
   totalDurationMs: z.number(),
   ttftMs: z.number().nullable(),
@@ -56,6 +62,7 @@ export const CompletedStreamStatsSchema = z.object({
 export const ModelTimingStatsSchema = z.object({
   model: z.string(),
   mode: ModeSchema,
+  agentId: AgentIdStatsSchema,
 
   totalDurationMs: z.number(),
   totalToolExecutionMs: z.number(),
@@ -81,7 +88,11 @@ export const SessionTimingStatsSchema = z.object({
   totalOutputTokens: z.number(),
   totalReasoningTokens: z.number(),
 
-  /** Per-model breakdown (key is stable identifier like normalizeGatewayModel(model) or model:mode). */
+  /**
+   * Per-model breakdown.
+   *
+   * Key is a stable identifier like normalizeGatewayModel(model) or model:agentId (fallback: model:mode).
+   */
   byModel: z.record(z.string(), ModelTimingStatsSchema),
 });
 

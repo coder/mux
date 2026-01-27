@@ -484,6 +484,67 @@ describe("SessionTimingService", () => {
     expect(file.session?.byModel[key]?.responseCount).toBe(1);
   });
 
+  it("uses agentId for the per-model breakdown when available", async () => {
+    const telemetry = createMockTelemetryService();
+    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+    service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+    const workspaceId = "test-workspace";
+    const messageId = "m1";
+    const model = "openai:gpt-4o";
+    const startTime = 1_000_000;
+
+    service.handleStreamStart({
+      type: "stream-start",
+      workspaceId,
+      messageId,
+      model,
+      historySequence: 1,
+      startTime,
+      mode: "exec",
+      agentId: "explore",
+    });
+
+    service.handleStreamDelta({
+      type: "stream-delta",
+      workspaceId,
+      messageId,
+      delta: "hi",
+      tokens: 5,
+      timestamp: startTime + 100,
+    });
+
+    service.handleStreamEnd({
+      type: "stream-end",
+      workspaceId,
+      messageId,
+      metadata: {
+        model,
+        duration: 500,
+        usage: {
+          inputTokens: 1,
+          outputTokens: 10,
+          totalTokens: 11,
+        },
+      },
+      parts: [],
+    });
+
+    await service.waitForIdle(workspaceId);
+
+    const snapshot = await service.getSnapshot(workspaceId);
+
+    const normalizedModel = normalizeGatewayModel(model);
+    const key = `${normalizedModel}:explore`;
+
+    expect(snapshot.session?.byModel[key]).toBeDefined();
+    expect(snapshot.session?.byModel[key]?.agentId).toBe("explore");
+    expect(snapshot.session?.byModel[key]?.mode).toBe("exec");
+
+    // Regression: splitting should not label explore traffic as plain exec.
+    expect(snapshot.session?.byModel[`${normalizedModel}:exec`]).toBeUndefined();
+  });
+
   it("ignores replayed events so timing stats aren't double-counted", async () => {
     const telemetry = createMockTelemetryService();
     const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
