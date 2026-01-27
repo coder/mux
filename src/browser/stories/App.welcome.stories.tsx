@@ -52,8 +52,8 @@ export default {
   title: "App/Welcome",
 };
 
-/** Welcome screen shown when no projects exist */
-export const WelcomeScreen: AppStory = {
+/** Chat with Mux - the default boot state (no user projects) */
+export const ChatWithMux: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() =>
@@ -84,6 +84,10 @@ export const CreateWorkspace: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openFirstProjectCreationView(storyRoot);
+  },
 };
 
 /** Creation view with multiple projects - shows sidebar with projects */
