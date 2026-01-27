@@ -12,7 +12,7 @@ function createTextMessage(overrides: Partial<MuxMessage>): MuxMessage {
 }
 
 describe("isStartHerePlanSummaryMessage", () => {
-  it("returns true for Start Here summary messages", () => {
+  it("returns true for Start Here summary messages that include plan content", () => {
     const msg = createTextMessage({
       id: "start-here-123",
       role: "assistant",
@@ -20,12 +20,38 @@ describe("isStartHerePlanSummaryMessage", () => {
       parts: [
         {
           type: "text",
-          text: "# My Plan\n\n---\n\n*Plan file preserved at:* `~/.mux/plans/demo.md`",
+          text: "# My Plan\n\n## Step\n- Do the thing\n\n---\n\n*Plan file preserved at:* `~/.mux/plans/demo.md`",
         },
       ],
     });
 
     expect(isStartHerePlanSummaryMessage(msg)).toBe(true);
+  });
+
+  it("returns false for Start Here summaries that only include the placeholder", () => {
+    const msg = createTextMessage({
+      id: "start-here-123",
+      role: "assistant",
+      metadata: { compacted: "user", agentId: "plan" },
+      parts: [
+        {
+          type: "text",
+          text: [
+            "# My Plan",
+            "",
+            "*Plan saved to /tmp/demo.md*",
+            "",
+            "Note: This chat already contains the full plan; no need to re-open the plan file.",
+            "",
+            "---",
+            "",
+            "*Plan file preserved at:* `/tmp/demo.md`",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(isStartHerePlanSummaryMessage(msg)).toBe(false);
   });
 
   it("returns false for other Start Here messages from the plan agent", () => {
@@ -52,7 +78,7 @@ describe("isStartHerePlanSummaryMessage", () => {
 });
 
 describe("hasStartHerePlanSummary", () => {
-  it("checks the last assistant message", () => {
+  it("returns true when a Start Here plan summary exists anywhere in history", () => {
     const messages: MuxMessage[] = [
       createTextMessage({
         id: "start-here-123",
@@ -61,7 +87,7 @@ describe("hasStartHerePlanSummary", () => {
         parts: [
           {
             type: "text",
-            text: "*Plan file preserved at:* `~/.mux/plans/demo.md`",
+            text: "# My Plan\n\n## Step\n- Do the thing\n\n---\n\n*Plan file preserved at:* `~/.mux/plans/demo.md`",
           },
         ],
       }),
@@ -70,15 +96,9 @@ describe("hasStartHerePlanSummary", () => {
         role: "user",
         parts: [{ type: "text", text: "Implement the plan" }],
       }),
+      createTextMessage({ id: "msg-2", role: "assistant", metadata: { agentId: "exec" } }),
     ];
 
     expect(hasStartHerePlanSummary(messages)).toBe(true);
-
-    // Once an exec response exists, the last assistant isn't the Start Here summary.
-    const withExec = [
-      ...messages,
-      createTextMessage({ id: "msg-2", role: "assistant", metadata: { agentId: "exec" } }),
-    ];
-    expect(hasStartHerePlanSummary(withExec)).toBe(false);
   });
 });
