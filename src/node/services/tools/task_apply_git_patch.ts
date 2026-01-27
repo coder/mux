@@ -69,14 +69,17 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
     inputSchema: TOOL_DEFINITIONS.task_apply_git_patch.schema,
     execute: async (args, { abortSignal }): Promise<unknown> => {
       const workspaceId = requireWorkspaceId(config, "task_apply_git_patch");
-      assert(config.workspaceSessionDir, "task_apply_git_patch requires workspaceSessionDir");
+      assert(config.cwd, "task_apply_git_patch requires cwd");
+      assert(config.runtimeTempDir, "task_apply_git_patch requires runtimeTempDir");
+      const workspaceSessionDir = config.workspaceSessionDir;
+      assert(workspaceSessionDir, "task_apply_git_patch requires workspaceSessionDir");
 
       const taskId = args.task_id;
       const dryRun = args.dry_run === true;
       const threeWay = args.three_way !== false;
       const force = args.force === true;
 
-      const artifact = await readSubagentGitPatchArtifact(config.workspaceSessionDir, taskId);
+      const artifact = await readSubagentGitPatchArtifact(workspaceSessionDir, taskId);
       if (!artifact) {
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
@@ -151,10 +154,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         );
       }
 
-      const expectedPatchPath = getSubagentGitPatchMboxPath(config.workspaceSessionDir, taskId);
+      const expectedPatchPath = getSubagentGitPatchMboxPath(workspaceSessionDir, taskId);
 
       // Defensive: `task_id` is user-controlled input; reject path traversal.
-      if (!isPathInsideDir(config.workspaceSessionDir, expectedPatchPath)) {
+      if (!isPathInsideDir(workspaceSessionDir, expectedPatchPath)) {
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
@@ -169,7 +172,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
 
       const safeMboxPath =
         typeof artifact.mboxPath === "string" && artifact.mboxPath.length > 0
-          ? isPathInsideDir(config.workspaceSessionDir, artifact.mboxPath)
+          ? isPathInsideDir(workspaceSessionDir, artifact.mboxPath)
             ? artifact.mboxPath
             : undefined
           : undefined;
@@ -197,13 +200,31 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
       }
 
       if (!patchPath) {
+        const checkedPaths = Array.from(new Set(patchCandidates))
+          .map((candidate) =>
+            isPathInsideDir(workspaceSessionDir, candidate)
+              ? path.relative(workspaceSessionDir, candidate) || path.basename(candidate)
+              : candidate
+          )
+          .join(", ");
+
+        log.debug("task_apply_git_patch: patch file missing", {
+          taskId,
+          workspaceId,
+          cwd: config.cwd,
+          checkedPaths,
+        });
+
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
             success: false as const,
             taskId,
             error: "Patch file is missing on disk.",
-            note: patchPathNote,
+            note: mergeNotes(
+              patchPathNote,
+              checkedPaths.length > 0 ? `Checked patch locations: ${checkedPaths}` : undefined
+            ),
           },
           "task_apply_git_patch"
         );
@@ -349,6 +370,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
             if (abortResult.exitCode !== 0) {
               log.debug("task_apply_git_patch: dry-run git am --abort failed", {
                 taskId,
+                workspaceId,
+                cwd: config.cwd,
                 dryRunWorktreePath,
                 exitCode: abortResult.exitCode,
                 stderr: abortResult.stderr.trim(),
@@ -358,6 +381,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           } catch (error: unknown) {
             log.debug("task_apply_git_patch: dry-run git am --abort threw", {
               taskId,
+              workspaceId,
+              cwd: config.cwd,
               dryRunWorktreePath,
               error,
             });
@@ -372,6 +397,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
             if (removeResult.exitCode !== 0) {
               log.debug("task_apply_git_patch: dry-run git worktree remove failed", {
                 taskId,
+                workspaceId,
+                cwd: config.cwd,
                 dryRunWorktreePath,
                 exitCode: removeResult.exitCode,
                 stderr: removeResult.stderr.trim(),
@@ -381,6 +408,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           } catch (error: unknown) {
             log.debug("task_apply_git_patch: dry-run git worktree remove threw", {
               taskId,
+              workspaceId,
+              cwd: config.cwd,
               dryRunWorktreePath,
               error,
             });
@@ -394,6 +423,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
             if (pruneResult.exitCode !== 0) {
               log.debug("task_apply_git_patch: dry-run git worktree prune failed", {
                 taskId,
+                workspaceId,
+                cwd: config.cwd,
                 exitCode: pruneResult.exitCode,
                 stderr: pruneResult.stderr.trim(),
                 stdout: pruneResult.stdout.trim(),
@@ -402,6 +433,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           } catch (error: unknown) {
             log.debug("task_apply_git_patch: dry-run git worktree prune threw", {
               taskId,
+              workspaceId,
+              cwd: config.cwd,
               error,
             });
           }
@@ -453,7 +486,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
       if (!dryRun) {
         await markSubagentGitPatchArtifactApplied({
           workspaceId,
-          workspaceSessionDir: config.workspaceSessionDir,
+          workspaceSessionDir,
           childTaskId: taskId,
           appliedAtMs: Date.now(),
         });

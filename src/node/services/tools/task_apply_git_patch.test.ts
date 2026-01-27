@@ -119,7 +119,7 @@ describe("task_apply_git_patch tool", () => {
     );
 
     const artifact = await readSubagentGitPatchArtifact(sessionDir, childTaskId);
-    expect(artifact?.appliedAtMs).toBeTruthy();
+    expect(artifact?.appliedAtMs ?? 0).toBeGreaterThan(0);
   }, 20_000);
 
   it("supports dry_run without changing the repo or marking applied", async () => {
@@ -324,7 +324,79 @@ describe("task_apply_git_patch tool", () => {
     );
 
     const artifact = await readSubagentGitPatchArtifact(sessionDir, childTaskId);
-    expect(artifact?.appliedAtMs).toBeTruthy();
+    expect(artifact?.appliedAtMs ?? 0).toBeGreaterThan(0);
+  }, 20_000);
+
+  it("blocks applying when there are staged changes unless force=true", async () => {
+    initGitRepo(childRepo);
+    initGitRepo(targetRepo);
+
+    // Both repos start from the same base content so the patch applies cleanly.
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    await commitFile(childRepo, "README.md", "hello\nworld", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const childTaskId = "child-task-1";
+    const workspaceId = getTestDeps().workspaceId;
+
+    const patchPath = getSubagentGitPatchMboxPath(sessionDir, childTaskId);
+    const patch = execSync(`git format-patch --stdout --binary ${baseSha}..${headSha}`, {
+      cwd: childRepo,
+      encoding: "buffer",
+    });
+
+    await fsPromises.mkdir(path.dirname(patchPath), { recursive: true });
+    await fsPromises.writeFile(patchPath, patch);
+
+    await upsertSubagentGitPatchArtifact({
+      workspaceId,
+      workspaceSessionDir: sessionDir,
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId: workspaceId,
+        createdAtMs: Date.now(),
+        status: "ready",
+        baseCommitSha: baseSha,
+        headCommitSha: headSha,
+        commitCount: 1,
+        mboxPath: patchPath,
+      }),
+    });
+
+    // Stage a change in the target repo. This should block without force=true.
+    await fsPromises.writeFile(path.join(targetRepo, "STAGED.md"), "staged", "utf-8");
+    execSync("git add -- STAGED.md", { cwd: targetRepo, stdio: "ignore" });
+
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: sessionDir,
+    });
+
+    const result = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
+      success: boolean;
+      error?: string;
+      note?: string;
+    };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("Working tree is not clean.");
+    expect(result.note).toContain("force=true");
+
+    // The patch should not have been applied or marked applied.
+    expect(execSync("git log -1 --pretty=%s", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      "base"
+    );
+
+    const artifact = await readSubagentGitPatchArtifact(sessionDir, childTaskId);
+    expect(artifact?.appliedAtMs).toBeUndefined();
   }, 20_000);
 
   it("ignores an unsafe mboxPath in artifact metadata", async () => {

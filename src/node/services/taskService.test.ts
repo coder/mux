@@ -1888,21 +1888,34 @@ describe("TaskService", () => {
     const parentSessionDir = config.getSessionDir(parentId);
     const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
 
-    const internalWithJobs = taskService as unknown as {
-      pendingSubagentGitPatchJobsByTaskId?: Map<string, Promise<void>>;
-    };
+    const start = Date.now();
+    let lastArtifact: unknown = null;
+    while (true) {
+      const artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+      lastArtifact = artifact;
 
-    const generationJob = internalWithJobs.pendingSubagentGitPatchJobsByTaskId?.get(childId);
-    if (generationJob) {
-      await Promise.race([
-        generationJob,
-        new Promise<void>((_resolve, reject) => {
-          setTimeout(
-            () => reject(new Error("Timed out waiting for patch artifact generation")),
-            10_000
-          );
-        }),
-      ]);
+      if (artifact?.status === "ready") {
+        try {
+          await fsPromises.stat(patchPath);
+          if (remove.mock.calls.length > 0) {
+            break;
+          }
+        } catch {
+          // Keep polling until the patch file exists.
+        }
+      } else if (artifact?.status === "failed" || artifact?.status === "skipped") {
+        throw new Error(
+          `Patch artifact generation failed with status=${artifact.status}: ${artifact.error ?? "unknown error"}`
+        );
+      }
+
+      if (Date.now() - start > 10_000) {
+        throw new Error(
+          `Timed out waiting for patch artifact generation (removeCalled=${remove.mock.calls.length > 0}, lastArtifact=${JSON.stringify(lastArtifact)})`
+        );
+      }
+
+      await new Promise((r) => setTimeout(r, 50));
     }
 
     const artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
