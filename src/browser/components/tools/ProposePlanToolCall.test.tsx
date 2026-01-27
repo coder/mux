@@ -120,6 +120,30 @@ describe("ProposePlanToolCall", () => {
     globalThis.document = originalDocument;
   });
 
+  test("does not claim plan is in chat when Start Here content is a placeholder", () => {
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    render(
+      <TooltipProvider>
+        <ProposePlanToolCall
+          args={{}}
+          result={{
+            success: true,
+            planPath,
+          }}
+          workspaceId="ws-123"
+          isLatest={false}
+        />
+      </TooltipProvider>
+    );
+
+    expect(startHereCalls.length).toBe(1);
+    expect(startHereCalls[0]?.content).toContain("*Plan saved to");
+    expect(startHereCalls[0]?.content).not.toContain(
+      "Note: This chat already contains the full plan"
+    );
+    expect(startHereCalls[0]?.content).toContain("Read the plan file below");
+  });
   test("keeps plan file on disk and includes plan path note in Start Here content", () => {
     const planPath = "~/.mux/plans/demo/ws-123.md";
 
@@ -146,6 +170,7 @@ describe("ProposePlanToolCall", () => {
 
     // The Start Here message should explicitly tell the user the plan file remains on disk.
     expect(startHereCalls[0]?.content).toContain("*Plan file preserved at:*");
+    expect(startHereCalls[0]?.content).toContain("Note: This chat already contains the full plan");
     expect(startHereCalls[0]?.content).toContain(planPath);
   });
 
@@ -295,6 +320,9 @@ describe("ProposePlanToolCall", () => {
     };
 
     expect(summaryMessage.role).toBe("assistant");
+    expect(summaryMessage.parts?.[0]?.text).toContain(
+      "Note: This chat already contains the full plan"
+    );
     expect(summaryMessage.metadata?.agentId).toBe("plan");
     expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
     expect(summaryMessage.parts?.[0]?.text).toContain(planPath);
