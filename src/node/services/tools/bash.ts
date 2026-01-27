@@ -22,6 +22,155 @@ import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
 import { getToolEnvPath } from "@/node/services/hooks";
 
+const CAT_FILE_READ_NOTICE =
+  "[IMPORTANT]\n\nDO NOT use `cat` to read files. Use the `file_read` tool instead (supports offset/limit paging). Bash output may be truncated or auto-filtered, which can hide parts of the file.";
+
+function prependToolNote(existing: string | undefined, extra: string): string {
+  if (!existing) {
+    return extra;
+  }
+
+  return `${extra}\n\n${existing}`;
+}
+
+function isCatToken(token: string): boolean {
+  const normalized = token.trim().startsWith("\\") ? token.trim().slice(1) : token.trim();
+  return normalized === "cat";
+}
+
+function getCatCommandTokenIndex(tokens: string[]): number | null {
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  if (isCatToken(tokens[0])) {
+    return 0;
+  }
+
+  if (tokens[0] === "command" && tokens[1] && isCatToken(tokens[1])) {
+    return 1;
+  }
+
+  // Handle common patterns like: sudo cat file, sudo -n cat file, sudo -u user cat file
+  if (tokens[0] === "sudo") {
+    for (let i = 1; i < tokens.length && i < 8; i++) {
+      if (isCatToken(tokens[i])) {
+        return i;
+      }
+    }
+  }
+
+  return null;
+}
+
+function detectCatFileRead(script: string): boolean {
+  // Fast-path: avoid doing any work if "cat" doesn't appear at all.
+  if (!script.includes("cat")) {
+    return false;
+  }
+
+  // Split on common statement separators and pipelines.
+  // Note: this is intentionally not a full shell parser; we aim to catch the common
+  // "cat <path>" pattern without false positives like "echo foo | cat".
+  const segments = script.split(/\n|&&|\|\||;|\|/);
+
+  for (const segment of segments) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    const catIndex = getCatCommandTokenIndex(tokens);
+    if (catIndex === null) continue;
+
+    const args = tokens.slice(catIndex + 1);
+    if (args.length === 0) continue; // "cat" (stdin passthrough)
+
+    // Ignore heredocs / here-strings (not a file read).
+    if (args.some((t) => t.startsWith("<<") || t.startsWith("<<<"))) {
+      continue;
+    }
+
+    let expectInputFile = false;
+    let skipNextOutputTarget = false;
+
+    for (const token of args) {
+      if (expectInputFile) {
+        expectInputFile = false;
+        if (token !== "-" && token.length > 0) {
+          return true;
+        }
+        continue;
+      }
+
+      if (skipNextOutputTarget) {
+        skipNextOutputTarget = false;
+        continue;
+      }
+
+      // Input redirection: cat < file OR cat <file
+      if (token === "<" || token === "0<") {
+        expectInputFile = true;
+        continue;
+      }
+      const inputMatch = /^(?:0)?<(.+)$/.exec(token);
+      if (inputMatch && !token.startsWith("<<") && !token.startsWith("<<<")) {
+        const inputFile = inputMatch[1];
+        if (inputFile !== "-" && inputFile.length > 0) {
+          return true;
+        }
+        continue;
+      }
+
+      // Output redirection: ignore output targets (doesn't indicate reading a file).
+      if (
+        token === ">" ||
+        token === ">>" ||
+        token === "1>" ||
+        token === "1>>" ||
+        token === "2>" ||
+        token === "2>>" ||
+        token === "&>" ||
+        token === "&>>"
+      ) {
+        skipNextOutputTarget = true;
+        continue;
+      }
+
+      // Output redirection with attached target (e.g. ">out", "2>/dev/null", "2>&1")
+      if (/^(?:\d+|&)?>>?/.test(token)) {
+        continue;
+      }
+
+      // Flags and stdin
+      if (token === "-" || token.startsWith("-")) {
+        continue;
+      }
+
+      // Remaining non-flag tokens look like file operands (e.g. "cat file").
+      return true;
+    }
+  }
+
+  return false;
+}
+
+type BashToolForegroundResult = Exclude<BashToolResult, { backgroundProcessId: string }>;
+
+function isForegroundBashToolResult(result: BashToolResult): result is BashToolForegroundResult {
+  return !("backgroundProcessId" in result);
+}
+
+function addNoticeToBashToolResult(
+  result: BashToolResult,
+  notice: string | undefined
+): BashToolResult {
+  if (!notice || !isForegroundBashToolResult(result)) {
+    return result;
+  }
+
+  return {
+    ...result,
+    note: prependToolNote(result.note, notice),
+  };
+}
+
 /**
  * Validates bash script input for common issues
  * Returns error result if validation fails, null if valid
@@ -256,6 +405,13 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
 
+      // Warn on "cat <path>" file reads.
+      // Reading files via bash output is fragile (may be truncated or auto-filtered);
+      // file_read supports paging and avoids silent context loss.
+      const catNotice = detectCatFileRead(script) ? CAT_FILE_READ_NOTICE : undefined;
+      const withNotice = (result: BashToolResult): BashToolResult =>
+        addNoticeToBashToolResult(result, catNotice);
+
       // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
       const toolEnvPath = config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
       const toolEnvPrelude = buildToolEnvPrelude(toolEnvPath);
@@ -264,13 +420,13 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       // Handle explicit background execution (run_in_background=true)
       if (run_in_background) {
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
-          return {
+          return withNotice({
             success: false,
             error:
               "Background execution is only available for AI tool calls, not direct IPC invocation",
             exitCode: -1,
             wall_duration_ms: 0,
-          };
+          });
         }
 
         const startTime = performance.now();
@@ -289,22 +445,22 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
         );
 
         if (!spawnResult.success) {
-          return {
+          return withNotice({
             success: false,
             error: spawnResult.error,
             exitCode: -1,
             wall_duration_ms: Math.round(performance.now() - startTime),
-          };
+          });
         }
 
-        return {
+        return withNotice({
           success: true,
           output: `Background process started with ID: ${spawnResult.processId}`,
           exitCode: 0,
           wall_duration_ms: Math.round(performance.now() - startTime),
           taskId: toBashTaskId(spawnResult.processId),
           backgroundProcessId: spawnResult.processId,
-        };
+        });
       }
 
       // Setup execution parameters
@@ -709,25 +865,25 @@ ${scriptWithEnv}`;
                   safeDisplayName
                 );
 
-                return {
+                return withNotice({
                   success: true,
                   output: `Process sent to background with ID: ${processId}\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
                   exitCode: 0,
                   wall_duration_ms,
                   taskId: toBashTaskId(processId),
                   backgroundProcessId: processId,
-                };
+                });
               }
               // Migration failed, fall through to simple return
             }
 
             // Fallback: return without process ID (no manager or migration failed)
-            return {
+            return withNotice({
               success: true,
               output: `Process sent to background. It will continue running.\n\nOutput so far (${lines.length} lines):\n${lines.slice(-20).join("\n")}${lines.length > 20 ? "\n...(showing last 20 lines)" : ""}`,
               exitCode: 0,
               wall_duration_ms,
-            };
+            });
           }
         } else {
           // Normal completion - extract exit code
@@ -739,19 +895,19 @@ ${scriptWithEnv}`;
 
         // Check if this was an abort
         if (abortSignal?.aborted) {
-          return {
+          return withNotice({
             success: false,
             error: "Command execution was aborted",
             exitCode: -1,
             wall_duration_ms: Math.round(performance.now() - startTime),
-          };
+          });
         }
-        return {
+        return withNotice({
           success: false,
           error: `Failed to execute command: ${err instanceof Error ? err.message : String(err)}`,
           exitCode: -1,
           wall_duration_ms: Math.round(performance.now() - startTime),
-        };
+        });
       } finally {
         stopLiveOutput(true);
       }
@@ -762,12 +918,12 @@ ${scriptWithEnv}`;
       // Check if command was aborted (exitCode will be EXIT_CODE_ABORTED = -997)
       // This can happen if abort signal fired after Promise.all resolved but before we check
       if (abortSignal?.aborted) {
-        return {
+        return withNotice({
           success: false,
           error: "Command execution was aborted",
           exitCode: -1,
           wall_duration_ms: Math.round(performance.now() - startTime),
-        };
+        });
       }
 
       // Round to integer to preserve tokens
@@ -807,34 +963,36 @@ Use selective filtering tools (e.g. grep) to extract relevant information and co
 
 File will be automatically cleaned up when stream ends.`;
 
-          return {
+          return withNotice({
             success: true,
             output: "",
             note: notice,
             exitCode: 0,
             wall_duration_ms,
             truncated: truncationInfo,
-          };
+          });
         } catch (err) {
           // If temp file creation fails, fall back to original error
-          return {
+          return withNotice({
             success: false,
             error: `Command output overflow: ${overflowReason ?? "unknown reason"}. Failed to save overflow to temp file: ${String(err)}`,
             exitCode: -1,
             wall_duration_ms,
-          };
+          });
         }
       }
 
       // Format result based on exit code and truncation state
-      return formatResult(
-        exitCode,
-        lines,
-        truncated,
-        overflowReason,
-        wall_duration_ms,
-        config.overflow_policy ?? "tmpfile",
-        effectiveTimeout
+      return withNotice(
+        formatResult(
+          exitCode,
+          lines,
+          truncated,
+          overflowReason,
+          wall_duration_ms,
+          config.overflow_policy ?? "tmpfile",
+          effectiveTimeout
+        )
       );
     },
   });

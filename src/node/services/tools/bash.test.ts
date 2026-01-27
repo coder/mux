@@ -5,6 +5,7 @@ import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import * as fs from "fs";
+import * as path from "path";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
@@ -120,6 +121,95 @@ describe("bash tool", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.output).toBe("line1\nline2\nline3");
+    }
+  });
+
+  it("should warn when using cat to read a file", async () => {
+    using tempDir = new TestTempDir("test-bash-cat-read");
+
+    const filePath = path.join(tempDir.path, "input.txt");
+    fs.writeFileSync(filePath, "hello\nworld", "utf-8");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: `cat ${filePath}`,
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (isForegroundSuccess(result)) {
+      expect(result.output).toBe("hello\nworld");
+      expect(result.note).toContain("DO NOT use `cat`");
+      expect(result.note).toContain("file_read");
+    }
+  });
+
+  it("should not warn on cat heredoc", async () => {
+    using tempDir = new TestTempDir("test-bash-cat-heredoc");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: "cat <<'EOF'\nhello\nEOF",
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (isForegroundSuccess(result)) {
+      expect(result.output).toBe("hello");
+      expect(result.note).toBeUndefined();
+    }
+  });
+
+  it("should warn on cat file reads even when output overflows", async () => {
+    using tempDir = new TestTempDir("test-bash-cat-overflow");
+
+    const filePath = path.join(tempDir.path, "large.txt");
+    fs.writeFileSync(
+      filePath,
+      Array.from({ length: 400 }, (_, i) => `line${i + 1}`).join("\n"),
+      "utf-8"
+    );
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: `cat ${filePath}`,
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (isForegroundSuccess(result)) {
+      expect(result.output).toBe("");
+      expect(result.note).toContain("DO NOT use `cat`");
+      expect(result.note).toContain("[OUTPUT OVERFLOW");
+
+      const match = /saved to (\/.*?\.txt)/.exec(result.note ?? "");
+      expect(match).toBeDefined();
+      if (match) {
+        const overflowPath = match[1];
+        expect(fs.existsSync(overflowPath)).toBe(true);
+        fs.unlinkSync(overflowPath);
+      }
     }
   });
 
