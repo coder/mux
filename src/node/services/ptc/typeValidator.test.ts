@@ -690,6 +690,62 @@ mux.file_read({ path: "wrong" });`,
   // Edge cases that must not break (preprocessing skip patterns)
   // ==========================================================================
 
+  // ==========================================================================
+  // Contextual typing should be preserved
+  // ==========================================================================
+
+  test("preserves contextual typing in ternary expressions", () => {
+    const result = validateTypes(
+      `
+      const condition = true;
+      const nums: number[] = condition ? [] : [1];
+      return nums;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("still reports type mismatches in ternary expressions", () => {
+    const result = validateTypes(
+      `
+      const condition = true;
+      const nums: number[] = condition ? [] : ["oops"];
+      return nums;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+  });
+
+  test("still fixes empty arrays in logical OR expressions", () => {
+    const result = validateTypes(
+      `
+      const condition = Math.random() > 0.5;
+      const maybe = condition ? [] : null;
+      const nums = maybe || [1];
+      nums.push(2);
+      return nums;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("still fixes empty arrays in nullish coalescing expressions", () => {
+    const result = validateTypes(
+      `
+      const condition = Math.random() > 0.5;
+      const maybe = condition ? [] : undefined;
+      const nums = maybe ?? [1];
+      nums.push(2);
+      return nums;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
   test("handles angle-bracket type assertions", () => {
     // <Type[]>[] should not get double-asserted
     const result = validateTypes(

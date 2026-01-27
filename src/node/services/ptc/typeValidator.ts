@@ -27,6 +27,71 @@ const LIB_DIR = IS_PRODUCTION
   ? BUNDLED_LIB_DIR
   : path.dirname(require.resolve("typescript/lib/lib.d.ts"));
 
+const WRAPPER_PREFIX = "function __agent__() {\n";
+
+function wrapAgentCode(code: string, muxTypes: string): string {
+  return `${WRAPPER_PREFIX}${code}\n}\n\n${muxTypes}\n`;
+}
+
+/** Resolve lib file path, accounting for .d.ts rename in production */
+const resolveLibPath = (fileName: string): string => {
+  const libFileName = path.basename(fileName);
+  const actualName = IS_PRODUCTION ? toProductionLibName(libFileName) : libFileName;
+  return path.join(LIB_DIR, actualName);
+};
+
+function createProgramForCode(
+  wrappedCode: string,
+  compilerOptions: ts.CompilerOptions
+): { program: ts.Program; sourceFile: ts.SourceFile } {
+  const scriptTarget = compilerOptions.target ?? ts.ScriptTarget.ES2020;
+  const sourceFile = ts.createSourceFile("agent.ts", wrappedCode, scriptTarget, true);
+  const host = ts.createCompilerHost(compilerOptions);
+
+  // Override to read lib files from our bundled directory
+  host.getDefaultLibLocation = () => LIB_DIR;
+  host.getDefaultLibFileName = (options) => path.join(LIB_DIR, ts.getDefaultLibFileName(options));
+
+  const originalGetSourceFile = host.getSourceFile.bind(host);
+  const originalFileExists = host.fileExists.bind(host);
+  const originalReadFile = host.readFile.bind(host);
+
+  host.getSourceFile = (fileName, languageVersion) => {
+    if (fileName === "agent.ts") return sourceFile;
+    // In production, redirect lib file requests to our bundled directory (with .txt extension)
+    // In development, let TypeScript use its default resolution so /// <reference lib=\"...\" /> works
+    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+      const libPath = resolveLibPath(fileName);
+      const content = fs.existsSync(libPath) ? fs.readFileSync(libPath, "utf-8") : undefined;
+      if (content) {
+        return ts.createSourceFile(fileName, content, languageVersion, true);
+      }
+    }
+    return originalGetSourceFile(fileName, languageVersion);
+  };
+  host.fileExists = (fileName) => {
+    if (fileName === "agent.ts") return true;
+    // In production, check bundled lib directory for lib files
+    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+      return fs.existsSync(resolveLibPath(fileName));
+    }
+    return originalFileExists(fileName);
+  };
+  host.readFile = (fileName) => {
+    // In production, read lib files from bundled directory
+    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
+      const libPath = resolveLibPath(fileName);
+      if (fs.existsSync(libPath)) {
+        return fs.readFileSync(libPath, "utf-8");
+      }
+    }
+    return originalReadFile(fileName);
+  };
+
+  const program = ts.createProgram(["agent.ts"], compilerOptions, host);
+  return { program, sourceFile };
+}
+
 /** Convert lib filename for production: lib.X.d.ts → lib.X.d.ts.txt */
 function toProductionLibName(fileName: string): string {
   return fileName + ".txt";
@@ -103,6 +168,25 @@ function findTokenAtPosition(sourceFile: ts.SourceFile, position: number): ts.No
   return find(sourceFile);
 }
 
+/** Returns true if the type resolves to a non-tuple never[] (including unions). */
+function isNeverArrayType(type: ts.Type, checker: ts.TypeChecker): boolean {
+  const nonNullable = checker.getNonNullableType(type);
+
+  if (nonNullable.isUnion()) {
+    return nonNullable.types.every((member) => isNeverArrayType(member, checker));
+  }
+
+  if (checker.isTupleType(nonNullable)) {
+    return false;
+  }
+
+  if (!checker.isArrayType(nonNullable)) {
+    return false;
+  }
+
+  const elementType = checker.getIndexTypeOfType(nonNullable, ts.IndexKind.Number);
+  return elementType !== undefined && (elementType.flags & ts.TypeFlags.Never) !== 0;
+}
 /**
  * Check if an empty array literal has type context (annotation or assertion),
  * or is in a position where adding `as any[]` would be invalid.
@@ -142,6 +226,39 @@ function hasTypeContext(node: ts.ArrayLiteralExpression): boolean {
   return false;
 }
 
+function getNeverArrayLiteralStarts(
+  code: string,
+  muxTypes: string,
+  compilerOptions: ts.CompilerOptions
+): Set<number> {
+  const wrappedCode = wrapAgentCode(code, muxTypes);
+  const { program, sourceFile } = createProgramForCode(wrappedCode, compilerOptions);
+  const checker = program.getTypeChecker();
+  const codeStart = WRAPPER_PREFIX.length;
+  const codeEnd = codeStart + code.length;
+  const starts = new Set<number>();
+
+  function visit(node: ts.Node) {
+    if (ts.isArrayLiteralExpression(node) && node.elements.length === 0) {
+      const start = node.getStart(sourceFile);
+      if (start >= codeStart && node.end <= codeEnd) {
+        // `satisfies` validates compatibility without changing the inferred type.
+        const contextualType = ts.isSatisfiesExpression(node.parent)
+          ? undefined
+          : checker.getContextualType(node);
+        const type = contextualType ?? checker.getTypeAtLocation(node);
+        if (isNeverArrayType(type, checker)) {
+          starts.add(start - codeStart);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return starts;
+}
+
 /**
  * Preprocess agent code to add type assertions to empty array literals.
  *
@@ -152,13 +269,14 @@ function hasTypeContext(node: ts.ArrayLiteralExpression): boolean {
  * This function transforms `[]` → `[] as any[]` for untyped empty arrays, enabling
  * all array operations (push, map, forEach, etc.) to work without type errors.
  */
-function preprocessEmptyArrays(code: string): string {
+function preprocessEmptyArrays(code: string, neverArrayStarts: Set<number>): string {
   const sourceFile = ts.createSourceFile("temp.ts", code, ts.ScriptTarget.Latest, true);
   const edits: Array<{ pos: number; text: string }> = [];
 
   function visit(node: ts.Node) {
     if (ts.isArrayLiteralExpression(node) && node.elements.length === 0) {
-      if (!hasTypeContext(node)) {
+      const start = node.getStart(sourceFile);
+      if (neverArrayStarts.has(start) && !hasTypeContext(node)) {
         const parent = node.parent;
         const needsParens =
           ts.isPropertyAccessExpression(parent) ||
@@ -190,20 +308,6 @@ function preprocessEmptyArrays(code: string): string {
 }
 
 export function validateTypes(code: string, muxTypes: string): TypeValidationResult {
-  // Preprocess empty arrays to avoid never[] inference
-  // (TypeScript infers [] as never[] with strictNullChecks + noImplicitAny:false)
-  const preprocessedCode = preprocessEmptyArrays(code);
-
-  // Wrap code in function to allow return statements (matches runtime behavior)
-  // Note: We don't use async because Asyncify makes mux.* calls appear synchronous
-  // Types go AFTER code so error line numbers match agent's code directly
-  const wrapperPrefix = "function __agent__() {\n";
-  const wrappedCode = `${wrapperPrefix}${preprocessedCode}
-}
-
-${muxTypes}
-`;
-
   const compilerOptions: ts.CompilerOptions = {
     noEmit: true,
     strict: false, // Don't require explicit types on everything
@@ -217,60 +321,16 @@ ${muxTypes}
     lib: ["lib.es2023.d.ts"],
   };
 
-  const sourceFile = ts.createSourceFile("agent.ts", wrappedCode, ts.ScriptTarget.ES2020, true);
+  // Preprocess empty arrays to avoid never[] inference without overriding contextual typing.
+  const neverArrayStarts = getNeverArrayLiteralStarts(code, muxTypes, compilerOptions);
+  const preprocessedCode = preprocessEmptyArrays(code, neverArrayStarts);
 
-  // Create compiler host with custom lib directory resolution.
-  // In production, lib files are in dist/typescript-lib/ with .d-ts extension.
-  const host = ts.createCompilerHost(compilerOptions);
+  // Wrap code in function to allow return statements (matches runtime behavior)
+  // Note: We don't use async because Asyncify makes mux.* calls appear synchronous
+  // Types go AFTER code so error line numbers match agent's code directly
+  const wrappedCode = wrapAgentCode(preprocessedCode, muxTypes);
 
-  // Override to read lib files from our bundled directory
-  host.getDefaultLibLocation = () => LIB_DIR;
-  host.getDefaultLibFileName = (options) => path.join(LIB_DIR, ts.getDefaultLibFileName(options));
-
-  const originalGetSourceFile = host.getSourceFile.bind(host);
-  const originalFileExists = host.fileExists.bind(host);
-  const originalReadFile = host.readFile.bind(host);
-
-  /** Resolve lib file path, accounting for .d-ts rename in production */
-  const resolveLibPath = (fileName: string): string => {
-    const libFileName = path.basename(fileName);
-    const actualName = IS_PRODUCTION ? toProductionLibName(libFileName) : libFileName;
-    return path.join(LIB_DIR, actualName);
-  };
-
-  host.getSourceFile = (fileName, languageVersion) => {
-    if (fileName === "agent.ts") return sourceFile;
-    // In production, redirect lib file requests to our bundled directory (with .txt extension)
-    // In development, let TypeScript use its default resolution so /// <reference lib="..." /> works
-    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
-      const libPath = resolveLibPath(fileName);
-      const content = fs.existsSync(libPath) ? fs.readFileSync(libPath, "utf-8") : undefined;
-      if (content) {
-        return ts.createSourceFile(fileName, content, languageVersion, true);
-      }
-    }
-    return originalGetSourceFile(fileName, languageVersion);
-  };
-  host.fileExists = (fileName) => {
-    if (fileName === "agent.ts") return true;
-    // In production, check bundled lib directory for lib files
-    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
-      return fs.existsSync(resolveLibPath(fileName));
-    }
-    return originalFileExists(fileName);
-  };
-  host.readFile = (fileName) => {
-    // In production, read lib files from bundled directory
-    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
-      const libPath = resolveLibPath(fileName);
-      if (fs.existsSync(libPath)) {
-        return fs.readFileSync(libPath, "utf-8");
-      }
-    }
-    return originalReadFile(fileName);
-  };
-
-  const program = ts.createProgram(["agent.ts"], compilerOptions, host);
+  const { program, sourceFile } = createProgramForCode(wrappedCode, compilerOptions);
   const diagnostics = ts.getPreEmitDiagnostics(program);
 
   // Filter to errors in our code only (not lib files)
