@@ -61,7 +61,7 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
           <SkillIcon className="h-4 w-4" />
           <span
             className={cn(
-              "absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center",
+              "absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center",
               "rounded-full border border-border bg-sidebar px-0.5 text-[9px] font-medium",
               loadedCount > 0 ? "text-foreground" : "text-muted"
             )}
