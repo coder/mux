@@ -15,11 +15,11 @@ import { log } from "@/node/services/log";
  * to persist state to ~/.mux/sessions/{workspaceId}/.
  */
 export class SessionFileManager<T> {
-  private readonly config: Config;
+  private readonly config: Pick<Config, "getSessionDir">;
   private readonly fileName: string;
   private readonly fileLocks = workspaceFileLocks;
 
-  constructor(config: Config, fileName: string) {
+  constructor(config: Pick<Config, "getSessionDir">, fileName: string) {
     this.config = config;
     this.fileName = fileName;
   }
