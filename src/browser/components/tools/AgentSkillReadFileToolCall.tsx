@@ -118,7 +118,7 @@ export const AgentSkillReadFileToolCall: React.FC<AgentSkillReadFileToolCallProp
           <span className="font-monospace truncate">{displayPath}</span>
         </div>
         {successResult && parsedContent && (
-          <span className="text-secondary ml-2 text-[10px] whitespace-nowrap">
+          <span className="text-secondary font-monospace ml-2 text-[10px] whitespace-nowrap">
             <span className="hidden @sm:inline">read </span>
             {formatBytes(parsedContent.actualBytes)}
             <span className="hidden @lg:inline"> of {formatBytes(successResult.file_size)}</span>
@@ -131,41 +131,41 @@ export const AgentSkillReadFileToolCall: React.FC<AgentSkillReadFileToolCallProp
         <ToolDetails>
           <DetailSection>
             <div className="bg-code-bg flex flex-wrap gap-4 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
-              <div className="flex gap-1.5">
+              <div className="flex items-baseline gap-1.5">
                 <span className="text-secondary font-medium">Skill:</span>
                 <span className="text-text font-monospace break-all">{args.name}</span>
               </div>
-              <div className="flex gap-1.5">
+              <div className="flex items-baseline gap-1.5">
                 <span className="text-secondary font-medium">File:</span>
                 <span className="text-text font-monospace break-all">{args.filePath}</span>
               </div>
               {args.offset !== undefined && (
-                <div className="flex gap-1.5">
+                <div className="flex items-baseline gap-1.5">
                   <span className="text-secondary font-medium">Offset:</span>
                   <span className="text-text font-monospace break-all">line {args.offset}</span>
                 </div>
               )}
               {args.limit !== undefined && (
-                <div className="flex gap-1.5">
+                <div className="flex items-baseline gap-1.5">
                   <span className="text-secondary font-medium">Limit:</span>
                   <span className="text-text font-monospace break-all">{args.limit} lines</span>
                 </div>
               )}
               {successResult && (
                 <>
-                  <div className="flex gap-1.5">
+                  <div className="flex items-baseline gap-1.5">
                     <span className="text-secondary font-medium">Modified:</span>
                     <span className="text-text font-monospace break-all">
                       {successResult.modifiedTime}
                     </span>
                   </div>
-                  <div className="flex gap-1.5">
+                  <div className="flex items-baseline gap-1.5">
                     <span className="text-secondary font-medium">Lines:</span>
                     <span className="text-text font-monospace break-all">
                       {successResult.lines_read}
                     </span>
                   </div>
-                  <div className="flex gap-1.5">
+                  <div className="flex items-baseline gap-1.5">
                     <span className="text-secondary font-medium">Size:</span>
                     <span className="text-text font-monospace break-all">
                       {formatBytes(successResult.file_size)}

@@ -106,19 +106,19 @@ export const AgentSkillReadToolCall: React.FC<AgentSkillReadToolCallProps> = ({
         <ToolDetails>
           <DetailSection>
             <div className="bg-code-bg flex flex-wrap gap-4 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
-              <div className="flex gap-1.5">
+              <div className="flex items-baseline gap-1.5">
                 <span className="text-secondary font-medium">Skill:</span>
                 <span className="text-text font-monospace break-all">{args.name}</span>
               </div>
               {successResult && (
                 <>
-                  <div className="flex gap-1.5">
+                  <div className="flex items-baseline gap-1.5">
                     <span className="text-secondary font-medium">Scope:</span>
                     <span className="text-text font-monospace break-all">
                       {successResult.skill.scope}
                     </span>
                   </div>
-                  <div className="flex gap-1.5">
+                  <div className="flex items-baseline gap-1.5">
                     <span className="text-secondary font-medium">Directory:</span>
                     <span className="text-text font-monospace break-all">
                       {successResult.skill.directoryName}
