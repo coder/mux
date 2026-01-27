@@ -225,8 +225,8 @@ export async function processSlashCommand(
       return { clearInput: false, toastShown: true };
     }
 
-    const [provider, modelId] = modelString.split(":", 2);
-    if (!provider || !modelId) {
+    const separatorIndex = modelString.indexOf(":");
+    if (separatorIndex <= 0 || separatorIndex === modelString.length - 1) {
       setToast({
         id: Date.now().toString(),
         type: "error",
@@ -234,6 +234,9 @@ export async function processSlashCommand(
       });
       return { clearInput: false, toastShown: true };
     }
+
+    const provider = modelString.slice(0, separatorIndex);
+    const modelId = modelString.slice(separatorIndex + 1);
 
     try {
       // Validate provider is supported
