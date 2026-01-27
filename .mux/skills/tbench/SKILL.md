@@ -116,7 +116,7 @@ Results are saved to `runs/YYYY-MM-DD__HH-MM-SS/`:
 
 ## CI/CD Integration
 
-**Fast iteration:** When testing workflow changes, use `-f max_tasks="1"` to run a single task (~3-5 min) instead of the full suite.
+**Fast iteration:** When testing workflow changes, use `-f task_names="hello-world"` for fastest verification (~2 min). Alternatively, `-f max_tasks="1"` runs a random task (~3-5 min).
 
 ## Querying Results from BigQuery
 
