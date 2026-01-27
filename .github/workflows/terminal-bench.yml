@@ -251,9 +251,9 @@ jobs:
       - name: Fix artifact permissions
         if: always()
         run: |
-          # Verifier containers may create files with restrictive permissions
-          # Make all files readable so upload-artifact can zip them
-          chmod -R a+r jobs/ 2>/dev/null || true
+          # Verifier containers run as root and may create files with restrictive permissions
+          # Use sudo to make all files readable so upload-artifact can zip them
+          sudo chmod -R a+r jobs/ 2>/dev/null || true
 
       - name: Upload benchmark results
         if: always()
