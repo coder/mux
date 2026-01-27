@@ -293,6 +293,20 @@ function calculateOnChatBackoffMs(attempt: number): number {
   return Math.min(ON_CHAT_RETRY_BASE_MS * 2 ** attempt, ON_CHAT_RETRY_MAX_MS);
 }
 
+function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
+  let max: number | undefined;
+  for (const message of messages) {
+    const seq = message.metadata?.historySequence;
+    if (typeof seq !== "number") {
+      continue;
+    }
+    if (max === undefined || seq > max) {
+      max = seq;
+    }
+  }
+  return max;
+}
+
 /**
  * External store for workspace aggregators and streaming state.
  *
@@ -1201,6 +1215,70 @@ export class WorkspaceStore {
     });
   }
 
+  private tryHydrateConsumersFromSessionUsageCache(
+    workspaceId: string,
+    aggregator: StreamingMessageAggregator
+  ): boolean {
+    const usage = this.sessionUsage.get(workspaceId);
+    const tokenStatsCache = usage?.tokenStatsCache;
+    if (!tokenStatsCache) {
+      return false;
+    }
+
+    const messages = aggregator.getAllMessages();
+    if (messages.length === 0) {
+      return false;
+    }
+
+    const model = aggregator.getCurrentModel() ?? "unknown";
+    if (tokenStatsCache.model !== model) {
+      return false;
+    }
+
+    if (tokenStatsCache.history.messageCount !== messages.length) {
+      return false;
+    }
+
+    const cachedMaxSeq = tokenStatsCache.history.maxHistorySequence;
+    const currentMaxSeq = getMaxHistorySequence(messages);
+
+    // Fall back to messageCount matching if either side lacks historySequence metadata.
+    if (
+      cachedMaxSeq !== undefined &&
+      currentMaxSeq !== undefined &&
+      cachedMaxSeq !== currentMaxSeq
+    ) {
+      return false;
+    }
+
+    this.consumerManager.hydrateFromCache(workspaceId, {
+      consumers: tokenStatsCache.consumers,
+      tokenizerName: tokenStatsCache.tokenizerName,
+      totalTokens: tokenStatsCache.totalTokens,
+      topFilePaths: tokenStatsCache.topFilePaths,
+    });
+
+    return true;
+  }
+
+  private ensureConsumersCached(workspaceId: string, aggregator: StreamingMessageAggregator): void {
+    if (aggregator.getAllMessages().length === 0) {
+      return;
+    }
+
+    const cached = this.consumerManager.getCachedState(workspaceId);
+    const isPending = this.consumerManager.isPending(workspaceId);
+    if (cached || isPending) {
+      return;
+    }
+
+    if (this.tryHydrateConsumersFromSessionUsageCache(workspaceId, aggregator)) {
+      return;
+    }
+
+    this.consumerManager.scheduleCalculation(workspaceId, aggregator);
+  }
+
   /**
    * Get consumer breakdown (may be calculating).
    * Triggers lazy calculation if workspace is caught-up but no data exists.
@@ -1218,10 +1296,10 @@ export class WorkspaceStore {
 
     if (!cached && !isPending && isCaughtUp) {
       if (aggregator && aggregator.getAllMessages().length > 0) {
-        // Defer scheduling to avoid setState-during-render warning
+        // Defer scheduling/hydration to avoid setState-during-render warning
         // queueMicrotask ensures this runs after current render completes
         queueMicrotask(() => {
-          this.consumerManager.scheduleCalculation(workspaceId, aggregator);
+          this.ensureConsumersCached(workspaceId, aggregator);
         });
       }
     }
@@ -1790,9 +1868,10 @@ export class WorkspaceStore {
       // Bump usage after loading history
       this.usageStore.bump(workspaceId);
 
-      // Schedule consumer calculation once after all buffered events processed
+      // Hydrate consumer breakdown from persisted cache when possible.
+      // Fall back to tokenization when no cache (or stale cache) exists.
       if (aggregator.getAllMessages().length > 0) {
-        this.consumerManager.scheduleCalculation(workspaceId, aggregator);
+        this.ensureConsumersCached(workspaceId, aggregator);
       }
 
       return;

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
-import { SessionUsageService } from "./sessionUsageService";
+import { SessionUsageService, type SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
 import type { HistoryService } from "./historyService";
 import { Config } from "@/node/config";
 import { createMuxMessage } from "@/common/types/message";
@@ -183,6 +183,61 @@ describe("SessionUsageService", () => {
       result = await service.getSessionUsage(workspaceId);
       expect(result?.lastRequest?.model).toBe("claude-opus-4-20250514");
       expect(result?.lastRequest?.usage.input.tokens).toBe(200);
+    });
+  });
+
+  describe("setTokenStatsCache", () => {
+    it("should persist tokenStatsCache and preserve existing usage fields", async () => {
+      const projectPath = "/tmp/mux-session-usage-test-project";
+      const model = "claude-sonnet-4-20250514";
+
+      const parentWorkspaceId = "parent-workspace";
+      const childWorkspaceId = "child-workspace";
+
+      await config.addWorkspace(projectPath, {
+        id: parentWorkspaceId,
+        name: "parent-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+      });
+      await config.addWorkspace(projectPath, {
+        id: childWorkspaceId,
+        name: "child-branch",
+        projectName: "test-project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: parentWorkspaceId,
+      });
+
+      // Seed: base usage + rolledUpFrom ledger
+      await service.recordUsage(parentWorkspaceId, model, createUsage(100, 50));
+      await service.rollUpUsageIntoParent(parentWorkspaceId, childWorkspaceId, {
+        [model]: createUsage(7, 3),
+      });
+
+      const cache: SessionUsageTokenStatsCacheV1 = {
+        version: 1,
+        computedAt: 123,
+        model: "gpt-4",
+        tokenizerName: "cl100k",
+        history: { messageCount: 2, maxHistorySequence: 42 },
+        consumers: [{ name: "User", tokens: 10, percentage: 100 }],
+        totalTokens: 10,
+        topFilePaths: [{ path: "/tmp/file.ts", tokens: 10 }],
+      };
+
+      await service.setTokenStatsCache(parentWorkspaceId, cache);
+
+      const result = await service.getSessionUsage(parentWorkspaceId);
+      expect(result).toBeDefined();
+      expect(result!.tokenStatsCache).toEqual(cache);
+      expect(result!.rolledUpFrom?.[childWorkspaceId]).toBe(true);
+
+      // Existing usage fields preserved
+      expect(result!.byModel[model].input.tokens).toBe(107);
+      expect(result!.byModel[model].output.tokens).toBe(53);
+      expect(result!.lastRequest).toBeDefined();
     });
   });
 

@@ -101,7 +101,11 @@ export const router = (authToken?: string) => {
         .input(schemas.tokenizer.calculateStats.input)
         .output(schemas.tokenizer.calculateStats.output)
         .handler(async ({ context, input }) => {
-          return context.tokenizerService.calculateStats(input.messages, input.model);
+          return context.tokenizerService.calculateStats(
+            input.workspaceId,
+            input.messages,
+            input.model
+          );
         }),
     },
     splashScreens: {

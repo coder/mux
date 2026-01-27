@@ -9,8 +9,35 @@ import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import type { TokenConsumer } from "@/common/types/chatStats";
 import type { MuxMessage } from "@/common/types/message";
 import { log } from "./log";
+
+export interface SessionUsageTokenStatsCacheV1 {
+  /**
+   * Schema version for this cache block.
+   * (Kept separate so we don't have to bump session-usage.json version for derived fields.)
+   */
+  version: 1;
+
+  computedAt: number;
+
+  /** Tokenization model (impacts tokenizer + tool definition counting) */
+  model: string;
+
+  /** e.g. "o200k_base", "claude" */
+  tokenizerName: string;
+
+  /** Cheap fingerprint to validate cache freshness against current message history */
+  history: {
+    messageCount: number;
+    maxHistorySequence?: number;
+  };
+
+  consumers: TokenConsumer[];
+  totalTokens: number;
+  topFilePaths?: Array<{ path: string; tokens: number }>;
+}
 
 export interface SessionUsageFile {
   byModel: Record<string, ChatUsageDisplay>;
@@ -28,6 +55,9 @@ export interface SessionUsageFile {
    * if removal is retried.
    */
   rolledUpFrom?: Record<string, true>;
+
+  /** Cached token statistics (consumer/file breakdown) for Costs tab */
+  tokenStatsCache?: SessionUsageTokenStatsCacheV1;
 
   version: 1;
 }
@@ -84,6 +114,58 @@ export class SessionUsageService {
       // CRITICAL: Accumulate, don't overwrite
       current.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
       current.lastRequest = { model, usage, timestamp: Date.now() };
+      await this.writeFile(workspaceId, current);
+    });
+  }
+
+  /**
+   * Persist derived token stats (consumer + file breakdown) as a cache.
+   *
+   * This is intentionally treated as a replaceable cache: if the cache is stale,
+   * the next tokenizer.calculateStats call will overwrite it.
+   */
+  async setTokenStatsCache(
+    workspaceId: string,
+    cache: SessionUsageTokenStatsCacheV1
+  ): Promise<void> {
+    assert(workspaceId.trim().length > 0, "setTokenStatsCache: workspaceId empty");
+    assert(cache.version === 1, "setTokenStatsCache: cache.version must be 1");
+    assert(cache.totalTokens >= 0, "setTokenStatsCache: totalTokens must be >= 0");
+    assert(
+      cache.history.messageCount >= 0,
+      "setTokenStatsCache: history.messageCount must be >= 0"
+    );
+    for (const consumer of cache.consumers) {
+      assert(
+        typeof consumer.tokens === "number" && consumer.tokens >= 0,
+        `setTokenStatsCache: consumer tokens must be >= 0 (${consumer.name})`
+      );
+    }
+
+    return this.fileLocks.withLock(workspaceId, async () => {
+      // Defensive: don't create new session dirs for already-deleted workspaces.
+      if (!this.config.findWorkspace(workspaceId)) {
+        return;
+      }
+
+      let current: SessionUsageFile;
+      try {
+        current = await this.readFile(workspaceId);
+      } catch {
+        // Parse errors or other read failures - best-effort rebuild.
+        log.warn(
+          `session-usage.json unreadable for ${workspaceId}, rebuilding before token stats cache update`
+        );
+        const historyResult = await this.historyService.getHistory(workspaceId);
+        if (historyResult.success && historyResult.data.length > 0) {
+          await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
+          current = await this.readFile(workspaceId);
+        } else {
+          current = { byModel: {}, version: 1 };
+        }
+      }
+
+      current.tokenStatsCache = cache;
       await this.writeFile(workspaceId, current);
     });
   }

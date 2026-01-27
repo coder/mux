@@ -3,8 +3,30 @@ import { calculateTokenStats } from "@/common/utils/tokens/tokenStatsCalculator"
 import type { MuxMessage } from "@/common/types/message";
 import type { ChatStats } from "@/common/types/chatStats";
 import assert from "@/common/utils/assert";
+import type { SessionUsageService, SessionUsageTokenStatsCacheV1 } from "./sessionUsageService";
+import { log } from "./log";
+
+function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
+  let max: number | undefined;
+  for (const message of messages) {
+    const seq = message.metadata?.historySequence;
+    if (typeof seq !== "number") {
+      continue;
+    }
+    if (max === undefined || seq > max) {
+      max = seq;
+    }
+  }
+  return max;
+}
 
 export class TokenizerService {
+  private readonly sessionUsageService: SessionUsageService;
+
+  constructor(sessionUsageService: SessionUsageService) {
+    this.sessionUsageService = sessionUsageService;
+  }
+
   /**
    * Count tokens for a single string
    */
@@ -30,15 +52,73 @@ export class TokenizerService {
   }
 
   /**
-   * Calculate detailed token statistics for a chat history
+   * Calculate detailed token statistics for a chat history.
    */
-  async calculateStats(messages: MuxMessage[], model: string): Promise<ChatStats> {
+  async calculateStats(
+    workspaceId: string,
+    messages: MuxMessage[],
+    model: string
+  ): Promise<ChatStats> {
+    assert(
+      typeof workspaceId === "string" && workspaceId.length > 0,
+      "Tokenizer calculateStats requires workspaceId"
+    );
     assert(Array.isArray(messages), "Tokenizer calculateStats requires an array of messages");
     assert(
       typeof model === "string" && model.length > 0,
       "Tokenizer calculateStats requires model name"
     );
 
-    return calculateTokenStats(messages, model);
+    const stats = await calculateTokenStats(messages, model);
+
+    const cache: SessionUsageTokenStatsCacheV1 = {
+      version: 1,
+      computedAt: Date.now(),
+      model: stats.model,
+      tokenizerName: stats.tokenizerName,
+      history: {
+        messageCount: messages.length,
+        maxHistorySequence: getMaxHistorySequence(messages),
+      },
+      consumers: stats.consumers,
+      totalTokens: stats.totalTokens,
+      topFilePaths: stats.topFilePaths,
+    };
+
+    // Defensive: keep cache invariants tight so we don't persist corrupt state.
+    // Prefer returning stats over crashing the UI - if something is off, log and skip persisting.
+    try {
+      assert(cache.totalTokens >= 0, "Tokenizer calculateStats: cache.totalTokens must be >= 0");
+      assert(
+        cache.history.messageCount === messages.length,
+        "Tokenizer calculateStats: cache.history.messageCount must match messages.length"
+      );
+      for (const consumer of cache.consumers) {
+        assert(
+          typeof consumer.tokens === "number" && consumer.tokens >= 0,
+          `Tokenizer calculateStats: consumer.tokens must be >= 0 (${consumer.name})`
+        );
+      }
+
+      const sumConsumerTokens = cache.consumers.reduce((sum, consumer) => sum + consumer.tokens, 0);
+      assert(
+        sumConsumerTokens === cache.totalTokens,
+        `Tokenizer calculateStats: totalTokens mismatch (sum=${sumConsumerTokens}, total=${cache.totalTokens})`
+      );
+    } catch (error) {
+      log.warn("[TokenizerService] Token stats cache invariant check failed; skipping persist", {
+        workspaceId,
+        error,
+      });
+      return stats;
+    }
+
+    try {
+      await this.sessionUsageService.setTokenStatsCache(workspaceId, cache);
+    } catch (error) {
+      log.warn("[TokenizerService] Failed to persist token stats cache", { workspaceId, error });
+    }
+
+    return stats;
   }
 }

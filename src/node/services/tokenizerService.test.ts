@@ -1,10 +1,20 @@
-import { describe, expect, test, spyOn } from "bun:test";
+import { beforeEach, describe, expect, test, spyOn } from "bun:test";
 import { TokenizerService } from "./tokenizerService";
+import type { SessionUsageService } from "./sessionUsageService";
 import * as tokenizerUtils from "@/node/utils/main/tokenizer";
 import * as statsUtils from "@/common/utils/tokens/tokenStatsCalculator";
+import { createMuxMessage } from "@/common/types/message";
 
 describe("TokenizerService", () => {
-  const service = new TokenizerService();
+  let sessionUsageService: SessionUsageService;
+  let service: TokenizerService;
+
+  beforeEach(() => {
+    sessionUsageService = {
+      setTokenStatsCache: () => Promise.resolve(),
+    } as unknown as SessionUsageService;
+    service = new TokenizerService(sessionUsageService);
+  });
 
   describe("countTokens", () => {
     test("delegates to underlying function", async () => {
@@ -43,25 +53,55 @@ describe("TokenizerService", () => {
   });
 
   describe("calculateStats", () => {
-    test("delegates to underlying function", async () => {
+    test("delegates to underlying function and persists token stats cache", async () => {
+      const messages = [
+        createMuxMessage("msg1", "user", "Hello", { historySequence: 1 }),
+        createMuxMessage("msg2", "assistant", "World", { historySequence: 2 }),
+      ];
+
       const mockResult = {
-        consumers: [],
+        consumers: [{ name: "User", tokens: 100, percentage: 100 }],
         totalTokens: 100,
         model: "gpt-4",
         tokenizerName: "cl100k",
         usageHistory: [],
       };
-      const spy = spyOn(statsUtils, "calculateTokenStats").mockResolvedValue(mockResult);
+      const statsSpy = spyOn(statsUtils, "calculateTokenStats").mockResolvedValue(mockResult);
+      const persistSpy = spyOn(sessionUsageService, "setTokenStatsCache").mockResolvedValue(
+        undefined
+      );
+      const nowSpy = spyOn(Date, "now").mockReturnValue(1234);
 
-      const result = await service.calculateStats([], "gpt-4");
+      const result = await service.calculateStats("test-workspace", messages, "gpt-4");
       expect(result).toBe(mockResult);
-      expect(spy).toHaveBeenCalledWith([], "gpt-4");
-      spy.mockRestore();
+      expect(statsSpy).toHaveBeenCalledWith(messages, "gpt-4");
+      expect(persistSpy).toHaveBeenCalledWith(
+        "test-workspace",
+        expect.objectContaining({
+          version: 1,
+          computedAt: 1234,
+          model: "gpt-4",
+          tokenizerName: "cl100k",
+          totalTokens: 100,
+          consumers: mockResult.consumers,
+          history: { messageCount: 2, maxHistorySequence: 2 },
+        })
+      );
+
+      nowSpy.mockRestore();
+      statsSpy.mockRestore();
+      persistSpy.mockRestore();
     });
 
     test("throws on invalid messages", () => {
       // @ts-expect-error testing runtime validation
-      expect(service.calculateStats(null, "gpt-4")).rejects.toThrow("requires an array");
+      expect(service.calculateStats("test-workspace", null, "gpt-4")).rejects.toThrow(
+        "requires an array"
+      );
+    });
+
+    test("throws on empty workspaceId", () => {
+      expect(service.calculateStats("", [], "gpt-4")).rejects.toThrow("requires workspaceId");
     });
   });
 });

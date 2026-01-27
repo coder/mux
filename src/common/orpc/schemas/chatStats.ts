@@ -49,6 +49,33 @@ export const ChatStatsSchema = z.object({
 });
 
 /**
+ * Cached token statistics for consumer/file breakdown in the Costs tab.
+ *
+ * Stored inside session-usage.json to avoid re-tokenizing on every app start.
+ */
+export const SessionUsageTokenStatsCacheSchema = z.object({
+  version: z.literal(1),
+  computedAt: z.number().meta({ description: "Unix timestamp (ms) when this cache was computed" }),
+  model: z
+    .string()
+    .meta({ description: "Model used for tokenization (affects tokenizer + tool definitions)" }),
+  tokenizerName: z.string().meta({ description: 'e.g., "o200k_base", "claude"' }),
+  history: z.object({
+    messageCount: z.number().meta({ description: "Number of messages used to compute this cache" }),
+    maxHistorySequence: z
+      .number()
+      .optional()
+      .meta({ description: "Max MuxMessage.metadata.historySequence seen in the message list" }),
+  }),
+  consumers: z.array(TokenConsumerSchema).meta({ description: "Sorted descending by token count" }),
+  totalTokens: z.number(),
+  topFilePaths: z
+    .array(TopFilePathSchema)
+    .optional()
+    .meta({ description: "Top 10 files by token count aggregated across all file tools" }),
+});
+
+/**
  * Cumulative session usage file format.
  * Stored in ~/.mux/sessions/{workspaceId}/session-usage.json
  */
@@ -61,5 +88,11 @@ export const SessionUsageFileSchema = z.object({
       timestamp: z.number(),
     })
     .optional(),
+  /**
+   * Idempotency ledger for rolled-up sub-agent usage.
+   * Key: child workspaceId, value: true.
+   */
+  rolledUpFrom: z.record(z.string(), z.literal(true)).optional(),
+  tokenStatsCache: SessionUsageTokenStatsCacheSchema.optional(),
   version: z.literal(1),
 });

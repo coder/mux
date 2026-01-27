@@ -22,7 +22,7 @@ async function calculateTokenStatsLatest(
   latestRequestByWorkspace.set(workspaceId, requestId);
 
   try {
-    const stats = await orpcClient.tokenizer.calculateStats({ messages, model });
+    const stats = await orpcClient.tokenizer.calculateStats({ workspaceId, messages, model });
     const latestRequestId = latestRequestByWorkspace.get(workspaceId);
     if (latestRequestId !== requestId) {
       throw new Error(TOKENIZER_CANCELLED_MESSAGE);
@@ -121,6 +121,22 @@ export class WorkspaceConsumerManager {
       totalTokens: 0,
       isCalculating: this.scheduledCalcs.has(workspaceId) || this.pendingCalcs.has(workspaceId),
     };
+  }
+
+  /**
+   * Hydrate consumer breakdown from a persisted cache (session-usage.json).
+   * Skips hydration if a calculation is already scheduled/running.
+   */
+  hydrateFromCache(
+    workspaceId: string,
+    state: Omit<WorkspaceConsumersState, "isCalculating">
+  ): void {
+    if (this.pendingCalcs.has(workspaceId) || this.scheduledCalcs.has(workspaceId)) {
+      return;
+    }
+
+    this.cache.set(workspaceId, { ...state, isCalculating: false });
+    this.notifyStoreAsync(workspaceId);
   }
 
   /**

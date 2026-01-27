@@ -178,7 +178,7 @@ export class ServiceContainer {
     // Editor service for opening workspaces in code editors
     this.editorService = new EditorService(config);
     this.updateService = new UpdateService();
-    this.tokenizerService = new TokenizerService();
+    this.tokenizerService = new TokenizerService(this.sessionUsageService);
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
