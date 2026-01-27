@@ -277,11 +277,20 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   // Format: Title as H1 + plan content for "Start Here" functionality.
   // Note: we intentionally preserve the plan file on disk when starting here so it can be
   // referenced later (e.g., via post-compaction attachments).
+  const planContentTrimmed = planContent.trim();
+  const hasPlanContentInChat =
+    planContentTrimmed.length > 0 && !planContentTrimmed.startsWith("*Plan saved to ");
+
   // When using "Start Here" (replace chat history), the plan is already included in the
-  // conversation. Keeping this note short avoids token bloat while discouraging redundant
-  // plan-file reads in Exec.
-  const startHereNote =
-    "\n\nNote: This chat already contains the full plan; no need to re-open the plan file.";
+  // conversation *only* when the Propose Plan tool result includes full plan text.
+  // Keeping this note short avoids token bloat while discouraging redundant plan-file
+  // reads in Exec.
+  const startHereNote = hasPlanContentInChat
+    ? "\n\nNote: This chat already contains the full plan; no need to re-open the plan file."
+    : planContentTrimmed.startsWith("*Plan saved to ")
+      ? "\n\nNote: This chat only includes a placeholder. Read the plan file below for the full plan."
+      : "";
+
   const planPathNote = planPath ? `\n\n---\n\n*Plan file preserved at:* \`${planPath}\`` : "";
   const startHereContent = `# ${planTitle}\n\n${planContent}${startHereNote}${planPathNote}`;
   const {

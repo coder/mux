@@ -120,6 +120,30 @@ describe("ProposePlanToolCall", () => {
     globalThis.document = originalDocument;
   });
 
+  test("does not claim plan is in chat when Start Here content is a placeholder", () => {
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    render(
+      <TooltipProvider>
+        <ProposePlanToolCall
+          args={{}}
+          result={{
+            success: true,
+            planPath,
+          }}
+          workspaceId="ws-123"
+          isLatest={false}
+        />
+      </TooltipProvider>
+    );
+
+    expect(startHereCalls.length).toBe(1);
+    expect(startHereCalls[0]?.content).toContain("*Plan saved to");
+    expect(startHereCalls[0]?.content).not.toContain(
+      "Note: This chat already contains the full plan"
+    );
+    expect(startHereCalls[0]?.content).toContain("Read the plan file below");
+  });
   test("keeps plan file on disk and includes plan path note in Start Here content", () => {
     const planPath = "~/.mux/plans/demo/ws-123.md";
 
