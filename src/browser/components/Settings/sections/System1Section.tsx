@@ -1,25 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 
-import { Switch } from "@/browser/components/ui/switch";
 import { Input } from "@/browser/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/browser/components/ui/select";
+import { Switch } from "@/browser/components/ui/switch";
 import { useAPI } from "@/browser/contexts/API";
-import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { getDefaultModel, getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
-import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  getModelKey,
-  PREFERRED_SYSTEM_1_MODEL_KEY,
-  PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-} from "@/common/constants/storage";
+import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import {
   DEFAULT_TASK_SETTINGS,
   SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
@@ -27,19 +13,42 @@ import {
   normalizeTaskSettings,
   type TaskSettings,
 } from "@/common/types/tasks";
-import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
-import {
-  THINKING_LEVELS,
-  coerceThinkingLevel,
-  getThinkingOptionLabel,
-} from "@/common/types/thinking";
 
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { getErrorMessage } from "@/common/utils/errors";
 
+function mergeSystem1Settings(base: TaskSettings, override: TaskSettings): TaskSettings {
+  return {
+    ...base,
+    bashOutputCompactionMinLines:
+      override.bashOutputCompactionMinLines ?? base.bashOutputCompactionMinLines,
+    bashOutputCompactionMinTotalBytes:
+      override.bashOutputCompactionMinTotalBytes ?? base.bashOutputCompactionMinTotalBytes,
+    bashOutputCompactionMaxKeptLines:
+      override.bashOutputCompactionMaxKeptLines ?? base.bashOutputCompactionMaxKeptLines,
+    bashOutputCompactionTimeoutMs:
+      override.bashOutputCompactionTimeoutMs ?? base.bashOutputCompactionTimeoutMs,
+    bashOutputCompactionHeuristicFallback:
+      override.bashOutputCompactionHeuristicFallback ?? base.bashOutputCompactionHeuristicFallback,
+    memoryWriterIntervalMessages:
+      override.memoryWriterIntervalMessages ?? base.memoryWriterIntervalMessages,
+  };
+}
+
+function areSystem1SettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
+  return (
+    a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
+    a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
+    a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
+    a.bashOutputCompactionTimeoutMs === b.bashOutputCompactionTimeoutMs &&
+    a.bashOutputCompactionHeuristicFallback === b.bashOutputCompactionHeuristicFallback &&
+    a.memoryWriterIntervalMessages === b.memoryWriterIntervalMessages
+  );
+}
+
 export function System1Section() {
   const { api } = useAPI();
-  const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
+  const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
 
   const [taskSettings, setTaskSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
   const [loaded, setLoaded] = useState(false);
@@ -50,59 +59,6 @@ export function System1Section() {
   const savingRef = useRef(false);
   const lastSyncedRef = useRef<TaskSettings | null>(null);
   const pendingSaveRef = useRef<TaskSettings | null>(null);
-
-  const [system1ModelRaw, setSystem1ModelRaw] = usePersistedState<unknown>(
-    PREFERRED_SYSTEM_1_MODEL_KEY,
-    "",
-    {
-      listener: true,
-    }
-  );
-
-  const system1Model = typeof system1ModelRaw === "string" ? system1ModelRaw : "";
-
-  const setSystem1Model = (value: string) => {
-    setSystem1ModelRaw(value);
-  };
-
-  const [system1ThinkingLevelRaw, setSystem1ThinkingLevelRaw] = usePersistedState<unknown>(
-    PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-    "off",
-    { listener: true }
-  );
-
-  const system1ThinkingLevel = coerceThinkingLevel(system1ThinkingLevelRaw) ?? "off";
-
-  const workspaceContext = useOptionalWorkspaceContext();
-  const selectedWorkspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
-  const defaultModel = getDefaultModel();
-
-  const workspaceModelStorageKey = selectedWorkspaceId
-    ? getModelKey(selectedWorkspaceId)
-    : "__system1_workspace_model_fallback__";
-
-  const [workspaceModelRaw] = usePersistedState<unknown>(workspaceModelStorageKey, defaultModel, {
-    listener: true,
-  });
-
-  const system1ModelTrimmed = system1Model.trim();
-  const workspaceModelTrimmed =
-    typeof workspaceModelRaw === "string" ? workspaceModelRaw.trim() : "";
-
-  const effectiveSystem1ModelStringForThinking =
-    system1ModelTrimmed || workspaceModelTrimmed || defaultModel;
-
-  const policyThinkingLevels = getThinkingPolicyForModel(effectiveSystem1ModelStringForThinking);
-  const allowedThinkingLevels =
-    policyThinkingLevels.length > 0 ? policyThinkingLevels : THINKING_LEVELS;
-
-  const effectiveSystem1ThinkingLevel = enforceThinkingPolicy(
-    effectiveSystem1ModelStringForThinking,
-    system1ThinkingLevel
-  );
-  const setSystem1ThinkingLevel = (value: string) => {
-    setSystem1ThinkingLevelRaw(coerceThinkingLevel(value) ?? "off");
-  };
 
   useEffect(() => {
     if (!api) {
@@ -142,7 +98,7 @@ export function System1Section() {
 
     // Debounce settings writes so typing doesn't thrash the disk.
     const lastSynced = lastSyncedRef.current;
-    if (lastSynced && areTaskSettingsEqual(lastSynced, taskSettings)) {
+    if (lastSynced && areSystem1SettingsEqual(lastSynced, taskSettings)) {
       pendingSaveRef.current = null;
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
@@ -172,8 +128,11 @@ export function System1Section() {
         savingRef.current = true;
 
         void api.config
-          .saveConfig({
-            taskSettings: payload,
+          .getConfig()
+          .then((cfg) => {
+            const latest = normalizeTaskSettings(cfg.taskSettings);
+            const merged = normalizeTaskSettings(mergeSystem1Settings(latest, payload));
+            return api.config.saveConfig({ taskSettings: merged });
           })
           .then(() => {
             lastSyncedRef.current = payload;
@@ -217,9 +176,13 @@ export function System1Section() {
 
       pendingSaveRef.current = null;
       savingRef.current = true;
+
       void api.config
-        .saveConfig({
-          taskSettings: payload,
+        .getConfig()
+        .then((cfg) => {
+          const latest = normalizeTaskSettings(cfg.taskSettings);
+          const merged = normalizeTaskSettings(mergeSystem1Settings(latest, payload));
+          return api.config.saveConfig({ taskSettings: merged });
         })
         .catch(() => undefined)
         .finally(() => {
@@ -229,7 +192,7 @@ export function System1Section() {
   }, [api, loaded, loadFailed]);
 
   const setBashOutputCompactionMinLines = (rawValue: string) => {
-    const parsed = Number(rawValue);
+    const parsed = rawValue.trim() === "" ? undefined : Number(rawValue);
     setTaskSettings((prev) =>
       normalizeTaskSettings({
         ...prev,
@@ -239,8 +202,8 @@ export function System1Section() {
   };
 
   const setBashOutputCompactionMinTotalKb = (rawValue: string) => {
-    const parsedKb = Math.floor(Number(rawValue));
-    const bytes = parsedKb * 1024;
+    const parsedKb = rawValue.trim() === "" ? undefined : Math.floor(Number(rawValue));
+    const bytes = parsedKb === undefined ? undefined : parsedKb * 1024;
     setTaskSettings((prev) =>
       normalizeTaskSettings({
         ...prev,
@@ -250,7 +213,7 @@ export function System1Section() {
   };
 
   const setBashOutputCompactionMaxKeptLines = (rawValue: string) => {
-    const parsed = Number(rawValue);
+    const parsed = rawValue.trim() === "" ? undefined : Number(rawValue);
     setTaskSettings((prev) =>
       normalizeTaskSettings({
         ...prev,
@@ -269,8 +232,8 @@ export function System1Section() {
   };
 
   const setBashOutputCompactionTimeoutSeconds = (rawValue: string) => {
-    const parsedSeconds = Math.floor(Number(rawValue));
-    const ms = parsedSeconds * 1000;
+    const parsedSeconds = rawValue.trim() === "" ? undefined : Math.floor(Number(rawValue));
+    const ms = parsedSeconds === undefined ? undefined : parsedSeconds * 1000;
     setTaskSettings((prev) =>
       normalizeTaskSettings({
         ...prev,
@@ -278,8 +241,9 @@ export function System1Section() {
       })
     );
   };
+
   const setMemoryWriterIntervalMessages = (rawValue: string) => {
-    const parsed = Number(rawValue);
+    const parsed = rawValue.trim() === "" ? undefined : Number(rawValue);
     setTaskSettings((prev) =>
       normalizeTaskSettings({
         ...prev,
@@ -287,17 +251,6 @@ export function System1Section() {
       })
     );
   };
-
-  if (!loaded || providersLoading || !providersConfig) {
-    return (
-      <div className="flex items-center justify-center gap-2 py-12">
-        <Loader2 className="text-muted h-5 w-5 animate-spin" />
-        <span className="text-muted text-sm">Loading settings...</span>
-      </div>
-    );
-  }
-
-  const allModels = getSuggestedModels(providersConfig);
 
   const bashOutputCompactionMinLines =
     taskSettings.bashOutputCompactionMinLines ??
@@ -308,14 +261,13 @@ export function System1Section() {
   const bashOutputCompactionMaxKeptLines =
     taskSettings.bashOutputCompactionMaxKeptLines ??
     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.default;
+  const bashOutputCompactionTimeoutMs =
+    taskSettings.bashOutputCompactionTimeoutMs ??
+    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default;
   const bashOutputCompactionHeuristicFallback =
     taskSettings.bashOutputCompactionHeuristicFallback ??
     DEFAULT_TASK_SETTINGS.bashOutputCompactionHeuristicFallback ??
     true;
-
-  const bashOutputCompactionTimeoutMs =
-    taskSettings.bashOutputCompactionTimeoutMs ??
-    SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.default;
 
   const bashOutputCompactionMinTotalKb = Math.floor(bashOutputCompactionMinTotalBytes / 1024);
   const bashOutputCompactionTimeoutSeconds = Math.floor(bashOutputCompactionTimeoutMs / 1000);
@@ -324,55 +276,31 @@ export function System1Section() {
     taskSettings.memoryWriterIntervalMessages ??
     SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.default;
 
+  if (!api) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-12">
+        <Loader2 className="text-muted h-5 w-5 animate-spin" />
+        <span className="text-muted text-sm">Connecting...</span>
+      </div>
+    );
+  }
+
+  if (!loaded) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-12">
+        <Loader2 className="text-muted h-5 w-5 animate-spin" />
+        <span className="text-muted text-sm">Loading settings...</span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Model Defaults */}
-      <div className="border-border-medium overflow-hidden rounded-md border">
-        <div className="border-border-medium bg-background-secondary/50 border-b px-2 py-1.5 md:px-3">
-          <span className="text-muted text-xs font-medium">System 1 Defaults</span>
+      {!system1Enabled ? (
+        <div className="border-border-medium bg-background-secondary/50 text-muted rounded-md border p-3 text-xs">
+          System 1 is disabled. Enable it in Settings → Experiments to activate these features.
         </div>
-        <div className="divide-border-medium divide-y">
-          <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-            <div className="w-32 shrink-0">
-              <div className="text-muted text-xs">System 1 Model</div>
-              <div className="text-muted-light text-[10px]">Context optimization</div>
-            </div>
-            <div className="min-w-0 flex-1">
-              <SearchableModelSelect
-                value={system1Model}
-                onChange={setSystem1Model}
-                models={allModels}
-                emptyOption={{ value: "", label: "Use workspace model" }}
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-            <div className="w-32 shrink-0">
-              <div className="text-muted text-xs">System 1 Reasoning</div>
-              <div className="text-muted-light text-[10px]">Log filtering</div>
-            </div>
-            <div className="min-w-0 flex-1">
-              <Select
-                value={effectiveSystem1ThinkingLevel}
-                onValueChange={setSystem1ThinkingLevel}
-                disabled={allowedThinkingLevels.length <= 1}
-              >
-                <SelectTrigger className="border-border-medium bg-modal-bg h-9 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {allowedThinkingLevels.map((level) => (
-                    <SelectItem key={level} value={level}>
-                      {getThinkingOptionLabel(level, effectiveSystem1ModelStringForThinking)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        </div>
-      </div>
+      ) : null}
 
       {/* Memories */}
       <div>
@@ -401,6 +329,7 @@ export function System1Section() {
           </div>
         </div>
       </div>
+
       {/* Bash output compaction */}
       <div>
         <h3 className="text-foreground mb-4 text-sm font-medium">Bash Output Compaction</h3>
@@ -516,18 +445,5 @@ export function System1Section() {
         {saveError ? <div className="text-danger-light mt-4 text-xs">{saveError}</div> : null}
       </div>
     </div>
-  );
-}
-
-function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
-  return (
-    a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
-    a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
-    a.bashOutputCompactionMinLines === b.bashOutputCompactionMinLines &&
-    a.bashOutputCompactionMinTotalBytes === b.bashOutputCompactionMinTotalBytes &&
-    a.bashOutputCompactionMaxKeptLines === b.bashOutputCompactionMaxKeptLines &&
-    a.bashOutputCompactionTimeoutMs === b.bashOutputCompactionTimeoutMs &&
-    a.bashOutputCompactionHeuristicFallback === b.bashOutputCompactionHeuristicFallback &&
-    a.memoryWriterIntervalMessages === b.memoryWriterIntervalMessages
   );
 }
