@@ -146,6 +146,7 @@ describe("ProposePlanToolCall", () => {
 
     // The Start Here message should explicitly tell the user the plan file remains on disk.
     expect(startHereCalls[0]?.content).toContain("*Plan file preserved at:*");
+    expect(startHereCalls[0]?.content).toContain("Note: This chat already contains the full plan");
     expect(startHereCalls[0]?.content).toContain(planPath);
   });
 
@@ -295,6 +296,9 @@ describe("ProposePlanToolCall", () => {
     };
 
     expect(summaryMessage.role).toBe("assistant");
+    expect(summaryMessage.parts?.[0]?.text).toContain(
+      "Note: This chat already contains the full plan"
+    );
     expect(summaryMessage.metadata?.agentId).toBe("plan");
     expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
     expect(summaryMessage.parts?.[0]?.text).toContain(planPath);

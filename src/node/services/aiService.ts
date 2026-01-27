@@ -102,6 +102,7 @@ import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
+import { hasStartHerePlanSummary } from "@/common/utils/messages/startHerePlanSummary";
 import { getPlanFilePath } from "@/common/utils/planStorage";
 import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
@@ -1458,6 +1459,8 @@ export class AIService extends EventEmitter {
         workspaceId
       );
 
+      const chatHasStartHerePlanSummary = hasStartHerePlanSummary(filteredMessages);
+
       if (effectiveMode === "plan") {
         const planModeInstruction = getPlanModeInstruction(planFilePath, planResult.exists);
         effectiveAdditionalInstructions = additionalSystemInstructions
@@ -1467,11 +1470,21 @@ export class AIService extends EventEmitter {
         // Users often use "Replace all chat history" after plan mode. In exec (or other non-plan)
         // modes, the model can lose the plan file location because plan path injection only
         // happens in plan mode.
-        const planFileHint = getPlanFileHint(planFilePath, planResult.exists);
-        if (planFileHint) {
-          effectiveAdditionalInstructions = effectiveAdditionalInstructions
-            ? `${planFileHint}\n\n${effectiveAdditionalInstructions}`
-            : planFileHint;
+        //
+        // Exception: the ProposePlanToolCall "Start Here" flow already stores the full plan
+        // (and plan path) directly in chat history. In that case, prompting the model to
+        // re-open the plan file is redundant and often results in an extra "read …KB" step.
+        if (!chatHasStartHerePlanSummary) {
+          const planFileHint = getPlanFileHint(planFilePath, planResult.exists);
+          if (planFileHint) {
+            effectiveAdditionalInstructions = effectiveAdditionalInstructions
+              ? `${planFileHint}\n\n${effectiveAdditionalInstructions}`
+              : planFileHint;
+          }
+        } else {
+          workspaceLog.debug(
+            "Skipping plan file hint: Start Here already includes the plan in chat history."
+          );
         }
       }
 
@@ -1487,7 +1500,7 @@ export class AIService extends EventEmitter {
       // Read plan content for agent transition (plan-like → exec-like)
       // Only read if switching to exec-like agent and last assistant was plan-like.
       let planContentForTransition: string | undefined;
-      if (effectiveMode === "exec") {
+      if (effectiveMode === "exec" && !chatHasStartHerePlanSummary) {
         const lastAssistantMessage = [...filteredMessages]
           .reverse()
           .find((m) => m.role === "assistant");
@@ -1523,6 +1536,10 @@ export class AIService extends EventEmitter {
             planContentForTransition = planResult.content;
           }
         }
+      } else if (effectiveMode === "exec" && chatHasStartHerePlanSummary) {
+        workspaceLog.debug(
+          "Skipping plan content injection for plan→exec transition: Start Here already includes the plan in chat history."
+        );
       }
 
       // Now inject agent transition context with plan content (runtime is now available)
