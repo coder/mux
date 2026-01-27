@@ -21,7 +21,6 @@ import * as path from "path";
 import chalk from "chalk";
 import { parseBoolEnv } from "@/common/utils/env";
 import { getMuxHome } from "@/common/constants/paths";
-import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
 
 // Lazy-initialized to avoid circular dependency with config.ts
 let _debugObjDir: string | null = null;
@@ -253,36 +252,6 @@ function safePipeLog(level: LogLevel, ...args: unknown[]): void {
       }
     }
   }
-}
-
-// Guard against unhandled EPIPE/ECONNRESET when stdout/stderr are piped.
-let stdioErrorHandlersInstalled = false;
-
-function writeStdioFallback(message: string): void {
-  try {
-    fs.writeSync(2, message);
-  } catch {
-    // Ignore fallback write failures.
-  }
-}
-
-export function installStdioErrorHandlers(): void {
-  if (stdioErrorHandlersInstalled) {
-    return;
-  }
-  stdioErrorHandlersInstalled = true;
-
-  const attach = (stream: NodeJS.WriteStream, label: string) => {
-    attachStreamErrorHandler(stream, label, {
-      onUnexpected: (_error, info) => {
-        const codeSuffix = info.code ? ` (${info.code})` : "";
-        writeStdioFallback(`[mux] ${label} error${codeSuffix}: ${info.message}\n`);
-      },
-    });
-  };
-
-  attach(process.stdout, "stdout");
-  attach(process.stderr, "stderr");
 }
 
 /**

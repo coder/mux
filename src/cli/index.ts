@@ -30,9 +30,6 @@ import {
   isCommandAvailable,
   isElectronLaunchArg,
 } from "./argv";
-import { installStdioErrorHandlers } from "@/node/services/log";
-
-installStdioErrorHandlers();
 
 const env = detectCliEnvironment();
 const subcommand = getSubcommand(process.argv, env);
