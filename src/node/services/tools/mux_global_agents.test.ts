@@ -4,9 +4,9 @@ import * as path from "path";
 import type { ToolCallOptions } from "ai";
 
 import {
-  MUX_CHAT_WORKSPACE_ID,
-  MUX_CHAT_WORKSPACE_NAME,
-  MUX_CHAT_WORKSPACE_TITLE,
+  MUX_HELP_CHAT_WORKSPACE_ID,
+  MUX_HELP_CHAT_WORKSPACE_NAME,
+  MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 
@@ -23,11 +23,11 @@ describe("mux_global_agents_* tools", () => {
   it("reads ~/.mux/AGENTS.md (returns empty string if missing)", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createTestToolConfig(muxHome.path, {
-      workspaceId: MUX_CHAT_WORKSPACE_ID,
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     });
 
@@ -47,7 +47,7 @@ describe("mux_global_agents_* tools", () => {
     const agentsPath = path.join(muxHome.path, "AGENTS.md");
     await fs.writeFile(
       agentsPath,
-      `# ${MUX_CHAT_WORKSPACE_TITLE}\n${MUX_CHAT_WORKSPACE_NAME}\n`,
+      `# ${MUX_HELP_CHAT_WORKSPACE_TITLE}\n${MUX_HELP_CHAT_WORKSPACE_NAME}\n`,
       "utf-8"
     );
 
@@ -57,19 +57,19 @@ describe("mux_global_agents_* tools", () => {
     };
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.content).toContain(MUX_CHAT_WORKSPACE_TITLE);
-      expect(result.content).toContain(MUX_CHAT_WORKSPACE_NAME);
+      expect(result.content).toContain(MUX_HELP_CHAT_WORKSPACE_TITLE);
+      expect(result.content).toContain(MUX_HELP_CHAT_WORKSPACE_NAME);
     }
   });
 
   it("refuses to write without explicit confirmation", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createTestToolConfig(muxHome.path, {
-      workspaceId: MUX_CHAT_WORKSPACE_ID,
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     });
 
@@ -100,11 +100,11 @@ describe("mux_global_agents_* tools", () => {
   it("writes ~/.mux/AGENTS.md and returns a diff", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createTestToolConfig(muxHome.path, {
-      workspaceId: MUX_CHAT_WORKSPACE_ID,
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     });
 
@@ -131,11 +131,11 @@ describe("mux_global_agents_* tools", () => {
   it("rejects symlink targets", async () => {
     using muxHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_CHAT_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(muxHome.path, "sessions", MUX_HELP_CHAT_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
     const config = createTestToolConfig(muxHome.path, {
-      workspaceId: MUX_CHAT_WORKSPACE_ID,
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     });
 

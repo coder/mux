@@ -2,12 +2,12 @@ import * as os from "os";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import {
-  MUX_CHAT_AGENT_ID,
-  MUX_CHAT_WORKSPACE_ID,
-  MUX_CHAT_WORKSPACE_NAME,
-  MUX_CHAT_WORKSPACE_TITLE,
+  MUX_HELP_CHAT_AGENT_ID,
+  MUX_HELP_CHAT_WORKSPACE_ID,
+  MUX_HELP_CHAT_WORKSPACE_NAME,
+  MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
-import { getMuxChatProjectPath } from "@/node/constants/muxChat";
+import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import { createMuxMessage } from "@/common/types/message";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -55,8 +55,8 @@ import { getSigningService, type SigningService } from "@/node/services/signingS
 import { coderService, type CoderService } from "@/node/services/coderService";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 
-const MUX_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
-const MUX_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
+const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
+const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
 
 This is your built-in **Chat with Mux** workspace — a safe place to ask questions about Mux itself.
 
@@ -258,7 +258,7 @@ export class ServiceContainer {
   }
 
   private async ensureMuxChatWorkspace(): Promise<void> {
-    const projectPath = getMuxChatProjectPath(this.config.rootDir);
+    const projectPath = getMuxHelpChatProjectPath(this.config.rootDir);
 
     // Ensure the directory exists (LocalRuntime uses project dir directly).
     await fsPromises.mkdir(projectPath, { recursive: true });
@@ -270,14 +270,14 @@ export class ServiceContainer {
         config.projects.set(projectPath, projectConfig);
       }
 
-      const existing = projectConfig.workspaces.find((w) => w.id === MUX_CHAT_WORKSPACE_ID);
+      const existing = projectConfig.workspaces.find((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID);
       if (!existing) {
         projectConfig.workspaces.push({
           path: projectPath,
-          id: MUX_CHAT_WORKSPACE_ID,
-          name: MUX_CHAT_WORKSPACE_NAME,
-          title: MUX_CHAT_WORKSPACE_TITLE,
-          agentId: MUX_CHAT_AGENT_ID,
+          id: MUX_HELP_CHAT_WORKSPACE_ID,
+          name: MUX_HELP_CHAT_WORKSPACE_NAME,
+          title: MUX_HELP_CHAT_WORKSPACE_TITLE,
+          agentId: MUX_HELP_CHAT_AGENT_ID,
           createdAt: new Date().toISOString(),
           runtimeConfig: { type: "local" },
         });
@@ -286,9 +286,9 @@ export class ServiceContainer {
 
       // Self-heal: enforce invariants for the system workspace.
       existing.path = projectPath;
-      existing.name = MUX_CHAT_WORKSPACE_NAME;
-      existing.title = MUX_CHAT_WORKSPACE_TITLE;
-      existing.agentId = MUX_CHAT_AGENT_ID;
+      existing.name = MUX_HELP_CHAT_WORKSPACE_NAME;
+      existing.title = MUX_HELP_CHAT_WORKSPACE_TITLE;
+      existing.agentId = MUX_HELP_CHAT_AGENT_ID;
       existing.createdAt ??= new Date().toISOString();
       existing.runtimeConfig = { type: "local" };
       existing.archivedAt = undefined;
@@ -300,7 +300,7 @@ export class ServiceContainer {
   }
 
   private async ensureMuxChatWelcomeMessage(): Promise<void> {
-    const historyResult = await this.historyService.getHistory(MUX_CHAT_WORKSPACE_ID);
+    const historyResult = await this.historyService.getHistory(MUX_HELP_CHAT_WORKSPACE_ID);
     if (!historyResult.success) {
       log.warn("[ServiceContainer] Failed to read mux-chat history for welcome message", {
         error: historyResult.error,
@@ -313,14 +313,17 @@ export class ServiceContainer {
     }
 
     const message = createMuxMessage(
-      MUX_CHAT_WELCOME_MESSAGE_ID,
+      MUX_HELP_CHAT_WELCOME_MESSAGE_ID,
       "assistant",
-      MUX_CHAT_WELCOME_MESSAGE,
+      MUX_HELP_CHAT_WELCOME_MESSAGE,
       // Note: This message should be visible in the UI, so it must NOT be marked synthetic.
       { timestamp: Date.now() }
     );
 
-    const appendResult = await this.historyService.appendToHistory(MUX_CHAT_WORKSPACE_ID, message);
+    const appendResult = await this.historyService.appendToHistory(
+      MUX_HELP_CHAT_WORKSPACE_ID,
+      message
+    );
     if (!appendResult.success) {
       log.warn("[ServiceContainer] Failed to seed mux-chat welcome message", {
         error: appendResult.error,

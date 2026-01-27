@@ -4,7 +4,7 @@ import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 function getMuxHomeFromWorkspaceSessionDir(config: ToolConfiguration): string {
   if (!config.workspaceSessionDir) {
@@ -39,7 +39,7 @@ export const createMuxGlobalAgentsReadTool: ToolFactory = (config: ToolConfigura
       { abortSignal: _abortSignal }
     ): Promise<MuxGlobalAgentsReadToolOutput> => {
       try {
-        if (config.workspaceId !== MUX_CHAT_WORKSPACE_ID) {
+        if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
           return {
             success: false,
             error: "mux_global_agents_read is only available in the Chat with Mux system workspace",

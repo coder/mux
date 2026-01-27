@@ -40,7 +40,7 @@ import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
@@ -67,7 +67,7 @@ const MuxChatHelpButton: React.FC<{
   onClick: () => void;
   isSelected: boolean;
 }> = ({ onClick, isSelected }) => {
-  const { isUnread: hasUnread } = useWorkspaceUnread(MUX_CHAT_WORKSPACE_ID);
+  const { isUnread: hasUnread } = useWorkspaceUnread(MUX_HELP_CHAT_WORKSPACE_ID);
   const isUnread = hasUnread && !isSelected;
 
   return (
@@ -307,7 +307,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const handleOpenMuxChat = useCallback(() => {
-    const meta = workspaceMetadata.get(MUX_CHAT_WORKSPACE_ID);
+    const meta = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID);
 
     handleSelectWorkspace(
       meta
@@ -319,7 +319,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           }
         : {
             // Fallback: navigate by ID; metadata will fill in once refreshed.
-            workspaceId: MUX_CHAT_WORKSPACE_ID,
+            workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
             projectPath: "",
             projectName: "Mux",
             namedWorkspacePath: "",
@@ -515,7 +515,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Hide the built-in Chat with Mux system project from the normal projects list.
   // We still render the mux-chat workspace as a dedicated pinned row above projects.
-  const muxChatMetadata = workspaceMetadata.get(MUX_CHAT_WORKSPACE_ID);
+  const muxChatMetadata = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID);
   const muxChatProjectPath = muxChatMetadata?.projectPath ?? null;
   const visibleProjectPaths = React.useMemo(
     () =>
@@ -539,7 +539,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       // Create new workspace for the project of the selected workspace
       if (matchesKeybind(e, KEYBINDS.NEW_WORKSPACE) && selectedWorkspace) {
         e.preventDefault();
-        if (selectedWorkspace.workspaceId === MUX_CHAT_WORKSPACE_ID) {
+        if (selectedWorkspace.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
           return;
         }
         handleAddWorkspace(selectedWorkspace.projectPath);
@@ -583,9 +583,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     <>
                       <MuxChatHelpButton
                         onClick={handleOpenMuxChat}
-                        isSelected={selectedWorkspace?.workspaceId === MUX_CHAT_WORKSPACE_ID}
+                        isSelected={selectedWorkspace?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID}
                       />
-                      <WorkspaceStatusIndicator workspaceId={MUX_CHAT_WORKSPACE_ID} />
+                      <WorkspaceStatusIndicator workspaceId={MUX_HELP_CHAT_WORKSPACE_ID} />
                     </>
                   )}
                 </div>

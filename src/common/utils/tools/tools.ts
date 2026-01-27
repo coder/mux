@@ -1,5 +1,5 @@
 import { type Tool } from "ai";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import assert from "@/common/utils/assert";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -377,7 +377,7 @@ export async function getToolsForModel(
   const allowlistedToolNames = new Set(
     getAvailableTools(modelString, {
       enableAgentReport: config.enableAgentReport,
-      enableMuxGlobalAgentsTools: workspaceId === MUX_CHAT_WORKSPACE_ID,
+      enableMuxGlobalAgentsTools: workspaceId === MUX_HELP_CHAT_WORKSPACE_ID,
     })
   );
   for (const toolName of Object.keys(mcpTools ?? {})) {

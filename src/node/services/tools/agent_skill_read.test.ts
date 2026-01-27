@@ -5,7 +5,7 @@ import { describe, it, expect } from "bun:test";
 import type { ToolCallOptions } from "ai";
 
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { createAgentSkillReadTool } from "./agent_skill_read";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
 
@@ -27,7 +27,9 @@ async function writeProjectSkill(workspacePath: string, name: string): Promise<v
 describe("agent_skill_read (Chat with Mux sandbox)", () => {
   it("allows reading built-in skills", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-mux-chat");
-    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: MUX_CHAT_WORKSPACE_ID });
+    const baseConfig = createTestToolConfig(tempDir.path, {
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+    });
 
     const tool = createAgentSkillReadTool(baseConfig);
 
@@ -53,7 +55,9 @@ describe("agent_skill_read (Chat with Mux sandbox)", () => {
     using tempDir = new TestTempDir("test-agent-skill-read-mux-chat-reject");
     await writeProjectSkill(tempDir.path, "foo");
 
-    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: MUX_CHAT_WORKSPACE_ID });
+    const baseConfig = createTestToolConfig(tempDir.path, {
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+    });
     const tool = createAgentSkillReadTool(baseConfig);
 
     const raw: unknown = await Promise.resolve(tool.execute!({ name: "foo" }, mockToolCallOptions));

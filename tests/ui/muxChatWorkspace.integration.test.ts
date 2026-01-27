@@ -13,8 +13,8 @@ import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } fro
 import { cleanupTempGitRepo, createTempGitRepo, generateBranchName } from "../ipc/helpers";
 
 import { detectDefaultTrunkBranch } from "@/node/git";
-import { getMuxChatProjectPath } from "@/node/constants/muxChat";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
@@ -47,7 +47,7 @@ describe("Chat with Mux system workspace (UI)", () => {
       await view.waitForReady();
       await waitForWorkspaceChatToRender(view.container);
 
-      expect(window.location.pathname).toBe(`/workspace/${MUX_CHAT_WORKSPACE_ID}`);
+      expect(window.location.pathname).toBe(`/workspace/${MUX_HELP_CHAT_WORKSPACE_ID}`);
       expect(view.queryByText("Welcome to Mux")).toBeNull();
 
       // On first boot, the mux-chat workspace should seed a synthetic welcome message.
@@ -109,7 +109,7 @@ describe("Chat with Mux system workspace (UI)", () => {
 
       await waitFor(
         () => {
-          expect(window.location.pathname).toBe(`/workspace/${MUX_CHAT_WORKSPACE_ID}`);
+          expect(window.location.pathname).toBe(`/workspace/${MUX_HELP_CHAT_WORKSPACE_ID}`);
         },
         { timeout: 10_000 }
       );
@@ -144,7 +144,7 @@ describe("Chat with Mux system workspace (UI)", () => {
       await waitForWorkspaceChatToRender(view.container);
 
       // The system project itself should be hidden from the sidebar projects list.
-      const systemProjectPath = getMuxChatProjectPath(env.config.rootDir);
+      const systemProjectPath = getMuxHelpChatProjectPath(env.config.rootDir);
       await waitFor(
         () => {
           expect(
@@ -158,7 +158,7 @@ describe("Chat with Mux system workspace (UI)", () => {
       // it's accessed via the Mux logo / help icon in the header. Verify no workspace
       // row exists for it (which means no Archive button by design).
       expect(
-        view.container.querySelector(`[data-workspace-id="${MUX_CHAT_WORKSPACE_ID}"]`)
+        view.container.querySelector(`[data-workspace-id="${MUX_HELP_CHAT_WORKSPACE_ID}"]`)
       ).toBeNull();
 
       // Ctrl+N should not redirect to /project when mux-chat is selected.
@@ -167,7 +167,7 @@ describe("Chat with Mux system workspace (UI)", () => {
       });
 
       await new Promise((r) => setTimeout(r, 200));
-      expect(window.location.pathname).toBe(`/workspace/${MUX_CHAT_WORKSPACE_ID}`);
+      expect(window.location.pathname).toBe(`/workspace/${MUX_HELP_CHAT_WORKSPACE_ID}`);
     } finally {
       await cleanupView(view, cleanupDom);
       await cleanupTestEnvironment(env);

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, it, expect } from "bun:test";
 import type { ToolCallOptions } from "ai";
 
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { AgentSkillReadFileToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { createAgentSkillReadFileTool } from "./agent_skill_read_file";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
@@ -27,7 +27,9 @@ async function writeProjectSkill(workspacePath: string, name: string): Promise<v
 describe("agent_skill_read_file (Chat with Mux sandbox)", () => {
   it("allows reading built-in skill files", async () => {
     using tempDir = new TestTempDir("test-agent-skill-read-file-mux-chat");
-    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: MUX_CHAT_WORKSPACE_ID });
+    const baseConfig = createTestToolConfig(tempDir.path, {
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+    });
 
     const tool = createAgentSkillReadFileTool(baseConfig);
 
@@ -55,7 +57,9 @@ describe("agent_skill_read_file (Chat with Mux sandbox)", () => {
     using tempDir = new TestTempDir("test-agent-skill-read-file-mux-chat-reject");
     await writeProjectSkill(tempDir.path, "foo");
 
-    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: MUX_CHAT_WORKSPACE_ID });
+    const baseConfig = createTestToolConfig(tempDir.path, {
+      workspaceId: MUX_HELP_CHAT_WORKSPACE_ID,
+    });
     const tool = createAgentSkillReadFileTool(baseConfig);
 
     const raw: unknown = await Promise.resolve(

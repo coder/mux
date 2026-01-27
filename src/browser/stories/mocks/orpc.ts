@@ -25,10 +25,10 @@ import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
 import type { ChatStats } from "@/common/types/chatStats";
 import {
-  MUX_CHAT_AGENT_ID,
-  MUX_CHAT_WORKSPACE_ID,
-  MUX_CHAT_WORKSPACE_NAME,
-  MUX_CHAT_WORKSPACE_TITLE,
+  MUX_HELP_CHAT_AGENT_ID,
+  MUX_HELP_CHAT_WORKSPACE_ID,
+  MUX_HELP_CHAT_WORKSPACE_NAME,
+  MUX_HELP_CHAT_WORKSPACE_TITLE,
 } from "@/common/constants/muxChat";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import {
@@ -271,17 +271,17 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   // App now boots into the built-in mux-chat workspace by default.
   // Ensure Storybook mocks always include it so stories don't render "Workspace not found".
   const muxChatWorkspace: FrontendWorkspaceMetadata = {
-    id: MUX_CHAT_WORKSPACE_ID,
-    name: MUX_CHAT_WORKSPACE_NAME,
-    title: MUX_CHAT_WORKSPACE_TITLE,
+    id: MUX_HELP_CHAT_WORKSPACE_ID,
+    name: MUX_HELP_CHAT_WORKSPACE_NAME,
+    title: MUX_HELP_CHAT_WORKSPACE_TITLE,
     projectName: "Mux",
     projectPath: "/Users/dev/.mux/system/chat-with-mux",
     namedWorkspacePath: "/Users/dev/.mux/system/chat-with-mux",
     runtimeConfig: { type: "local" },
-    agentId: MUX_CHAT_AGENT_ID,
+    agentId: MUX_HELP_CHAT_AGENT_ID,
   };
 
-  const workspaces = inputWorkspaces.some((w) => w.id === MUX_CHAT_WORKSPACE_ID)
+  const workspaces = inputWorkspaces.some((w) => w.id === MUX_HELP_CHAT_WORKSPACE_ID)
     ? inputWorkspaces
     : [muxChatWorkspace, ...inputWorkspaces];
 

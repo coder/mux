@@ -2,8 +2,8 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import assert from "@/common/utils/assert";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { getMuxChatProjectPath } from "@/node/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
@@ -620,7 +620,7 @@ export class WorkspaceService extends EventEmitter {
     sectionId?: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata }>> {
     // Chat with Mux is a built-in system workspace; it cannot host additional workspaces.
-    if (projectPath === getMuxChatProjectPath(this.config.rootDir)) {
+    if (projectPath === getMuxHelpChatProjectPath(this.config.rootDir)) {
       return Err("Cannot create workspaces in the Chat with Mux system project");
     }
 
@@ -812,7 +812,7 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
-    if (workspaceId === MUX_CHAT_WORKSPACE_ID) {
+    if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
       return Err("Cannot remove the Chat with Mux system workspace");
     }
 
@@ -1236,7 +1236,7 @@ export class WorkspaceService extends EventEmitter {
    * but can be viewed on the project page. Safe and reversible.
    */
   async archive(workspaceId: string): Promise<Result<void>> {
-    if (workspaceId === MUX_CHAT_WORKSPACE_ID) {
+    if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
       return Err("Cannot archive the Chat with Mux system workspace");
     }
 
@@ -1296,7 +1296,7 @@ export class WorkspaceService extends EventEmitter {
    * Unarchive a workspace. Restores it to the main sidebar view.
    */
   async unarchive(workspaceId: string): Promise<Result<void>> {
-    if (workspaceId === MUX_CHAT_WORKSPACE_ID) {
+    if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
       return Err("Cannot unarchive the Chat with Mux system workspace");
     }
 
@@ -1543,7 +1543,7 @@ export class WorkspaceService extends EventEmitter {
     newName: string
   ): Promise<Result<{ metadata: FrontendWorkspaceMetadata; projectPath: string }>> {
     try {
-      if (sourceWorkspaceId === MUX_CHAT_WORKSPACE_ID) {
+      if (sourceWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
         return Err("Cannot fork the Chat with Mux system workspace");
       }
 

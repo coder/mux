@@ -4,7 +4,7 @@ import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import { generateDiff } from "./fileCommon";
 
@@ -51,7 +51,7 @@ export const createMuxGlobalAgentsWriteTool: ToolFactory = (config: ToolConfigur
       { abortSignal: _abortSignal }
     ): Promise<MuxGlobalAgentsWriteToolOutput> => {
       try {
-        if (config.workspaceId !== MUX_CHAT_WORKSPACE_ID) {
+        if (config.workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
           return {
             success: false,
             error:

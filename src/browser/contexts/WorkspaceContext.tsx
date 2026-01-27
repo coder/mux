@@ -13,7 +13,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import {
   deleteWorkspaceStorage,
   getAgentIdKey,
@@ -754,8 +754,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const beginWorkspaceCreation = useCallback(
     (projectPath: string, sectionId?: string) => {
-      if (workspaceMetadata.get(MUX_CHAT_WORKSPACE_ID)?.projectPath === projectPath) {
-        navigateToWorkspace(MUX_CHAT_WORKSPACE_ID);
+      if (workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID)?.projectPath === projectPath) {
+        navigateToWorkspace(MUX_HELP_CHAT_WORKSPACE_ID);
         return;
       }
 
