@@ -2,8 +2,7 @@ import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
-import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getWorkspaceLastReadKey } from "@/common/constants/storage";
+import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -57,9 +56,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   const isCreating = status === "creating";
   const isDisabled = isCreating || isArchiving;
 
-  const [lastReadTimestamp] = usePersistedState<number>(getWorkspaceLastReadKey(workspaceId), 0, {
-    listener: true,
-  });
+  const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
 
   // Get title edit context (renamed from rename context since we now edit titles, not names)
@@ -112,10 +109,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     }
   };
 
-  const { canInterrupt, awaitingUserQuestion, isStarting, recencyTimestamp } =
-    useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, awaitingUserQuestion, isStarting } = useWorkspaceSidebarState(workspaceId);
 
-  const isUnread = recencyTimestamp !== null && recencyTimestamp > lastReadTimestamp;
   const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
   const barColorClass =
     isSelected && !isDisabled

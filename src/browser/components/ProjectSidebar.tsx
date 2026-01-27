@@ -6,6 +6,7 @@ import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
@@ -35,9 +36,10 @@ import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
 
 import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem";
+import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, KeyRound } from "lucide-react";
+import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
@@ -56,6 +58,39 @@ export type { WorkspaceSelection } from "./WorkspaceListItem";
 // Draggable project item moved to module scope to avoid remounting on every parent render.
 // Defining components inside another component causes a new function identity each render,
 // which forces React to unmount/remount the subtree. That led to hover flicker and high CPU.
+
+/**
+ * Compact button for opening Chat with Mux, showing an unread dot when there are
+ * new messages since the user last viewed the workspace.
+ */
+const MuxChatHelpButton: React.FC<{
+  onClick: () => void;
+  isSelected: boolean;
+}> = ({ onClick, isSelected }) => {
+  const { isUnread: hasUnread } = useWorkspaceUnread(MUX_CHAT_WORKSPACE_ID);
+  const isUnread = hasUnread && !isSelected;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          onClick={onClick}
+          className="text-muted hover:text-primary relative flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors"
+          aria-label="Open Chat with Mux"
+        >
+          <CircleHelp className="h-3.5 w-3.5" />
+          {isUnread && (
+            <span
+              className="bg-accent absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full"
+              aria-label="Unread messages"
+            />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Chat with Mux</TooltipContent>
+    </Tooltip>
+  );
+};
 
 const PROJECT_ITEM_BASE_CLASS =
   "py-2 px-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
@@ -536,37 +571,34 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           {!collapsed && (
             <>
               <div className="border-dark flex items-center justify-between border-b py-3 pr-3 pl-4">
-                <button
-                  onClick={handleOpenMuxChat}
-                  className="cursor-pointer border-none bg-transparent p-0"
-                  aria-label="Open Chat with Mux"
-                >
-                  <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
-                </button>
+                <div className="flex min-w-0 items-center gap-2">
+                  <button
+                    onClick={handleOpenMuxChat}
+                    className="shrink-0 cursor-pointer border-none bg-transparent p-0"
+                    aria-label="Open Chat with Mux"
+                  >
+                    <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
+                  </button>
+                  {muxChatMetadata && (
+                    <>
+                      <MuxChatHelpButton
+                        onClick={handleOpenMuxChat}
+                        isSelected={selectedWorkspace?.workspaceId === MUX_CHAT_WORKSPACE_ID}
+                      />
+                      <WorkspaceStatusIndicator workspaceId={MUX_CHAT_WORKSPACE_ID} />
+                    </>
+                  )}
+                </div>
                 <button
                   onClick={onAddProject}
                   aria-label="Add project"
-                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
+                  className="text-secondary hover:bg-hover hover:border-border-light flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded border border-transparent bg-transparent px-1.5 text-xs transition-all duration-200"
                 >
                   <span className="text-base leading-none">+</span>
                   <span>New Project</span>
                 </button>
               </div>
               <div className="flex-1 overflow-y-auto">
-                {muxChatMetadata && (
-                  <div className="border-hover border-b">
-                    <WorkspaceListItem
-                      metadata={muxChatMetadata}
-                      projectPath={muxChatMetadata.projectPath}
-                      projectName={muxChatMetadata.projectName}
-                      isSelected={selectedWorkspace?.workspaceId === muxChatMetadata.id}
-                      isArchiving={archivingWorkspaceIds.has(muxChatMetadata.id)}
-                      onSelectWorkspace={handleSelectWorkspace}
-                      onArchiveWorkspace={handleArchiveWorkspace}
-                      depth={0}
-                    />
-                  </div>
-                )}
                 {visibleProjectPaths.length === 0 ? (
                   <div className="px-4 py-8 text-center">
                     <p className="text-muted mb-4 text-[13px]">No projects</p>

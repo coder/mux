@@ -154,18 +154,12 @@ describe("Chat with Mux system workspace (UI)", () => {
         { timeout: 10_000 }
       );
 
-      const muxChatRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            `[data-workspace-id="${MUX_CHAT_WORKSPACE_ID}"]`
-          ) as HTMLElement | null;
-          if (!el) throw new Error("mux-chat workspace not found in sidebar");
-          return el;
-        },
-        { timeout: 10_000 }
-      );
-
-      expect(muxChatRow.querySelector('button[aria-label^="Archive workspace"]')).toBeNull();
+      // Chat with Mux is no longer rendered as a WorkspaceListItem in the sidebar;
+      // it's accessed via the Mux logo / help icon in the header. Verify no workspace
+      // row exists for it (which means no Archive button by design).
+      expect(
+        view.container.querySelector(`[data-workspace-id="${MUX_CHAT_WORKSPACE_ID}"]`)
+      ).toBeNull();
 
       // Ctrl+N should not redirect to /project when mux-chat is selected.
       await act(async () => {
