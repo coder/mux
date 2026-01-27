@@ -14,6 +14,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
+import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
 
 const TEST_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -805,7 +806,7 @@ export class MCPServerManager {
    * @param instances - Map of server instances
    * @param serverInfo - Project-level server info (for project-level tool allowlists)
    * @param workspaceOverrides - Optional workspace MCP overrides for tool allowlists
-   * @returns Aggregated tools record with namespaced names (serverName_toolName)
+   * @returns Aggregated tools record with provider-safe namespaced names
    */
   private collectTools(
     instances: Map<string, MCPServerInstance>,
@@ -813,7 +814,12 @@ export class MCPServerManager {
     workspaceOverrides?: WorkspaceMCPOverrides
   ): Record<string, Tool> {
     const aggregated: Record<string, Tool> = {};
-    for (const instance of instances.values()) {
+    const usedNames = new Set<string>();
+
+    // Sort for determinism so collision handling yields stable tool keys.
+    const sortedInstances = [...instances.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const instance of sortedInstances) {
       // Get project-level allowlist for this server
       const projectAllowlist = serverInfo[instance.name]?.toolAllowlist;
       // Apply tool allowlist filtering (project-level + workspace-level)
@@ -823,12 +829,52 @@ export class MCPServerManager {
         projectAllowlist,
         workspaceOverrides
       );
-      for (const [toolName, tool] of Object.entries(filteredTools)) {
-        // Namespace tools with server name to prevent collisions
-        const namespacedName = `${instance.name}_${toolName}`;
-        aggregated[namespacedName] = tool;
+
+      const sortedTools = Object.entries(filteredTools).sort(([a], [b]) => a.localeCompare(b));
+
+      for (const [toolName, tool] of sortedTools) {
+        const originalName = `${instance.name}_${toolName}`;
+
+        // Namespace tools with server name to prevent collisions.
+        //
+        // Important: provider SDKs can validate tool names strictly (regex + 64-char max).
+        // User-configured MCP server names may contain spaces or other invalid characters,
+        // so we normalize keys here instead of forcing a config migration.
+        const result = buildMcpToolName({
+          serverName: instance.name,
+          toolName,
+          usedNames,
+        });
+
+        if (!result) {
+          log.error("[MCP] Failed to build provider-safe tool name", {
+            serverName: instance.name,
+            toolName,
+          });
+          continue;
+        }
+
+        if (result.wasSuffixed) {
+          log.warn("[MCP] Normalized MCP tool name required hash suffix", {
+            serverName: instance.name,
+            toolName,
+            originalName,
+            normalizedName: result.toolName,
+            baseName: result.baseName,
+          });
+        } else if (result.toolName !== originalName) {
+          log.debug("[MCP] Normalized MCP tool name", {
+            serverName: instance.name,
+            toolName,
+            originalName,
+            normalizedName: result.toolName,
+          });
+        }
+
+        aggregated[result.toolName] = tool;
       }
     }
+
     return aggregated;
   }
 

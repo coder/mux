@@ -422,7 +422,8 @@ describe("MCPServerManager", () => {
       },
     });
 
-    expect(Object.keys(toolsResult.tools)).toContain("serverA_tool");
-    expect(Object.keys(toolsResult.tools)).not.toContain("serverB_tool");
+    // Tool names are normalized to provider-safe keys (lowercase + underscore-delimited).
+    expect(Object.keys(toolsResult.tools)).toContain("servera_tool");
+    expect(Object.keys(toolsResult.tools)).not.toContain("serverb_tool");
   });
 });

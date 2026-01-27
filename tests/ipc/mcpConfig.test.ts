@@ -329,7 +329,7 @@ describeIntegration("MCP server integration with model", () => {
         console.log("[MCP Test] Adding MCP server...");
         const addResult = await client.projects.mcp.add({
           projectPath: tempGitRepo,
-          name: "memory",
+          name: "memory server",
           command: "npx -y @modelcontextprotocol/server-memory",
         });
         expect(addResult.success).toBe(true);
@@ -374,8 +374,10 @@ describeIntegration("MCP server integration with model", () => {
         // Should have at least one tool call
         expect(toolCallStarts.length).toBeGreaterThan(0);
 
-        // Should have called the MCP memory tool (namespaced as memory_create_entities)
-        const mcpToolCall = toolCallStarts.find((e) => e.toolName === "memory_create_entities");
+        // Should have called the MCP memory tool (namespaced as memory_server_create_entities)
+        const mcpToolCall = toolCallStarts.find(
+          (e) => e.toolName === "memory_server_create_entities"
+        );
         expect(mcpToolCall).toBeDefined();
 
         // Verify response mentions the entity was created
