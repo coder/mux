@@ -53,7 +53,9 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
       autoFocus = false,
       onIsCreatingChange,
       submitLabel = "Add Project",
-      placeholder = "/home/user/projects/my-project",
+      placeholder = window.api?.platform === "win32"
+        ? "C:\\Users\\user\\projects\\my-project"
+        : "/home/user/projects/my-project",
       hideFooter = false,
     },
     ref
