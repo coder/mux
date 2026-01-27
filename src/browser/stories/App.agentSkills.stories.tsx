@@ -1,0 +1,199 @@
+/**
+ * Storybook stories for agent_skill_read + agent_skill_read_file tool UIs.
+ */
+
+import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import { setupSimpleChatStory } from "./storyHelpers";
+import {
+  STABLE_TIMESTAMP,
+  createAssistantMessage,
+  createGenericTool,
+  createUserMessage,
+} from "./mockFactory";
+import {
+  blurActiveElement,
+  waitForChatInputAutofocusDone,
+  waitForChatMessagesLoaded,
+  waitForScrollStabilization,
+} from "./storyPlayHelpers";
+import { userEvent, waitFor } from "@storybook/test";
+
+export default {
+  ...appMeta,
+  title: "App/Agent Skill Tools",
+};
+
+async function expandFirstToolCall(canvasElement: HTMLElement) {
+  await waitForChatMessagesLoaded(canvasElement);
+
+  const messageWindow = canvasElement.querySelector('[data-testid="message-window"]');
+  if (!(messageWindow instanceof HTMLElement)) {
+    throw new Error("Message window not found");
+  }
+
+  await waitFor(
+    () => {
+      const allSpans = messageWindow.querySelectorAll("span");
+      const expandIcon = Array.from(allSpans).find((span) => span.textContent?.trim() === "▶");
+      if (!expandIcon) {
+        throw new Error("No expand icon found");
+      }
+    },
+    { timeout: 5000 }
+  );
+
+  const allSpans = messageWindow.querySelectorAll("span");
+  const expandIcon = Array.from(allSpans).find((span) => span.textContent?.trim() === "▶");
+  if (!expandIcon) {
+    throw new Error("No expand icon found");
+  }
+
+  const header = expandIcon.closest("div.cursor-pointer");
+  if (!(header instanceof HTMLElement)) {
+    throw new Error("Tool header not found");
+  }
+
+  await userEvent.click(header);
+
+  // Give ResizeObserver-based scroll a chance to settle after expansion.
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+
+const SKILL_PACKAGE = {
+  scope: "project",
+  directoryName: "react-effects",
+  frontmatter: {
+    name: "react-effects",
+    description: "Guidelines for when to use (and avoid) useEffect in React components",
+    license: "MIT",
+    compatibility: "Mux desktop app",
+    metadata: {
+      owner: "mux",
+      audience: "contributors",
+    },
+  },
+  body: `## useEffect: last resort
+
+Effects run after paint. Prefer derived state and event handlers.
+
+### Prefer
+
+- Derive values during render
+- Use explicit event handlers
+
+### Avoid
+
+- Syncing props to state via effects
+- Timing-based coordination
+
+<details>
+<summary>Why this matters</summary>
+
+Effects can introduce UI flicker and race conditions.
+
+</details>`,
+};
+
+const SKILL_FILE_CONTENT = [
+  "1\t# references/README.md",
+  "2\t",
+  "3\tThis file lives inside the skill directory.",
+  "4\t- It can contain examples.",
+  "5\t- It can contain references.",
+].join("\n");
+
+export const AgentSkillRead_Collapsed: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-agent-skill-read-collapsed",
+          messages: [
+            createUserMessage("u1", "Load the react-effects skill", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("a1", "Reading skill:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 59000,
+              toolCalls: [
+                createGenericTool(
+                  "tc1",
+                  "agent_skill_read",
+                  { name: "react-effects" },
+                  { success: true, skill: SKILL_PACKAGE }
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+export const AgentSkillRead_Expanded: AppStory = {
+  render: AgentSkillRead_Collapsed.render,
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+    await expandFirstToolCall(canvasElement);
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+export const AgentSkillReadFile_Collapsed: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-agent-skill-file-collapsed",
+          messages: [
+            createUserMessage("u1", "Read a file from the skill", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60000,
+            }),
+            createAssistantMessage("a1", "Reading file:", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 59000,
+              toolCalls: [
+                createGenericTool(
+                  "tc1",
+                  "agent_skill_read_file",
+                  { name: "react-effects", filePath: "references/README.md", offset: 1, limit: 5 },
+                  {
+                    success: true,
+                    file_size: 250,
+                    modifiedTime: "2023-11-14T00:00:00.000Z",
+                    lines_read: 5,
+                    content: SKILL_FILE_CONTENT,
+                  }
+                ),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+export const AgentSkillReadFile_Expanded: AppStory = {
+  render: AgentSkillReadFile_Collapsed.render,
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+    await expandFirstToolCall(canvasElement);
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};

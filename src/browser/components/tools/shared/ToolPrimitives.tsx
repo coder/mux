@@ -205,6 +205,8 @@ const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   bash_background_terminate: Square,
   bash_background_list: List,
   agent_report: FileText,
+  agent_skill_read: BookOpen,
+  agent_skill_read_file: FileText,
   file_read: BookOpen,
   file_edit_insert: Pencil,
   file_edit_replace_string: Pencil,

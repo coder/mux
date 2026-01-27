@@ -11,6 +11,8 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { GenericToolCall } from "../GenericToolCall";
 import { BashToolCall } from "../BashToolCall";
 import { FileEditToolCall } from "../FileEditToolCall";
+import { AgentSkillReadToolCall } from "../AgentSkillReadToolCall";
+import { AgentSkillReadFileToolCall } from "../AgentSkillReadFileToolCall";
 import { FileReadToolCall } from "../FileReadToolCall";
 import { WebFetchToolCall } from "../WebFetchToolCall";
 import { WebSearchToolCall } from "../WebSearchToolCall";
@@ -57,6 +59,14 @@ interface ToolRegistryEntry {
 const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   bash: { component: BashToolCall, schema: TOOL_DEFINITIONS.bash.schema },
   file_read: { component: FileReadToolCall, schema: TOOL_DEFINITIONS.file_read.schema },
+  agent_skill_read: {
+    component: AgentSkillReadToolCall,
+    schema: TOOL_DEFINITIONS.agent_skill_read.schema,
+  },
+  agent_skill_read_file: {
+    component: AgentSkillReadFileToolCall,
+    schema: TOOL_DEFINITIONS.agent_skill_read_file.schema,
+  },
   file_edit_replace_string: {
     component: FileEditToolCall,
     schema: TOOL_DEFINITIONS.file_edit_replace_string.schema,
