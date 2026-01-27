@@ -1,6 +1,7 @@
 import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
+import { readSubagentGitPatchArtifactsFile } from "@/node/services/subagentGitPatchArtifacts";
 import { TaskAwaitToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { fromBashTaskId, toBashTaskId } from "./taskId";
@@ -62,6 +63,11 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           ) => string[];
         }
       ).filterDescendantAgentTaskIds;
+
+      const patchArtifactsByChildTaskId = config.workspaceSessionDir
+        ? (await readSubagentGitPatchArtifactsFile(config.workspaceSessionDir))
+            .artifactsByChildTaskId
+        : null;
       const descendantAgentTaskIdSet = new Set(
         typeof bulkFilter === "function"
           ? bulkFilter.call(taskService, workspaceId, agentTaskIds)
@@ -157,11 +163,14 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 abortSignal,
                 requestingWorkspaceId: workspaceId,
               });
+
+              const gitFormatPatch = patchArtifactsByChildTaskId?.[taskId];
               return {
                 status: "completed" as const,
                 taskId,
                 reportMarkdown: report.reportMarkdown,
                 title: report.title,
+                ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
               };
             } catch (error: unknown) {
               const message = error instanceof Error ? error.message : String(error);
@@ -178,11 +187,14 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               abortSignal,
               requestingWorkspaceId: workspaceId,
             });
+
+            const gitFormatPatch = patchArtifactsByChildTaskId?.[taskId];
             return {
               status: "completed" as const,
               taskId,
               reportMarkdown: report.reportMarkdown,
               title: report.title,
+              ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
             };
           } catch (error: unknown) {
             if (abortSignal?.aborted) {

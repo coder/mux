@@ -7,6 +7,10 @@ import { execSync } from "node:child_process";
 import { Config } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
+import {
+  getSubagentGitPatchMboxPath,
+  readSubagentGitPatchArtifact,
+} from "@/node/services/subagentGitPatchArtifacts";
 import { TaskService } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -1759,6 +1763,150 @@ describe("TaskService", () => {
     expect(resumeStream).toHaveBeenCalled();
     expect(emit).toHaveBeenCalled();
   });
+
+  test("agent_report generates git format-patch artifact for exec tasks and defers cleanup", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    await fsPromises.mkdir(parentPath, { recursive: true });
+    await fsPromises.mkdir(childPath, { recursive: true });
+
+    initGitRepo(childPath);
+    const baseCommitSha = execSync("git rev-parse HEAD", {
+      cwd: childPath,
+      encoding: "utf-8",
+    }).trim();
+
+    execSync("bash -lc 'echo \"world\" >> README.md'", { cwd: childPath, stdio: "ignore" });
+    execSync("git add README.md", { cwd: childPath, stdio: "ignore" });
+    execSync('git commit -m "child change"', { cwd: childPath, stdio: "ignore" });
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: parentPath,
+                id: parentId,
+                name: "parent",
+                runtimeConfig: { type: "local" },
+              },
+              {
+                path: childPath,
+                id: childId,
+                name: "agent_exec_child",
+                parentWorkspaceId: parentId,
+                agentType: "exec",
+                agentId: "exec",
+                taskStatus: "running",
+                runtimeConfig: { type: "local" },
+                taskBaseCommitSha: baseCommitSha,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const { partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-partial",
+      "assistant",
+      "Waiting on subagent…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-call-1",
+          toolName: "task",
+          input: { subagent_type: "exec", prompt: "do the thing", title: "Test task" },
+          state: "input-available",
+        },
+      ]
+    );
+    const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
+    expect(writeParentPartial.success).toBe(true);
+
+    const childPartial = createMuxMessage(
+      "assistant-child-partial",
+      "assistant",
+      "",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+    const writeChildPartial = await partialService.writePartial(childId, childPartial);
+    expect(writeChildPartial.success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleAgentReport: (event: {
+        type: "tool-call-end";
+        workspaceId: string;
+        messageId: string;
+        toolCallId: string;
+        toolName: string;
+        result: unknown;
+        timestamp: number;
+      }) => Promise<void>;
+    };
+
+    await internal.handleAgentReport({
+      type: "tool-call-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      toolCallId: "agent-report-call-1",
+      toolName: "agent_report",
+      result: { success: true },
+      timestamp: Date.now(),
+    });
+
+    // Cleanup should be deferred until git-format-patch generation completes.
+    expect(remove).not.toHaveBeenCalled();
+
+    const parentSessionDir = config.getSessionDir(parentId);
+    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
+
+    const startedAtMs = Date.now();
+    while (true) {
+      const artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+      if (artifact?.status === "ready") {
+        break;
+      }
+
+      if (Date.now() - startedAtMs > 10_000) {
+        throw new Error(
+          `Timed out waiting for patch artifact readiness (status=${artifact?.status ?? "missing"})`
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+
+    await fsPromises.stat(patchPath);
+    expect(remove).toHaveBeenCalled();
+  }, 20_000);
 
   test("agent_report updates queued/running task tool output in parent history", async () => {
     const config = await createTestConfig(rootDir);
