@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createServer } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -118,5 +119,42 @@ describe("PolicyService", () => {
     expect(service.isModelAllowed("openai", "gpt-3.5")).toBe(true);
 
     service.dispose();
+  });
+
+  test("loads policy from a remote URI", async () => {
+    const policy = {
+      policy_format_version: "0.1",
+      provider_access: [{ id: "openai", model_access: ["gpt-4"] }],
+    };
+
+    const server = createServer((_req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/json",
+      });
+      res.end(JSON.stringify(policy));
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind test server");
+      }
+
+      process.env.MUX_POLICY_FILE = `http://127.0.0.1:${address.port}/policy.json`;
+
+      const service = new PolicyService();
+      await service.initialize();
+
+      expect(service.isEnforced()).toBe(true);
+      expect(service.isProviderAllowed("openai")).toBe(true);
+      expect(service.isModelAllowed("openai", "gpt-4")).toBe(true);
+      expect(service.isModelAllowed("openai", "gpt-3.5")).toBe(false);
+
+      service.dispose();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

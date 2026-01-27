@@ -14,6 +14,8 @@ import { compareVersions } from "@/node/services/coderService";
 
 import packageJson from "../../../package.json";
 
+const POLICY_FETCH_TIMEOUT_MS = 10 * 1000;
+const POLICY_MAX_BYTES = 1024 * 1024;
 const POLICY_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 function stableNormalize(value: unknown): unknown {
@@ -56,6 +58,63 @@ async function getClientVersion(): Promise<string> {
   return "0.0.0";
 }
 
+function isRemotePolicySource(source: string): boolean {
+  return source.startsWith("http://") || source.startsWith("https://");
+}
+
+function formatPolicySourceForLog(source: string): string {
+  if (!isRemotePolicySource(source)) {
+    return source;
+  }
+
+  try {
+    const url = new URL(source);
+    // Intentionally omit credentials and query string.
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "<policy-url>";
+  }
+}
+
+async function loadPolicyText(source: string): Promise<string> {
+  if (!isRemotePolicySource(source)) {
+    try {
+      return await readFile(source, "utf8");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to read policy file: ${message}`);
+    }
+  }
+
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), POLICY_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(source, {
+      signal: abortController.signal,
+      headers: {
+        accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > POLICY_MAX_BYTES) {
+      throw new Error(`Response too large (${bytes} bytes)`);
+    }
+
+    return text;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to fetch policy URL (${formatPolicySourceForLog(source)}): ${message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 function normalizeForcedBaseUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -240,7 +299,7 @@ export class PolicyService {
     try {
       const [clientVersion, fileText] = await Promise.all([
         getClientVersion(),
-        readFile(filePath, "utf8"),
+        loadPolicyText(filePath),
       ]);
 
       const raw = parsePolicyFile(fileText);

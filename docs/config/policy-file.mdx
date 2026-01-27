@@ -11,13 +11,18 @@ Mux supports an **admin-controlled policy file** that can restrict what users ca
 
 ## Enable the policy file
 
-Set `MUX_POLICY_FILE` to an absolute path on the machine running Mux:
+Set `MUX_POLICY_FILE` to either:
+
+- an absolute path on the machine running Mux, or
+- a remote `http://` / `https://` URL that Mux can fetch.
 
 ```bash
 export MUX_POLICY_FILE="/etc/mux/policy.json"
+# or
+export MUX_POLICY_FILE="https://example.com/mux/policy.json"
 ```
 
-If `MUX_POLICY_FILE` is set but the file can’t be read/parsed/validated, Mux will **block startup** with an error.
+If `MUX_POLICY_FILE` is set but the file can’t be read/fetched/parsed/validated, Mux will **block startup** with an error.
 
 ## File format
 
