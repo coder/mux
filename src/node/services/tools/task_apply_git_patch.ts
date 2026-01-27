@@ -16,6 +16,7 @@ import {
   markSubagentGitPatchArtifactApplied,
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
+import { log } from "@/node/services/log";
 
 import { parseToolResult, requireWorkspaceId } from "./toolUtils";
 
@@ -47,6 +48,22 @@ async function copyLocalFileToRuntime(params: {
 }
 
 export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfiguration) => {
+  function mergeNotes(...notes: Array<string | undefined>): string | undefined {
+    const parts = notes
+      .map((note) => (typeof note === "string" ? note.trim() : ""))
+      .filter((note) => note.length > 0);
+
+    return parts.length > 0 ? parts.join("\n") : undefined;
+  }
+
+  function isPathInsideDir(dirPath: string, filePath: string): boolean {
+    const resolvedDir = path.resolve(dirPath);
+    const resolvedFile = path.resolve(filePath);
+    const relative = path.relative(resolvedDir, resolvedFile);
+
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  }
+
   return tool({
     description: TOOL_DEFINITIONS.task_apply_git_patch.description,
     inputSchema: TOOL_DEFINITIONS.task_apply_git_patch.schema,
@@ -134,20 +151,68 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         );
       }
 
-      const patchPath =
-        artifact.mboxPath ?? getSubagentGitPatchMboxPath(config.workspaceSessionDir, taskId);
+      const expectedPatchPath = getSubagentGitPatchMboxPath(config.workspaceSessionDir, taskId);
 
-      try {
-        await fsPromises.stat(patchPath);
-      } catch {
+      // Defensive: `task_id` is user-controlled input; reject path traversal.
+      if (!isPathInsideDir(config.workspaceSessionDir, expectedPatchPath)) {
+        return parseToolResult(
+          TaskApplyGitPatchToolResultSchema,
+          {
+            success: false as const,
+            taskId,
+            error: "Invalid task_id.",
+            note: "task_id must not contain path traversal segments.",
+          },
+          "task_apply_git_patch"
+        );
+      }
+
+      const safeMboxPath =
+        typeof artifact.mboxPath === "string" && artifact.mboxPath.length > 0
+          ? isPathInsideDir(config.workspaceSessionDir, artifact.mboxPath)
+            ? artifact.mboxPath
+            : undefined
+          : undefined;
+
+      let patchPathNote =
+        artifact.mboxPath && !safeMboxPath
+          ? "Ignoring unsafe mboxPath in patch artifact metadata; using canonical patch location."
+          : undefined;
+
+      const patchCandidates = [safeMboxPath, expectedPatchPath].filter(
+        (candidate): candidate is string => typeof candidate === "string"
+      );
+
+      let patchPath: string | null = null;
+      for (const candidate of patchCandidates) {
+        try {
+          const stat = await fsPromises.stat(candidate);
+          if (stat.isFile()) {
+            patchPath = candidate;
+            break;
+          }
+        } catch {
+          // try next candidate
+        }
+      }
+
+      if (!patchPath) {
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
             success: false as const,
             taskId,
             error: "Patch file is missing on disk.",
+            note: patchPathNote,
           },
           "task_apply_git_patch"
+        );
+      }
+
+      if (safeMboxPath && patchPath === expectedPatchPath && safeMboxPath !== expectedPatchPath) {
+        patchPathNote = mergeNotes(
+          patchPathNote,
+          "Patch file not found at metadata mboxPath; using canonical patch location."
         );
       }
 
@@ -163,6 +228,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
               success: false as const,
               taskId,
               error: statusResult.stderr.trim() || "git status failed",
+              note: patchPathNote,
             },
             "task_apply_git_patch"
           );
@@ -175,7 +241,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
               success: false as const,
               taskId,
               error: "Working tree is not clean.",
-              note: "Commit/stash your changes (or pass force=true) before applying patches.",
+              note: mergeNotes(
+                patchPathNote,
+                "Commit/stash your changes (or pass force=true) before applying patches."
+              ),
             },
             "task_apply_git_patch"
           );
@@ -235,7 +304,12 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           });
 
           if (amResult.exitCode !== 0) {
-            const errorOutput = (amResult.stderr || amResult.stdout).trim();
+            const stderr = amResult.stderr.trim();
+            const stdout = amResult.stdout.trim();
+            const errorOutput = [stderr, stdout]
+              .filter((s) => s.length > 0)
+              .join("\n")
+              .trim();
             return parseToolResult(
               TaskApplyGitPatchToolResultSchema,
               {
@@ -245,7 +319,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
                   errorOutput.length > 0
                     ? errorOutput
                     : `git am failed (exitCode=${amResult.exitCode})`,
-                note: "Dry run failed. If git am stopped due to conflicts, resolve them then run `git am --continue` or `git am --abort` in the temp worktree.",
+                note: mergeNotes(
+                  patchPathNote,
+                  "Dry run failed; the patch does not apply cleanly. Applying for real will likely require conflict resolution."
+                ),
               },
               "task_apply_git_patch"
             );
@@ -258,38 +335,75 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
               taskId,
               appliedCommitCount: artifact.commitCount ?? 0,
               dryRun: true,
-              note: "Dry run succeeded; no commits were applied.",
+              note: mergeNotes(patchPathNote, "Dry run succeeded; no commits were applied."),
             },
             "task_apply_git_patch"
           );
         } finally {
-          // Best-effort: clean up the temp worktree.
+          // Best-effort: clean up the temp worktree. This should never fail the tool call.
           try {
-            await execBuffered(config.runtime, "git am --abort", {
+            const abortResult = await execBuffered(config.runtime, "git am --abort", {
               cwd: dryRunWorktreePath,
               timeout: 30,
             });
-          } catch {
-            // ignore
+            if (abortResult.exitCode !== 0) {
+              log.debug("task_apply_git_patch: dry-run git am --abort failed", {
+                taskId,
+                dryRunWorktreePath,
+                exitCode: abortResult.exitCode,
+                stderr: abortResult.stderr.trim(),
+                stdout: abortResult.stdout.trim(),
+              });
+            }
+          } catch (error: unknown) {
+            log.debug("task_apply_git_patch: dry-run git am --abort threw", {
+              taskId,
+              dryRunWorktreePath,
+              error,
+            });
           }
 
           try {
-            await execBuffered(
+            const removeResult = await execBuffered(
               config.runtime,
               `git worktree remove --force ${shellQuote(dryRunWorktreePath)}`,
               { cwd: config.cwd, timeout: 60 }
             );
-          } catch {
-            // ignore
+            if (removeResult.exitCode !== 0) {
+              log.debug("task_apply_git_patch: dry-run git worktree remove failed", {
+                taskId,
+                dryRunWorktreePath,
+                exitCode: removeResult.exitCode,
+                stderr: removeResult.stderr.trim(),
+                stdout: removeResult.stdout.trim(),
+              });
+            }
+          } catch (error: unknown) {
+            log.debug("task_apply_git_patch: dry-run git worktree remove threw", {
+              taskId,
+              dryRunWorktreePath,
+              error,
+            });
           }
 
           try {
-            await execBuffered(config.runtime, "git worktree prune", {
+            const pruneResult = await execBuffered(config.runtime, "git worktree prune", {
               cwd: config.cwd,
               timeout: 60,
             });
-          } catch {
-            // ignore
+            if (pruneResult.exitCode !== 0) {
+              log.debug("task_apply_git_patch: dry-run git worktree prune failed", {
+                taskId,
+                exitCode: pruneResult.exitCode,
+                stderr: pruneResult.stderr.trim(),
+                stdout: pruneResult.stdout.trim(),
+              });
+            }
+          } catch (error: unknown) {
+            log.debug("task_apply_git_patch: dry-run git worktree prune threw", {
+              taskId,
+              error,
+            });
           }
         }
       }
@@ -298,7 +412,12 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
       const amResult = await execBuffered(config.runtime, amCmd, { cwd: config.cwd, timeout: 300 });
 
       if (amResult.exitCode !== 0) {
-        const errorOutput = (amResult.stderr || amResult.stdout).trim();
+        const stderr = amResult.stderr.trim();
+        const stdout = amResult.stdout.trim();
+        const errorOutput = [stderr, stdout]
+          .filter((s) => s.length > 0)
+          .join("\n")
+          .trim();
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
@@ -308,7 +427,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
               errorOutput.length > 0
                 ? errorOutput
                 : `git am failed (exitCode=${amResult.exitCode})`,
-            note: "If git am stopped due to conflicts, resolve them then run `git am --continue` or `git am --abort`.",
+            note: mergeNotes(
+              patchPathNote,
+              "If git am stopped due to conflicts, resolve them then run `git am --continue` or `git am --abort`."
+            ),
           },
           "task_apply_git_patch"
         );
@@ -345,7 +467,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           appliedCommitCount: artifact.commitCount ?? 0,
           headCommitSha,
           dryRun: dryRun ? true : undefined,
-          note: dryRun ? "Dry run succeeded; no commits were applied." : undefined,
+          note: mergeNotes(
+            patchPathNote,
+            dryRun ? "Dry run succeeded; no commits were applied." : undefined
+          ),
         },
         "task_apply_git_patch"
       );

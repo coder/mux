@@ -1888,21 +1888,25 @@ describe("TaskService", () => {
     const parentSessionDir = config.getSessionDir(parentId);
     const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
 
-    const startedAtMs = Date.now();
-    while (true) {
-      const artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
-      if (artifact?.status === "ready") {
-        break;
-      }
+    const internalWithJobs = taskService as unknown as {
+      pendingSubagentGitPatchJobsByTaskId?: Map<string, Promise<void>>;
+    };
 
-      if (Date.now() - startedAtMs > 10_000) {
-        throw new Error(
-          `Timed out waiting for patch artifact readiness (status=${artifact?.status ?? "missing"})`
-        );
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 20));
+    const generationJob = internalWithJobs.pendingSubagentGitPatchJobsByTaskId?.get(childId);
+    if (generationJob) {
+      await Promise.race([
+        generationJob,
+        new Promise<void>((_resolve, reject) => {
+          setTimeout(
+            () => reject(new Error("Timed out waiting for patch artifact generation")),
+            10_000
+          );
+        }),
+      ]);
     }
+
+    const artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(artifact?.status).toBe("ready");
 
     await fsPromises.stat(patchPath);
     expect(remove).toHaveBeenCalled();

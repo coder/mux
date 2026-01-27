@@ -2237,17 +2237,76 @@ export class TaskService {
       return;
     }
 
-    const job = this.generateSubagentGitPatchArtifact(parentWorkspaceId, childWorkspaceId)
-      .catch((error: unknown) => {
-        log.error("Subagent git patch generation failed", {
-          parentWorkspaceId,
-          childWorkspaceId,
-          error,
+    let job: Promise<void>;
+    try {
+      job = this.generateSubagentGitPatchArtifact(parentWorkspaceId, childWorkspaceId)
+        .catch(async (error: unknown) => {
+          log.error("Subagent git patch generation failed", {
+            parentWorkspaceId,
+            childWorkspaceId,
+            error,
+          });
+
+          // Best-effort: if generation failed before it could update the artifact status,
+          // mark it failed so the parent isn't blocked forever by a pending marker.
+          try {
+            await upsertSubagentGitPatchArtifact({
+              workspaceId: parentWorkspaceId,
+              workspaceSessionDir: parentSessionDir,
+              childTaskId: childWorkspaceId,
+              updater: (existing) => {
+                if (existing && existing.status !== "pending") {
+                  return existing;
+                }
+
+                const failedAtMs = Date.now();
+                return {
+                  ...(existing ?? {}),
+                  childTaskId: childWorkspaceId,
+                  parentWorkspaceId,
+                  createdAtMs: existing?.createdAtMs ?? failedAtMs,
+                  updatedAtMs: failedAtMs,
+                  status: "failed",
+                  error: error instanceof Error ? error.message : String(error),
+                };
+              },
+            });
+          } catch (updateError: unknown) {
+            log.error("Failed to mark subagent git patch artifact as failed", {
+              parentWorkspaceId,
+              childWorkspaceId,
+              error: updateError,
+            });
+          }
+        })
+        .finally(() => {
+          this.pendingSubagentGitPatchJobsByTaskId.delete(childWorkspaceId);
         });
-      })
-      .finally(() => {
-        this.pendingSubagentGitPatchJobsByTaskId.delete(childWorkspaceId);
+    } catch (error: unknown) {
+      // If scheduling fails synchronously, don't leave the artifact stuck in `pending`.
+      await upsertSubagentGitPatchArtifact({
+        workspaceId: parentWorkspaceId,
+        workspaceSessionDir: parentSessionDir,
+        childTaskId: childWorkspaceId,
+        updater: (existing) => {
+          if (existing && existing.status !== "pending") {
+            return existing;
+          }
+
+          const failedAtMs = Date.now();
+          return {
+            ...(existing ?? {}),
+            childTaskId: childWorkspaceId,
+            parentWorkspaceId,
+            createdAtMs: existing?.createdAtMs ?? failedAtMs,
+            updatedAtMs: failedAtMs,
+            status: "failed",
+            error: error instanceof Error ? error.message : String(error),
+          };
+        },
       });
+      return;
+    }
 
     this.pendingSubagentGitPatchJobsByTaskId.set(childWorkspaceId, job);
   }
@@ -2814,6 +2873,10 @@ export class TaskService {
         currentWorkspaceId
       );
       if (patchArtifact?.status === "pending") {
+        log.debug("cleanupReportedLeafTask: deferring auto-delete; patch artifact pending", {
+          workspaceId: currentWorkspaceId,
+          parentWorkspaceId,
+        });
         return;
       }
 
