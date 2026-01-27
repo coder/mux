@@ -33,6 +33,8 @@ import {
 import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 import { SkillIndicator } from "./SkillIndicator";
+import { useAPI } from "@/browser/contexts/API";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -58,6 +60,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   onToggleLeftSidebarCollapsed,
   onOpenTerminal,
 }) => {
+  const { api } = useAPI();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const isMuxChat = workspaceId === MUX_CHAT_WORKSPACE_ID;
@@ -69,6 +72,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [editorError, setEditorError] = useState<string | null>(null);
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
+  const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
 
   const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
     // This state is toggled from RightSidebar, so we need cross-component updates.
@@ -138,6 +142,36 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [setNotifyOnResponse]);
+
+  // Fetch available skills for this project
+  useEffect(() => {
+    if (!api || isMuxChat) {
+      setAvailableSkills([]);
+      return;
+    }
+
+    let isMounted = true;
+
+    const loadSkills = async () => {
+      try {
+        const skills = await api.agentSkills.list({ projectPath });
+        if (isMounted && Array.isArray(skills)) {
+          setAvailableSkills(skills);
+        }
+      } catch (error) {
+        console.error("Failed to load available skills:", error);
+        if (isMounted) {
+          setAvailableSkills([]);
+        }
+      }
+    };
+
+    void loadSkills();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [api, projectPath, isMuxChat]);
 
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
@@ -306,7 +340,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </div>
           </PopoverContent>
         </Popover>
-        <SkillIndicator skills={loadedSkills} />
+        <SkillIndicator loadedSkills={loadedSkills} availableSkills={availableSkills} />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>

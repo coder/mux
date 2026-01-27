@@ -311,6 +311,12 @@ export interface SimpleChatSetupOptions {
     workspaceId: string,
     script: string
   ) => Promise<{ success: true; output: string; exitCode: number; wall_duration_ms: number }>;
+  /** Available agent skills for the project */
+  agentSkills?: Array<{
+    name: string;
+    description: string;
+    scope: "project" | "global" | "built-in";
+  }>;
 }
 
 /**
@@ -394,6 +400,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     sessionUsage: sessionUsageMap,
     idleCompactionHours,
     signingCapabilities: opts.signingCapabilities,
+    agentSkills: opts.agentSkills,
   });
 }
 

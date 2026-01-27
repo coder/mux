@@ -83,6 +83,29 @@ export const WithLoadedSkills: AppStory = {
               }
             ),
           ],
+          // Available skills: 2 loaded (tests, react-effects) + 2 unloaded (pull-requests, init)
+          agentSkills: [
+            {
+              name: "tests",
+              description: "Testing doctrine, commands, and test layout conventions",
+              scope: "project",
+            },
+            {
+              name: "react-effects",
+              description: "Guidelines for when to use (and avoid) useEffect in React",
+              scope: "project",
+            },
+            {
+              name: "pull-requests",
+              description: "Guidelines for creating and managing Pull Requests",
+              scope: "project",
+            },
+            {
+              name: "init",
+              description: "Bootstrap an AGENTS.md file in a new or existing project",
+              scope: "built-in",
+            },
+          ],
         })
       }
     />
