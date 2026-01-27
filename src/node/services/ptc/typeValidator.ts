@@ -27,12 +27,47 @@ const LIB_DIR = IS_PRODUCTION
   ? BUNDLED_LIB_DIR
   : path.dirname(require.resolve("typescript/lib/lib.d.ts"));
 
-const WRAPPER_PREFIX = "function __agent__() {\n";
+export const WRAPPER_PREFIX = "function __agent__() {\n";
+const MUX_TYPES_FILE = "mux.d.ts";
+const ROOT_FILE_NAMES = ["agent.ts", MUX_TYPES_FILE];
 
-function wrapAgentCode(code: string, muxTypes: string): string {
-  return `${WRAPPER_PREFIX}${code}\n}\n\n${muxTypes}\n`;
+// Cache lib and mux type SourceFiles across validations to avoid re-parsing.
+const libSourceFileCache = new Map<string, ts.SourceFile>();
+const muxSourceFileCache = new Map<string, ts.SourceFile>();
+
+function wrapAgentCode(code: string): string {
+  return `${WRAPPER_PREFIX}${code}\n}\n`;
 }
 
+const getLibCacheKey = (fileName: string, languageVersion: ts.ScriptTarget): string =>
+  `${languageVersion}:${fileName}`;
+
+function getCachedLibSourceFile(
+  fileName: string,
+  languageVersion: ts.ScriptTarget,
+  readFile: () => string | undefined
+): ts.SourceFile | undefined {
+  const key = getLibCacheKey(fileName, languageVersion);
+  const cached = libSourceFileCache.get(key);
+  if (cached) return cached;
+
+  const contents = readFile();
+  if (!contents) return undefined;
+
+  const sourceFile = ts.createSourceFile(fileName, contents, languageVersion, true);
+  libSourceFileCache.set(key, sourceFile);
+  return sourceFile;
+}
+
+function getCachedMuxSourceFile(muxTypes: string, languageVersion: ts.ScriptTarget): ts.SourceFile {
+  const key = `${languageVersion}:${muxTypes}`;
+  const cached = muxSourceFileCache.get(key);
+  if (cached) return cached;
+
+  const sourceFile = ts.createSourceFile(MUX_TYPES_FILE, muxTypes, languageVersion, true);
+  muxSourceFileCache.set(key, sourceFile);
+  return sourceFile;
+}
 /** Resolve lib file path, accounting for .d.ts rename in production */
 const resolveLibPath = (fileName: string): string => {
   const libFileName = path.basename(fileName);
@@ -42,10 +77,20 @@ const resolveLibPath = (fileName: string): string => {
 
 function createProgramForCode(
   wrappedCode: string,
+  muxTypes: string,
   compilerOptions: ts.CompilerOptions
-): { program: ts.Program; sourceFile: ts.SourceFile } {
+): {
+  program: ts.Program;
+  host: ts.CompilerHost;
+  getSourceFile: () => ts.SourceFile;
+  setSourceFile: (newWrappedCode: string) => void;
+} {
   const scriptTarget = compilerOptions.target ?? ts.ScriptTarget.ES2020;
-  const sourceFile = ts.createSourceFile("agent.ts", wrappedCode, scriptTarget, true);
+  let sourceFile = ts.createSourceFile("agent.ts", wrappedCode, scriptTarget, true);
+  const muxSourceFile = getCachedMuxSourceFile(muxTypes, scriptTarget);
+  const setSourceFile = (newWrappedCode: string) => {
+    sourceFile = ts.createSourceFile("agent.ts", newWrappedCode, scriptTarget, true);
+  };
   const host = ts.createCompilerHost(compilerOptions);
 
   // Override to read lib files from our bundled directory
@@ -56,21 +101,27 @@ function createProgramForCode(
   const originalFileExists = host.fileExists.bind(host);
   const originalReadFile = host.readFile.bind(host);
 
-  host.getSourceFile = (fileName, languageVersion) => {
+  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+    const target = languageVersion ?? scriptTarget;
     if (fileName === "agent.ts") return sourceFile;
-    // In production, redirect lib file requests to our bundled directory (with .txt extension)
-    // In development, let TypeScript use its default resolution so /// <reference lib=\"...\" /> works
-    if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
-      const libPath = resolveLibPath(fileName);
-      const content = fs.existsSync(libPath) ? fs.readFileSync(libPath, "utf-8") : undefined;
-      if (content) {
-        return ts.createSourceFile(fileName, content, languageVersion, true);
-      }
+    if (fileName === MUX_TYPES_FILE) return muxSourceFile;
+
+    const isLibFile = fileName.includes("lib.") && fileName.endsWith(".d.ts");
+    if (isLibFile) {
+      const cached = getCachedLibSourceFile(fileName, target, () => {
+        if (IS_PRODUCTION) {
+          const libPath = resolveLibPath(fileName);
+          return fs.existsSync(libPath) ? fs.readFileSync(libPath, "utf-8") : undefined;
+        }
+        return originalReadFile(fileName) ?? undefined;
+      });
+      if (cached) return cached;
     }
-    return originalGetSourceFile(fileName, languageVersion);
+
+    return originalGetSourceFile(fileName, target, onError, shouldCreateNewSourceFile);
   };
   host.fileExists = (fileName) => {
-    if (fileName === "agent.ts") return true;
+    if (fileName === "agent.ts" || fileName === MUX_TYPES_FILE) return true;
     // In production, check bundled lib directory for lib files
     if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
       return fs.existsSync(resolveLibPath(fileName));
@@ -78,6 +129,7 @@ function createProgramForCode(
     return originalFileExists(fileName);
   };
   host.readFile = (fileName) => {
+    if (fileName === MUX_TYPES_FILE) return muxTypes;
     // In production, read lib files from bundled directory
     if (IS_PRODUCTION && fileName.includes("lib.") && fileName.endsWith(".d.ts")) {
       const libPath = resolveLibPath(fileName);
@@ -88,8 +140,8 @@ function createProgramForCode(
     return originalReadFile(fileName);
   };
 
-  const program = ts.createProgram(["agent.ts"], compilerOptions, host);
-  return { program, sourceFile };
+  const program = ts.createProgram(ROOT_FILE_NAMES, compilerOptions, host);
+  return { program, host, getSourceFile: () => sourceFile, setSourceFile };
 }
 
 /** Convert lib filename for production: lib.X.d.ts → lib.X.d.ts.txt */
@@ -106,6 +158,7 @@ export interface TypeValidationError {
 export interface TypeValidationResult {
   valid: boolean;
   errors: TypeValidationError[];
+  sourceFile?: ts.SourceFile;
 }
 
 /**
@@ -228,12 +281,9 @@ function hasTypeContext(node: ts.ArrayLiteralExpression): boolean {
 
 function getNeverArrayLiteralStarts(
   code: string,
-  muxTypes: string,
-  compilerOptions: ts.CompilerOptions
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker
 ): Set<number> {
-  const wrappedCode = wrapAgentCode(code, muxTypes);
-  const { program, sourceFile } = createProgramForCode(wrappedCode, compilerOptions);
-  const checker = program.getTypeChecker();
   const codeStart = WRAPPER_PREFIX.length;
   const codeEnd = codeStart + code.length;
   const starts = new Set<number>();
@@ -270,6 +320,10 @@ function getNeverArrayLiteralStarts(
  * all array operations (push, map, forEach, etc.) to work without type errors.
  */
 function preprocessEmptyArrays(code: string, neverArrayStarts: Set<number>): string {
+  if (neverArrayStarts.size === 0) {
+    return code;
+  }
+
   const sourceFile = ts.createSourceFile("temp.ts", code, ts.ScriptTarget.Latest, true);
   const edits: Array<{ pos: number; text: string }> = [];
 
@@ -278,13 +332,21 @@ function preprocessEmptyArrays(code: string, neverArrayStarts: Set<number>): str
       const start = node.getStart(sourceFile);
       if (neverArrayStarts.has(start) && !hasTypeContext(node)) {
         const parent = node.parent;
+        // `as` binds looser than unary operators, so wrap to keep the assertion on the literal.
         const needsParens =
           ts.isPropertyAccessExpression(parent) ||
           ts.isPropertyAccessChain(parent) ||
           ts.isElementAccessExpression(parent) ||
           ts.isElementAccessChain(parent) ||
           (ts.isCallExpression(parent) && parent.expression === node) ||
-          (ts.isCallChain(parent) && parent.expression === node);
+          (ts.isCallChain(parent) && parent.expression === node) ||
+          ts.isPrefixUnaryExpression(parent) ||
+          ts.isPostfixUnaryExpression(parent) ||
+          ts.isTypeOfExpression(parent) ||
+          ts.isVoidExpression(parent) ||
+          ts.isDeleteExpression(parent) ||
+          ts.isAwaitExpression(parent) ||
+          ts.isYieldExpression(parent);
 
         if (needsParens) {
           edits.push({ pos: node.getStart(sourceFile), text: "(" });
@@ -322,15 +384,33 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
   };
 
   // Preprocess empty arrays to avoid never[] inference without overriding contextual typing.
-  const neverArrayStarts = getNeverArrayLiteralStarts(code, muxTypes, compilerOptions);
+  const originalWrappedCode = wrapAgentCode(code);
+  const {
+    program: originalProgram,
+    host,
+    getSourceFile,
+    setSourceFile,
+  } = createProgramForCode(originalWrappedCode, muxTypes, compilerOptions);
+  const originalSourceFile = getSourceFile();
+  const neverArrayStarts = getNeverArrayLiteralStarts(
+    code,
+    originalSourceFile,
+    originalProgram.getTypeChecker()
+  );
   const preprocessedCode = preprocessEmptyArrays(code, neverArrayStarts);
 
   // Wrap code in function to allow return statements (matches runtime behavior)
   // Note: We don't use async because Asyncify makes mux.* calls appear synchronous
-  // Types go AFTER code so error line numbers match agent's code directly
-  const wrappedCode = wrapAgentCode(preprocessedCode, muxTypes);
+  // Types live in a separate virtual file so error line numbers match agent code directly.
+  const wrappedCode = wrapAgentCode(preprocessedCode);
 
-  const { program, sourceFile } = createProgramForCode(wrappedCode, compilerOptions);
+  let program = originalProgram;
+  if (wrappedCode !== originalWrappedCode) {
+    setSourceFile(wrappedCode);
+    program = ts.createProgram(ROOT_FILE_NAMES, compilerOptions, host, originalProgram);
+  }
+
+  const sourceFile = program.getSourceFile("agent.ts") ?? getSourceFile();
   const diagnostics = ts.getPreEmitDiagnostics(program);
 
   // Filter to errors in our code only (not lib files)
@@ -361,5 +441,5 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
       return { message };
     });
 
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors, sourceFile: originalSourceFile };
 }

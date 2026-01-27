@@ -732,6 +732,39 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
+  test("preserves typeof on empty arrays", () => {
+    const result = validateTypes(
+      `
+      const t = typeof [];
+      return t.toUpperCase();
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("preserves unary numeric operators on empty arrays", () => {
+    const result = validateTypes(
+      `
+      const value: number = +[];
+      return value;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("preserves void on empty arrays", () => {
+    const result = validateTypes(
+      `
+      const value: void = void [];
+      return value;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
   test("still fixes empty arrays in nullish coalescing expressions", () => {
     const result = validateTypes(
       `
