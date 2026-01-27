@@ -9,6 +9,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { FC } from "react";
 import { useRef } from "react";
 import { AppLoader } from "../components/AppLoader";
+import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
 import type { APIClient } from "@/browser/contexts/API";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -39,6 +40,14 @@ interface AppWithMocksProps {
 }
 
 /** Wrapper that runs setup once and passes the client to AppLoader */
+
+function resetStorybookPersistedStateForStory(): void {
+  // Storybook/Chromatic can preserve localStorage across story captures.
+  // Clear workspace selection so each story starts from a known route.
+  if (typeof localStorage !== "undefined") {
+    localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+  }
+}
 function getStorybookStoryId(): string | null {
   if (typeof window === "undefined") {
     return null;
@@ -53,9 +62,11 @@ export const AppWithMocks: FC<AppWithMocksProps> = ({ setup }) => {
   const clientRef = useRef<APIClient | null>(null);
 
   const storyId = getStorybookStoryId();
-  if (lastStoryIdRef.current !== storyId) {
+  const shouldReset = clientRef.current === null || lastStoryIdRef.current !== storyId;
+  if (shouldReset) {
+    resetStorybookPersistedStateForStory();
     lastStoryIdRef.current = storyId;
-    clientRef.current = setup();
+    clientRef.current = null;
   }
 
   clientRef.current ??= setup();
