@@ -28,14 +28,29 @@ function getHarnessConfigSchemaPromptBlock(): string {
   return cachedHarnessConfigSchemaBlock;
 }
 
+function normalizeWorkspaceName(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : "";
+}
+
+function getHarnessOutputPathPromptBlock(workspaceName: unknown): string | null {
+  const normalized = normalizeWorkspaceName(workspaceName);
+  if (!normalized) return null;
+
+  return `<harness_output_path>.mux/harness/${normalized}.jsonc</harness_output_path>`;
+}
+
 export function maybeAppendHarnessConfigSchemaToAdditionalInstructions(args: {
   agentId: string;
+  workspaceName: string | undefined;
   additionalInstructions: string | undefined;
 }): string | undefined {
-  const shouldInject = args.agentId === "harness-init" || args.agentId === "harness-from-plan";
+  const shouldInject = args.agentId === "harness-init";
   if (!shouldInject) return args.additionalInstructions;
 
-  const block = getHarnessConfigSchemaPromptBlock();
+  const schemaBlock = getHarnessConfigSchemaPromptBlock();
+  const outputPathBlock = getHarnessOutputPathPromptBlock(args.workspaceName);
+  const block = outputPathBlock ? `${schemaBlock}\n\n${outputPathBlock}` : schemaBlock;
+
   const additional = args.additionalInstructions;
   if (additional && additional.trim().length > 0) {
     return `${additional}\n\n${block}`;

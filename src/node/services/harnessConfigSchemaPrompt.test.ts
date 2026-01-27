@@ -42,15 +42,20 @@ describe("harness config schema prompt injection", () => {
         runtimeConfig: DEFAULT_RUNTIME_CONFIG,
       };
 
-      for (const agentId of ["harness-init", "harness-from-plan"] as const) {
+      for (const agentId of ["harness-init"] as const) {
         const additional = maybeAppendHarnessConfigSchemaToAdditionalInstructions({
           agentId,
+          workspaceName: metadata.name,
           additionalInstructions: "extra",
         });
         expect(additional).toContain("<harness_config_schema");
+        expect(additional).toContain("<harness_output_path>");
+        expect(additional).toContain(`.mux/harness/${metadata.name}.jsonc`);
 
         const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir, additional);
         expect(systemMessage).toContain("<harness_config_schema");
+        expect(systemMessage).toContain("<harness_output_path>");
+        expect(systemMessage).toContain(`.mux/harness/${metadata.name}.jsonc`);
 
         const match = /<harness_config_schema[^>]*>\s*([\s\S]*?)\s*<\/harness_config_schema>/m.exec(
           systemMessage
@@ -66,6 +71,7 @@ describe("harness config schema prompt injection", () => {
 
       const nonHarness = maybeAppendHarnessConfigSchemaToAdditionalInstructions({
         agentId: "exec",
+        workspaceName: metadata.name,
         additionalInstructions: "extra",
       });
       expect(nonHarness).toBe("extra");

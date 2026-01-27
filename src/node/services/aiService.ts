@@ -1509,6 +1509,7 @@ export class AIService extends EventEmitter {
       // This block is generated from the Zod schema at runtime to avoid schema drift.
       effectiveAdditionalInstructions = maybeAppendHarnessConfigSchemaToAdditionalInstructions({
         agentId: effectiveAgentId,
+        workspaceName: metadata.name,
         additionalInstructions: effectiveAdditionalInstructions,
       });
 

@@ -405,76 +405,13 @@ You are in Explore mode (read-only).
 
 </Accordion>
 
-### Harness from Plan (internal)
-
-**Generate a Ralph harness draft from a plan (internal)**
-
-<Accordion title="View harness-from-plan.md">
-
-```md
----
-name: Harness from Plan
-description: Generate a Ralph harness draft from a plan (internal)
-base: exec
-ui:
-  hidden: true
-subagent:
-  runnable: true
-  append_prompt: |
-    You are a sub-agent generating a Ralph harness draft from a plan.
-
-    - Use read-only investigation only (no file edits, no state changes).
-    - Output ONLY a single JSON object in a fenced code block (language: json).
-    - When complete, call agent_report exactly once with that JSON block.
-tools:
-  # Remove editing and task tools from exec base (read-only agent)
-  remove:
-    - file_edit_.*
-    - task
-    - task_.*
-    - agent_skill_read
-    - agent_skill_read_file
----
-
-The `.mux/harness/*.jsonc` schema is provided in the system prompt as `<harness_config_schema>`.
-Follow it exactly (extra/unknown keys will fail validation).
-You generate a Ralph harness draft (checklist + optional gates) from the plan provided in the prompt.
-
-=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
-
-- You MUST NOT create, edit, delete, move, or copy files.
-- You MUST NOT create temporary files anywhere (including /tmp).
-- You MUST NOT use redirect operators (>, >>, |) or heredocs to write to files.
-- You MUST NOT run commands that change system state (rm, mv, cp, mkdir, touch, git add/commit, installs, etc.).
-- Use bash only for read-only operations (rg, ls, cat, git diff/show/log, etc.).
-
-Rules:
-
-- Checklist items should be small, mergeable steps (max 20).
-- Gates should be safe single commands that run checks (prefer make targets from this repo, e.g. "make static-check").
-- Do not use shell chaining, pipes, redirects, quotes, or destructive commands.
-
-Output format: a single fenced code block (language: json) containing one JSON object.
-
-Example JSON object:
-
-{
-"version": 1,
-"checklist": [{ "id": "item-1", "title": "...", "status": "todo", "notes": "..." }],
-"gates": [{ "command": "make static-check", "title": "...", "timeoutSecs": 600 }],
-"loop": { "autoCommit": false }
-}
-```
-
-</Accordion>
-
 ### Harness Init (internal)
 
 **Interactive harness generation + approval (internal)**
 
 <Accordion title="View harness-init.md">
 
-```md
+````md
 ---
 name: Harness Init
 description: Interactive harness generation + approval (internal)
@@ -496,10 +433,16 @@ You are in Harness Init mode.
 Your job is to create or refine a Ralph harness for this workspace based on the current plan and the repository.
 
 === CRITICAL: LIMITED EDIT MODE ===
-Harness schema:
+Harness schema + output path:
 
 - The `.mux/harness/*.jsonc` schema is provided in the system prompt as `<harness_config_schema>`.
+- The required harness output file path is provided as `<harness_output_path>` (derived from `MUX_WORKSPACE_NAME`).
 - Follow the schema exactly (extra/unknown keys will fail validation).
+
+- Write the final harness config to the exact `<harness_output_path>` file.
+  - Do NOT invent filenames.
+  - Create/edit ONLY that one harness file (no extra drafts).
+
 - Web tools are disabled in this mode; do not attempt to look up harness docs online.
 
 - You may ONLY create/edit files under: `.mux/harness/**/*.jsonc`
@@ -509,26 +452,32 @@ Harness schema:
 - Use bash only for read-only investigation (rg, ls, cat, git diff/show/log, etc.).
   - No redirects/heredocs, no installs, no git add/commit, no rm/mv/cp/mkdir/touch.
 
-Repo-aware investigation:
+=== REQUIRED WORKFLOW ===
 
-- Identify which commands should be used as gates by checking repo-native entrypoints:
-  - `Makefile`, `package.json` scripts, `.github/workflows/*`, etc.
-- Map the plan’s changes to impacted subsystems by tracing callsites/imports.
+1. Start by spawning 1-4 read-only `explore` subagents via `task` with `agentId: "explore"`.
+   - Keep each prompt focused (e.g. CI/workflows, Make targets, tests, etc.).
+   - Tell them to avoid web_search/web_fetch/google_search.
+   - Wait for all reports before writing the harness file.
+
+   Suggested prompt template:
+   - Summarize repo-native gate entrypoints (Makefile, package.json scripts, .github/workflows/\*).
+   - Recommend:
+     - Checklist items (short titles + optional notes)
+     - Gate commands (exact command strings + optional title/timeout)
+   - (Optional) include a fenced ```json draft with { "checklist": [...], "gates": [...] }
+
+2. Synthesize the explore reports into a single harness config (matching `<harness_config_schema>`) and write it to `<harness_output_path>`.
 
 Gates:
 
 - Prefer a small set of safe, single commands.
 - Do NOT use shell chaining, pipes, redirects, or quotes.
 
-Delegation:
-
-- You may spawn only read-only exploration subagents via `task` with `agentId: "explore"`.
-
 When the harness file is ready for user review:
 
 - Call `propose_harness` exactly once.
 - Do NOT start the Ralph loop yourself; the UI will start it after user approval.
-```
+````
 
 </Accordion>
 
