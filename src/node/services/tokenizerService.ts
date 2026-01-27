@@ -23,6 +23,12 @@ function getMaxHistorySequence(messages: MuxMessage[]): number | undefined {
 export class TokenizerService {
   private readonly sessionUsageService: SessionUsageService;
 
+  // Token stats calculations can overlap for a single workspace (e.g., rapid tool events).
+  // The renderer ignores outdated results client-side, but the backend must also avoid
+  // persisting stale `tokenStatsCache` data if an older calculation finishes after a newer one.
+  private latestCalcIdByWorkspace = new Map<string, number>();
+  private nextCalcId = 0;
+
   constructor(sessionUsageService: SessionUsageService) {
     this.sessionUsageService = sessionUsageService;
   }
@@ -69,7 +75,16 @@ export class TokenizerService {
       "Tokenizer calculateStats requires model name"
     );
 
+    const calcId = ++this.nextCalcId;
+    this.latestCalcIdByWorkspace.set(workspaceId, calcId);
+
     const stats = await calculateTokenStats(messages, model);
+
+    // Only persist the cache for the most recently-started calculation.
+    // Older calculations can finish later and would otherwise overwrite a newer cache.
+    if (this.latestCalcIdByWorkspace.get(workspaceId) !== calcId) {
+      return stats;
+    }
 
     const cache: SessionUsageTokenStatsCacheV1 = {
       version: 1,

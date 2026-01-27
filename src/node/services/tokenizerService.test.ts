@@ -93,6 +93,76 @@ describe("TokenizerService", () => {
       persistSpy.mockRestore();
     });
 
+    test("skips persisting stale token stats cache when calculations overlap", async () => {
+      const messagesV1 = [
+        createMuxMessage("msg1", "user", "Hello", { historySequence: 1 }),
+        createMuxMessage("msg2", "assistant", "World", { historySequence: 2 }),
+      ];
+
+      const messagesV2 = [
+        ...messagesV1,
+        createMuxMessage("msg3", "assistant", "!!!", { historySequence: 3 }),
+      ];
+
+      const deferred = <T>() => {
+        let resolve!: (value: T) => void;
+        let reject!: (error: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+          resolve = res;
+          reject = rej;
+        });
+        return { promise, resolve, reject };
+      };
+
+      const statsV1 = {
+        consumers: [{ name: "User", tokens: 1, percentage: 100 }],
+        totalTokens: 1,
+        model: "gpt-4",
+        tokenizerName: "cl100k",
+        usageHistory: [],
+      };
+      const statsV2 = {
+        consumers: [{ name: "User", tokens: 2, percentage: 100 }],
+        totalTokens: 2,
+        model: "gpt-4",
+        tokenizerName: "cl100k",
+        usageHistory: [],
+      };
+
+      const d1 = deferred<typeof statsV1>();
+      const d2 = deferred<typeof statsV2>();
+
+      const statsSpy = spyOn(statsUtils, "calculateTokenStats")
+        .mockImplementationOnce(() => d1.promise)
+        .mockImplementationOnce(() => d2.promise);
+      const persistSpy = spyOn(sessionUsageService, "setTokenStatsCache").mockResolvedValue(
+        undefined
+      );
+
+      const p1 = service.calculateStats("test-workspace", messagesV1, "gpt-4");
+      const p2 = service.calculateStats("test-workspace", messagesV2, "gpt-4");
+
+      // Resolve second (newer) request first
+      d2.resolve(statsV2);
+      expect(await p2).toBe(statsV2);
+
+      // Resolve first (older) request last
+      d1.resolve(statsV1);
+      expect(await p1).toBe(statsV1);
+
+      // Only the newer request should persist the cache.
+      expect(persistSpy).toHaveBeenCalledTimes(1);
+      expect(persistSpy).toHaveBeenCalledWith(
+        "test-workspace",
+        expect.objectContaining({
+          history: { messageCount: messagesV2.length, maxHistorySequence: 3 },
+        })
+      );
+
+      statsSpy.mockRestore();
+      persistSpy.mockRestore();
+    });
+
     test("throws on invalid messages", () => {
       // @ts-expect-error testing runtime validation
       expect(service.calculateStats("test-workspace", null, "gpt-4")).rejects.toThrow(
