@@ -15,6 +15,46 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
+  it("accepts bash tool calls using command (alias for script)", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      command: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.script).toBe("ls");
+      expect("command" in parsed.data).toBe(false);
+    }
+  });
+
+  it("prefers script when both script and command are provided", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      script: "echo hi",
+      command: "ls",
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.script).toBe("echo hi");
+    }
+  });
+
+  it("rejects bash tool calls missing both script and command", () => {
+    const parsed = TOOL_DEFINITIONS.bash.schema.safeParse({
+      timeout_secs: 60,
+      run_in_background: false,
+      display_name: "Test",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
   it("asks for clarification via ask_user_question (instead of emitting open questions)", () => {
     expect(TOOL_DEFINITIONS.ask_user_question.description).toContain(
       "MUST be used when you need user clarification"

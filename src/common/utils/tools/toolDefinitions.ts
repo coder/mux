@@ -439,39 +439,57 @@ export const TOOL_DEFINITIONS = {
       "Commands that exceed these limits will FAIL with an error (no partial output returned). " +
       "Be conservative: use 'head', 'tail', 'grep', or other filters to limit output before running commands. " +
       "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.",
-    schema: z.object({
-      script: z.string().describe("The bash script/command to execute"),
-      timeout_secs: z
-        .number()
-        .positive()
-        .describe(
-          "Timeout in seconds. For foreground: max execution time before kill. " +
-            "For background: max lifetime before auto-termination. " +
-            "Start small and increase on retry; avoid large initial values to keep UX responsive"
-        ),
-      run_in_background: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Run this command in the background without blocking. " +
-            "Use for processes running >5s (dev servers, builds, file watchers). " +
-            "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
-            "or processes requiring real-time output (use foreground with larger timeout instead). " +
-            "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
-            "Read output with task_await (returns only new output since last check). " +
-            "Terminate with task_terminate using the taskId. " +
-            "List active tasks with task_list. " +
-            "Process persists until timeout_secs expires, terminated, or workspace is removed." +
-            "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
-            "Check back periodically with task_await rather than blocking on completion."
-        ),
-      display_name: z
-        .string()
-        .describe(
-          "Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). " +
-            "Required for all bash invocations since any process can be sent to background."
-        ),
-    }),
+    schema: z.preprocess(
+      (value) => {
+        // Compatibility: some models emit { command: "..." } instead of { script: "..." }.
+        // Normalize to `script` so downstream code (tool runner + UI) stays consistent.
+        if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+
+        const obj = value as Record<string, unknown>;
+        if (typeof obj.script === "string") return value;
+
+        if (typeof obj.command === "string") {
+          // Drop the legacy field to keep tool args canonical (and avoid confusing downstream consumers).
+          const { command, ...rest } = obj as Record<string, unknown> & { command: string };
+          return { ...rest, script: command };
+        }
+
+        return value;
+      },
+      z.object({
+        script: z.string().describe("The bash script/command to execute"),
+        timeout_secs: z
+          .number()
+          .positive()
+          .describe(
+            "Timeout in seconds. For foreground: max execution time before kill. " +
+              "For background: max lifetime before auto-termination. " +
+              "Start small and increase on retry; avoid large initial values to keep UX responsive"
+          ),
+        run_in_background: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Run this command in the background without blocking. " +
+              "Use for processes running >5s (dev servers, builds, file watchers). " +
+              "Do NOT use for quick commands (<5s), interactive processes (no stdin support), " +
+              "or processes requiring real-time output (use foreground with larger timeout instead). " +
+              "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
+              "Read output with task_await (returns only new output since last check). " +
+              "Terminate with task_terminate using the taskId. " +
+              "List active tasks with task_list. " +
+              "Process persists until timeout_secs expires, terminated, or workspace is removed." +
+              "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
+              "Check back periodically with task_await rather than blocking on completion."
+          ),
+        display_name: z
+          .string()
+          .describe(
+            "Human-readable name for the process (e.g., 'Dev Server', 'TypeCheck Watch'). " +
+              "Required for all bash invocations since any process can be sent to background."
+          ),
+      })
+    ),
   },
   file_read: {
     description:
