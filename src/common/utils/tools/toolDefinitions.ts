@@ -243,6 +243,37 @@ export const TaskAwaitToolArgsSchema = z
     }
   });
 
+export const SubagentGitPatchArtifactStatusSchema = z.enum([
+  "pending",
+  "ready",
+  "failed",
+  "skipped",
+]);
+
+export const SubagentGitPatchArtifactSchema = z
+  .object({
+    childTaskId: z.string(),
+    parentWorkspaceId: z.string(),
+    createdAtMs: z.number().int().nonnegative(),
+    updatedAtMs: z.number().int().nonnegative().optional(),
+    status: SubagentGitPatchArtifactStatusSchema,
+    baseCommitSha: z.string().optional(),
+    headCommitSha: z.string().optional(),
+    commitCount: z.number().int().nonnegative().optional(),
+    mboxPath: z.string().optional(),
+    error: z.string().optional(),
+    appliedAtMs: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type SubagentGitPatchArtifact = z.infer<typeof SubagentGitPatchArtifactSchema>;
+
+const TaskAwaitToolArtifactsSchema = z
+  .object({
+    gitFormatPatch: SubagentGitPatchArtifactSchema.optional(),
+  })
+  .strict();
+
 export const TaskAwaitToolCompletedResultSchema = z
   .object({
     status: z.literal("completed"),
@@ -253,6 +284,7 @@ export const TaskAwaitToolCompletedResultSchema = z
     elapsed_ms: z.number().optional(),
     exitCode: z.number().optional(),
     note: z.string().optional(),
+    artifacts: TaskAwaitToolArtifactsSchema.optional(),
   })
   .strict();
 
@@ -303,9 +335,52 @@ export const TaskAwaitToolResultSchema = z
   .strict();
 
 // -----------------------------------------------------------------------------
-// task_terminate (terminate one or more sub-agent tasks)
+// task_apply_git_patch (apply git-format-patch artifact via git am)
 // -----------------------------------------------------------------------------
 
+export const TaskApplyGitPatchToolArgsSchema = z
+  .object({
+    task_id: z.string().min(1).describe("Child task ID whose patch artifact should be applied"),
+    dry_run: z
+      .boolean()
+      .optional()
+      .describe(
+        "When true, attempt to apply the patch in a temporary git worktree and then discard it (does not modify the current workspace)."
+      ),
+    three_way: z.boolean().optional().default(true).describe("When true, run git am with --3way"),
+    force: z
+      .boolean()
+      .optional()
+      .describe(
+        "When true, allow apply even if the patch was previously applied (and skip clean-tree checks)."
+      ),
+  })
+  .strict();
+
+export const TaskApplyGitPatchToolResultSchema = z.union([
+  z
+    .object({
+      success: z.literal(true),
+      taskId: z.string(),
+      appliedCommitCount: z.number().int().nonnegative(),
+      headCommitSha: z.string().optional(),
+      dryRun: z.boolean().optional(),
+      note: z.string().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      success: z.literal(false),
+      taskId: z.string(),
+      error: z.string(),
+      note: z.string().optional(),
+    })
+    .strict(),
+]);
+
+// -----------------------------------------------------------------------------
+// task_terminate (terminate one or more sub-agent tasks)
+// -----------------------------------------------------------------------------
 export const TaskTerminateToolArgsSchema = z
   .object({
     task_ids: z
@@ -667,6 +742,12 @@ export const TOOL_DEFINITIONS = {
       "If run_in_background is true, returns a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
       "Use the bash tool to run shell commands.",
     schema: TaskToolArgsSchema,
+  },
+  task_apply_git_patch: {
+    description:
+      "Apply a completed sub-agent task's git-format-patch artifact to the current workspace using `git am`. " +
+      "This is an explicit integration step: mux will not auto-apply patches.",
+    schema: TaskApplyGitPatchToolArgsSchema,
   },
   task_await: {
     description:
@@ -1258,6 +1339,7 @@ export function getAvailableTools(
     "bash",
     "task",
     "task_await",
+    "task_apply_git_patch",
     "task_terminate",
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),

@@ -15,6 +15,7 @@ import { createTodoWriteTool, createTodoReadTool } from "@/node/services/tools/t
 import { createStatusSetTool } from "@/node/services/tools/status_set";
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createTaskTool } from "@/node/services/tools/task";
+import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
 import { createTaskTerminateTool } from "@/node/services/tools/task_terminate";
 import { createTaskListTool } from "@/node/services/tools/task_list";
@@ -289,6 +290,7 @@ export async function getToolsForModel(
     // Sub-agent task orchestration (child workspaces)
     task: wrap(createTaskTool(config)),
     task_await: wrap(createTaskAwaitTool(config)),
+    task_apply_git_patch: wrap(createTaskApplyGitPatchTool(config)),
     task_terminate: wrap(createTaskTerminateTool(config)),
     task_list: wrap(createTaskListTool(config)),
 

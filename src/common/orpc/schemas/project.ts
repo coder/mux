@@ -88,6 +88,10 @@ export const WorkspaceConfigSchema = z.object({
     .meta({
       description: "PTC experiments inherited from parent for restart-safe resumptions.",
     }),
+  taskBaseCommitSha: z.string().optional().meta({
+    description:
+      "Git commit SHA this agent task workspace started from (used for generating git-format-patch artifacts).",
+  }),
   taskTrunkBranch: z.string().optional().meta({
     description:
       "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",
