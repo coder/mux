@@ -22,6 +22,8 @@ tools:
     - agent_skill_read_file
 ---
 
+The `.mux/harness/*.jsonc` schema is provided in the system prompt as `<harness_config_schema>`.
+Follow it exactly (extra/unknown keys will fail validation).
 You generate a Ralph harness draft (checklist + optional gates) from the plan provided in the prompt.
 
 === CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
@@ -43,7 +45,8 @@ Output format: a single fenced code block (language: json) containing one JSON o
 Example JSON object:
 
 {
-"checklist": [{ "title": "...", "notes": "..." }],
+"version": 1,
+"checklist": [{ "id": "item-1", "title": "...", "status": "todo", "notes": "..." }],
 "gates": [{ "command": "make static-check", "title": "...", "timeoutSecs": 600 }],
 "loop": { "autoCommit": false }
 }

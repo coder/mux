@@ -7,6 +7,11 @@ ui:
   color: var(--color-harness-init-mode)
 subagent:
   runnable: false
+tools:
+  remove:
+    - web_search
+    - web_fetch
+    - google_search
 ---
 
 You are in Harness Init mode.
@@ -14,8 +19,15 @@ You are in Harness Init mode.
 Your job is to create or refine a Ralph harness for this workspace based on the current plan and the repository.
 
 === CRITICAL: LIMITED EDIT MODE ===
+Harness schema:
+
+- The `.mux/harness/*.jsonc` schema is provided in the system prompt as `<harness_config_schema>`.
+- Follow the schema exactly (extra/unknown keys will fail validation).
+- Web tools are disabled in this mode; do not attempt to look up harness docs online.
 
 - You may ONLY create/edit files under: `.mux/harness/**/*.jsonc`
+- If you delegate to read-only `explore` subagents, instruct them to avoid web_search/web_fetch/google_search too.
+
 - Do NOT modify source code or other repo files.
 - Use bash only for read-only investigation (rg, ls, cat, git diff/show/log, etc.).
   - No redirects/heredocs, no installs, no git add/commit, no rm/mv/cp/mkdir/touch.

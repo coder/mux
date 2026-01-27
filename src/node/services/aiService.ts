@@ -41,6 +41,7 @@ import type { BashOutputEvent } from "@/common/types/stream";
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config, ProviderConfig } from "@/node/config";
+import { maybeAppendHarnessConfigSchemaToAdditionalInstructions } from "./harnessConfigSchemaPrompt";
 import { StreamManager } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
@@ -1503,6 +1504,13 @@ export class AIService extends EventEmitter {
           ? `${effectiveAdditionalInstructions}\n\n${nestingInstruction}`
           : nestingInstruction;
       }
+
+      // Harness agents need a schema-aware prompt so they don't web-search for an internal/WIP spec.
+      // This block is generated from the Zod schema at runtime to avoid schema drift.
+      effectiveAdditionalInstructions = maybeAppendHarnessConfigSchemaToAdditionalInstructions({
+        agentId: effectiveAgentId,
+        additionalInstructions: effectiveAdditionalInstructions,
+      });
 
       // Read plan content for agent transition (plan-like → exec-like)
       // Only read if switching to exec-like agent and last assistant was plan-like.
