@@ -343,4 +343,343 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
   });
+
+  // ==========================================================================
+  // Empty array push/unshift patterns (regression tests for never[] fix)
+  // ==========================================================================
+
+  test("allows empty array with push pattern", () => {
+    // Claude frequently collects results in an empty array
+    const result = validateTypes(
+      `
+      const results = [];
+      results.push(mux.file_read({ filePath: "a.txt" }));
+      results.push(mux.file_read({ filePath: "b.txt" }));
+      return results;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows empty array with unshift pattern", () => {
+    const result = validateTypes(
+      `
+      const results = [];
+      results.unshift(mux.file_read({ filePath: "a.txt" }));
+      return results;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows empty array with push inside loop", () => {
+    const result = validateTypes(
+      `
+      const files = ["a.txt", "b.txt"];
+      const results = [];
+      for (const f of files) {
+        results.push(mux.file_read({ filePath: f }));
+      }
+      return results;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows push with primitive values", () => {
+    const result = validateTypes(
+      `
+      const arr = [];
+      arr.push(1);
+      arr.push("hello");
+      arr.push({ foo: "bar" });
+      return arr;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  // ==========================================================================
+  // Patterns that must continue to work (regression tests)
+  // ==========================================================================
+
+  test("allows untyped function parameters", () => {
+    const result = validateTypes(
+      `
+      function process(x) { return x.success; }
+      const r = mux.file_read({ filePath: "test.txt" });
+      return process(r);
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows untyped arrow function parameters", () => {
+    const result = validateTypes(
+      `
+      const process = (x) => x.success;
+      const r = mux.file_read({ filePath: "test.txt" });
+      return process(r);
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows destructuring parameters", () => {
+    // Test that untyped destructuring params work (no TS7031 error)
+    const result = validateTypes(
+      `
+      function processArgs({ a, b }) { return a + b; }
+      return processArgs({ a: 1, b: 2 });
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows rest parameters", () => {
+    const result = validateTypes(
+      `
+      function all(...args) { return args.length; }
+      return all(1, 2, 3);
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows callbacks on typed arrays", () => {
+    const result = validateTypes(
+      `
+      const nums = [1, 2, 3];
+      const doubled = nums.map(x => x * 2);
+      const evens = nums.filter(x => x % 2 === 0);
+      nums.forEach(x => console.log(x));
+      return { doubled, evens };
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  // ==========================================================================
+  // Empty array operations beyond push/unshift (preprocessing tests)
+  // These patterns require the preprocessing approach ([] → [] as any[])
+  // ==========================================================================
+
+  test("allows map on empty array that gets populated", () => {
+    // Preprocessing transforms [] to [] as any[], so operations work
+    const result = validateTypes(
+      `
+      const results = [];
+      results.push(mux.file_read({ filePath: "a.txt" }));
+      results.push(mux.file_read({ filePath: "b.txt" }));
+      return results.map(r => r.success);
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows filter on empty array", () => {
+    const result = validateTypes(
+      `
+      const results = [];
+      results.push(mux.file_read({ filePath: "a.txt" }));
+      results.push(mux.file_read({ filePath: "b.txt" }));
+      return results.filter(r => r.success);
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows forEach on empty array", () => {
+    const result = validateTypes(
+      `
+      const results = [];
+      results.push(mux.file_read({ filePath: "a.txt" }));
+      results.forEach(r => console.log(r.success));
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows spread of empty array", () => {
+    const result = validateTypes(
+      `
+      const arr = [];
+      arr.push(1);
+      const copy = [...arr];
+      return copy;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows index access on empty array", () => {
+    const result = validateTypes(
+      `
+      const arr = [];
+      arr.push("hello");
+      return arr[0];
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows empty array in object property", () => {
+    const result = validateTypes(
+      `
+      const obj = { items: [] };
+      obj.items.push(1);
+      return obj;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows empty array as function argument", () => {
+    const result = validateTypes(
+      `
+      function process(arr) { return arr.length; }
+      return process([]);
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("allows empty array in return statement", () => {
+    const result = validateTypes(
+      `
+      function empty() { return []; }
+      return empty();
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  // ==========================================================================
+  // Patterns that should NOT be modified (already typed)
+  // ==========================================================================
+
+  test("respects explicit type annotations on arrays", () => {
+    // With type annotation, TypeScript knows the type - no preprocessing needed
+    const result = validateTypes(
+      `
+      const nums: number[] = [];
+      nums.push(1);
+      return nums;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("respects as const assertions", () => {
+    // [] as const creates a readonly tuple, not any[]
+    const result = validateTypes(
+      `
+      const empty = [] as const;
+      return empty;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("respects explicit as Type[] assertions", () => {
+    const result = validateTypes(
+      `
+      const arr = [] as string[];
+      arr.push("hello");
+      return arr;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles multiple empty arrays in same statement", () => {
+    const result = validateTypes(
+      `
+      const a = [], b = [];
+      a.push(1);
+      b.push("hello");
+      return { a, b };
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles nested empty arrays", () => {
+    const result = validateTypes(
+      `
+      const matrix = [];
+      matrix.push([]);
+      matrix[0].push(1);
+      return matrix;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  // ==========================================================================
+  // Edge cases that must not break (preprocessing skip patterns)
+  // ==========================================================================
+
+  test("handles angle-bracket type assertions", () => {
+    // <Type[]>[] should not get double-asserted
+    const result = validateTypes(
+      `
+      const arr = <any[]>[];
+      arr.push(1);
+      return arr;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles satisfies operator", () => {
+    // [] satisfies Type[] still needs as any[] because satisfies only validates,
+    // it doesn't change the inferred type (still never[] with our settings)
+    const result = validateTypes(
+      `
+      const arr = [] satisfies any[];
+      arr.push(1);
+      return arr;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles destructuring assignment on LHS", () => {
+    // ([] = foo) should not become ([] as any[] = foo) which is invalid
+    const result = validateTypes(
+      `
+      let foo = [1, 2, 3];
+      let a, b;
+      ([a, b] = foo);
+      return [a, b];
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
 });

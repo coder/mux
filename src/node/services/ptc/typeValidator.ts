@@ -103,12 +103,88 @@ function findTokenAtPosition(sourceFile: ts.SourceFile, position: number): ts.No
   return find(sourceFile);
 }
 
+/**
+ * Check if an empty array literal has type context (annotation or assertion),
+ * or is in a position where adding `as any[]` would be invalid.
+ * If true, we should NOT add `as any[]`.
+ */
+function hasTypeContext(node: ts.ArrayLiteralExpression): boolean {
+  const parent = node.parent;
+
+  // Skip: `[] as Type` or `[] as const`
+  if (ts.isAsExpression(parent)) return true;
+
+  // Skip: `<Type[]>[]` (angle-bracket type assertion)
+  if (ts.isTypeAssertionExpression(parent)) return true;
+
+  // Note: We do NOT skip `[] satisfies Type[]` because satisfies only validates
+  // compatibility without changing the inferred type (still never[] with our settings)
+
+  // Skip: `const x: Type[] = []` (variable with type annotation)
+  if (ts.isVariableDeclaration(parent) && parent.type) return true;
+
+  // Skip: `const [] = x` (destructuring pattern - array is on LHS)
+  if (ts.isArrayBindingPattern(parent)) return true;
+
+  // Skip: `([] = foo)` (destructuring assignment - array on LHS of =)
+  // Adding `as any[]` here would produce invalid syntax: `([] as any[] = foo)`
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.left === node
+  ) {
+    return true;
+  }
+
+  // Skip: `function f(x: Type[] = [])` (parameter with type annotation and default)
+  if (ts.isParameter(parent) && parent.type) return true;
+
+  return false;
+}
+
+/**
+ * Preprocess agent code to add type assertions to empty array literals.
+ *
+ * TypeScript infers `[]` as `never[]` when `strictNullChecks: true` and `noImplicitAny: false`.
+ * This is documented behavior (GitHub issues #36987, #13140, #50505, #51979).
+ * The TypeScript team recommends using type assertions: `[] as any[]`.
+ *
+ * This function transforms `[]` → `[] as any[]` for untyped empty arrays, enabling
+ * all array operations (push, map, forEach, etc.) to work without type errors.
+ */
+function preprocessEmptyArrays(code: string): string {
+  const sourceFile = ts.createSourceFile("temp.ts", code, ts.ScriptTarget.Latest, true);
+  const edits: Array<{ pos: number; text: string }> = [];
+
+  function visit(node: ts.Node) {
+    if (ts.isArrayLiteralExpression(node) && node.elements.length === 0) {
+      if (!hasTypeContext(node)) {
+        edits.push({ pos: node.end, text: " as any[]" });
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+
+  // Apply edits in reverse order to preserve positions
+  let result = code;
+  for (const edit of edits.sort((a, b) => b.pos - a.pos)) {
+    result = result.slice(0, edit.pos) + edit.text + result.slice(edit.pos);
+  }
+  return result;
+}
+
 export function validateTypes(code: string, muxTypes: string): TypeValidationResult {
+  // Preprocess empty arrays to avoid never[] inference
+  // (TypeScript infers [] as never[] with strictNullChecks + noImplicitAny:false)
+  const preprocessedCode = preprocessEmptyArrays(code);
+
   // Wrap code in function to allow return statements (matches runtime behavior)
   // Note: We don't use async because Asyncify makes mux.* calls appear synchronous
   // Types go AFTER code so error line numbers match agent's code directly
   const wrapperPrefix = "function __agent__() {\n";
-  const wrappedCode = `${wrapperPrefix}${code}
+  const wrappedCode = `${wrapperPrefix}${preprocessedCode}
 }
 
 ${muxTypes}
