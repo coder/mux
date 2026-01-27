@@ -109,6 +109,7 @@ export function parseRightSidebarLayoutState(
     if (!layoutContainsTab(raw.root, "explorer")) {
       injectTabIntoLayout(raw.root, "explorer");
     }
+
     return raw;
   }
 

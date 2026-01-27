@@ -46,6 +46,10 @@ import { SessionTimingService } from "@/node/services/sessionTimingService";
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
+import { WorkspaceHarnessService } from "@/node/services/workspaceHarnessService";
+import { GateRunnerService } from "@/node/services/gateRunnerService";
+import { GitCheckpointService } from "@/node/services/gitCheckpointService";
+import { LoopRunnerService } from "@/node/services/loopRunnerService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
@@ -83,6 +87,10 @@ export class ServiceContainer {
   private readonly partialService: PartialService;
   public readonly aiService: AIService;
   public readonly projectService: ProjectService;
+  public readonly workspaceHarnessService: WorkspaceHarnessService;
+  public readonly gateRunnerService: GateRunnerService;
+  public readonly gitCheckpointService: GitCheckpointService;
+  public readonly loopRunnerService: LoopRunnerService;
   public readonly workspaceService: WorkspaceService;
   public readonly taskService: TaskService;
   public readonly providerService: ProviderService;
@@ -116,6 +124,9 @@ export class ServiceContainer {
     this.historyService = new HistoryService(config);
     this.partialService = new PartialService(config, this.historyService);
     this.projectService = new ProjectService(config);
+    this.workspaceHarnessService = new WorkspaceHarnessService(config);
+    this.gateRunnerService = new GateRunnerService(config, this.workspaceHarnessService);
+    this.gitCheckpointService = new GitCheckpointService(config, this.workspaceHarnessService);
     this.initStateManager = new InitStateManager(config);
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
     this.mcpConfigService = new MCPConfigService();
@@ -155,6 +166,14 @@ export class ServiceContainer {
       this.aiService,
       this.workspaceService,
       this.initStateManager
+    );
+    this.loopRunnerService = new LoopRunnerService(
+      config,
+      this.workspaceService,
+      this.aiService,
+      this.workspaceHarnessService,
+      this.gateRunnerService,
+      this.gitCheckpointService
     );
     this.aiService.setTaskService(this.taskService);
     // Idle compaction service - auto-compacts workspaces after configured idle period

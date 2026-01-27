@@ -17,6 +17,7 @@ import { FileReadToolCall } from "../FileReadToolCall";
 import { WebFetchToolCall } from "../WebFetchToolCall";
 import { WebSearchToolCall } from "../WebSearchToolCall";
 import { AskUserQuestionToolCall } from "../AskUserQuestionToolCall";
+import { ProposeHarnessToolCall } from "../ProposeHarnessToolCall";
 import { ProposePlanToolCall } from "../ProposePlanToolCall";
 import { TodoToolCall } from "../TodoToolCall";
 import { StatusSetToolCall } from "../StatusSetToolCall";
@@ -51,7 +52,7 @@ interface ToolRegistryEntry {
  * Registry mapping tool names to their components and validation schemas.
  * Adding a new tool: add one line here.
  *
- * Note: Some tools (ask_user_question, propose_plan, todo_write, status_set) require
+ * Note: Some tools (ask_user_question, propose_plan, propose_harness, todo_write, status_set) require
  * props like workspaceId/toolCallId that aren't available in nested context. This is
  * fine because the backend excludes these from code_execution sandbox (see EXCLUDED_TOOLS
  * in src/node/services/ptc/toolBridge.ts). They can never appear in nested tool calls.
@@ -86,6 +87,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   propose_plan: {
     component: ProposePlanToolCall,
     schema: TOOL_DEFINITIONS.propose_plan.schema,
+  },
+  propose_harness: {
+    component: ProposeHarnessToolCall,
+    schema: TOOL_DEFINITIONS.propose_harness.schema,
   },
   todo_write: { component: TodoToolCall, schema: TOOL_DEFINITIONS.todo_write.schema },
   status_set: { component: StatusSetToolCall, schema: TOOL_DEFINITIONS.status_set.schema },

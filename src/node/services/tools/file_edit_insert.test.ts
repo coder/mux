@@ -181,7 +181,7 @@ describe("file_edit_insert plan mode enforcement", () => {
       cwd: workspaceCwd,
       runtime: createRuntime({ type: "local", srcBaseDir: workspaceCwd }),
       runtimeTempDir: testDir,
-      planFileOnly: true,
+      mode: "plan",
       planFilePath: planFilePath,
     });
 
@@ -194,7 +194,7 @@ describe("file_edit_insert plan mode enforcement", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("In the plan agent, only the plan file can be edited");
+      expect(result.error).toContain("In plan mode, only the plan file can be edited");
     }
   });
 
@@ -210,7 +210,7 @@ describe("file_edit_insert plan mode enforcement", () => {
       cwd: workspaceCwd,
       runtime: createRuntime({ type: "local", srcBaseDir: workspaceCwd }),
       runtimeTempDir: testDir,
-      planFileOnly: true,
+      mode: "plan",
       planFilePath: planFilePath,
     });
 
@@ -265,7 +265,7 @@ describe("file_edit_insert plan mode enforcement", () => {
       cwd: workspaceCwd,
       runtime: createRuntime({ type: "local", srcBaseDir: workspaceCwd }),
       runtimeTempDir: testDir,
-      planFileOnly: true,
+      mode: "plan",
       planFilePath: realPlanPath, // The REAL plan file path
     });
 
@@ -279,7 +279,7 @@ describe("file_edit_insert plan mode enforcement", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("In the plan agent, only the plan file can be edited");
+      expect(result.error).toContain("In plan mode, only the plan file can be edited");
       expect(result.error).toContain("exact plan file path");
       expect(result.error).toContain(realPlanPath);
       expect(result.error).toContain(".mux/plan.md");

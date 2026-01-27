@@ -203,7 +203,11 @@ test.describe("sidebar drag and drop", () => {
     const topTabs = await tablists[0].getByRole("tab").all();
     const bottomTabs = await tablists[1].getByRole("tab").all();
 
-    expect(topTabs.length).toBe(3); // Costs, Review, Explorer
+    expect(topTabs.length).toBeGreaterThanOrEqual(3);
+    await expect(tablists[0]).toContainText("Costs");
+    await expect(tablists[0]).toContainText("Review");
+    await expect(tablists[0]).toContainText("Explorer");
+
     expect(bottomTabs.length).toBe(1); // Costs (duplicate tab in split)
   });
 

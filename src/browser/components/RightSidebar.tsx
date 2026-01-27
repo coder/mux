@@ -11,7 +11,11 @@ import {
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
+import {
+  useWorkspaceUsage,
+  useWorkspaceStatsSnapshot,
+  workspaceStore,
+} from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { CostsTab } from "./RightSidebar/CostsTab";
@@ -21,6 +25,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { StatsTab } from "./RightSidebar/StatsTab";
 
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
+import { RefreshController } from "@/browser/utils/RefreshController";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
@@ -51,7 +56,6 @@ import {
   parseRightSidebarLayoutState,
   removeTabEverywhere,
   reorderTabInTabset,
-  selectTabByIndex,
   selectTabInTabset,
   setFocusedTabset,
   updateSplitSizes,
@@ -71,6 +75,7 @@ import {
 import {
   CostsTabLabel,
   ExplorerTabLabel,
+  HarnessTabLabel,
   FileTabLabel,
   ReviewTabLabel,
   StatsTabLabel,
@@ -79,6 +84,7 @@ import {
   type ReviewStats,
 } from "./RightSidebar/tabs";
 import { FileViewerTab } from "./RightSidebar/FileViewer";
+import { HarnessTab } from "./RightSidebar/HarnessTab";
 import { ExplorerTab } from "./RightSidebar/ExplorerTab";
 import {
   DndContext,
@@ -189,6 +195,7 @@ const DragAwarePanelResizeHandle: React.FC<{
   return <PanelResizeHandle className={className} />;
 };
 
+type HarnessPresence = "unknown" | "exists" | "missing";
 type TabsetNode = Extract<RightSidebarLayoutNode, { type: "tabset" }>;
 
 interface RightSidebarTabsetNodeProps {
@@ -204,6 +211,7 @@ interface RightSidebarTabsetNodeProps {
   onReviewStatsChange: (stats: ReviewStats | null) => void;
   sessionCost: number | null;
   statsTabEnabled: boolean;
+  harnessTabEnabled: boolean;
   sessionDuration: number | null;
   /** Whether any sidebar tab is currently being dragged */
   isDraggingTab: boolean;
@@ -235,13 +243,19 @@ interface RightSidebarTabsetNodeProps {
 }
 
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
+  const isTabEnabled = (tab: TabType): boolean => {
+    if (tab === "stats") return props.statsTabEnabled;
+    if (tab === "harness") return props.harnessTabEnabled;
+    return true;
+  };
+
+  const activeTab = isTabEnabled(props.node.activeTab)
+    ? props.node.activeTab
+    : (props.node.tabs.find(isTabEnabled) ?? props.node.activeTab);
   const tabsetBaseId = `${props.baseId}-${props.node.id}`;
 
   // Content container class comes from tab registry - each tab defines its own padding/overflow
-  const tabsetContentClassName = cn(
-    "relative flex-1 min-h-0",
-    getTabContentClassName(props.node.activeTab)
-  );
+  const tabsetContentClassName = cn("relative flex-1 min-h-0", getTabContentClassName(activeTab));
 
   // Drop zones using @dnd-kit's useDroppable
   const { setNodeRef: contentRef, isOver: isOverContent } = useDroppable({
@@ -295,7 +309,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const terminalTabs = props.node.tabs.filter(isTerminalTab);
 
   const items = props.node.tabs.flatMap((tab) => {
-    if (tab === "stats" && !props.statsTabEnabled) {
+    if (!isTabEnabled(tab)) {
       return [];
     }
 
@@ -345,6 +359,8 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       label = <ReviewTabLabel reviewStats={props.reviewStats} />;
     } else if (tab === "explorer") {
       label = <ExplorerTabLabel />;
+    } else if (tab === "harness") {
+      label = <HarnessTabLabel />;
     } else if (tab === "stats") {
       label = <StatsTabLabel sessionDuration={props.sessionDuration} />;
     } else if (isTerminal) {
@@ -368,7 +384,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       {
         id: tabId,
         panelId,
-        selected: props.node.activeTab === tab,
+        selected: activeTab === tab,
         onSelect: () => selectTab(tab),
         label,
         tooltip,
@@ -385,11 +401,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
 
   const costsPanelId = `${tabsetBaseId}-panel-costs`;
   const reviewPanelId = `${tabsetBaseId}-panel-review`;
+  const harnessPanelId = `${tabsetBaseId}-panel-harness`;
   const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
   const statsPanelId = `${tabsetBaseId}-panel-stats`;
 
   const costsTabId = `${tabsetBaseId}-tab-costs`;
   const reviewTabId = `${tabsetBaseId}-tab-review`;
+  const harnessTabId = `${tabsetBaseId}-tab-harness`;
   const explorerTabId = `${tabsetBaseId}-tab-explorer`;
   const statsTabId = `${tabsetBaseId}-tab-stats`;
 
@@ -463,7 +481,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           )}
         />
 
-        {props.node.activeTab === "costs" && (
+        {activeTab === "costs" && (
           <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
             <CostsTab workspaceId={props.workspaceId} />
           </div>
@@ -473,7 +491,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
         {terminalTabs.map((terminalTab) => {
           const terminalTabId = `${tabsetBaseId}-tab-${terminalTab}`;
           const terminalPanelId = `${tabsetBaseId}-panel-${terminalTab}`;
-          const isActive = props.node.activeTab === terminalTab;
+          const isActive = activeTab === terminalTab;
           // Check if this terminal should be auto-focused (was just opened via keybind)
           const terminalSessionId = getTerminalSessionId(terminalTab);
           const shouldAutoFocus = isActive && terminalSessionId === props.autoFocusTerminalSession;
@@ -504,7 +522,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             role="tabpanel"
             id={statsPanelId}
             aria-labelledby={statsTabId}
-            hidden={props.node.activeTab !== "stats"}
+            hidden={activeTab !== "stats"}
           >
             <ErrorBoundary workspaceInfo="Stats tab">
               <StatsTab workspaceId={props.workspaceId} />
@@ -512,7 +530,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           </div>
         )}
 
-        {props.node.activeTab === "explorer" && (
+        {props.harnessTabEnabled && activeTab === "harness" && (
+          <div role="tabpanel" id={harnessPanelId} aria-labelledby={harnessTabId}>
+            <HarnessTab workspaceId={props.workspaceId} />
+          </div>
+        )}
+
+        {activeTab === "explorer" && (
           <div
             role="tabpanel"
             id={explorerPanelId}
@@ -532,7 +556,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           const filePath = getFilePath(fileTab);
           const fileTabId = `${tabsetBaseId}-tab-${fileTab}`;
           const filePanelId = `${tabsetBaseId}-panel-${fileTab}`;
-          const isActive = props.node.activeTab === fileTab;
+          const isActive = activeTab === fileTab;
 
           return (
             <div
@@ -554,7 +578,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           );
         })}
 
-        {props.node.activeTab === "review" && (
+        {activeTab === "review" && (
           <div role="tabpanel" id={reviewPanelId} aria-labelledby={reviewTabId} className="h-full">
             <ReviewPanel
               key={`${props.workspaceId}:${props.node.id}`}
@@ -603,6 +627,11 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // Stats tab feature flag
   const { statsTabState } = useFeatureFlags();
+
+  const [harnessPresence, setHarnessPresence] = React.useState<HarnessPresence>("unknown");
+
+  const { api } = useAPI();
+  const harnessTabEnabled = harnessPresence === "exists";
   const statsTabEnabled = Boolean(statsTabState?.enabled);
 
   // Read last-used focused tab for better defaults when initializing a new layout.
@@ -655,6 +684,46 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     setLayoutDraft(null);
   }, [setLayoutRaw]);
 
+  const refreshHarnessPresence = React.useCallback(async () => {
+    if (!api) return;
+
+    try {
+      const result = await api.workspace.harness.exists({ workspaceId });
+      if (!result.success) {
+        return;
+      }
+
+      setHarnessPresence(result.data.exists ? "exists" : "missing");
+    } catch {
+      // Defensive: keep the previous state (don't crash / don't force-hide).
+    }
+  }, [api, workspaceId]);
+
+  const harnessPresenceRefreshController = React.useMemo(
+    () =>
+      new RefreshController({
+        onRefresh: refreshHarnessPresence,
+        debounceMs: 1000,
+        refreshOnFocus: true,
+      }),
+    [refreshHarnessPresence]
+  );
+
+  React.useEffect(() => {
+    harnessPresenceRefreshController.bindListeners();
+    return () => harnessPresenceRefreshController.dispose();
+  }, [harnessPresenceRefreshController]);
+
+  React.useEffect(() => {
+    setHarnessPresence("unknown");
+    harnessPresenceRefreshController.requestImmediate();
+  }, [harnessPresenceRefreshController, workspaceId]);
+
+  React.useEffect(() => {
+    return workspaceStore.subscribeFileModifyingTool(() => {
+      harnessPresenceRefreshController.schedule();
+    }, workspaceId);
+  }, [harnessPresenceRefreshController, workspaceId]);
   const layout = React.useMemo(
     () => parseRightSidebarLayoutState(layoutDraft ?? layoutRaw, initialActiveTab),
     [layoutDraft, layoutRaw, initialActiveTab]
@@ -679,9 +748,33 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       return prev;
     });
   }, [initialActiveTab, setLayoutRaw, statsTabEnabled]);
-  // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
+
+  // If harness files exist, ensure the Harness tab exists in the layout.
+  // If missing, ensure it doesn't linger in persisted layouts.
+  React.useEffect(() => {
+    if (harnessPresence === "unknown") {
+      return;
+    }
+
+    setLayoutRaw((prevRaw) => {
+      const prev = parseRightSidebarLayoutState(prevRaw, initialActiveTab);
+      const hasHarness = collectAllTabs(prev.root).includes("harness");
+
+      if (harnessPresence === "exists" && !hasHarness) {
+        // Add harness tab to the focused tabset without stealing focus.
+        return addTabToFocusedTabset(prev, "harness", false);
+      }
+
+      if (harnessPresence === "missing" && hasHarness) {
+        return removeTabEverywhere(prev, "harness");
+      }
+
+      return prev;
+    });
+  }, [harnessPresence, initialActiveTab, setLayoutRaw]);
   React.useEffect(() => {
     if (!isRightSidebarLayoutState(layoutRaw)) {
+      // If we ever deserialize an invalid layout (e.g. schema changes), reset to defaults.
       setLayoutRaw(layout);
     }
   }, [layout, layoutRaw, setLayoutRaw]);
@@ -748,9 +841,22 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             layoutRawRef.current,
             initialActiveTab
           );
-          const allTabs = collectAllTabsWithTabset(currentLayout.root);
+          const allTabs = collectAllTabsWithTabset(currentLayout.root).filter(({ tab }) => {
+            if (tab === "stats" && !statsTabEnabled) {
+              return false;
+            }
+            if (tab === "harness" && !harnessTabEnabled) {
+              return false;
+            }
+            return true;
+          });
+
           const target = allTabs[i];
-          if (target && isTerminalTab(target.tab)) {
+          if (!target) {
+            return;
+          }
+
+          if (isTerminalTab(target.tab)) {
             const sessionId = getTerminalSessionId(target.tab);
             if (sessionId) {
               setAutoFocusTerminalSession(sessionId);
@@ -761,7 +867,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
             _setFocusTrigger((prev) => prev + 1);
           }
 
-          setLayout((prev) => selectTabByIndex(prev, i));
+          setLayout((prev) =>
+            selectTabInTabset(setFocusedTabset(prev, target.tabsetId), target.tabsetId, target.tab)
+          );
           setCollapsed(false);
           return;
         }
@@ -770,7 +878,15 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout, _setFocusTrigger]);
+  }, [
+    harnessTabEnabled,
+    initialActiveTab,
+    setAutoFocusTerminalSession,
+    setCollapsed,
+    setLayout,
+    statsTabEnabled,
+    _setFocusTrigger,
+  ]);
 
   const usage = useWorkspaceUsage(workspaceId);
 
@@ -778,13 +894,22 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
   // Build map of tab → position for keybind tooltips
   const tabPositions = React.useMemo(() => {
-    const allTabs = collectAllTabsWithTabset(layout.root);
+    const allTabs = collectAllTabsWithTabset(layout.root).filter(({ tab }) => {
+      if (tab === "stats" && !statsTabEnabled) {
+        return false;
+      }
+      if (tab === "harness" && !harnessTabEnabled) {
+        return false;
+      }
+      return true;
+    });
+
     const positions = new Map<TabType, number>();
     allTabs.forEach(({ tab }, index) => {
       positions.set(tab, index);
     });
     return positions;
-  }, [layout.root]);
+  }, [harnessTabEnabled, layout.root, statsTabEnabled]);
 
   // Calculate session cost for tab display
   const sessionCost = React.useMemo(() => {
@@ -828,7 +953,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   });
 
   // API for opening terminal windows and managing sessions
-  const { api } = useAPI();
 
   // Keyboard shortcut for closing active tab (Ctrl/Cmd+W)
   // Works for terminal tabs and file tabs
@@ -1208,6 +1332,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         focusTrigger={focusTrigger}
         onReviewNote={onReviewNote}
         reviewStats={reviewStats}
+        harnessTabEnabled={harnessTabEnabled}
         statsTabEnabled={statsTabEnabled}
         sessionDuration={sessionDuration}
         onReviewStatsChange={setReviewStats}

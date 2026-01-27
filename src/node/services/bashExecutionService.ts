@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import type { ChildProcess } from "child_process";
 import { log } from "./log";
+import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getBashPath } from "@/node/utils/main/bashPath";
 
 /**
@@ -85,16 +86,9 @@ export class BashExecutionService {
       ...process.env,
       // Inject secrets as environment variables
       ...(secrets ?? {}),
-      // Prevent interactive editors from blocking bash execution
-      // Critical for git operations like rebase/commit that try to open editors
-      GIT_EDITOR: "true", // Git-specific editor (highest priority)
-      GIT_SEQUENCE_EDITOR: "true", // For interactive rebase sequences
-      EDITOR: "true", // General fallback for non-git commands
-      VISUAL: "true", // Another common editor environment variable
-      // Prevent git from prompting for credentials
-      // Critical for operations like fetch/pull that might try to authenticate
-      // Without this, git can hang waiting for user input if credentials aren't configured
-      GIT_TERMINAL_PROMPT: "0", // Disables git credential prompts
+
+      // Prevent interactive editors / credential prompts from blocking execution.
+      ...NON_INTERACTIVE_ENV_VARS,
     };
   }
 

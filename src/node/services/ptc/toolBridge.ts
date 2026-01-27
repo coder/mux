@@ -14,6 +14,7 @@ const EXCLUDED_TOOLS = new Set([
   "code_execution", // Prevent recursive sandbox creation
   "ask_user_question", // Requires UI interaction
   "propose_plan", // Mode-specific, call directly
+  "propose_harness", // UI-specific, call directly
   "todo_write", // UI-specific
   "todo_read", // UI-specific
   "status_set", // UI-specific

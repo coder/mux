@@ -47,8 +47,9 @@ function buildSystemPrompt(args: {
 const EXEC_PRESET: AgentPreset = {
   agentType: "exec",
   toolPolicy: [
-    // Only the main plan-mode session should call propose_plan.
+    // Only the main workspace session should call propose_* approval tools.
     { regex_match: "propose_plan", action: "disable" },
+    { regex_match: "propose_harness", action: "disable" },
   ],
   systemPrompt: buildSystemPrompt({
     agentLabel: "Exec",
@@ -59,6 +60,7 @@ const EXEC_PRESET: AgentPreset = {
     rules: [
       "- You MUST NOT spawn additional sub-agent tasks.",
       "- Do not call propose_plan.",
+      "- Do not call propose_harness.",
       "- Prefer small, reviewable diffs and run targeted checks when feasible.",
     ],
   }),

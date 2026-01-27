@@ -420,7 +420,7 @@ describe("file_read tool", () => {
         cwd: testDir,
         runtime: new LocalRuntime(testDir),
         runtimeTempDir: testDir,
-        planFileOnly: true,
+        mode: "plan",
         planFilePath: planPath,
       });
 

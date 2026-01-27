@@ -118,6 +118,10 @@ const mockWindow: BrowserWindow = {
     sessionUsageService: serviceContainer.sessionUsageService,
     signingService: serviceContainer.signingService,
     coderService: serviceContainer.coderService,
+    workspaceHarnessService: serviceContainer.workspaceHarnessService,
+    gateRunnerService: serviceContainer.gateRunnerService,
+    gitCheckpointService: serviceContainer.gitCheckpointService,
+    loopRunnerService: serviceContainer.loopRunnerService,
   };
 
   const mdnsAdvertiser = new MdnsAdvertiserService();

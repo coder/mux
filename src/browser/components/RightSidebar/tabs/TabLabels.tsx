@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { ExternalLink, FolderTree, Terminal as TerminalIcon, X } from "lucide-react";
+import { ExternalLink, FolderTree, ListChecks, Terminal as TerminalIcon, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { FileIcon } from "../../FileIcon";
 import { formatTabDuration, type ReviewStats } from "./registry";
@@ -68,6 +68,14 @@ export const ExplorerTabLabel: React.FC = () => (
   <span className="inline-flex items-center gap-1">
     <FolderTree className="h-3 w-3 shrink-0" />
     Explorer
+  </span>
+);
+
+/** Harness tab label with checklist icon */
+export const HarnessTabLabel: React.FC = () => (
+  <span className="inline-flex items-center gap-1">
+    <ListChecks className="h-3 w-3 shrink-0" />
+    Harness
   </span>
 );
 

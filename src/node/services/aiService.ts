@@ -1413,7 +1413,12 @@ export class AIService extends EventEmitter {
           runtime: earlyRuntime,
           runtimeTempDir: os.tmpdir(),
           secrets: {},
-          planFileOnly: agentIsPlanLike,
+          mode: effectiveMode === "plan" ? "plan" : "exec",
+          agentId: effectiveAgentId,
+          allowedEditPaths:
+            effectiveAgentId === "harness-init"
+              ? [".mux/harness/*.jsonc", ".mux/harness/**/*.jsonc"]
+              : undefined,
         },
         "", // Empty workspace ID for early stub config
         this.initStateManager,
@@ -1728,10 +1733,15 @@ export class AIService extends EventEmitter {
           ),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
-          // Plan agent configuration for plan file access.
-          // - read: plan file is readable in all agents (useful context)
-          // - write: enforced by file_edit_* tools (plan file is read-only outside plan agent)
-          planFileOnly: agentIsPlanLike,
+          // Plan/exec mode configuration for plan file access.
+          // - read: plan file is readable in all modes (useful context)
+          // - write: enforced by file_edit_* tools (plan file is read-only outside plan mode)
+          mode: effectiveMode === "plan" ? "plan" : "exec",
+          agentId: effectiveAgentId,
+          allowedEditPaths:
+            effectiveAgentId === "harness-init"
+              ? [".mux/harness/*.jsonc", ".mux/harness/**/*.jsonc"]
+              : undefined,
           emitChatEvent: (event) => {
             // Defensive: tools should only emit events for the workspace they belong to.
             if ("workspaceId" in event && event.workspaceId !== workspaceId) {
