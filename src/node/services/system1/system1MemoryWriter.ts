@@ -18,6 +18,7 @@ import {
   readInstructionSet,
   readInstructionSetFromRuntime,
 } from "@/node/utils/main/instructionFiles";
+import { log } from "@/node/services/log";
 import { linkAbortSignal } from "@/node/utils/abort";
 
 export type GenerateTextLike = (
@@ -35,6 +36,7 @@ export interface RunSystem1MemoryWriterParams {
 
   workspaceId: string;
   workspaceName: string;
+  triggerMessageId: string;
   projectPath: string;
   workspacePath: string;
 
@@ -54,6 +56,69 @@ interface MemoryWriterToolCall {
   input: unknown;
   output?: unknown;
   state: "input-available" | "output-available";
+}
+
+interface MemoryWriterToolExecutionEvent {
+  attemptIndex: number;
+  toolName: string;
+  toolCallId?: string;
+  input: unknown;
+  output?: unknown;
+  error?: string;
+  startedAt: number;
+  durationMs: number;
+}
+
+interface MemoryWriterAttemptDebug {
+  attemptIndex: number;
+  messages: unknown;
+  stepResults: unknown[];
+  toolExecutions: MemoryWriterToolExecutionEvent[];
+  finishReason?: string;
+  wrote: boolean;
+  aborted: boolean;
+  error?: string;
+}
+
+function sanitizeDebugFilenameComponent(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.-]+/g, "_");
+}
+
+function getToolCallIdFromExecuteOptions(options: unknown): string | undefined {
+  if (!options || typeof options !== "object") {
+    return undefined;
+  }
+
+  const record = options as Record<string, unknown>;
+  const toolCallId = record.toolCallId;
+  return typeof toolCallId === "string" && toolCallId.trim().length > 0 ? toolCallId : undefined;
+}
+
+function sanitizeStepResultForDebug(stepResult: unknown): unknown {
+  if (!stepResult || typeof stepResult !== "object") {
+    return stepResult;
+  }
+
+  const record = stepResult as Record<string, unknown>;
+  const sanitized: Record<string, unknown> = { ...record };
+
+  const request = record.request;
+  if (request && typeof request === "object") {
+    const requestRecord = request as Record<string, unknown>;
+    // Request bodies can be very large; keep the metadata but drop the body for readability.
+    const { body: _requestBody, ...rest } = requestRecord;
+    sanitized.request = rest;
+  }
+
+  const response = record.response;
+  if (response && typeof response === "object") {
+    const responseRecord = response as Record<string, unknown>;
+    // Response bodies can be very large; keep the metadata but drop the body for readability.
+    const { body: _responseBody, ...rest } = responseRecord;
+    sanitized.response = rest;
+  }
+
+  return sanitized;
 }
 
 interface MemoryWriterEvent {
@@ -131,6 +196,10 @@ export async function runSystem1WriteProjectMemories(
     "modelString must be a non-empty string"
   );
   assert(
+    typeof params.triggerMessageId === "string" && params.triggerMessageId.length > 0,
+    "triggerMessageId must be a non-empty string"
+  );
+  assert(
     typeof params.workspaceId === "string" && params.workspaceId.length > 0,
     "workspaceId is required"
   );
@@ -147,6 +216,8 @@ export async function runSystem1WriteProjectMemories(
     Number.isInteger(params.timeoutMs) && params.timeoutMs > 0,
     "timeoutMs must be a positive integer"
   );
+
+  const runStartedAt = Date.now();
 
   // Intentionally keep the System 1 prompt minimal to avoid consuming context budget.
   //
@@ -217,6 +288,10 @@ export async function runSystem1WriteProjectMemories(
   }, params.timeoutMs);
   timeout.unref?.();
 
+  const debugAttempts: MemoryWriterAttemptDebug[] = [];
+
+  let didWriteMemory = false;
+
   const generate = params.generateTextImpl ?? generateText;
 
   try {
@@ -232,8 +307,23 @@ export async function runSystem1WriteProjectMemories(
       ],
     ];
 
-    for (const messages of attemptMessages) {
+    for (let attemptIndex = 0; attemptIndex < attemptMessages.length; attemptIndex += 1) {
+      const messages = attemptMessages[attemptIndex];
       let wrote = false;
+
+      const stepResults: unknown[] = [];
+      const toolExecutions: MemoryWriterToolExecutionEvent[] = [];
+
+      const attemptDebug: MemoryWriterAttemptDebug = {
+        attemptIndex: attemptIndex + 1,
+        messages,
+        stepResults,
+        toolExecutions,
+        wrote: false,
+        aborted: false,
+      };
+
+      debugAttempts.push(attemptDebug);
 
       const toolConfig: ToolConfiguration = {
         cwd: params.workspacePath,
@@ -247,30 +337,71 @@ export async function runSystem1WriteProjectMemories(
         workspaceId: params.workspaceId,
       };
 
+      const wrapToolExecute = (toolName: string, tool: Tool) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const toolRecord = tool as any as Record<string, unknown>;
+        const originalExecute = toolRecord.execute;
+        if (typeof originalExecute !== "function") {
+          return;
+        }
+
+        toolRecord.execute = async (input: unknown, options: unknown) => {
+          const startedAt = Date.now();
+          const toolCallId = getToolCallIdFromExecuteOptions(options);
+
+          try {
+            const result = await (originalExecute as (a: unknown, b: unknown) => Promise<unknown>)(
+              input,
+              options
+            );
+
+            if (
+              toolName === "memory_write" &&
+              result &&
+              typeof result === "object" &&
+              "success" in result
+            ) {
+              const successValue = (result as { success?: unknown }).success;
+              if (successValue === true) {
+                wrote = true;
+              }
+            }
+
+            toolExecutions.push({
+              attemptIndex: attemptDebug.attemptIndex,
+              toolName,
+              toolCallId,
+              input,
+              output: result,
+              startedAt,
+              durationMs: Date.now() - startedAt,
+            });
+
+            return result;
+          } catch (error) {
+            toolExecutions.push({
+              attemptIndex: attemptDebug.attemptIndex,
+              toolName,
+              toolCallId,
+              input,
+              error: error instanceof Error ? error.message : String(error),
+              startedAt,
+              durationMs: Date.now() - startedAt,
+            });
+
+            throw error;
+          }
+        };
+      };
+
+      const memoryReadTool = createMemoryReadTool(toolConfig);
       const memoryWriteTool = createMemoryWriteTool(toolConfig);
 
-      // Track whether the model successfully persisted an update.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const memoryWriteToolRecord = memoryWriteTool as any as Record<string, unknown>;
-      const originalExecute = memoryWriteToolRecord.execute;
-      if (typeof originalExecute === "function") {
-        memoryWriteToolRecord.execute = async (args: unknown, options: unknown) => {
-          const result = await (originalExecute as (a: unknown, b: unknown) => Promise<unknown>)(
-            args,
-            options
-          );
-          if (result && typeof result === "object" && "success" in result) {
-            const successValue = (result as { success?: unknown }).success;
-            if (successValue === true) {
-              wrote = true;
-            }
-          }
-          return result;
-        };
-      }
+      wrapToolExecute("memory_read", memoryReadTool);
+      wrapToolExecute("memory_write", memoryWriteTool);
 
       const tools: Record<string, Tool> = {
-        memory_read: createMemoryReadTool(toolConfig),
+        memory_read: memoryReadTool,
         memory_write: memoryWriteTool,
       };
 
@@ -286,16 +417,27 @@ export async function runSystem1WriteProjectMemories(
           providerOptions: params.providerOptions as any,
           maxOutputTokens: 300,
           maxRetries: 0,
+          onStepFinish: (stepResult) => {
+            stepResults.push(sanitizeStepResultForDebug(stepResult));
+          },
         });
       } catch (error) {
         const errorName = error instanceof Error ? error.name : undefined;
         if (errorName === "AbortError") {
+          attemptDebug.aborted = true;
+          attemptDebug.error = timedOut ? "AbortError (timeout)" : "AbortError";
           return undefined;
         }
+
+        attemptDebug.error = error instanceof Error ? error.message : String(error);
         throw error;
       }
 
+      attemptDebug.finishReason = response.finishReason;
+
       if (wrote) {
+        didWriteMemory = true;
+        attemptDebug.wrote = true;
         return {
           finishReason: response.finishReason,
           timedOut,
@@ -307,5 +449,39 @@ export async function runSystem1WriteProjectMemories(
   } finally {
     clearTimeout(timeout);
     unlink();
+
+    if (log.isDebugMode() && (timedOut || !didWriteMemory)) {
+      const safeTriggerMessageId = sanitizeDebugFilenameComponent(params.triggerMessageId);
+      log.debug_obj(
+        `${params.workspaceId}/system1_memory_writer/${runStartedAt}_${safeTriggerMessageId}.json`,
+        {
+          schemaVersion: 1,
+          runStartedAt,
+          workspaceId: params.workspaceId,
+          workspaceName: params.workspaceName,
+          triggerMessageId: params.triggerMessageId,
+          modelString: params.modelString,
+          timeoutMs: params.timeoutMs,
+          timedOut,
+          didWriteMemory,
+          agentDiscoveryPath: params.agentDiscoveryPath,
+          projectPath: params.projectPath,
+          workspacePath: params.workspacePath,
+          memoryPath,
+          systemPrompt,
+          globalAgentsMd,
+          contextAgentsMd,
+          existingMemory,
+          eventsSummary: {
+            originalCount: events.length,
+            trimmedCount: trimmedEvents.length,
+            maxJsonChars: MAX_EVENTS_JSON_CHARS,
+          },
+          events: trimmedEvents,
+          userMessage,
+          attempts: debugAttempts,
+        }
+      );
+    }
   }
 }

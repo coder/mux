@@ -411,6 +411,7 @@ export class MemoryWriterPolicy {
           modelString: effectiveSystem1ModelString,
           providerOptions,
           workspaceId: ctx.workspaceId,
+          triggerMessageId: ctx.messageId,
           workspaceName: ctx.workspaceName,
           projectPath: ctx.projectPath,
           workspacePath,
