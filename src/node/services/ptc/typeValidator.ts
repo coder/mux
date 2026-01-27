@@ -159,7 +159,21 @@ function preprocessEmptyArrays(code: string): string {
   function visit(node: ts.Node) {
     if (ts.isArrayLiteralExpression(node) && node.elements.length === 0) {
       if (!hasTypeContext(node)) {
-        edits.push({ pos: node.end, text: " as any[]" });
+        const parent = node.parent;
+        const needsParens =
+          ts.isPropertyAccessExpression(parent) ||
+          ts.isPropertyAccessChain(parent) ||
+          ts.isElementAccessExpression(parent) ||
+          ts.isElementAccessChain(parent) ||
+          (ts.isCallExpression(parent) && parent.expression === node) ||
+          (ts.isCallChain(parent) && parent.expression === node);
+
+        if (needsParens) {
+          edits.push({ pos: node.getStart(sourceFile), text: "(" });
+          edits.push({ pos: node.end, text: " as any[])" });
+        } else {
+          edits.push({ pos: node.end, text: " as any[]" });
+        }
       }
     }
     ts.forEachChild(node, visit);

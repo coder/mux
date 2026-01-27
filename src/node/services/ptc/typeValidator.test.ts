@@ -572,6 +572,54 @@ mux.file_read({ path: "wrong" });`,
   });
 
   // ==========================================================================
+  // Empty array literal access patterns (parenthesized assertions)
+  // ==========================================================================
+
+  test("handles member access on empty array literal", () => {
+    const result = validateTypes(
+      `
+      const mapped = [].map((x) => x);
+      return mapped;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles index access on empty array literal", () => {
+    const result = validateTypes(
+      `
+      const first = [][0];
+      return first;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles optional chaining on empty array literal", () => {
+    const result = validateTypes(
+      `
+      const length = []?.length;
+      return length;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles property access on empty array literal", () => {
+    const result = validateTypes(
+      `
+      const length = [].length;
+      return length;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  // ==========================================================================
   // Patterns that should NOT be modified (already typed)
   // ==========================================================================
 
