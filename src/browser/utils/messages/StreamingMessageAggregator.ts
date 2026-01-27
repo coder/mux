@@ -51,6 +51,16 @@ const AgentStatusSchema = z.object({
   url: z.string().optional(),
 });
 
+/** Skill scope type for loaded skills tracking */
+type SkillScope = "project" | "global" | "built-in";
+
+/** Loaded skill info tracked by the aggregator */
+export interface LoadedSkill {
+  name: string;
+  description: string;
+  scope: SkillScope;
+}
+
 type AgentStatus = z.infer<typeof AgentStatusSchema>;
 const MAX_DISPLAYED_MESSAGES = 128;
 
@@ -205,6 +215,13 @@ export class StreamingMessageAggregator {
   // Current agent status (updated when status_set is called)
   // Unlike todos, this persists after stream completion to show last activity
   private agentStatus: AgentStatus | undefined = undefined;
+
+  // Loaded skills (updated when agent_skill_read succeeds)
+  // Persists after stream completion (like agentStatus) to show which skills were loaded
+  // Keyed by skill name to avoid duplicates
+  private loadedSkills = new Map<string, LoadedSkill>();
+  // Cached array for getLoadedSkills() to preserve reference identity for memoization
+  private loadedSkillsCache: LoadedSkill[] = [];
 
   // Last URL set via status_set - kept in memory to reuse when later calls omit url
   private lastStatusUrl: string | undefined = undefined;
@@ -478,6 +495,16 @@ export class StreamingMessageAggregator {
   }
 
   /**
+   * Get the list of loaded skills for this workspace.
+   * Updated whenever agent_skill_read succeeds.
+   * Persists after stream completion (like agentStatus).
+   * Returns a stable array reference for memoization (only changes when skills change).
+   */
+  getLoadedSkills(): LoadedSkill[] {
+    return this.loadedSkillsCache;
+  }
+
+  /**
    * Check if there's an executing ask_user_question tool awaiting user input.
    * Used to show "Awaiting your input" instead of "streaming..." in the UI.
    */
@@ -700,6 +727,8 @@ export class StreamingMessageAggregator {
     this.messageVersions.clear();
     this.deltaHistory.clear();
     this.activeStreamUsage.clear();
+    this.loadedSkills.clear();
+    this.loadedSkillsCache = [];
 
     // Add all messages to the map
     for (const message of messages) {
@@ -1497,6 +1526,30 @@ export class StreamingMessageAggregator {
 
       if (notifiedVia === "browser") {
         this.sendBrowserNotification(result.title, result.message, workspaceId);
+      }
+    }
+
+    // Track loaded skills when agent_skill_read succeeds
+    // Skills persist: update both during streaming and on historical reload
+    if (toolName === "agent_skill_read" && hasSuccessResult(output)) {
+      const result = output as {
+        success: true;
+        skill: {
+          scope: SkillScope;
+          directoryName: string;
+          frontmatter: { name: string; description: string };
+        };
+      };
+      const skill = result.skill;
+      const prevSize = this.loadedSkills.size;
+      this.loadedSkills.set(skill.directoryName, {
+        name: skill.frontmatter.name,
+        description: skill.frontmatter.description,
+        scope: skill.scope,
+      });
+      // Update cache only when a new skill is added (not on duplicate)
+      if (this.loadedSkills.size !== prevSize) {
+        this.loadedSkillsCache = Array.from(this.loadedSkills.values());
       }
     }
 

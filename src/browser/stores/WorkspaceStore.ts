@@ -6,7 +6,10 @@ import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { TodoItem } from "@/common/types/tools";
 import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/applyWorkspaceChatEventToAggregator";
-import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
+import {
+  StreamingMessageAggregator,
+  type LoadedSkill,
+} from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getRetryStateKey } from "@/common/constants/storage";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
@@ -58,6 +61,7 @@ export interface WorkspaceState {
   currentModel: string | null;
   recencyTimestamp: number | null;
   todos: TodoItem[];
+  loadedSkills: LoadedSkill[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   lastAbortReason: StreamAbortReasonSnapshot | null;
   pendingStreamStartTime: number | null;
@@ -158,6 +162,7 @@ export interface WorkspaceSidebarState {
   awaitingUserQuestion: boolean;
   currentModel: string | null;
   recencyTimestamp: number | null;
+  loadedSkills: LoadedSkill[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
 }
 
@@ -939,6 +944,7 @@ export class WorkspaceStore {
         currentModel: aggregator.getCurrentModel() ?? null,
         recencyTimestamp: aggregator.getRecencyTimestamp(),
         todos: aggregator.getCurrentTodos(),
+        loadedSkills: aggregator.getLoadedSkills(),
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime,
@@ -982,6 +988,7 @@ export class WorkspaceStore {
       cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
       cached.currentModel === fullState.currentModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
+      cached.loadedSkills === fullState.loadedSkills &&
       cached.agentStatus === fullState.agentStatus
     ) {
       // Even if we re-use the cached object, mark it as derived from the current
@@ -997,6 +1004,7 @@ export class WorkspaceStore {
       awaitingUserQuestion: fullState.awaitingUserQuestion,
       currentModel: fullState.currentModel,
       recencyTimestamp: fullState.recencyTimestamp,
+      loadedSkills: fullState.loadedSkills,
       agentStatus: fullState.agentStatus,
     };
     this.sidebarStateCache.set(workspaceId, newState);

@@ -32,6 +32,7 @@ import {
 } from "@/browser/hooks/useDesktopTitlebar";
 import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
+import { SkillIndicator } from "./SkillIndicator";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -61,7 +62,8 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const openInEditor = useOpenInEditor();
   const isMuxChat = workspaceId === MUX_CHAT_WORKSPACE_ID;
   const gitStatus = useGitStatus(workspaceId);
-  const { canInterrupt, isStarting, awaitingUserQuestion } = useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills } =
+    useWorkspaceSidebarState(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const { startSequence: startTutorial } = useTutorial();
   const [editorError, setEditorError] = useState<string | null>(null);
@@ -173,7 +175,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             aria-label="Open sidebar menu"
             className="mobile-menu-btn text-muted hover:text-foreground hidden h-6 w-6 shrink-0"
           >
-            <Menu className="h-4 w-4" />
+            <Menu className="h-3.5 w-3.5" />
           </Button>
         )}
         {!isMuxChat && (
@@ -218,9 +220,9 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
                   aria-pressed={notifyOnResponse}
                 >
                   {notifyOnResponse ? (
-                    <Bell className="h-4 w-4" />
+                    <Bell className="h-3.5 w-3.5" />
                   ) : (
-                    <BellOff className="h-4 w-4" />
+                    <BellOff className="h-3.5 w-3.5" />
                   )}
                 </button>
               </PopoverTrigger>
@@ -304,6 +306,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </div>
           </PopoverContent>
         </Popover>
+        <SkillIndicator skills={loadedSkills} />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -314,7 +317,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               className="text-muted hover:text-foreground h-6 w-6 shrink-0"
               data-testid="workspace-mcp-button"
             >
-              <Server className="h-4 w-4" />
+              <Server className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center">
@@ -329,7 +332,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
               onClick={() => void handleOpenInEditor()}
               className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
             >
-              <Pencil className="h-4 w-4" />
+              <Pencil className="h-3.5 w-3.5" />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom" align="center">

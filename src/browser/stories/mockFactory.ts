@@ -408,6 +408,40 @@ export function createPendingTool(toolCallId: string, toolName: string, args: ob
 }
 
 /** Create a generic tool call with custom name, args, and output - falls back to GenericToolCall */
+
+/** Create an agent_skill_read tool call */
+export function createAgentSkillReadTool(
+  toolCallId: string,
+  skillName: string,
+  opts: {
+    description?: string;
+    scope?: "project" | "global" | "built-in";
+    body?: string;
+  } = {}
+): MuxPart {
+  const scope = opts.scope ?? "project";
+  const description = opts.description ?? `${skillName} skill description`;
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "agent_skill_read",
+    state: "output-available",
+    input: { name: skillName },
+    output: {
+      success: true,
+      skill: {
+        scope,
+        directoryName: skillName,
+        frontmatter: {
+          name: skillName,
+          description,
+        },
+        body: opts.body ?? `# ${skillName}\n\nSkill content here.`,
+      },
+    },
+  };
+}
+
 export function createGenericTool(
   toolCallId: string,
   toolName: string,
