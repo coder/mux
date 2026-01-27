@@ -21,7 +21,11 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { RUNTIME_MODE, parseRuntimeModeAndHost } from "@/common/types/runtime";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { WORKSPACE_ONLY_COMMANDS } from "@/constants/slashCommands";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import {
+  WORKSPACE_ONLY_COMMAND_KEYS,
+  WORKSPACE_ONLY_COMMAND_TYPES,
+} from "@/constants/slashCommands";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
 import {
@@ -41,6 +45,7 @@ import {
   WORDS_TO_TOKENS_RATIO,
   buildCompactionPrompt,
 } from "@/common/constants/ui";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { openInEditor } from "@/browser/utils/openInEditor";
 
 // ============================================================================
@@ -53,6 +58,8 @@ import {
 } from "@/browser/components/ChatInputToasts";
 import { trackCommandUsed, trackProviderConfigured } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
+
+const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((model) => model.id));
 
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
@@ -235,8 +242,19 @@ export async function processSlashCommand(
       return { clearInput: false, toastShown: true };
     }
 
-    const provider = modelString.slice(0, separatorIndex);
-    const modelId = modelString.slice(separatorIndex + 1);
+    const canonicalModel = migrateGatewayModel(modelString).trim();
+    const canonicalSeparatorIndex = canonicalModel.indexOf(":");
+    if (canonicalSeparatorIndex <= 0 || canonicalSeparatorIndex === canonicalModel.length - 1) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: `Invalid model format: expected "provider:model"`,
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    const provider = canonicalModel.slice(0, canonicalSeparatorIndex);
+    const modelId = canonicalModel.slice(canonicalSeparatorIndex + 1);
 
     try {
       // Validate provider is supported
@@ -250,8 +268,8 @@ export async function processSlashCommand(
         return { clearInput: false, toastShown: true };
       }
 
-      // Check if model needs to be added to provider's custom models
-      if (activeClient) {
+      // Align with settings behavior: only persist non-built-in, non-gateway models.
+      if (activeClient && !BUILT_IN_MODEL_SET.has(canonicalModel) && provider !== "mux-gateway") {
         try {
           const config = await activeClient.providers.getConfig();
           const existingModels = config[provider]?.models ?? [];
@@ -416,18 +434,35 @@ export async function processSlashCommand(
   }
 
   // 2. Workspace Commands
-  const isWorkspaceCommand = WORKSPACE_ONLY_COMMANDS.has(parsed.type);
-
-  if (isWorkspaceCommand) {
-    if (variant !== "workspace") {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: "Command not available during workspace creation",
-      });
-      return { clearInput: false, toastShown: true };
+  // Use command keys for help/invalid variants so creation mode doesn't surface workspace-only help text.
+  const workspaceOnlyKey = (() => {
+    switch (parsed.type) {
+      case "command-missing-args":
+      case "command-invalid-args":
+      case "unknown-command":
+        return parsed.command;
+      case "fork-help":
+        return "fork";
+      default:
+        return null;
     }
+  })();
 
+  const isWorkspaceCommandType = WORKSPACE_ONLY_COMMAND_TYPES.has(parsed.type);
+  const isWorkspaceOnlyCommand =
+    isWorkspaceCommandType ||
+    (workspaceOnlyKey ? WORKSPACE_ONLY_COMMAND_KEYS.has(workspaceOnlyKey) : false);
+
+  if (isWorkspaceOnlyCommand && variant !== "workspace") {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Command not available during workspace creation",
+    });
+    return { clearInput: false, toastShown: true };
+  }
+
+  if (isWorkspaceCommandType) {
     // Dispatch workspace commands
     switch (parsed.type) {
       case "clear":

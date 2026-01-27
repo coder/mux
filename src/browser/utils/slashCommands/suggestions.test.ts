@@ -7,6 +7,18 @@ describe("getSlashCommandSuggestions", () => {
     expect(getSlashCommandSuggestions("")).toEqual([]);
   });
 
+  it("filters workspace-only commands in creation mode", () => {
+    const suggestions = getSlashCommandSuggestions("/", { variant: "creation" });
+    const labels = suggestions.map((s) => s.display);
+
+    expect(labels).not.toContain("/clear");
+    expect(labels).not.toContain("/plan");
+  });
+
+  it("omits workspace-only subcommands in creation mode", () => {
+    const suggestions = getSlashCommandSuggestions("/plan ", { variant: "creation" });
+    expect(suggestions).toEqual([]);
+  });
   it("suggests top level commands when starting with slash", () => {
     const suggestions = getSlashCommandSuggestions("/");
     const labels = suggestions.map((s) => s.display);
