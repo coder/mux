@@ -1,9 +1,10 @@
 import React from "react";
+import { Check } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SkillIcon } from "@/browser/components/icons/SkillIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import type { LoadedSkill } from "@/browser/utils/messages/StreamingMessageAggregator";
-import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { AgentSkillDescriptor, AgentSkillScope } from "@/common/types/agentSkill";
 
 interface SkillIndicatorProps {
   /** Skills that have been loaded in the current session */
@@ -13,10 +14,17 @@ interface SkillIndicatorProps {
   className?: string;
 }
 
+/** Scope display order and labels */
+const SCOPE_CONFIG: Array<{ scope: AgentSkillScope; label: string }> = [
+  { scope: "project", label: "Project" },
+  { scope: "global", label: "Global" },
+  { scope: "built-in", label: "Built-in" },
+];
+
 /**
  * Indicator showing loaded and available skills in a workspace.
  * Displays in the WorkspaceHeader to the right of the notification bell.
- * Hover to see the list of loaded and unloaded skills.
+ * Hover to see skills organized by scope (Project, Global, Built-in).
  */
 export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
   const loadedCount = props.loadedSkills.length;
@@ -30,8 +38,13 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
   // Build set of loaded skill names for quick lookup
   const loadedSkillNames = new Set(props.loadedSkills.map((s) => s.name));
 
-  // Separate available skills into loaded and unloaded
-  const unloadedSkills = props.availableSkills.filter((s) => !loadedSkillNames.has(s.name));
+  // Group skills by scope
+  const skillsByScope = new Map<AgentSkillScope, AgentSkillDescriptor[]>();
+  for (const skill of props.availableSkills) {
+    const existing = skillsByScope.get(skill.scope) ?? [];
+    existing.push(skill);
+    skillsByScope.set(skill.scope, existing);
+  }
 
   return (
     <Tooltip>
@@ -59,47 +72,44 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
       </TooltipTrigger>
       <TooltipContent side="bottom" align="end" className="max-w-[300px]">
         <div className="flex flex-col gap-2">
-          {/* Loaded skills section */}
-          {props.loadedSkills.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <div className="text-xs font-medium">Loaded ({props.loadedSkills.length})</div>
-              <div className="flex flex-col gap-1">
-                {props.loadedSkills.map((skill) => (
-                  <div key={skill.name} className="flex flex-col">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-foreground text-xs font-medium">{skill.name}</span>
-                      <span className="text-muted-foreground text-[10px]">({skill.scope})</span>
-                    </div>
-                    <span className="text-muted-foreground line-clamp-2 text-[11px]">
-                      {skill.description}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {SCOPE_CONFIG.map(({ scope, label }) => {
+            const skills = skillsByScope.get(scope);
+            if (!skills || skills.length === 0) return null;
 
-          {/* Unloaded skills section */}
-          {unloadedSkills.length > 0 && (
-            <div className="flex flex-col gap-1">
-              <div className="text-muted-foreground text-xs font-medium">
-                Available ({unloadedSkills.length})
+            return (
+              <div key={scope} className="flex flex-col gap-1">
+                <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
+                  {label}
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  {skills.map((skill) => {
+                    const isLoaded = loadedSkillNames.has(skill.name);
+                    return (
+                      <div key={skill.name} className="flex flex-col">
+                        <span
+                          className={cn(
+                            "flex items-center gap-1 text-xs",
+                            isLoaded ? "font-medium text-foreground" : "text-muted-foreground/60"
+                          )}
+                        >
+                          {skill.name}
+                          {isLoaded && <Check className="text-success h-3 w-3" />}
+                        </span>
+                        <span
+                          className={cn(
+                            "line-clamp-2 text-[11px]",
+                            isLoaded ? "text-muted-foreground" : "text-muted-foreground/40"
+                          )}
+                        >
+                          {skill.description}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="flex flex-col gap-1">
-                {unloadedSkills.map((skill) => (
-                  <div key={skill.name} className="flex flex-col">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground text-xs">{skill.name}</span>
-                      <span className="text-muted-foreground/70 text-[10px]">({skill.scope})</span>
-                    </div>
-                    <span className="text-muted-foreground/70 line-clamp-2 text-[11px]">
-                      {skill.description}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+            );
+          })}
         </div>
       </TooltipContent>
     </Tooltip>

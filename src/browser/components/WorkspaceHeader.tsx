@@ -145,7 +145,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
   // Fetch available skills for this project
   useEffect(() => {
-    if (!api || isMuxChat) {
+    if (!api) {
       setAvailableSkills([]);
       return;
     }
@@ -171,7 +171,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [api, projectPath, isMuxChat]);
+  }, [api, projectPath]);
 
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath

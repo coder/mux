@@ -8,6 +8,7 @@ import type {
   AgentDefinitionDescriptor,
   AgentDefinitionPackage,
 } from "@/common/types/agentDefinition";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
 import {
@@ -176,11 +177,7 @@ export interface MockORPCClientOptions {
   /** Existing Coder workspaces */
   coderWorkspaces?: CoderWorkspace[];
   /** Available agent skills (descriptors) */
-  agentSkills?: Array<{
-    name: string;
-    description: string;
-    scope: "project" | "global" | "built-in";
-  }>;
+  agentSkills?: AgentSkillDescriptor[];
 }
 
 interface MockBackgroundProcess {

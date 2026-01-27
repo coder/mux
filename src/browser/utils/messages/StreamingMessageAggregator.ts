@@ -34,6 +34,7 @@ import type {
   DynamicToolPartPending,
   DynamicToolPartAvailable,
 } from "@/common/types/toolParts";
+import type { AgentSkillDescriptor, AgentSkillScope } from "@/common/types/agentSkill";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { z } from "zod";
@@ -51,15 +52,8 @@ const AgentStatusSchema = z.object({
   url: z.string().optional(),
 });
 
-/** Skill scope type for loaded skills tracking */
-type SkillScope = "project" | "global" | "built-in";
-
-/** Loaded skill info tracked by the aggregator */
-export interface LoadedSkill {
-  name: string;
-  description: string;
-  scope: SkillScope;
-}
+/** Re-export for consumers that need the loaded skill type */
+export type LoadedSkill = AgentSkillDescriptor;
 
 type AgentStatus = z.infer<typeof AgentStatusSchema>;
 const MAX_DISPLAYED_MESSAGES = 128;
@@ -1535,7 +1529,7 @@ export class StreamingMessageAggregator {
       const result = output as {
         success: true;
         skill: {
-          scope: SkillScope;
+          scope: AgentSkillScope;
           directoryName: string;
           frontmatter: { name: string; description: string };
         };

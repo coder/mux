@@ -5,6 +5,7 @@
  * making each story file more focused on the specific visual state being tested.
  */
 
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
   WorkspaceChatMessage,
@@ -312,11 +313,7 @@ export interface SimpleChatSetupOptions {
     script: string
   ) => Promise<{ success: true; output: string; exitCode: number; wall_duration_ms: number }>;
   /** Available agent skills for the project */
-  agentSkills?: Array<{
-    name: string;
-    description: string;
-    scope: "project" | "global" | "built-in";
-  }>;
+  agentSkills?: AgentSkillDescriptor[];
 }
 
 /**

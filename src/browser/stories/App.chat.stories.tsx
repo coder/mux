@@ -83,8 +83,10 @@ export const WithLoadedSkills: AppStory = {
               }
             ),
           ],
-          // Available skills: 2 loaded (tests, react-effects) + 2 unloaded (pull-requests, init)
+          // Available skills organized by scope: Project (3), Global (1), Built-in (1)
+          // Loaded: tests, react-effects
           agentSkills: [
+            // Project skills
             {
               name: "tests",
               description: "Testing doctrine, commands, and test layout conventions",
@@ -100,6 +102,13 @@ export const WithLoadedSkills: AppStory = {
               description: "Guidelines for creating and managing Pull Requests",
               scope: "project",
             },
+            // Global skill
+            {
+              name: "my-company-style",
+              description: "Company-wide coding style and conventions",
+              scope: "global",
+            },
+            // Built-in skill
             {
               name: "init",
               description: "Bootstrap an AGENTS.md file in a new or existing project",
