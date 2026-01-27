@@ -8,6 +8,7 @@ import {
   DialogFooter,
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { Input } from "@/browser/components/ui/input";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import { DirectoryTree } from "./DirectoryTree";
@@ -36,6 +37,8 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
   // Track if we can offer to create the folder (path doesn't exist)
   const [canCreateFolder, setCanCreateFolder] = useState(false);
   const [pathInput, setPathInput] = useState(initialPath || "");
+  // Default off (component stays mounted between opens).
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const treeRef = useRef<HTMLDivElement>(null);
 
@@ -85,6 +88,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setPathInput(initialPath || "");
+    setShowHiddenFiles(false);
     void loadDirectory(initialPath || ".");
   }, [isOpen, initialPath, loadDirectory]);
 
@@ -207,6 +211,7 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
   const entries =
     root?.children
       .filter((child) => child.isDirectory)
+      .filter((child) => showHiddenFiles || !child.name.startsWith("."))
       .map((child) => ({ name: child.name, path: child.path })) ?? [];
 
   const shortcutLabel = isMac() ? "⌘O" : formatKeybind(OPEN_KEYBIND);
@@ -229,6 +234,53 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
             placeholder="Enter path..."
             className="bg-modal-bg border-border-medium h-9 font-mono text-sm"
           />
+        </div>
+        <div className="mb-3 flex items-center">
+          <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs">
+            <Checkbox
+              checked={showHiddenFiles}
+              onCheckedChange={(checked) => {
+                const nextShowHiddenFiles = checked === true;
+                setShowHiddenFiles(nextShowHiddenFiles);
+
+                // Preserve selection when possible. If hidden entries are inserted/removed ahead
+                // of the current selection, keeping the same raw index can jump to the wrong row.
+                setSelectedIndex((prev) => {
+                  if (!root) return 0;
+
+                  const hasParentEntry = Boolean(root.path);
+                  if (hasParentEntry && prev === 0) return 0;
+
+                  const previousVisibleEntries = root.children
+                    .filter((child) => child.isDirectory)
+                    .filter((child) => showHiddenFiles || !child.name.startsWith("."));
+
+                  const selectedEntryIndex = hasParentEntry ? prev - 1 : prev;
+                  const selectedEntryPath = previousVisibleEntries[selectedEntryIndex]?.path;
+
+                  const nextVisibleEntries = root.children
+                    .filter((child) => child.isDirectory)
+                    .filter((child) => nextShowHiddenFiles || !child.name.startsWith("."));
+
+                  if (selectedEntryPath) {
+                    const nextEntryIndex = nextVisibleEntries.findIndex(
+                      (child) => child.path === selectedEntryPath
+                    );
+                    if (nextEntryIndex !== -1) {
+                      return hasParentEntry ? nextEntryIndex + 1 : nextEntryIndex;
+                    }
+                  }
+
+                  // Fallback: clamp to the new bounds.
+                  const maxIndex = hasParentEntry
+                    ? nextVisibleEntries.length
+                    : Math.max(nextVisibleEntries.length - 1, 0);
+                  return Math.max(0, Math.min(prev, maxIndex));
+                });
+              }}
+            />
+            Show hidden files
+          </label>
         </div>
         {error && (
           <div className="mb-3 flex items-center gap-2 text-xs">
