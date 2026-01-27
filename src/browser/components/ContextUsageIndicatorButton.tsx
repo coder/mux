@@ -1,7 +1,6 @@
 import React from "react";
 import { Hourglass } from "lucide-react";
-import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { TokenMeter } from "./RightSidebar/TokenMeter";
 import {
   HorizontalThresholdSlider,
@@ -175,8 +174,6 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
   autoCompaction,
   idleCompaction,
 }) => {
-  const [popoverOpen, setPopoverOpen] = React.useState(false);
-
   const isAutoCompactionEnabled = autoCompaction && autoCompaction.threshold < 100;
   const idleHours = idleCompaction?.hours;
   const isIdleCompactionEnabled = idleHours !== null && idleHours !== undefined;
@@ -192,61 +189,50 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
     : `Context usage: ${formatTokens(data.totalTokens)} (unknown limit)`;
 
   return (
-    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-      <Tooltip {...(popoverOpen ? { open: false } : {})}>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <button
-              aria-label={ariaLabel}
-              className="hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1"
-              type="button"
+    <HoverCard openDelay={200} closeDelay={300}>
+      <HoverCardTrigger asChild>
+        <button
+          aria-label={ariaLabel}
+          className="hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1"
+          type="button"
+        >
+          {/* Idle compaction badge - shows hourglass with hours when enabled */}
+          {isIdleCompactionEnabled && (
+            <div
+              className="text-muted flex items-center gap-0.5 text-[10px]"
+              title={`Auto-compact after ${idleHours}h idle`}
             >
-              {/* Idle compaction badge - shows hourglass with hours when enabled */}
-              {isIdleCompactionEnabled && (
-                <div
-                  className="text-muted flex items-center gap-0.5 text-[10px]"
-                  title={`Auto-compact after ${idleHours}h idle`}
-                >
-                  <Hourglass className="h-3 w-3" />
-                  <span>{idleHours}h</span>
-                </div>
+              <Hourglass className="h-3 w-3" />
+              <span>{idleHours}h</span>
+            </div>
+          )}
+          {/* Show meter when there's usage, or show empty placeholder for settings access */}
+          {data.totalTokens > 0 ? (
+            <div className="relative h-2 w-20">
+              <TokenMeter
+                segments={data.segments}
+                orientation="horizontal"
+                className="h-2"
+                trackClassName="bg-dark"
+              />
+              {isAutoCompactionEnabled && (
+                <CompactThresholdIndicator threshold={autoCompaction.threshold} />
               )}
-              {/* Show meter when there's usage, or show empty placeholder for settings access */}
-              {data.totalTokens > 0 ? (
-                <div className="relative h-2 w-20">
-                  <TokenMeter
-                    segments={data.segments}
-                    orientation="horizontal"
-                    className="h-2"
-                    trackClassName="bg-dark"
-                  />
-                  {isAutoCompactionEnabled && (
-                    <CompactThresholdIndicator threshold={autoCompaction.threshold} />
-                  )}
-                </div>
-              ) : (
-                /* Empty meter placeholder - allows access to settings with no usage */
-                <div className="bg-dark relative h-2 w-20 rounded-full" />
-              )}
-            </button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="end" className="w-80">
-          <AutoCompactSettings
-            data={data}
-            usageConfig={autoCompaction}
-            idleConfig={idleCompaction}
-          />
-        </TooltipContent>
-      </Tooltip>
+            </div>
+          ) : (
+            /* Empty meter placeholder - allows access to settings with no usage */
+            <div className="bg-dark relative h-2 w-20 rounded-full" />
+          )}
+        </button>
+      </HoverCardTrigger>
 
-      <PopoverContent
+      <HoverCardContent
         side="bottom"
         align="end"
         className="bg-modal-bg border-separator-light w-80 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
       >
         <AutoCompactSettings data={data} usageConfig={autoCompaction} idleConfig={idleCompaction} />
-      </PopoverContent>
-    </Popover>
+      </HoverCardContent>
+    </HoverCard>
   );
 };
