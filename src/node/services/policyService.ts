@@ -133,10 +133,16 @@ export class PolicyService {
   }
 
   isEnforced(): boolean {
-    return this.status.state === "enforced";
+    // "blocked" should behave as deny-all enforcement so callers can't bypass the
+    // UI block by calling backend endpoints directly (CLI/headless/orpc).
+    return this.status.state !== "disabled";
   }
 
   isProviderAllowed(provider: ProviderName): boolean {
+    if (this.status.state === "blocked") {
+      return false;
+    }
+
     const access = this.effectivePolicy?.providerAccess;
     if (access == null) {
       return true;
@@ -150,6 +156,10 @@ export class PolicyService {
   }
 
   isModelAllowed(provider: ProviderName, modelId: string): boolean {
+    if (this.status.state === "blocked") {
+      return false;
+    }
+
     const access = this.effectivePolicy?.providerAccess;
     if (access == null) {
       return true;
@@ -169,6 +179,10 @@ export class PolicyService {
   }
 
   isMcpTransportAllowed(transport: MCPServerTransport): boolean {
+    if (this.status.state === "blocked") {
+      return false;
+    }
+
     const policy = this.effectivePolicy;
     if (!policy) {
       return true;
@@ -184,6 +198,10 @@ export class PolicyService {
   }
 
   isRuntimeAllowed(runtimeConfig: RuntimeConfig | undefined): boolean {
+    if (this.status.state === "blocked") {
+      return false;
+    }
+
     const runtimes = this.effectivePolicy?.runtimes;
     if (runtimes == null) {
       return true;

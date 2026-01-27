@@ -1575,8 +1575,14 @@ export class WorkspaceService extends EventEmitter {
       const sourceMetadata = sourceMetadataResult.data;
       const foundProjectPath = sourceMetadata.projectPath;
       const projectName = sourceMetadata.projectName;
-
       const sourceRuntimeConfig = sourceMetadata.runtimeConfig;
+
+      // Policy: do not allow creating new workspaces (including via fork) with a disallowed runtime.
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isRuntimeAllowed(sourceRuntimeConfig)) {
+          return Err("Forking this workspace is not allowed by policy (runtime disabled)");
+        }
+      }
 
       // Block fork for remote runtimes - creates broken workspaces
       // Sub-agent task spawning uses a different code path (TaskService.create)
