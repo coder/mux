@@ -118,12 +118,22 @@ export class MemoryWriterPolicy {
   async onAssistantStreamEnd(ctx: MemoryWriterStreamContext): Promise<void> {
     assert(ctx, "MemoryWriterPolicy.onAssistantStreamEnd: ctx is required");
 
+    const workspaceLog = log.withFields({
+      workspaceId: ctx.workspaceId,
+      workspaceName: ctx.workspaceName,
+      messageId: ctx.messageId,
+    });
+
     if (ctx.system1Enabled !== true) {
+      workspaceLog.debug("[system1][memory] Skipping memory writer scheduling (System 1 disabled)");
       return;
     }
 
     // Avoid polluting project memories with child task workspaces.
     if (ctx.parentWorkspaceId) {
+      workspaceLog.debug("[system1][memory] Skipping memory writer scheduling (child workspace)", {
+        parentWorkspaceId: ctx.parentWorkspaceId,
+      });
       return;
     }
 
@@ -133,6 +143,9 @@ export class MemoryWriterPolicy {
       SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.default;
 
     if (!Number.isInteger(interval) || interval <= 0) {
+      workspaceLog.debug("[system1][memory] Skipping memory writer scheduling (invalid interval)", {
+        interval,
+      });
       return;
     }
 
@@ -409,10 +422,13 @@ export class MemoryWriterPolicy {
         });
 
         if (!result) {
-          workspaceLog.debug("[system1][memory] Memory writer produced no output", {
-            timedOut,
-            system1Model: effectiveSystem1ModelString,
-          });
+          workspaceLog.debug(
+            "[system1][memory] Memory writer exited without updating memory (no memory_write call)",
+            {
+              timedOut,
+              system1Model: effectiveSystem1ModelString,
+            }
+          );
           return;
         }
 
