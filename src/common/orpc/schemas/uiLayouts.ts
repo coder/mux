@@ -5,8 +5,11 @@ import type {
 import { z } from "zod";
 
 export const KeybindSchema = z
+  // Keep in sync with the Keybind type (including allowShift). Strict schemas will
+  // otherwise reject normalized config objects that include optional fields.
   .object({
     key: z.string().min(1),
+    allowShift: z.boolean().optional(),
     ctrl: z.boolean().optional(),
     shift: z.boolean().optional(),
     alt: z.boolean().optional(),

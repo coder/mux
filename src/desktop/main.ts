@@ -18,6 +18,7 @@ import { randomBytes } from "crypto";
 import { RPCHandler } from "@orpc/server/message-port";
 import { onError } from "@orpc/server";
 import { router } from "@/node/orpc/router";
+import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import "disposablestack/auto";
 
@@ -343,8 +344,9 @@ async function loadServices(): Promise<void> {
 
   const orpcHandler = new RPCHandler(orpcRouter, {
     interceptors: [
-      onError((error) => {
-        console.error("ORPC Error:", error);
+      onError((error, options) => {
+        const formatted = formatOrpcError(error, options);
+        console.error(formatted.message);
       }),
     ],
   });

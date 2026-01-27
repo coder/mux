@@ -21,6 +21,7 @@ import { router, type AppRouter } from "@/node/orpc/router";
 import type { ORPCContext } from "@/node/orpc/context";
 import { extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
+import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
@@ -41,7 +42,7 @@ export interface OrpcServerOptions {
   /** Directory to serve static files from (default: dist/ relative to dist/node/orpc/) */
   staticDir?: string;
   /** Custom error handler for oRPC errors */
-  onOrpcError?: (error: unknown) => void;
+  onOrpcError?: (error: unknown, options: unknown) => void;
   /** Optional bearer token for HTTP auth (used if router not provided) */
   authToken?: string;
   /** Optional pre-created router (if not provided, creates router(authToken)) */
@@ -132,7 +133,7 @@ export async function createOrpcServer({
   serveStatic = false,
   // From dist/node/orpc/, go up 2 levels to reach dist/ where index.html lives
   staticDir = path.join(__dirname, "../.."),
-  onOrpcError = (error) => {
+  onOrpcError = (error, options) => {
     // Auth failures are expected in browser mode while the user enters the token.
     // Avoid spamming error logs with stack traces on every unauthenticated request.
     if (error instanceof ORPCError && error.code === "UNAUTHORIZED") {
@@ -140,7 +141,13 @@ export async function createOrpcServer({
       return;
     }
 
-    log.error("ORPC Error:", error);
+    const formatted = formatOrpcError(error, options);
+    log.error(formatted.message);
+
+    if (log.isDebugMode()) {
+      const suffix = Math.random().toString(16).slice(2);
+      log.debug_obj(`orpc/${Date.now()}_${suffix}.json`, formatted.debugDump);
+    }
   },
   router: existingRouter,
 }: OrpcServerOptions): Promise<OrpcServer> {
