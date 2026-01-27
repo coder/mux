@@ -9,12 +9,14 @@ import {
   Bot,
   Keyboard,
   Layout,
+  BrainCircuit,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
 import { TasksSection } from "./sections/TasksSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
+import { System1Section } from "./sections/System1Section";
 import { ModelsSection } from "./sections/ModelsSection";
 import { Button } from "@/browser/components/ui/button";
 import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
@@ -65,6 +67,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Experiments",
     icon: <FlaskConical className="h-4 w-4" />,
     component: ExperimentsSection,
+  },
+  {
+    id: "system1",
+    label: "System 1",
+    icon: <BrainCircuit className="h-4 w-4" />,
+    component: System1Section,
   },
   {
     id: "keybinds",
