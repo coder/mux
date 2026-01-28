@@ -12,6 +12,20 @@ import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
+
+const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
+
+/** Prevent HoverCard from closing when interacting with nested Radix portals (e.g., RuntimeBadge tooltip) */
+function preventHoverCardDismissForRadixPortals(e: {
+  target: EventTarget | null;
+  preventDefault: () => void;
+}) {
+  const target = e.target;
+  if (target instanceof HTMLElement && target.closest(RADIX_PORTAL_WRAPPER_SELECTOR)) {
+    e.preventDefault();
+  }
+}
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -256,8 +270,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
+              <HoverCard openDelay={300} closeDelay={100}>
+                <HoverCardTrigger asChild>
                   <span
                     className={cn(
                       "text-foreground block truncate text-left text-[14px] transition-colors duration-200",
@@ -277,8 +291,13 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                       displayTitle
                     )}
                   </span>
-                </TooltipTrigger>
-                <TooltipContent align="start" className="max-w-[420px]">
+                </HoverCardTrigger>
+                <HoverCardContent
+                  align="start"
+                  className="w-auto max-w-[420px] p-2"
+                  onPointerDownOutside={preventHoverCardDismissForRadixPortals}
+                  onFocusOutside={preventHoverCardDismissForRadixPortals}
+                >
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
                       <RuntimeBadge
@@ -290,10 +309,12 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                         {displayTitle}
                       </span>
                     </div>
-                    {!isDisabled && <div className="text-muted">Double-click to edit title</div>}
+                    {!isDisabled && (
+                      <div className="text-muted text-xs">Double-click to edit title</div>
+                    )}
                   </div>
-                </TooltipContent>
-              </Tooltip>
+                </HoverCardContent>
+              </HoverCard>
             )}
 
             {!isCreating && !isEditing && (
