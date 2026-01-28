@@ -193,6 +193,7 @@ export function useCreationWorkspace({
   const latestRouteRef = useRef({ currentWorkspaceId, currentProjectId, pendingDraftId });
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
