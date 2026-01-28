@@ -615,7 +615,7 @@ describe("CompactionHandler", () => {
         parts: [{ type: "text", text: "Summary text" }],
         metadata: expect.objectContaining({
           compacted: "user",
-          muxMetadata: { type: "normal" },
+          muxMetadata: { type: "compaction-summary" },
         }) as MuxMessage["metadata"],
       });
     });

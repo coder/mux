@@ -256,6 +256,15 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         displayStatus?: DisplayStatus;
       }
     | {
+        type: "compaction-summary";
+        /**
+         * Follow-up content to dispatch after compaction completes.
+         * Stored on the summary so it survives crashes - the user message
+         * persisted by dispatch serves as proof of completion.
+         */
+        pendingFollowUp?: CompactionFollowUpRequest;
+      }
+    | {
         type: "agent-skill";
         /** The original /{skillName} invocation as typed by user (for display) */
         rawCommand: string;
@@ -284,6 +293,19 @@ export function getCompactionFollowUpContent(
     continueMessage?: CompactionRequestData["followUpContent"];
   };
   return parsed.followUpContent ?? parsed.continueMessage;
+}
+
+/** Type for compaction-summary metadata variant */
+export type CompactionSummaryMetadata = Extract<
+  MuxFrontendMetadata,
+  { type: "compaction-summary" }
+>;
+
+/** Type guard for compaction-summary metadata */
+export function isCompactionSummaryMetadata(
+  metadata: MuxFrontendMetadata | undefined
+): metadata is CompactionSummaryMetadata {
+  return metadata?.type === "compaction-summary";
 }
 
 // Our custom metadata type
