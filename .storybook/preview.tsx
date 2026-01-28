@@ -6,6 +6,7 @@ import {
   TUTORIAL_STATE_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   EXPANDED_PROJECTS_KEY,
+  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
   type TutorialState,
 } from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/mockFactory";
@@ -67,6 +68,14 @@ function collapseProjects() {
   }
 }
 
+// Clear workspace drafts to ensure deterministic snapshots.
+// Drafts persist in localStorage and can leak between stories causing flaky diffs.
+function clearWorkspaceDrafts() {
+  if (typeof localStorage !== "undefined") {
+    localStorage.setItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY, JSON.stringify({}));
+  }
+}
+
 const preview: Preview = {
   globalTypes: {
     theme: {
@@ -119,6 +128,9 @@ const preview: Preview = {
       // Collapse projects by default so one story doesn't leak expanded state into the next.
       // Stories that want expanded projects should call expandProjects() in setup.
       collapseProjects();
+
+      // Clear workspace drafts so they don't leak between stories.
+      clearWorkspaceDrafts();
 
       return (
         <ThemeProvider forcedTheme={mode}>
