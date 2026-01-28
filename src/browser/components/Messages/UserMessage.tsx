@@ -11,7 +11,17 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
-import { Clipboard, ClipboardCheck, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clipboard, ClipboardCheck, Pencil } from "lucide-react";
+
+/** Navigation info for navigating between user messages */
+export interface UserMessageNavigation {
+  /** History ID of the previous user message (undefined if this is the first) */
+  prevUserMessageId?: string;
+  /** History ID of the next user message (undefined if this is the last) */
+  nextUserMessageId?: string;
+  /** Callback to navigate to a specific message by history ID */
+  onNavigate: (historyId: string) => void;
+}
 
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
@@ -19,6 +29,8 @@ interface UserMessageProps {
   onEdit?: (messageId: string, content: string, fileParts?: FilePart[]) => void;
   isCompacting?: boolean;
   clipboardWriteText?: (data: string) => Promise<void>;
+  /** Navigation info for backward/forward between user messages */
+  navigation?: UserMessageNavigation;
 }
 
 export const UserMessage: React.FC<UserMessageProps> = ({
@@ -27,6 +39,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   onEdit,
   isCompacting,
   clipboardWriteText = copyToClipboard,
+  navigation,
 }) => {
   const isSynthetic = message.isSynthetic === true;
   const content = message.content;
@@ -56,9 +69,43 @@ export const UserMessage: React.FC<UserMessageProps> = ({
     }
   };
 
+  // Navigation buttons - always reserve space to avoid layout shift
+  // Only show when navigation prop is provided (indicates more than one user message)
+  const showNavigation = navigation !== undefined;
+  const hasPrev = navigation?.prevUserMessageId !== undefined;
+  const hasNext = navigation?.nextUserMessageId !== undefined;
+
   // Keep Copy and Edit buttons visible (most common actions)
-  // Kebab menu saves horizontal space by collapsing less-used actions
+  // Navigation buttons appear first when there are multiple user messages
   const buttons: ButtonConfig[] = [
+    // Navigation: backward (previous user message)
+    ...(showNavigation
+      ? [
+          {
+            label: "Previous message",
+            onClick: hasPrev
+              ? () => navigation.onNavigate(navigation.prevUserMessageId!)
+              : undefined,
+            disabled: !hasPrev,
+            icon: <ChevronLeft className={!hasPrev ? "opacity-30" : undefined} />,
+            tooltip: hasPrev ? "Go to previous message" : undefined,
+          },
+        ]
+      : []),
+    // Navigation: forward (next user message)
+    ...(showNavigation
+      ? [
+          {
+            label: "Next message",
+            onClick: hasNext
+              ? () => navigation.onNavigate(navigation.nextUserMessageId!)
+              : undefined,
+            disabled: !hasNext,
+            icon: <ChevronRight className={!hasNext ? "opacity-30" : undefined} />,
+            tooltip: hasNext ? "Go to next message" : undefined,
+          },
+        ]
+      : []),
     ...(onEdit && !isLocalCommandOutput && !isSynthetic
       ? [
           {

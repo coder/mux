@@ -186,6 +186,26 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     [workspaceId, latestMessageId, onOpenTerminal]
   );
 
+  // Compute navigation map for user messages (prev/next historyIds for each user message)
+  // Only enabled when there are 2+ user messages to navigate between
+  const userMessageNavMap = useMemo(() => {
+    const userMessages = deferredMessages.filter(
+      (m): m is DisplayedMessage & { type: "user" } => m.type === "user"
+    );
+    // Only enable navigation when there are multiple user messages
+    if (userMessages.length < 2) return null;
+
+    const navMap = new Map<string, { prev?: string; next?: string }>();
+    for (let i = 0; i < userMessages.length; i++) {
+      const msg = userMessages[i];
+      navMap.set(msg.historyId, {
+        prev: i > 0 ? userMessages[i - 1].historyId : undefined,
+        next: i < userMessages.length - 1 ? userMessages[i + 1].historyId : undefined,
+      });
+    }
+    return navMap;
+  }, [deferredMessages]);
+
   const autoCompactionResult = useMemo(
     () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
     [workspaceUsage, pendingModel, use1M, autoCompactionThreshold]
@@ -238,6 +258,19 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     handleScroll,
     markUserInteraction,
   } = useAutoScroll();
+
+  // Handler to navigate (scroll) to a specific message by historyId
+  const handleNavigateToMessage = useCallback(
+    (historyId: string) => {
+      // Disable auto-scroll so the navigation isn't undone by streaming content
+      setAutoScroll(false);
+      requestAnimationFrame(() => {
+        const element = contentRef.current?.querySelector(`[data-message-id="${historyId}"]`);
+        element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    },
+    [contentRef, setAutoScroll]
+  );
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
@@ -616,6 +649,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                               msg.id === latestProposePlanId
                             }
                             bashOutputGroup={bashOutputGroup}
+                            userMessageNavigation={
+                              msg.type === "user" && userMessageNavMap
+                                ? {
+                                    prevUserMessageId: userMessageNavMap.get(msg.historyId)?.prev,
+                                    nextUserMessageId: userMessageNavMap.get(msg.historyId)?.next,
+                                    onNavigate: handleNavigateToMessage,
+                                  }
+                                : undefined
+                            }
                           />
                         </div>
                         {/* Show collapsed indicator after the first item in a bash_output group */}

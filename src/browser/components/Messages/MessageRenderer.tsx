@@ -3,7 +3,7 @@ import type { FilePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
 import type { ReviewNoteData } from "@/common/types/review";
-import { UserMessage } from "./UserMessage";
+import { UserMessage, type UserMessageNavigation } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
 import { ReasoningMessage } from "./ReasoningMessage";
@@ -26,6 +26,8 @@ interface MessageRendererProps {
   isLatestProposePlan?: boolean;
   /** Optional bash_output grouping info (computed at render-time) */
   bashOutputGroup?: BashOutputGroupInfo;
+  /** Navigation info for user messages (backward/forward between user messages) */
+  userMessageNavigation?: UserMessageNavigation;
 }
 
 // Memoized to prevent unnecessary re-renders when parent (AIView) updates
@@ -39,6 +41,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     onReviewNote,
     isLatestProposePlan,
     bashOutputGroup,
+    userMessageNavigation,
   }) => {
     // Route based on message type
     switch (message.type) {
@@ -49,6 +52,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             className={className}
             onEdit={onEditUserMessage}
             isCompacting={isCompacting}
+            navigation={userMessageNavigation}
           />
         );
       case "assistant":
