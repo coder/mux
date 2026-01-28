@@ -229,7 +229,7 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
   const promptPreview =
     typeof draftPrompt === "string" ? draftPrompt.trim().replace(/\s+/g, " ") : "";
 
-  const titleText = workspaceName.trim().length > 0 ? workspaceName.trim() : "Draft workspace";
+  const titleText = workspaceName.trim().length > 0 ? workspaceName.trim() : "Draft";
 
   return (
     <div

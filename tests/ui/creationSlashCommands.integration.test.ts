@@ -20,7 +20,12 @@ import { cleanupView } from "./helpers";
 import { ChatHarness } from "./harness";
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { getModelKey, getPendingScopeId, getProjectScopeId } from "@/common/constants/storage";
+import {
+  getDraftScopeId,
+  getModelKey,
+  getProjectScopeId,
+  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+} from "@/common/constants/storage";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -88,8 +93,23 @@ async function setupCreationView(): Promise<CreationView> {
     { timeout: 5_000 }
   );
 
-  const pendingScopeId = getPendingScopeId(projectPath);
-  const chat = new ChatHarness(view.container, pendingScopeId);
+  const draftId = await waitFor(
+    () => {
+      const rawDrafts = globalThis.localStorage.getItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY);
+      const parsedDrafts = rawDrafts
+        ? (JSON.parse(rawDrafts) as Record<string, { draftId: string }[]>)
+        : {};
+      const draftsForProject = parsedDrafts[projectPath] ?? [];
+      const latestDraft = draftsForProject[draftsForProject.length - 1];
+      if (!latestDraft?.draftId) {
+        throw new Error("Draft not registered yet");
+      }
+      return latestDraft.draftId;
+    },
+    { timeout: 5_000 }
+  );
+
+  const chat = new ChatHarness(view.container, getDraftScopeId(projectPath, draftId));
 
   return {
     env,
