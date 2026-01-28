@@ -130,6 +130,14 @@ Replaced body.
     expect(replacerBody).not.toContain("Base instructions");
   });
 
+  test("Ask agent instructs to trust Explore sub-agent reports", async () => {
+    const askAgentPath = path.join(process.cwd(), ".mux", "agents", "ask.md");
+    const content = await fs.readFile(askAgentPath, "utf-8");
+
+    expect(content).toContain("Trust Explore sub-agent reports as authoritative for repo facts");
+    expect(content).toContain("ambiguous or contradicts other evidence");
+  });
+
   test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {
     using project = new DisposableTempDir("agent-same-name");
     using global = new DisposableTempDir("agent-same-name-global");
