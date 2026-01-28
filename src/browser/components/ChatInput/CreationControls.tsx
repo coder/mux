@@ -558,7 +558,10 @@ export function CreationControls(props: CreationControlsProps) {
           <div className="border-border-medium flex w-fit flex-col gap-1.5 rounded-md border p-2">
             <div className="flex flex-col gap-1">
               <label className="text-muted-foreground text-xs">Config</label>
-              {devcontainerSelection.uiMode === "dropdown" ? (
+              {devcontainerSelection.uiMode === "loading" ? (
+                // Skeleton placeholder while loading - matches dropdown dimensions
+                <div className="bg-bg-dark/50 h-6 w-[280px] animate-pulse rounded-md" />
+              ) : devcontainerSelection.uiMode === "dropdown" ? (
                 <RadixSelect
                   value={devcontainerSelection.configPath}
                   onValueChange={(value) =>
