@@ -1109,6 +1109,8 @@ describe("bash tool", () => {
   });
 
   describe("script sanitization", () => {
+    const shouldRewriteNullRedirects = process.platform === "win32";
+
     it("should rewrite >nul to /dev/null (and not create a `nul` file)", async () => {
       using tempDir = new TestTempDir("test-bash-nul-redirect");
       const tool = createBashTool(createTestToolConfig(tempDir.path));
@@ -1124,10 +1126,14 @@ describe("bash tool", () => {
 
       expect(result.success).toBe(true);
       if (isForegroundSuccess(result)) {
-        expect(result.note).toContain("Rewrote `>nul`/`2>nul`");
+        if (shouldRewriteNullRedirects) {
+          expect(result.note).toContain("Rewrote `>nul`/`2>nul`");
+        } else {
+          expect(result.note).toBeUndefined();
+        }
       }
 
-      expect(fs.existsSync(path.join(tempDir.path, "nul"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir.path, "nul"))).toBe(!shouldRewriteNullRedirects);
     });
 
     it("should rewrite 2>nul to /dev/null (and not create a `nul` file)", async () => {
@@ -1145,10 +1151,14 @@ describe("bash tool", () => {
 
       expect(result.success).toBe(true);
       if (isForegroundSuccess(result)) {
-        expect(result.note).toContain("Rewrote `>nul`/`2>nul`");
+        if (shouldRewriteNullRedirects) {
+          expect(result.note).toContain("Rewrote `>nul`/`2>nul`");
+        } else {
+          expect(result.note).toBeUndefined();
+        }
       }
 
-      expect(fs.existsSync(path.join(tempDir.path, "nul"))).toBe(false);
+      expect(fs.existsSync(path.join(tempDir.path, "nul"))).toBe(!shouldRewriteNullRedirects);
     });
 
     it("should not rewrite an explicit path like >./nul", async () => {

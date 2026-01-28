@@ -20,6 +20,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
+import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { getToolEnvPath } from "@/node/services/hooks";
 
 const CAT_FILE_READ_NOTICE =
@@ -557,7 +558,12 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
       // On Windows, models sometimes emit cmd.exe-style `>nul` / `2>nul` redirections.
       // Since the bash tool runs via bash, `nul` becomes a real file in the workspace.
-      const nulRedirectRewrite = rewriteWindowsNullRedirects(script);
+      // Only rewrite for local Windows runtimes so non-Windows scripts keep their semantics.
+      const shouldRewriteNullRedirects =
+        process.platform === "win32" && config.runtime instanceof LocalBaseRuntime;
+      const nulRedirectRewrite = shouldRewriteNullRedirects
+        ? rewriteWindowsNullRedirects(script)
+        : { script, didRewrite: false };
       const scriptWithEnv = toolEnvPrelude + nulRedirectRewrite.script;
 
       const nulRedirectNote = nulRedirectRewrite.didRewrite
