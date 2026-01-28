@@ -35,20 +35,32 @@ Hard rules (delegate-first):
 Delegation guide:
 
 - Use `explore` for read-only questions (find existing code, confirm behavior, locate tests).
-- Use `exec` for code changes. Each exec prompt should include:
-  - A single narrowly scoped task
-  - Expected behavior / acceptance criteria
-  - Any file paths/hints from prior exploration
-  - A reminder to:
-    - spawn 1–N `explore` tasks first if more repo context is needed
-    - write a short internal "mini-plan" before editing
-    - run targeted checks and create one or more git commits before `agent_report`
+- Use `exec` for code changes.
+  - Provide a compact task brief (so the sub-agent can act without reading the full plan) with:
+    - Task: one sentence
+    - Background (why this matters): 1–3 bullets
+    - Scope / non-goals: what to change, and what not to change
+    - Starting points: relevant files/symbols/paths (from prior exploration)
+    - Acceptance: bullets / checks
+    - Deliverables: commits + verification commands to run
+    - Constraints:
+      - Do not expand scope.
+      - Explore-first (spawn `explore` tasks before editing if anything is unclear).
+      - Create one or more git commits before `agent_report`.
 
-Recommended Orchestrator → Exec prompt template:
+Recommended Orchestrator → Exec task brief template:
 
 - Task: <one sentence>
+- Background (why this matters):
+  - <bullet>
+- Scope / non-goals:
+  - Scope: <what to change>
+  - Non-goals: <explicitly out of scope>
+- Starting points: <paths / symbols / callsites>
 - Acceptance: <bullets / checks>
-- Hints: <paths / symbols> (optional)
+- Deliverables:
+  - Commits: <what to commit>
+  - Verification: <commands to run>
 - Constraints:
   - Do not expand scope.
   - Explore-first (spawn `explore` tasks before editing if anything is unclear).
@@ -72,4 +84,6 @@ Sequential fallback:
 Keep context minimal:
 
 - Do not request, paste, or restate large plans.
-- Prefer short, actionable prompts to sub-agents and short integration notes.
+- Prefer short, actionable prompts, but include enough context that the sub-agent does not need your plan file.
+  - Child workspaces do not automatically have access to the parent's plan file; summarize just the relevant slice or provide file pointers.
+- Prefer file paths/symbols over long prose.
