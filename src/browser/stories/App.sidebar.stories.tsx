@@ -20,6 +20,7 @@ import {
   createOnChatAdapter,
   type ChatHandler,
   expandProjects,
+  setWorkspaceDrafts,
 } from "./storyHelpers";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
 import { within, userEvent, waitFor } from "@storybook/test";
@@ -574,5 +575,112 @@ export const WorkspaceTitleHoverCard: AppStory = {
       },
       { timeout: 5000 }
     );
+  },
+};
+
+/**
+ * Draft workspaces (UI-only placeholders) in the sidebar.
+ * Shows drafts with various states: empty title, named, with prompt preview.
+ * Drafts are visually differentiated with italic text and dashed selection bar.
+ */
+export const WorkspaceDrafts: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/draft-demo";
+
+        // Create one regular workspace to show alongside drafts
+        const regularWorkspace = createWorkspace({
+          id: "ws-regular",
+          name: "existing-feature",
+          title: "Existing feature branch",
+          projectName: "draft-demo",
+          projectPath,
+          createdAt: new Date(NOW - 86400000).toISOString(),
+        });
+
+        // Set up workspace drafts (UI-only placeholders)
+        setWorkspaceDrafts(projectPath, [
+          {
+            draftId: "draft-1",
+            workspaceName: "New API endpoint",
+            prompt: "Implement a new REST API endpoint for user authentication",
+            createdAt: NOW - 1000,
+          },
+          {
+            draftId: "draft-2",
+            // No name - will show "Draft"
+            prompt: "Fix the bug where the sidebar flickers on hover",
+            createdAt: NOW - 2000,
+          },
+          {
+            draftId: "draft-3",
+            workspaceName: "Performance optimization",
+            // No prompt - just title
+            createdAt: NOW - 3000,
+          },
+        ]);
+
+        expandProjects([projectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject([regularWorkspace]),
+          workspaces: [regularWorkspace],
+        });
+      }}
+    />
+  ),
+};
+
+/**
+ * Draft workspace selected state.
+ * Shows the dashed selection indicator that differentiates drafts from regular workspaces.
+ * Uses play function to click on a draft and select it.
+ */
+export const WorkspaceDraftSelected: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/home/user/projects/draft-selected";
+
+        const regularWorkspace = createWorkspace({
+          id: "ws-regular-2",
+          name: "main-branch",
+          title: "Main development branch",
+          projectName: "draft-selected",
+          projectPath,
+          createdAt: new Date(NOW - 86400000).toISOString(),
+        });
+
+        setWorkspaceDrafts(projectPath, [
+          {
+            draftId: "selected-draft",
+            workspaceName: "My new workspace",
+            prompt: "Build a feature that does something amazing",
+            createdAt: NOW,
+          },
+        ]);
+
+        expandProjects([projectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject([regularWorkspace]),
+          workspaces: [regularWorkspace],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    // Wait for the draft row to appear
+    await waitFor(
+      () => {
+        const row = canvasElement.querySelector<HTMLElement>('[data-draft-id="selected-draft"]');
+        if (!row) throw new Error("selected-draft row not found");
+      },
+      { timeout: 5000 }
+    );
+
+    const row = canvasElement.querySelector<HTMLElement>('[data-draft-id="selected-draft"]')!;
+    await userEvent.click(row);
   },
 };

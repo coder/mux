@@ -13,6 +13,7 @@ import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
+import { Trash2 } from "lucide-react";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -38,32 +39,195 @@ export interface WorkspaceSelection {
   namedWorkspacePath: string; // Worktree path (directory uses workspace name)
   workspaceId: string;
 }
-export interface WorkspaceListItemProps {
-  // Workspace metadata passed directly
-  metadata: FrontendWorkspaceMetadata;
+
+/** Props for draft workspace rendering (UI-only placeholders) */
+export interface DraftWorkspaceData {
+  draftId: string;
+  draftNumber: number;
+  /** Title derived from draft name state */
+  title: string;
+  /** Collapsed prompt preview text */
+  promptPreview: string;
+  onOpen: () => void;
+  onDelete: () => void;
+}
+
+/** Base props shared by both workspace and draft items */
+interface WorkspaceListItemBaseProps {
   projectPath: string;
-  projectName: string;
   isSelected: boolean;
-  isArchiving?: boolean;
   depth?: number;
+}
+
+/** Props for regular (persisted) workspace items */
+export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
+  variant?: "workspace";
+  metadata: FrontendWorkspaceMetadata;
+  projectName: string;
+  isArchiving?: boolean;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
-  // Event handlers
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
 }
 
-const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
-  metadata,
-  projectPath,
-  projectName,
-  isSelected,
-  isArchiving,
-  depth,
-  sectionId,
-  onSelectWorkspace,
-  onArchiveWorkspace,
-}) => {
+/** Props for draft (UI-only placeholder) items */
+export interface DraftWorkspaceListItemProps extends WorkspaceListItemBaseProps {
+  variant: "draft";
+  draft: DraftWorkspaceData;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared components and utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Container styles shared between workspace and draft items */
+const LIST_ITEM_BASE_CLASSES =
+  "py-1.5 pr-2 transition-all duration-150 text-[13px] relative flex gap-2";
+
+/** Calculate left padding based on nesting depth */
+function getItemPaddingLeft(depth?: number): number {
+  const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
+  return 12 + Math.min(32, safeDepth) * 12;
+}
+
+/** Selection/unread indicator bar (absolute positioned on left edge) */
+function SelectionBar(props: { isSelected: boolean; showUnread?: boolean; isDraft?: boolean }) {
+  const barColorClass = props.isSelected
+    ? "bg-blue-400"
+    : props.showUnread
+      ? "bg-muted-foreground"
+      : "bg-transparent";
+
+  const bar = (
+    <span
+      className={cn(
+        "absolute left-0 top-0 bottom-0 w-[3px] transition-colors duration-150",
+        barColorClass,
+        // Dashed border effect for drafts when selected
+        props.isDraft && props.isSelected && "bg-[length:3px_6px] bg-repeat-y",
+        props.showUnread ? "pointer-events-auto" : "pointer-events-none"
+      )}
+      style={
+        props.isDraft && props.isSelected
+          ? {
+              background:
+                "repeating-linear-gradient(to bottom, var(--color-blue-400) 0px, var(--color-blue-400) 4px, transparent 4px, transparent 8px)",
+            }
+          : undefined
+      }
+      aria-hidden={!props.showUnread}
+    />
+  );
+
+  if (props.showUnread) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{bar}</TooltipTrigger>
+        <TooltipContent align="start">Unread messages</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return bar;
+}
+
+/** Action button wrapper (archive/delete) with consistent sizing and alignment */
+function ActionButtonWrapper(props: { hasSubtitle: boolean; children: React.ReactNode }) {
+  return (
+    <div
+      className={cn(
+        "relative inline-flex h-4 w-4 shrink-0 items-center",
+        props.hasSubtitle ? "self-center" : "self-start mt-0.5"
+      )}
+    >
+      {props.children}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Draft Workspace Item (UI-only placeholder)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
+  const { projectPath, isSelected, depth, draft } = props;
+  const paddingLeft = getItemPaddingLeft(depth);
+  const hasPromptPreview = draft.promptPreview.length > 0;
+
+  return (
+    <div
+      className={cn(
+        LIST_ITEM_BASE_CLASSES,
+        "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
+        isSelected && "bg-hover"
+      )}
+      style={{ paddingLeft }}
+      onClick={draft.onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          draft.onOpen();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-current={isSelected ? "true" : undefined}
+      aria-label={`Open workspace draft ${draft.draftNumber}`}
+      data-project-path={projectPath}
+      data-draft-id={draft.draftId}
+    >
+      <SelectionBar isSelected={isSelected} isDraft />
+
+      <ActionButtonWrapper hasSubtitle={hasPromptPreview}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                draft.onDelete();
+              }}
+              aria-label={`Delete workspace draft ${draft.draftNumber}`}
+              data-project-path={projectPath}
+              data-draft-id={draft.draftId}
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent align="start">Delete draft</TooltipContent>
+        </Tooltip>
+      </ActionButtonWrapper>
+
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="text-foreground block truncate text-left text-[13px] italic">
+          {draft.title}
+        </span>
+        {hasPromptPreview && (
+          <span className="text-muted block truncate text-left text-xs">{draft.promptPreview}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Regular Workspace Item (persisted workspace)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
+  const {
+    metadata,
+    projectPath,
+    projectName,
+    isSelected,
+    isArchiving,
+    depth,
+    sectionId,
+    onSelectWorkspace,
+    onArchiveWorkspace,
+  } = props;
+
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
@@ -128,25 +292,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
   const hasStatusText = Boolean(agentStatus ?? awaitingUserQuestion);
 
   const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
-  const barColorClass =
-    isSelected && !isDisabled
-      ? "bg-blue-400"
-      : showUnreadBar
-        ? "bg-muted-foreground"
-        : "bg-transparent";
-  const unreadBar = (
-    <span
-      className={cn(
-        "absolute left-0 top-0 bottom-0 w-[3px] transition-colors duration-150",
-        barColorClass,
-        showUnreadBar ? "pointer-events-auto" : "pointer-events-none"
-      )}
-      aria-hidden={!showUnreadBar}
-    />
-  );
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
-  const safeDepth = typeof depth === "number" && Number.isFinite(depth) ? Math.max(0, depth) : 0;
-  const paddingLeft = 12 + Math.min(32, safeDepth) * 12;
+  const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
   const [{ isDragging }, drag, dragPreview] = useDrag(
@@ -179,7 +326,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
       <div
         ref={drag}
         className={cn(
-          "py-1.5 pr-2 transition-all duration-150 text-[13px] relative flex gap-2",
+          LIST_ITEM_BASE_CLASSES,
           isDragging && "opacity-50",
           isDisabled
             ? "cursor-default opacity-70"
@@ -225,23 +372,11 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        {/* Workspace indicator bar (selected/unread) */}
-        {showUnreadBar ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{unreadBar}</TooltipTrigger>
-            <TooltipContent align="start">Unread messages</TooltipContent>
-          </Tooltip>
-        ) : (
-          unreadBar
-        )}
+        <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
+
         {/* Archive button - centered when status text visible, top-aligned otherwise */}
         {!isMuxHelpChat && !isCreating && !isEditing && (
-          <div
-            className={cn(
-              "relative inline-flex h-4 w-4 shrink-0 items-center",
-              hasStatusText ? "self-center" : "self-start mt-0.5"
-            )}
-          >
+          <ActionButtonWrapper hasSubtitle={hasStatusText}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -260,7 +395,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
               </TooltipContent>
             </Tooltip>
-          </div>
+          </ActionButtonWrapper>
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="grid min-w-0 grid-cols-[1fr_auto] items-center gap-1.5">
@@ -356,6 +491,19 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
       )}
     </React.Fragment>
   );
-};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified Export (dispatches based on variant)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type UnifiedWorkspaceListItemProps = WorkspaceListItemProps | DraftWorkspaceListItemProps;
+
+function WorkspaceListItemInner(props: UnifiedWorkspaceListItemProps) {
+  if (props.variant === "draft") {
+    return <DraftWorkspaceListItemInner {...props} />;
+  }
+  return <RegularWorkspaceListItemInner {...props} />;
+}
 
 export const WorkspaceListItem = React.memo(WorkspaceListItemInner);

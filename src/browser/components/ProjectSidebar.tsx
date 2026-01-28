@@ -44,7 +44,7 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, CircleHelp, KeyRound, Trash2 } from "lucide-react";
+import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -184,7 +184,11 @@ const DraggableProjectItem = React.memo(
     prev.onReorder === next.onReorder &&
     (prev["aria-expanded"] ?? false) === (next["aria-expanded"] ?? false)
 );
-interface DraftWorkspaceListItemProps {
+/**
+ * Wrapper that fetches draft data from localStorage and renders via unified WorkspaceListItem.
+ * Keeps data-fetching logic colocated with sidebar while delegating rendering to shared component.
+ */
+interface DraftWorkspaceListItemWrapperProps {
   projectPath: string;
   draftId: string;
   draftNumber: number;
@@ -193,7 +197,7 @@ interface DraftWorkspaceListItemProps {
   onDelete: () => void;
 }
 
-function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
+function DraftWorkspaceListItemWrapper(props: DraftWorkspaceListItemWrapperProps) {
   const scopeId = getDraftScopeId(props.projectPath, props.draftId);
 
   const [draftPrompt] = usePersistedState<string>(getInputKey(scopeId), "", {
@@ -232,52 +236,19 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
   const titleText = workspaceName.trim().length > 0 ? workspaceName.trim() : "Draft";
 
   return (
-    <div
-      className={cn(
-        "py-1.5 pr-2 border-l-[3px] border-transparent transition-all duration-150 text-[13px] relative flex gap-2",
-        "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
-        props.isSelected && "bg-hover border-l-blue-400"
-      )}
-      style={{ paddingLeft: 9 }}
-      onClick={props.onOpen}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          props.onOpen();
-        }
+    <WorkspaceListItem
+      variant="draft"
+      projectPath={props.projectPath}
+      isSelected={props.isSelected}
+      draft={{
+        draftId: props.draftId,
+        draftNumber: props.draftNumber,
+        title: titleText,
+        promptPreview,
+        onOpen: props.onOpen,
+        onDelete: props.onDelete,
       }}
-      role="button"
-      tabIndex={0}
-      aria-current={props.isSelected ? "true" : undefined}
-      aria-label={`Open workspace draft ${props.draftNumber}`}
-      data-project-path={props.projectPath}
-      data-draft-id={props.draftId}
-    >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            className="text-muted hover:text-foreground inline-flex shrink-0 cursor-pointer items-center self-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
-            onClick={(e) => {
-              e.stopPropagation();
-              props.onDelete();
-            }}
-            aria-label={`Delete workspace draft ${props.draftNumber}`}
-            data-project-path={props.projectPath}
-            data-draft-id={props.draftId}
-          >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent align="start">Delete draft</TooltipContent>
-      </Tooltip>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-foreground block truncate text-left text-[14px]">{titleText}</span>
-        {promptPreview.length > 0 && (
-          <span className="text-muted block truncate text-left text-xs">{promptPreview}</span>
-        )}
-      </div>
-    </div>
+    />
   );
 }
 
@@ -960,7 +931,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   pendingNewWorkspaceDraftId === draft.draftId;
 
                                 return (
-                                  <DraftWorkspaceListItem
+                                  <DraftWorkspaceListItemWrapper
                                     key={draft.draftId}
                                     projectPath={projectPath}
                                     draftId={draft.draftId}
