@@ -2118,67 +2118,72 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               </div>
             )}
 
-            <div className="@container flex flex-wrap items-center gap-x-3 gap-y-1">
-              {/* Model Selector - always visible */}
-              <div
-                className="flex items-center"
-                data-component="ModelSelectorGroup"
-                data-tutorial="model-selector"
-              >
-                <ModelSelector
-                  ref={modelSelectorRef}
-                  value={baseModel}
-                  onChange={setPreferredModel}
-                  models={models}
-                  onComplete={() => inputRef.current?.focus()}
-                  defaultModel={defaultModel}
-                  onSetDefaultModel={setDefaultModel}
-                  onHideModel={hideModel}
-                  hiddenModels={hiddenModels}
-                  onUnhideModel={unhideModel}
-                  onOpenSettings={() => open("models")}
-                />
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <HelpIndicator>?</HelpIndicator>
-                  </TooltipTrigger>
-                  <TooltipContent align="start" className="max-w-80 whitespace-normal">
-                    <strong>Click to edit</strong>
-                    <br />
-                    <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
-                    <br />
-                    <br />
-                    <strong>Abbreviations:</strong>
-                    {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
-                      <React.Fragment key={ex.abbrev}>
-                        <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
-                      </React.Fragment>
-                    ))}
-                    <br />
-                    <br />
-                    <strong>Full format:</strong>
-                    <br />
-                    <code>/model provider:model-name</code>
-                    <br />
-                    (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
-                  </TooltipContent>
-                </Tooltip>
+            <div className="@container flex flex-wrap items-center gap-x-3 gap-y-1 [@container(max-width:480px)]:flex-col [@container(max-width:480px)]:items-stretch [@container(max-width:480px)]:gap-1">
+              {/* Row 1 on mobile: Model Selector + Thinking Slider */}
+              <div className="flex items-center gap-x-3 [@container(max-width:480px)]:w-full">
+                <div
+                  className="flex items-center"
+                  data-component="ModelSelectorGroup"
+                  data-tutorial="model-selector"
+                >
+                  <ModelSelector
+                    ref={modelSelectorRef}
+                    value={baseModel}
+                    onChange={setPreferredModel}
+                    models={models}
+                    onComplete={() => inputRef.current?.focus()}
+                    defaultModel={defaultModel}
+                    onSetDefaultModel={setDefaultModel}
+                    onHideModel={hideModel}
+                    hiddenModels={hiddenModels}
+                    onUnhideModel={unhideModel}
+                    onOpenSettings={() => open("models")}
+                  />
+                  <div className="hidden [@media(hover:hover)_and_(pointer:fine)]:block">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <HelpIndicator>?</HelpIndicator>
+                      </TooltipTrigger>
+                      <TooltipContent align="start" className="max-w-80 whitespace-normal">
+                        <strong>Click to edit</strong>
+                        <br />
+                        <strong>{formatKeybind(KEYBINDS.CYCLE_MODEL)}</strong> to cycle models
+                        <br />
+                        <br />
+                        <strong>Abbreviations:</strong>
+                        {MODEL_ABBREVIATION_EXAMPLES.map((ex) => (
+                          <React.Fragment key={ex.abbrev}>
+                            <br />• <code>/model {ex.abbrev}</code> - {ex.displayName}
+                          </React.Fragment>
+                        ))}
+                        <br />
+                        <br />
+                        <strong>Full format:</strong>
+                        <br />
+                        <code>/model provider:model-name</code>
+                        <br />
+                        (e.g., <code>/model anthropic:claude-sonnet-4-5</code>)
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                </div>
+
+                {/* Thinking Slider - slider hidden on narrow containers, label always clickable */}
+                <div
+                  className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
+                  data-component="ThinkingSliderGroup"
+                >
+                  <ThinkingSliderComponent modelString={baseModel} />
+                </div>
               </div>
 
-              {/* Thinking Slider - slider hidden on narrow containers, label always clickable */}
-              <div
-                className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
-                data-component="ThinkingSliderGroup"
-              >
-                <ThinkingSliderComponent modelString={baseModel} />
-              </div>
-
-              <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
+              <div className="ml-4 flex items-center [@container(max-width:480px)]:hidden" data-component="ModelSettingsGroup">
                 <ModelSettings model={baseModel || ""} />
               </div>
 
+              {/* Row 2 on mobile: Context Usage + Agent Mode + Send Button */}
               <div
-                className="ml-auto flex items-center gap-2"
+                className="ml-auto flex items-center gap-2 [@container(max-width:480px)]:ml-0 [@container(max-width:480px)]:w-full [@container(max-width:480px)]:justify-end"
                 data-component="ModelControls"
                 data-tutorial="mode-selector"
               >

@@ -306,7 +306,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           )}
         </div>
         {showDropdown && (
-          <div className="bg-separator border-border-light absolute bottom-full left-0 z-[1020] mb-1 max-h-[200px] min-w-80 overflow-y-auto rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
+          <div className="bg-separator border-border-light absolute bottom-full left-0 z-1020 mb-1 max-h-[200px] min-w-80 overflow-y-auto overflow-x-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
             {filteredModels.length === 0 ? (
               <div className="text-muted-light font-monospace px-2.5 py-1.5 text-[11px]">
                 No matching models
@@ -327,7 +327,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   onClick={() => handleSelectModel(model)}
                 >
                   {/* Grid: model name | gateway | visibility | default */}
-                  <div className="grid w-full grid-cols-[1fr_20px_20px_20px] items-center gap-1">
+                  <div className="grid w-full min-w-0 grid-cols-[1fr_20px_30px_30px] items-center gap-1">
                     <span className="min-w-0 truncate">{model}</span>
                     {/* Gateway toggle */}
                     {gateway.canToggleModel(model) ? (
@@ -398,7 +398,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                           >
                             <Eye
                               className={cn(
-                                "h-3 w-3",
+                                "h-4 w-4 md:h-3 md:w-3",
                                 hiddenSet.has(model) ? "opacity-30" : "opacity-70"
                               )}
                             />
@@ -428,10 +428,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               onMouseDown={(e) => e.preventDefault()}
                               onClick={(e) => handleSetDefault(e, model)}
                               className={cn(
-                                "flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
+                                "flex h-5 w-5 items-center justify-center rounded-sm  transition-colors duration-150",
                                 defaultModel === model
-                                  ? "text-yellow-400 border-yellow-400/40 cursor-default"
-                                  : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
+                                  ? "text-yellow-400 cursor-default"
+                                  : "text-muted-light hover:text-foreground"
                               )}
                               aria-label={
                                 defaultModel === model
@@ -440,7 +440,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               }
                               disabled={defaultModel === model}
                             >
-                              <Star className="h-3 w-3" />
+                              <Star
+                                className="h-4 w-4 md:h-3 md:w-3"
+                                fill={defaultModel === model ? "currentColor" : "none"}
+                              />
                             </button>
                           </TooltipTrigger>
                           <TooltipContent align="center">
