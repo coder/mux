@@ -16,6 +16,11 @@ import {
 } from "@/common/orpc/schemas/coder";
 
 // Re-export types for consumers that import from this module
+
+export interface CoderApiSession {
+  token: string;
+  dispose: () => Promise<void>;
+}
 export type { CoderInfo, CoderTemplate, CoderPreset, CoderWorkspace, CoderWorkspaceStatus };
 
 /** Discriminated union for workspace status check results */
@@ -268,6 +273,9 @@ function interpretCoderResult(result: CoderCommandResult): InterpretedCoderComma
 }
 
 export class CoderService {
+  // Ephemeral API sessions scoped to workspace provisioning.
+  // This keeps token reuse explicit without persisting anything to disk.
+  private provisioningSessions = new Map<string, CoderApiSession>();
   private cachedInfo: CoderInfo | null = null;
 
   /**
@@ -336,6 +344,95 @@ export class CoderService {
     return { state: "unavailable", reason: { kind: "error", message: "Unknown error" } };
   }
 
+  /**
+   * Create a short-lived Coder API token for deployment endpoints.
+   */
+  private async createApiSession(tokenName: string): Promise<CoderApiSession> {
+    using tokenProc = execAsync(
+      `coder tokens create --lifetime 5m --name ${shescape.quote(tokenName)}`
+    );
+    const { stdout: token } = await tokenProc.result;
+    const trimmed = token.trim();
+
+    return {
+      token: trimmed,
+      dispose: async () => {
+        try {
+          using deleteProc = execAsync(`coder tokens delete ${shescape.quote(tokenName)}`);
+          await deleteProc.result;
+        } catch {
+          // Best-effort cleanup; token will expire in 5 minutes anyway.
+          log.debug("Failed to delete temporary Coder API token", { tokenName });
+        }
+      },
+    };
+  }
+
+  private async withApiSession<T>(
+    tokenName: string,
+    fn: (session: CoderApiSession) => Promise<T>
+  ): Promise<T> {
+    const session = await this.createApiSession(tokenName);
+    try {
+      return await fn(session);
+    } finally {
+      await session.dispose();
+    }
+  }
+
+  async ensureProvisioningSession(workspaceName: string): Promise<CoderApiSession> {
+    const existing = this.provisioningSessions.get(workspaceName);
+    if (existing) {
+      return existing;
+    }
+
+    const tokenName = `mux-${workspaceName}-${Date.now().toString(36)}`;
+    const session = await this.createApiSession(tokenName);
+    this.provisioningSessions.set(workspaceName, session);
+    return session;
+  }
+
+  takeProvisioningSession(workspaceName: string): CoderApiSession | undefined {
+    const session = this.provisioningSessions.get(workspaceName);
+    if (session) {
+      this.provisioningSessions.delete(workspaceName);
+    }
+    return session;
+  }
+
+  async disposeProvisioningSession(workspaceName: string): Promise<void> {
+    const session = this.provisioningSessions.get(workspaceName);
+    if (!session) {
+      return;
+    }
+    this.provisioningSessions.delete(workspaceName);
+    await session.dispose();
+  }
+
+  private normalizeHostnameSuffix(raw: string | undefined): string {
+    const cleaned = (raw ?? "").trim().replace(/^\./, "");
+    return cleaned || "coder";
+  }
+
+  async fetchDeploymentSshConfig(session?: CoderApiSession): Promise<{ hostnameSuffix: string }> {
+    const deploymentUrl = await this.getDeploymentUrl();
+    const tokenName = `mux-ssh-config-${Date.now().toString(36)}`;
+
+    const run = async (api: CoderApiSession) => {
+      const url = new URL("/api/v2/deployment/ssh", deploymentUrl);
+      const response = await fetch(url, {
+        headers: { "Coder-Session-Token": api.token },
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch SSH config: ${response.status}`);
+      }
+
+      const data = (await response.json()) as { hostname_suffix?: string };
+      return { hostnameSuffix: this.normalizeHostnameSuffix(data.hostname_suffix) };
+    };
+
+    return session ? run(session) : this.withApiSession(tokenName, run);
+  }
   /**
    * Clear cached Coder info. Used for testing.
    */
@@ -461,12 +558,13 @@ export class CoderService {
 
   /**
    * Fetch template rich parameters from Coder API.
-   * Creates a short-lived token, fetches params, then cleans up the token.
+   * Uses an optional API session to avoid generating multiple tokens.
    */
   private async getTemplateRichParameters(
     deploymentUrl: string,
     versionId: string,
-    workspaceName: string
+    workspaceName: string,
+    session?: CoderApiSession
   ): Promise<
     Array<{
       name: string;
@@ -476,14 +574,7 @@ export class CoderService {
       required: boolean;
     }>
   > {
-    // Create short-lived token named after workspace (avoids keychain read issues)
-    const tokenName = `mux-${workspaceName}`;
-    using tokenProc = execAsync(
-      `coder tokens create --lifetime 5m --name ${shescape.quote(tokenName)}`
-    );
-    const { stdout: token } = await tokenProc.result;
-
-    try {
+    const run = async (api: CoderApiSession) => {
       const url = new URL(
         `/api/v2/templateversions/${versionId}/rich-parameters`,
         deploymentUrl
@@ -491,7 +582,7 @@ export class CoderService {
 
       const response = await fetch(url, {
         headers: {
-          "Coder-Session-Token": token.trim(),
+          "Coder-Session-Token": api.token,
         },
       });
 
@@ -503,16 +594,10 @@ export class CoderService {
 
       const data: unknown = await response.json();
       return this.parseRichParameters(data);
-    } finally {
-      // Clean up the token by name
-      try {
-        using deleteProc = execAsync(`coder tokens delete ${shescape.quote(tokenName)}`);
-        await deleteProc.result;
-      } catch {
-        // Best-effort cleanup; token will expire in 5 minutes anyway
-        log.debug("Failed to delete temporary token", { tokenName });
-      }
-    }
+    };
+
+    const tokenName = `mux-${workspaceName}`;
+    return session ? run(session) : this.withApiSession(tokenName, run);
   }
 
   /**
@@ -914,13 +999,15 @@ export class CoderService {
    * @param preset Optional preset name
    * @param abortSignal Optional signal to cancel workspace creation
    * @param org Optional organization name for disambiguation
+   * @param session Optional API session to reuse across deployment endpoints
    */
   async *createWorkspace(
     name: string,
     template: string,
     preset?: string,
     abortSignal?: AbortSignal,
-    org?: string
+    org?: string,
+    session?: CoderApiSession
   ): AsyncGenerator<string, void, unknown> {
     log.debug("Creating Coder workspace", { name, template, preset, org });
 
@@ -940,7 +1027,7 @@ export class CoderService {
       : new Set<string>();
 
     // 4. Fetch all template parameters from API
-    const allParams = await this.getTemplateRichParameters(deploymentUrl, versionId, name);
+    const allParams = await this.getTemplateRichParameters(deploymentUrl, versionId, name, session);
 
     // 5. Validate required params have values
     this.validateRequiredParams(allParams, coveredByPreset);

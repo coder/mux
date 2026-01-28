@@ -366,12 +366,12 @@ export class CoderSSHRuntime extends SSHRuntime {
    * Finalize runtime config after collision handling.
    * Derives Coder workspace name from branch name and computes SSH host.
    */
-  finalizeConfig(
+  async finalizeConfig(
     finalBranchName: string,
     config: RuntimeConfig
   ): Promise<Result<RuntimeConfig, string>> {
     if (!isSSHRuntime(config) || !config.coder) {
-      return Promise.resolve(Ok(config));
+      return Ok(config);
     }
 
     const coder = config.coder;
@@ -387,32 +387,49 @@ export class CoderSSHRuntime extends SSHRuntime {
 
       // Validate against Coder's regex
       if (!CODER_NAME_REGEX.test(workspaceName)) {
-        return Promise.resolve(
-          Err(
-            `Workspace name "${finalBranchName}" cannot be converted to a valid Coder name. ` +
-              `Use only letters, numbers, and hyphens.`
-          )
+        return Err(
+          `Workspace name "${finalBranchName}" cannot be converted to a valid Coder name. ` +
+            `Use only letters, numbers, and hyphens.`
         );
       }
     } else {
       // Existing workspace: name must be provided (selected from dropdown)
       if (!workspaceName) {
-        return Promise.resolve(Err("Coder workspace name is required for existing workspaces"));
+        return Err("Coder workspace name is required for existing workspaces");
       }
     }
 
     // Final validation
     if (!workspaceName) {
-      return Promise.resolve(Err("Coder workspace name is required"));
+      return Err("Coder workspace name is required");
     }
 
-    return Promise.resolve(
-      Ok({
-        ...config,
-        host: `${workspaceName}.coder`,
-        coder: { ...coder, workspaceName },
-      })
-    );
+    let hostnameSuffix: string;
+    try {
+      // Keep a provisioning session around for new workspaces so we can reuse the same token
+      // when fetching template parameters during postCreateSetup.
+      const session = coder.existingWorkspace
+        ? undefined
+        : await this.coderService.ensureProvisioningSession(workspaceName);
+      const sshConfig = await this.coderService.fetchDeploymentSshConfig(session);
+      hostnameSuffix = sshConfig.hostnameSuffix;
+    } catch (error) {
+      if (!coder.existingWorkspace) {
+        await this.coderService.disposeProvisioningSession(workspaceName);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(
+        `Failed to read Coder deployment SSH config. ` +
+          `Make sure you're logged in with the Coder CLI. ` +
+          `(${message})`
+      );
+    }
+
+    return Ok({
+      ...config,
+      host: `${workspaceName}.${hostnameSuffix}`,
+      coder: { ...coder, workspaceName },
+    });
   }
 
   /**
@@ -440,6 +457,7 @@ export class CoderSSHRuntime extends SSHRuntime {
     const exists = await this.coderService.workspaceExists(workspaceName);
 
     if (exists) {
+      await this.coderService.disposeProvisioningSession(workspaceName);
       return Err(
         `A Coder workspace named "${workspaceName}" already exists. ` +
           `Either switch to "Existing" mode to use it, delete/rename it in Coder, ` +
@@ -594,10 +612,13 @@ export class CoderSSHRuntime extends SSHRuntime {
         throw new Error("Coder workspace name is required (should be set by finalizeConfig)");
       }
       if (!this.coderConfig.template) {
+        await this.coderService.disposeProvisioningSession(coderWorkspaceName);
         throw new Error("Coder template is required for new workspaces");
       }
 
       initLogger.logStep(`Creating Coder workspace "${coderWorkspaceName}"...`);
+
+      const provisioningSession = this.coderService.takeProvisioningSession(coderWorkspaceName);
 
       try {
         for await (const line of this.coderService.createWorkspace(
@@ -605,7 +626,8 @@ export class CoderSSHRuntime extends SSHRuntime {
           this.coderConfig.template,
           this.coderConfig.preset,
           abortSignal,
-          this.coderConfig.templateOrg
+          this.coderConfig.templateOrg,
+          provisioningSession
         )) {
           initLogger.logStdout(line);
         }
@@ -624,6 +646,10 @@ export class CoderSSHRuntime extends SSHRuntime {
         log.error("Failed to create Coder workspace", { error, config: this.coderConfig });
         initLogger.logStderr(`Failed to create Coder workspace: ${errorMsg}`);
         throw new Error(`Failed to create Coder workspace: ${errorMsg}`);
+      } finally {
+        if (provisioningSession) {
+          await provisioningSession.dispose();
+        }
       }
     } else if (this.coderConfig.workspaceName) {
       // For existing workspaces, wait for "stopping"/"canceling" to clear before SSH

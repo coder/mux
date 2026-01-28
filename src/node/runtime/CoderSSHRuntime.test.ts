@@ -16,6 +16,11 @@ import { createSSHTransport } from "./transports";
  * Only mocks methods used by the tested code paths.
  */
 function createMockCoderService(overrides?: Partial<CoderService>): CoderService {
+  const provisioningSession = {
+    token: "token",
+    dispose: mock(() => Promise.resolve()),
+  };
+
   return {
     createWorkspace: mock(() =>
       (async function* (): AsyncGenerator<string, void, unknown> {
@@ -27,6 +32,10 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
       })()
     ),
     deleteWorkspace: mock(() => Promise.resolve()),
+    ensureProvisioningSession: mock(() => Promise.resolve(provisioningSession)),
+    takeProvisioningSession: mock(() => provisioningSession),
+    disposeProvisioningSession: mock(() => Promise.resolve()),
+    fetchDeploymentSshConfig: mock(() => Promise.resolve({ hostnameSuffix: "coder" })),
     ensureSSHConfig: mock(() => Promise.resolve()),
     getWorkspaceStatus: mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
@@ -105,6 +114,20 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
   });
 
   describe("new workspace mode", () => {
+    it("uses hostname suffix from deployment SSH config", async () => {
+      const fetchDeploymentSshConfig = mock(() => Promise.resolve({ hostnameSuffix: "corp" }));
+      coderService = createMockCoderService({ fetchDeploymentSshConfig });
+      runtime = createRuntime({}, coderService);
+
+      const config = createSSHCoderConfig({ existingWorkspace: false });
+      const result = await runtime.finalizeConfig("my-feature", config);
+
+      expect(result.success).toBe(true);
+      if (result.success && result.data.type === "ssh") {
+        expect(result.data.host).toBe("mux-my-feature.corp");
+      }
+      expect(fetchDeploymentSshConfig).toHaveBeenCalled();
+    });
     it("derives Coder name from branch name when not provided", async () => {
       const config = createSSHCoderConfig({ existingWorkspace: false });
       const result = await runtime.finalizeConfig("my-feature", config);
@@ -151,6 +174,34 @@ describe("CoderSSHRuntime.finalizeConfig", () => {
       }
     });
 
+    it("returns error when deployment SSH config fetch fails", async () => {
+      const provisioningSession = {
+        token: "token",
+        dispose: mock(() => Promise.resolve()),
+      };
+      const ensureProvisioningSession = mock(() => Promise.resolve(provisioningSession));
+      const fetchDeploymentSshConfig = mock(() => Promise.reject(new Error("nope")));
+      const disposeProvisioningSession = mock(() => Promise.resolve());
+
+      coderService = createMockCoderService({
+        ensureProvisioningSession,
+        fetchDeploymentSshConfig,
+        disposeProvisioningSession,
+      });
+      runtime = createRuntime({}, coderService);
+
+      const config = createSSHCoderConfig({ existingWorkspace: false });
+      const result = await runtime.finalizeConfig("branch", config);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Failed to read Coder deployment SSH config");
+        expect(result.error).toContain("nope");
+      }
+      expect(ensureProvisioningSession).toHaveBeenCalledWith("mux-branch");
+      expect(fetchDeploymentSshConfig).toHaveBeenCalledWith(provisioningSession);
+      expect(disposeProvisioningSession).toHaveBeenCalledWith("mux-branch");
+    });
     it("uses provided workspaceName over branch name", async () => {
       const config = createSSHCoderConfig({
         existingWorkspace: false,
@@ -437,6 +488,11 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       })()
     );
     const ensureSSHConfig = mock(() => Promise.resolve());
+    const provisioningSession = {
+      token: "token",
+      dispose: mock(() => Promise.resolve()),
+    };
+    const takeProvisioningSession = mock(() => provisioningSession);
 
     // Start with workspace not found, then return running after creation
     let workspaceCreated = false;
@@ -452,6 +508,7 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       createWorkspace,
       ensureSSHConfig,
       getWorkspaceStatus,
+      takeProvisioningSession,
     });
     const runtime = createRuntime(
       { existingWorkspace: false, workspaceName: "my-ws", template: "my-template" },
@@ -492,13 +549,16 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
       workspacePath: "/home/user/src/my-project/my-ws",
     });
 
+    expect(takeProvisioningSession).toHaveBeenCalledWith("my-ws");
     expect(createWorkspace).toHaveBeenCalledWith(
       "my-ws",
       "my-template",
       undefined,
       undefined,
-      undefined
+      undefined,
+      provisioningSession
     );
+    expect(provisioningSession.dispose).toHaveBeenCalled();
     expect(ensureSSHConfig).toHaveBeenCalled();
     expect(execBufferedSpy).toHaveBeenCalled();
 
@@ -511,6 +571,60 @@ describe("CoderSSHRuntime.postCreateSetup", () => {
     expect(steps.join("\n")).toContain("Creating Coder workspace");
     expect(steps.join("\n")).toContain("Configuring SSH");
     expect(steps.join("\n")).toContain("Preparing workspace directory");
+  });
+
+  it("disposes provisioning session when workspace creation fails", async () => {
+    const createWorkspace = mock(() =>
+      (async function* (): AsyncGenerator<string, void, unknown> {
+        yield "Starting workspace...";
+        await Promise.resolve();
+        throw new Error("boom");
+      })()
+    );
+    const provisioningSession = {
+      token: "token",
+      dispose: mock(() => Promise.resolve()),
+    };
+    const takeProvisioningSession = mock(() => provisioningSession);
+
+    const coderService = createMockCoderService({
+      createWorkspace,
+      takeProvisioningSession,
+    });
+    const runtime = createRuntime(
+      { existingWorkspace: false, workspaceName: "my-ws", template: "my-template" },
+      coderService
+    );
+
+    let caughtError: Error | undefined;
+    try {
+      await runtime.postCreateSetup({
+        initLogger: {
+          logStep: noop,
+          logStdout: noop,
+          logStderr: noop,
+          logComplete: noop,
+        },
+        projectPath: "/project",
+        branchName: "branch",
+        trunkBranch: "main",
+        workspacePath: "/home/user/src/my-project/my-ws",
+      });
+    } catch (err) {
+      caughtError = err as Error;
+    }
+
+    expect(caughtError?.message).toContain("Failed to create Coder workspace");
+    expect(takeProvisioningSession).toHaveBeenCalledWith("my-ws");
+    expect(createWorkspace).toHaveBeenCalledWith(
+      "my-ws",
+      "my-template",
+      undefined,
+      undefined,
+      undefined,
+      provisioningSession
+    );
+    expect(provisioningSession.dispose).toHaveBeenCalled();
   });
 
   it("skips workspace creation when existingWorkspace=true and workspace is running", async () => {

@@ -444,6 +444,111 @@ describe("CoderService", () => {
     });
   });
 
+  describe("fetchDeploymentSshConfig", () => {
+    let originalFetch: typeof fetch;
+
+    beforeEach(() => {
+      originalFetch = global.fetch;
+    });
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    function mockWhoami() {
+      execAsyncSpy?.mockImplementation((cmd: string) => {
+        if (cmd === "coder whoami --output json") {
+          return createMockExecResult(
+            Promise.resolve({
+              stdout: JSON.stringify([{ url: "https://coder.example.com" }]),
+              stderr: "",
+            })
+          );
+        }
+        return createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)));
+      });
+    }
+
+    it("uses provided session and normalizes leading dot", async () => {
+      mockWhoami();
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ hostname_suffix: ".corp" }),
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const session = {
+        token: "session-token",
+        dispose: vi.fn().mockResolvedValue(undefined),
+      };
+      const result = await service.fetchDeploymentSshConfig(session);
+
+      expect(result).toEqual({ hostnameSuffix: "corp" });
+      const calledUrl = fetchSpy.mock.calls[0]?.[0] as URL | undefined;
+      const options = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(calledUrl?.toString()).toBe("https://coder.example.com/api/v2/deployment/ssh");
+      expect(options).toEqual({
+        headers: { "Coder-Session-Token": "session-token" },
+      });
+      expect(execAsyncSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("defaults to coder when hostname suffix missing", async () => {
+      mockWhoami();
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const session = {
+        token: "session-token",
+        dispose: vi.fn().mockResolvedValue(undefined),
+      };
+      const result = await service.fetchDeploymentSshConfig(session);
+
+      expect(result).toEqual({ hostnameSuffix: "coder" });
+    });
+  });
+
+  describe("provisioning sessions", () => {
+    function mockTokenCommands() {
+      execAsyncSpy?.mockImplementation((cmd: string) => {
+        if (cmd.startsWith("coder tokens create --lifetime 5m --name")) {
+          return createMockExecResult(Promise.resolve({ stdout: "token-123", stderr: "" }));
+        }
+        if (cmd.startsWith("coder tokens delete")) {
+          return createMockExecResult(Promise.resolve({ stdout: "", stderr: "" }));
+        }
+        return createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)));
+      });
+    }
+
+    it("reuses provisioning sessions for the same workspace", async () => {
+      mockTokenCommands();
+      const session1 = await service.ensureProvisioningSession("ws");
+      const session2 = await service.ensureProvisioningSession("ws");
+
+      expect(session1).toBe(session2);
+      expect(session1.token).toBe("token-123");
+
+      await service.disposeProvisioningSession("ws");
+      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it("takeProvisioningSession returns and clears the session", async () => {
+      mockTokenCommands();
+      const session = await service.ensureProvisioningSession("ws");
+      const taken = service.takeProvisioningSession("ws");
+
+      expect(taken).toBe(session);
+      expect(service.takeProvisioningSession("ws")).toBeUndefined();
+
+      await taken?.dispose();
+      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe("createWorkspace", () => {
     // Capture original fetch once per describe block to avoid nested mock issues
     let originalFetch: typeof fetch;
