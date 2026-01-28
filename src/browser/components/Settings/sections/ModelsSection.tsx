@@ -235,13 +235,16 @@ export function ModelsSection() {
     return models;
   };
 
-  // Get built-in models from KNOWN_MODELS
-  const builtInModels = Object.values(KNOWN_MODELS).map((model) => ({
-    provider: model.provider,
-    modelId: model.providerModelId,
-    fullId: model.id,
-    aliases: model.aliases,
-  }));
+  // Get built-in models from KNOWN_MODELS.
+  // Filter by policy so the settings table doesn't list models users can't ever select.
+  const builtInModels = Object.values(KNOWN_MODELS)
+    .map((model) => ({
+      provider: model.provider,
+      modelId: model.providerModelId,
+      fullId: model.id,
+      aliases: model.aliases,
+    }))
+    .filter((model) => isModelAllowedByPolicy(effectivePolicy, model.fullId));
 
   const customModels = getCustomModels();
 
