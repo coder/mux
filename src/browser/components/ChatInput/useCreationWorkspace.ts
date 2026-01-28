@@ -186,6 +186,7 @@ export function useCreationWorkspace({
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
   const workspaceContext = useOptionalWorkspaceContext();
   const promoteWorkspaceDraft = workspaceContext?.promoteWorkspaceDraft;
+  const deleteWorkspaceDraft = workspaceContext?.deleteWorkspaceDraft;
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -429,11 +430,28 @@ export function useCreationWorkspace({
             // Ignore - sendMessage will persist AI settings as a fallback.
           });
 
+        const isDraftScope = typeof draftId === "string" && draftId.trim().length > 0;
         const pendingScopeId = projectPath
-          ? typeof draftId === "string" && draftId.trim().length > 0
+          ? isDraftScope
             ? getDraftScopeId(projectPath, draftId)
             : getPendingScopeId(projectPath)
           : null;
+
+        const clearPendingDraft = () => {
+          // Once the workspace exists, drop the draft even if the initial send fails
+          // so we don't keep a hidden placeholder in the sidebar.
+          if (!pendingScopeId) {
+            return;
+          }
+
+          if (isDraftScope && deleteWorkspaceDraft && typeof draftId === "string") {
+            deleteWorkspaceDraft(projectPath, draftId);
+            return;
+          }
+
+          updatePersistedState(getInputKey(pendingScopeId), "");
+          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
+        };
 
         // Sync preferences before switching (keeps workspace settings consistent).
         syncCreationPreferences(projectPath, metadata.id);
@@ -449,7 +467,7 @@ export function useCreationWorkspace({
 
         setIsSending(false);
 
-        // Wait for the initial send result so the creation flow can preserve drafts on failure.
+        // Wait for the initial send result so we can surface errors and clean up draft state.
         const additionalSystemInstructions = [
           sendMessageOptions.additionalSystemInstructions,
           optionsOverride?.additionalSystemInstructions,
@@ -475,15 +493,11 @@ export function useCreationWorkspace({
             // Persist the failure so the workspace view can surface a toast after navigation.
             updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), sendResult.error);
           }
-          // Preserve draft input/attachments so the user can retry later.
+          clearPendingDraft();
           return { success: false, error: sendResult.error };
         }
 
-        if (pendingScopeId) {
-          updatePersistedState(getInputKey(pendingScopeId), "");
-          updatePersistedState(getInputAttachmentsKey(pendingScopeId), undefined);
-        }
-
+        clearPendingDraft();
         return { success: true };
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
@@ -513,6 +527,7 @@ export function useCreationWorkspace({
       sectionId,
       draftId,
       promoteWorkspaceDraft,
+      deleteWorkspaceDraft,
     ]
   );
 

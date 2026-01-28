@@ -203,6 +203,18 @@ function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByPro
   return result;
 }
 
+function createWorkspaceDraftId(): string {
+  const maybeCrypto = globalThis.crypto;
+  if (maybeCrypto && typeof maybeCrypto.randomUUID === "function") {
+    const id = maybeCrypto.randomUUID();
+    if (typeof id === "string" && id.length > 0) {
+      return id;
+    }
+  }
+
+  return `draft_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
 export interface WorkspaceContext {
   // Workspace data
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
@@ -261,6 +273,11 @@ export interface WorkspaceContext {
   // UI-only workspace creation drafts (placeholders)
   workspaceDraftsByProject: WorkspaceDraftsByProject;
   createWorkspaceDraft: (projectPath: string, sectionId?: string) => void;
+  updateWorkspaceDraftSection: (
+    projectPath: string,
+    draftId: string,
+    sectionId: string | null
+  ) => void;
   openWorkspaceDraft: (projectPath: string, draftId: string, sectionId?: string | null) => void;
   deleteWorkspaceDraft: (projectPath: string, draftId: string) => void;
 
@@ -371,6 +388,58 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     () => normalizeWorkspaceDraftsByProject(workspaceDraftsByProjectState),
     [workspaceDraftsByProjectState]
   );
+
+  // Clean up promotions that point at removed drafts or archived workspaces so
+  // promoted entries never hide the real workspace list.
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+
+    setWorkspaceDraftPromotionsByProject((prev) => {
+      let changed = false;
+      const next: WorkspaceDraftPromotionsByProject = {};
+
+      for (const [projectPath, promotions] of Object.entries(prev)) {
+        const draftIds = new Set(
+          (workspaceDraftsByProject[projectPath] ?? []).map((draft) => draft.draftId)
+        );
+        if (draftIds.size === 0) {
+          if (Object.keys(promotions).length > 0) {
+            changed = true;
+          }
+          continue;
+        }
+
+        const nextPromotions: Record<string, FrontendWorkspaceMetadata> = {};
+        for (const [draftId, metadata] of Object.entries(promotions)) {
+          if (!draftIds.has(draftId)) {
+            changed = true;
+            continue;
+          }
+
+          const liveMetadata = workspaceMetadata.get(metadata.id);
+          if (!liveMetadata) {
+            changed = true;
+            continue;
+          }
+
+          nextPromotions[draftId] = liveMetadata;
+        }
+
+        if (Object.keys(nextPromotions).length > 0) {
+          next[projectPath] = nextPromotions;
+          if (Object.keys(nextPromotions).length !== Object.keys(promotions).length) {
+            changed = true;
+          }
+        } else if (Object.keys(promotions).length > 0) {
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [loading, workspaceDraftsByProject, workspaceMetadata]);
 
   const currentProjectPath = useMemo(() => {
     if (currentProjectPathFromState) return currentProjectPathFromState;
@@ -886,9 +955,55 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     },
     [navigateToProject, navigateToWorkspace, workspaceMetadata]
   );
+  // Persist section selection + URL updates so draft section switches stick across navigation.
+  const updateWorkspaceDraftSection = useCallback(
+    (projectPath: string, draftId: string, sectionId: string | null) => {
+      if (projectPath.trim().length === 0) return;
+      if (draftId.trim().length === 0) return;
+
+      const normalizedSectionId =
+        typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : null;
+
+      setWorkspaceDraftsByProjectState((prev) => {
+        const current = normalizeWorkspaceDraftsByProject(prev);
+        const existing = current[projectPath] ?? [];
+        if (existing.length === 0) {
+          return prev;
+        }
+
+        let didUpdate = false;
+        const nextDrafts = existing.map((draft) => {
+          if (draft.draftId !== draftId) {
+            return draft;
+          }
+          if (draft.sectionId === normalizedSectionId) {
+            return draft;
+          }
+          didUpdate = true;
+          return {
+            ...draft,
+            sectionId: normalizedSectionId,
+          };
+        });
+
+        if (!didUpdate) {
+          return prev;
+        }
+
+        return {
+          ...current,
+          [projectPath]: nextDrafts,
+        };
+      });
+
+      navigateToProject(projectPath, normalizedSectionId ?? undefined, draftId);
+    },
+    [navigateToProject, setWorkspaceDraftsByProjectState]
+  );
+
   const createWorkspaceDraft = useCallback(
     (projectPath: string, sectionId?: string) => {
-      const draftId = crypto.randomUUID();
+      const draftId = createWorkspaceDraftId();
       const createdAt = Date.now();
       const draft: WorkspaceDraft = {
         draftId,
@@ -996,6 +1111,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       workspaceDraftPromotionsByProject,
       promoteWorkspaceDraft,
       createWorkspaceDraft,
+      updateWorkspaceDraftSection,
       openWorkspaceDraft,
       deleteWorkspaceDraft,
       getWorkspaceInfo,
@@ -1020,6 +1136,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       workspaceDraftPromotionsByProject,
       promoteWorkspaceDraft,
       createWorkspaceDraft,
+      updateWorkspaceDraftSection,
       openWorkspaceDraft,
       deleteWorkspaceDraft,
       getWorkspaceInfo,

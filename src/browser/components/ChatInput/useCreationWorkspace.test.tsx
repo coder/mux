@@ -510,7 +510,7 @@ describe("useCreationWorkspace", () => {
     expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
   });
 
-  test("handleSend returns failure when sendMessage fails and keeps draft", async () => {
+  test("handleSend returns failure when sendMessage fails and clears draft", async () => {
     const listBranchesMock = mock(
       (): Promise<BranchListResult> =>
         Promise.resolve({
@@ -570,8 +570,8 @@ describe("useCreationWorkspace", () => {
     const pendingInputKey = getInputKey(pendingScopeId);
     const pendingImagesKey = getInputAttachmentsKey(pendingScopeId);
     const pendingErrorKey = getPendingWorkspaceSendErrorKey(TEST_WORKSPACE_ID);
-    expect(updatePersistedStateCalls.some(([key]) => key === pendingInputKey)).toBe(false);
-    expect(updatePersistedStateCalls.some(([key]) => key === pendingImagesKey)).toBe(false);
+    expect(updatePersistedStateCalls).toContainEqual([pendingInputKey, ""]);
+    expect(updatePersistedStateCalls).toContainEqual([pendingImagesKey, undefined]);
     expect(updatePersistedStateCalls).toContainEqual([pendingErrorKey, sendError]);
   });
   test("onWorkspaceCreated is called before sendMessage resolves (no blocking)", async () => {

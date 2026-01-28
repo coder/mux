@@ -142,6 +142,8 @@ export type { ChatInputProps, ChatInputAPI };
 const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const { api } = useAPI();
   const { variant } = props;
+  const creationProjectPath = variant === "creation" ? props.projectPath : "";
+  const creationDraftId = variant === "creation" ? props.pendingDraftId : null;
   const [thinkingLevel] = useThinkingLevel();
   const atMentionProjectPath = variant === "creation" ? props.projectPath : null;
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
@@ -329,7 +331,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
   const { open } = useSettings();
-  const { selectedWorkspace, deleteWorkspaceDraft } = useWorkspaceContext();
+  const { selectedWorkspace, beginWorkspaceCreation, updateWorkspaceDraftSection } =
+    useWorkspaceContext();
   const { agentId, currentAgent } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
@@ -538,6 +541,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
   }, [creationProject, selectedSectionId, variant]);
 
+  const handleCreationSectionChange = useCallback(
+    (sectionId: string | null) => {
+      setSelectedSectionId(sectionId);
+
+      if (variant !== "creation") {
+        return;
+      }
+
+      if (typeof creationDraftId === "string" && creationDraftId.trim().length > 0) {
+        updateWorkspaceDraftSection(creationProjectPath, creationDraftId, sectionId);
+        return;
+      }
+
+      beginWorkspaceCreation(
+        creationProjectPath,
+        typeof sectionId === "string" && sectionId.trim().length > 0 ? sectionId : undefined
+      );
+    },
+    [
+      beginWorkspaceCreation,
+      creationDraftId,
+      creationProjectPath,
+      updateWorkspaceDraftSection,
+      variant,
+    ]
+  );
+
   // Creation-specific state (hook always called, but only used when variant === "creation")
   // This avoids conditional hook calls which violate React rules
   const creationState = useCreationWorkspace(
@@ -608,7 +638,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           runtimeAvailabilityState: creationState.runtimeAvailabilityState,
           sections: creationSections,
           selectedSectionId,
-          onSectionChange: setSelectedSectionId,
+          onSectionChange: handleCreationSectionChange,
           runtimeFieldError,
           // Pass coderProps when CLI is available/outdated, Coder is enabled, or still checking (so "Checking…" UI renders)
           coderProps:
@@ -642,8 +672,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !disabled &&
     !sendInFlightBlocksInput &&
     !coderPresetsLoading;
-
-  const creationProjectPath = variant === "creation" ? props.projectPath : "";
 
   // Creation variant: keep the project-scoped model/thinking in sync with global agent defaults
   // so switching agents uses the configured defaults (and respects "inherit" semantics).
@@ -1522,12 +1550,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           if (inputRef.current) {
             inputRef.current.style.height = "";
           }
-        }
-
-        // Important: the creation ChatInput unmounts immediately after workspace creation,
-        // but we still want to clean up the draft placeholder once the initial send succeeds.
-        if (typeof props.pendingDraftId === "string" && props.pendingDraftId.trim().length > 0) {
-          deleteWorkspaceDraft(props.projectPath, props.pendingDraftId);
         }
       }
       return;

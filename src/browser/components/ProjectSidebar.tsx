@@ -866,20 +866,25 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
 
+                              const draftsForProject = workspaceDraftsByProject[projectPath] ?? [];
+                              const activeDraftIds = new Set(
+                                draftsForProject.map((draft) => draft.draftId)
+                              );
                               const draftPromotionsForProject =
                                 workspaceDraftPromotionsByProject[projectPath] ?? {};
-                              const promotedWorkspaceIds = new Set(
-                                Object.values(draftPromotionsForProject).map(
-                                  (metadata) => metadata.id
+                              const activeDraftPromotions = Object.fromEntries(
+                                Object.entries(draftPromotionsForProject).filter(([draftId]) =>
+                                  activeDraftIds.has(draftId)
                                 )
+                              );
+                              const promotedWorkspaceIds = new Set(
+                                Object.values(activeDraftPromotions).map((metadata) => metadata.id)
                               );
                               const workspacesForNormalRendering = allWorkspaces.filter(
                                 (workspace) => !promotedWorkspaceIds.has(workspace.id)
                               );
                               const sections = sortSectionsByLinkedList(config.sections ?? []);
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
-
-                              const draftsForProject = workspaceDraftsByProject[projectPath] ?? [];
                               const sortedDrafts = draftsForProject
                                 .slice()
                                 .sort((a, b) => a.createdAt - b.createdAt);
@@ -939,7 +944,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 draft: (typeof sortedDrafts)[number]
                               ): React.ReactNode => {
                                 const sectionId = normalizeDraftSectionId(draft);
-                                const promotedMetadata = draftPromotionsForProject[draft.draftId];
+                                const promotedMetadata = activeDraftPromotions[draft.draftId];
 
                                 if (promotedMetadata) {
                                   const liveMetadata =
