@@ -39,6 +39,7 @@ import { Ok, Err } from "@/common/types/result";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import {
   createMuxMessage,
+  isCompactionSummaryMetadata,
   prepareUserMessageForSend,
   type CompactionFollowUpRequest,
   type MuxFrontendMetadata,
@@ -307,6 +308,12 @@ export class AgentSession {
 
     const unsubscribe = this.onChatEvent(listener);
     await this.emitHistoricalEvents(listener);
+
+    // Crash recovery: check if the last message is a compaction summary with
+    // a pending follow-up that was never dispatched. If so, dispatch it now.
+    // This handles the case where the app crashed after compaction completed
+    // but before the follow-up was sent.
+    void this.dispatchPendingFollowUp();
 
     return unsubscribe;
   }
@@ -740,78 +747,9 @@ export class AgentSession {
         }
       }
 
-      // If this is a compaction request with follow-up content, queue it for auto-send after compaction
-      // Use the type guard result to access followUpContent with proper typing
-      // Supports both new `followUpContent` and legacy `continueMessage` for backwards compatibility
-      if (isCompactionRequest && typedMuxMetadata && options) {
-        const compactionMeta = typedMuxMetadata as CompactionRequestMetadata;
-        const followUpContent = compactionMeta.parsed.followUpContent;
-        const legacyContinueMessage = compactionMeta.parsed.continueMessage;
-        // Prefer new field, fall back to legacy
-        const rawFollowUp = followUpContent ?? legacyContinueMessage;
-
-        if (rawFollowUp) {
-          const followUpText = followUpContent?.text ?? legacyContinueMessage?.text ?? "";
-
-          // Normalize attachments: newer metadata uses `fileParts`, older persisted entries used `imageParts`.
-          const followUpFileParts = followUpContent?.fileParts ?? legacyContinueMessage?.imageParts;
-
-          // Process the follow-up content (handles reviews -> text formatting + metadata)
-          const { finalText, metadata } = prepareUserMessageForSend(
-            {
-              text: followUpText,
-              fileParts: followUpFileParts,
-              reviews: followUpContent?.reviews ?? legacyContinueMessage?.reviews,
-            },
-            followUpContent?.muxMetadata ?? legacyContinueMessage?.muxMetadata
-          );
-
-          // Derive agentId: new field has it directly, legacy may use `mode` field.
-          // Legacy `mode` was "exec" | "plan" and maps directly to agentId.
-          const legacyMode = legacyContinueMessage?.mode;
-          const effectiveAgentId =
-            followUpContent?.agentId ?? legacyContinueMessage?.agentId ?? legacyMode ?? "exec";
-
-          // Use model/agentId from follow-up content - these were captured from the user's
-          // original settings when compaction was triggered (compaction uses its own
-          // agentId "compact" and potentially a different model for summarization).
-          const followUpModel =
-            followUpContent?.model ?? legacyContinueMessage?.model ?? options.model;
-
-          // Build options for the queued message (strip compaction-specific fields)
-          // agentId determines tool policy via resolveToolPolicyForAgent in aiService
-          const sanitizedOptions: Omit<
-            SendMessageOptions,
-            "muxMetadata" | "mode" | "editMessageId" | "fileParts" | "maxOutputTokens"
-          > & { fileParts?: FilePart[]; muxMetadata?: MuxFrontendMetadata } = {
-            model: followUpModel,
-            agentId: effectiveAgentId,
-            thinkingLevel: options.thinkingLevel,
-            additionalSystemInstructions: options.additionalSystemInstructions,
-            providerOptions: options.providerOptions,
-            experiments: options.experiments,
-            disableWorkspaceAgents: options.disableWorkspaceAgents,
-          };
-
-          if (followUpFileParts && followUpFileParts.length > 0) {
-            sanitizedOptions.fileParts = followUpFileParts;
-          }
-
-          // Add metadata with reviews if present
-          if (metadata) {
-            sanitizedOptions.muxMetadata = metadata;
-          }
-
-          const dedupeKey = JSON.stringify({
-            text: finalText.trim(),
-            files: (followUpFileParts ?? []).map((part) => `${part.mediaType}:${part.url}`),
-          });
-
-          if (this.messageQueue.addOnce(finalText, sanitizedOptions, dedupeKey)) {
-            this.emitQueuedMessageChanged();
-          }
-        }
-      }
+      // Note: Follow-up content for compaction is now stored on the summary message
+      // and dispatched via dispatchPendingFollowUp() after compaction completes.
+      // This provides crash safety - the follow-up survives app restarts.
 
       if (this.disposed) {
         return Ok(undefined);
@@ -1364,11 +1302,17 @@ export class AgentSession {
         // Compaction completed - notify to trigger metadata refresh
         // This allows the frontend to get updated postCompaction state
         this.onCompactionComplete?.();
+
+        // Dispatch any pending follow-up from the compaction summary.
+        // The follow-up is stored on the summary for crash safety - if the app
+        // crashes after compaction but before this dispatch, startup recovery
+        // will detect the pending follow-up and dispatch it.
+        void this.dispatchPendingFollowUp();
       }
 
       this.resetActiveStreamState();
 
-      // Stream end: auto-send queued messages
+      // Stream end: auto-send queued messages (for user messages typed during streaming)
       this.sendQueuedMessages();
     });
 
@@ -1509,6 +1453,73 @@ export class AgentSession {
 
       void this.sendMessage(message, options);
     }
+  }
+
+  /**
+   * Dispatch the pending follow-up from a compaction summary message.
+   * Called after compaction completes - the follow-up is stored on the summary
+   * for crash safety. The user message persisted by sendMessage() serves as
+   * proof of dispatch (no history rewrite needed).
+   */
+  private async dispatchPendingFollowUp(): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
+    // Read the last message from history
+    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    if (!historyResult.success || historyResult.data.length === 0) {
+      return;
+    }
+
+    const lastMessage = historyResult.data[historyResult.data.length - 1];
+    const muxMeta = lastMessage.metadata?.muxMetadata;
+
+    // Check if it's a compaction summary with a pending follow-up
+    if (!isCompactionSummaryMetadata(muxMeta) || !muxMeta.pendingFollowUp) {
+      return;
+    }
+
+    const followUp = muxMeta.pendingFollowUp;
+    log.debug("Dispatching pending follow-up from compaction summary", {
+      workspaceId: this.workspaceId,
+      hasText: Boolean(followUp.text),
+      hasFileParts: Boolean(followUp.fileParts?.length),
+      hasReviews: Boolean(followUp.reviews?.length),
+      model: followUp.model,
+      agentId: followUp.agentId,
+    });
+
+    // Process the follow-up content (handles reviews -> text formatting + metadata)
+    const { finalText, metadata } = prepareUserMessageForSend(
+      {
+        text: followUp.text,
+        fileParts: followUp.fileParts,
+        reviews: followUp.reviews,
+      },
+      followUp.muxMetadata
+    );
+
+    // Build options for the follow-up message
+    const options: SendMessageOptions & {
+      fileParts?: FilePart[];
+      muxMetadata?: MuxFrontendMetadata;
+    } = {
+      model: followUp.model,
+      agentId: followUp.agentId,
+    };
+
+    if (followUp.fileParts && followUp.fileParts.length > 0) {
+      options.fileParts = followUp.fileParts;
+    }
+
+    if (metadata) {
+      options.muxMetadata = metadata;
+    }
+
+    // Fire-and-forget: sendMessage will persist the user message, which serves
+    // as proof that the follow-up was dispatched.
+    void this.sendMessage(finalText, options);
   }
 
   /**

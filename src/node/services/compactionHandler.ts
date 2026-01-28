@@ -12,7 +12,13 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import {
+  createMuxMessage,
+  getCompactionFollowUpContent,
+  type CompactionFollowUpRequest,
+  type CompactionSummaryMetadata,
+  type MuxMessage,
+} from "@/common/types/message";
 import { createCompactionSummaryMessageId } from "@/node/services/utils/messageIds";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { MAX_EDITED_FILES, MAX_FILE_CONTENT_SIZE } from "@/common/constants/attachments";
@@ -368,6 +374,10 @@ export class CompactionHandler {
     // Check if this was an idle-compaction (auto-triggered due to inactivity)
     const isIdleCompaction =
       muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
+
+    // Extract follow-up content to attach to summary for crash-safe dispatch
+    const pendingFollowUp = getCompactionFollowUpContent(muxMeta);
+
     // Mark as processed before performing compaction
     this.processedCompactionRequestIds.add(lastUserMsg.id);
 
@@ -375,7 +385,8 @@ export class CompactionHandler {
       summary,
       event.metadata,
       messages,
-      isIdleCompaction
+      isIdleCompaction,
+      pendingFollowUp
     );
     if (!result.success) {
       log.error("Compaction failed:", result.error);
@@ -427,7 +438,8 @@ export class CompactionHandler {
       systemMessageTokens?: number;
     },
     messages: MuxMessage[],
-    isIdleCompaction = false
+    isIdleCompaction = false,
+    pendingFollowUp?: CompactionFollowUpRequest
   ): Promise<Result<void, string>> {
     // CRITICAL: Delete partial.json BEFORE clearing history
     // This prevents a race condition where:
@@ -479,6 +491,14 @@ export class CompactionHandler {
     // session-usage.json, which is updated on every stream-end. If that file is deleted
     // or corrupted, pre-compaction costs are lost - this is acceptable since manual
     // file deletion is out of scope for data recovery.
+    //
+    // The summary's muxMetadata stores the pending follow-up (if any) for crash-safe dispatch.
+    // After compaction, agentSession checks if the last message is a summary with pendingFollowUp
+    // and dispatches it. The user message persisted by that dispatch serves as proof of completion.
+    const summaryMuxMetadata: CompactionSummaryMetadata = {
+      type: "compaction-summary",
+      pendingFollowUp,
+    };
     const summaryMessage = createMuxMessage(
       createCompactionSummaryMessageId(),
       "assistant",
@@ -490,7 +510,7 @@ export class CompactionHandler {
         usage: metadata.usage,
         duration: metadata.duration,
         systemMessageTokens: metadata.systemMessageTokens,
-        muxMetadata: { type: "normal" },
+        muxMetadata: summaryMuxMetadata,
       }
     );
 
