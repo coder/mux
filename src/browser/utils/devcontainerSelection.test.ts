@@ -32,27 +32,28 @@ describe("resolveDevcontainerSelection", () => {
   describe("loading state", () => {
     const loadingState: RuntimeAvailabilityState = { status: "loading" };
 
-    it("returns input mode with no implicit default (P2 fix)", () => {
+    it("returns loading mode with skeleton placeholder (avoids flash)", () => {
       const result = resolveDevcontainerSelection({
         selectedRuntime: { mode: "devcontainer", configPath: "" },
         availabilityState: loadingState,
       });
 
-      expect(result.uiMode).toBe("input");
+      expect(result.uiMode).toBe("loading");
       expect(result.configPath).toBe("");
       expect(result.isCreatable).toBe(false);
-      expect(result.helperText).toBe("Loading configs…");
+      expect(result.helperText).toBeNull();
     });
 
-    it("is creatable when user provides explicit path", () => {
+    it("blocks creation during loading even with explicit path", () => {
       const result = resolveDevcontainerSelection({
         selectedRuntime: { mode: "devcontainer", configPath: ".devcontainer.json" },
         availabilityState: loadingState,
       });
 
-      expect(result.uiMode).toBe("input");
+      expect(result.uiMode).toBe("loading");
       expect(result.configPath).toBe(".devcontainer.json");
-      expect(result.isCreatable).toBe(true);
+      // Block creation until configs loaded to avoid invalid selections
+      expect(result.isCreatable).toBe(false);
     });
   });
 

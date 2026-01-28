@@ -14,7 +14,7 @@ import type { RuntimeAvailabilityState } from "@/browser/components/ChatInput/us
 export const DEFAULT_DEVCONTAINER_CONFIG_PATH = ".devcontainer/devcontainer.json";
 
 /** UI mode for devcontainer config controls */
-export type DevcontainerUiMode = "hidden" | "dropdown" | "input";
+export type DevcontainerUiMode = "hidden" | "loading" | "dropdown" | "input";
 
 /** Result of devcontainer selection resolution */
 export interface DevcontainerSelection {
@@ -63,14 +63,14 @@ export function resolveDevcontainerSelection(
 
   const selectedPath = selectedRuntime.configPath.trim();
 
-  // Loading state - show input, no implicit default (P2 fix)
+  // Loading state - show skeleton placeholder to avoid flash when switching to dropdown
   if (availabilityState.status === "loading") {
     return {
       configPath: selectedPath,
       configs: [],
-      uiMode: "input",
-      helperText: "Loading configs…",
-      isCreatable: selectedPath.length > 0,
+      uiMode: "loading",
+      helperText: null,
+      isCreatable: false, // Block creation until configs loaded
     };
   }
 
