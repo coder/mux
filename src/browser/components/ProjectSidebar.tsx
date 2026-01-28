@@ -7,6 +7,7 @@ import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
   getDraftScopeId,
@@ -38,6 +39,7 @@ import {
 } from "@/browser/utils/ui/workspaceFiltering";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
+import { ConfirmationModal } from "./ConfirmationModal";
 import SecretsModal from "./SecretsModal";
 import type { Secret } from "@/common/types/secrets";
 
@@ -323,6 +325,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     openWorkspaceDraft,
     deleteWorkspaceDraft,
   } = useWorkspaceContext();
+  const workspaceStore = useWorkspaceStoreRaw();
   const { navigateToProject } = useRouter();
 
   // Get project state and operations from context
@@ -431,6 +434,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
+  const [archiveConfirmation, setArchiveConfirmation] = useState<{
+    workspaceId: string;
+    displayTitle: string;
+    buttonElement?: HTMLElement;
+  } | null>(null);
   const projectRemoveError = usePopoverError();
   const sectionRemoveError = usePopoverError();
   const [secretsModalState, setSecretsModalState] = useState<{
@@ -480,7 +488,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     }
   };
 
-  const handleArchiveWorkspace = useCallback(
+  const performArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
       // Mark workspace as being archived for UI feedback
       setArchivingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
@@ -510,6 +518,52 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     },
     [onArchiveWorkspace, workspaceArchiveError]
   );
+
+  const hasActiveStream = useCallback(
+    (workspaceId: string) => {
+      const aggregator = workspaceStore.getAggregator(workspaceId);
+      if (!aggregator) return false;
+      const hasActiveStreams = aggregator.getActiveStreams().length > 0;
+      const isStarting = aggregator.getPendingStreamStartTime() !== null && !hasActiveStreams;
+      const awaitingUserQuestion = aggregator.hasAwaitingUserQuestion();
+      return (hasActiveStreams || isStarting) && !awaitingUserQuestion;
+    },
+    [workspaceStore]
+  );
+
+  const handleArchiveWorkspace = useCallback(
+    async (workspaceId: string, buttonElement?: HTMLElement) => {
+      if (hasActiveStream(workspaceId)) {
+        const metadata = workspaceMetadata.get(workspaceId);
+        const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
+        // Confirm before archiving if a stream is active so users don't interrupt in-progress work.
+        setArchiveConfirmation({ workspaceId, displayTitle, buttonElement });
+        return;
+      }
+
+      await performArchiveWorkspace(workspaceId, buttonElement);
+    },
+    [hasActiveStream, performArchiveWorkspace, workspaceMetadata]
+  );
+
+  const handleArchiveWorkspaceConfirm = useCallback(async () => {
+    if (!archiveConfirmation) {
+      return;
+    }
+
+    try {
+      await performArchiveWorkspace(
+        archiveConfirmation.workspaceId,
+        archiveConfirmation.buttonElement
+      );
+    } finally {
+      setArchiveConfirmation(null);
+    }
+  }, [archiveConfirmation, performArchiveWorkspace]);
+
+  const handleArchiveWorkspaceCancel = useCallback(() => {
+    setArchiveConfirmation(null);
+  }, []);
 
   const handleRemoveSection = async (
     projectPath: string,
@@ -1234,6 +1288,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               onSave={handleSaveSecrets}
             />
           )}
+          <ConfirmationModal
+            isOpen={archiveConfirmation !== null}
+            title={
+              archiveConfirmation
+                ? `Archive "${archiveConfirmation.displayTitle}" while streaming?`
+                : "Archive workspace?"
+            }
+            description="This workspace is currently streaming a response."
+            warning="Archiving will interrupt the active stream."
+            confirmLabel="Archive"
+            onConfirm={handleArchiveWorkspaceConfirm}
+            onCancel={handleArchiveWorkspaceCancel}
+          />
           <PopoverError
             error={workspaceArchiveError.error}
             prefix="Failed to archive workspace"
