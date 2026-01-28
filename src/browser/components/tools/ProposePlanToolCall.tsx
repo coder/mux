@@ -367,10 +367,13 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       // Switch to orchestrator before sending so send options (agentId/mode) match.
       updatePersistedState(getAgentIdKey(workspaceId), "orchestrator");
 
+      const sendMessageOptions = buildSendMessageOptions(workspaceId);
+
       await api.workspace.sendMessage({
         workspaceId,
-        message: "Start orchestrating the implementation of the plan.",
-        options: buildSendMessageOptions(workspaceId),
+        message:
+          "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `implementor` sub-agents; avoid doing repo work directly here except applying patches.",
+        options: { ...sendMessageOptions, agentId: "orchestrator" },
       });
     } catch (err) {
       console.error("Failed to start orchestrator:", err);
