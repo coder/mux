@@ -21,7 +21,11 @@ import {
 import { generateBranchName } from "../ipc/helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getInputKey, getPendingScopeId } from "@/common/constants/storage";
+import {
+  getDraftScopeId,
+  getInputKey,
+  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+} from "@/common/constants/storage";
 
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
@@ -90,8 +94,22 @@ describeIntegration("Name generation UI flow", () => {
 
       // Set input text via persisted state (happy-dom fireEvent.change can be flaky)
       // This mimics how ChatHarness.send() works
-      const pendingScopeId = getPendingScopeId(projectPath);
-      const inputKey = getInputKey(pendingScopeId);
+      const draftId = await waitFor(
+        () => {
+          const rawDrafts = globalThis.localStorage.getItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY);
+          const parsedDrafts = rawDrafts
+            ? (JSON.parse(rawDrafts) as Record<string, { draftId: string }[]>)
+            : {};
+          const draftsForProject = parsedDrafts[projectPath] ?? [];
+          const latestDraft = draftsForProject[draftsForProject.length - 1];
+          if (!latestDraft?.draftId) {
+            throw new Error("Draft not registered yet");
+          }
+          return latestDraft.draftId;
+        },
+        { timeout: 5_000 }
+      );
+      const inputKey = getInputKey(getDraftScopeId(projectPath, draftId));
       act(() => {
         updatePersistedState(inputKey, "Fix the sidebar layout bug on mobile devices");
       });

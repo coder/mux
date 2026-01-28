@@ -26,7 +26,7 @@ import {
   getProjectScopeId,
 } from "@/common/constants/storage";
 import type { SendMessageError } from "@/common/types/errors";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
@@ -184,7 +184,8 @@ export function useCreationWorkspace({
   draftId,
   userModel,
 }: UseCreationWorkspaceOptions): UseCreationWorkspaceReturn {
-  const { promoteWorkspaceDraft } = useWorkspaceContext();
+  const workspaceContext = useOptionalWorkspaceContext();
+  const promoteWorkspaceDraft = workspaceContext?.promoteWorkspaceDraft;
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -441,7 +442,7 @@ export function useCreationWorkspace({
         // The user sees the workspace UI while sendMessage kicks off the stream.
         onWorkspaceCreated(metadata);
 
-        if (typeof draftId === "string" && draftId.trim().length > 0) {
+        if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
           // UI-only: show the created workspace in-place where the draft was rendered.
           promoteWorkspaceDraft(projectPath, draftId, metadata);
         }
