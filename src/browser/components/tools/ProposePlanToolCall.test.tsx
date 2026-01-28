@@ -384,7 +384,7 @@ describe("ProposePlanToolCall", () => {
 
     await waitFor(() => expect(sendMessageCalls.length).toBe(1));
     expect(sendMessageCalls[0]?.message).toBe(
-      "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `implementor` sub-agents; avoid doing repo work directly here except applying patches."
+      "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `exec` sub-agents; avoid doing repo work directly here except applying patches."
     );
     expect(sendMessageCalls[0]?.options.agentId).toBe("orchestrator");
     expect(replaceChatHistoryCalls.length).toBe(0);
@@ -468,7 +468,7 @@ describe("ProposePlanToolCall", () => {
 
     await waitFor(() => expect(sendMessageCalls.length).toBe(1));
     expect(sendMessageCalls[0]?.message).toBe(
-      "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `implementor` sub-agents; avoid doing repo work directly here except applying patches."
+      "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `exec` sub-agents; avoid doing repo work directly here except applying patches."
     );
     expect(sendMessageCalls[0]?.options.agentId).toBe("orchestrator");
 
