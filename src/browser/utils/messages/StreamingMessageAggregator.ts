@@ -4,10 +4,9 @@ import type {
   MuxFilePart,
   DisplayedMessage,
   CompactionRequestData,
-  CompactionFollowUpRequest,
   MuxFrontendMetadata,
 } from "@/common/types/message";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, getCompactionFollowUpContent } from "@/common/types/message";
 
 import type {
   StreamStartEvent,
@@ -1921,16 +1920,7 @@ export class StreamingMessageAggregator {
           ? { skillName: muxMeta.skillName, scope: muxMeta.scope }
           : undefined;
 
-      // Extract followUpContent, supporting both new `followUpContent` and legacy `continueMessage` fields
-      const extractFollowUpContent = (): CompactionFollowUpRequest | undefined => {
-        if (muxMeta?.type !== "compaction-request") return undefined;
-        const parsed = muxMeta.parsed as {
-          followUpContent?: CompactionFollowUpRequest;
-          continueMessage?: CompactionFollowUpRequest;
-        };
-        return parsed.followUpContent ?? parsed.continueMessage;
-      };
-      const compactionFollowUp = extractFollowUpContent();
+      const compactionFollowUp = getCompactionFollowUpContent(muxMeta);
 
       const compactionRequest =
         muxMeta?.type === "compaction-request"

@@ -6,6 +6,7 @@
  */
 
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
+import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { APIClient } from "@/browser/contexts/API";
 import { getFollowUpContentText } from "./format";
 
@@ -42,12 +43,7 @@ export function getCompactionCommand(aggregator: StreamingMessageAggregator): st
   const muxMeta = compactionMsg.metadata?.muxMetadata;
   if (muxMeta?.type !== "compaction-request") return null;
 
-  // Support both new `followUpContent` and legacy `continueMessage` for backwards compatibility
-  const parsed = muxMeta.parsed as { followUpContent?: unknown; continueMessage?: unknown };
-  const followUpContent = (parsed.followUpContent ?? parsed.continueMessage) as Parameters<
-    typeof getFollowUpContentText
-  >[0];
-  const followUpText = getFollowUpContentText(followUpContent);
+  const followUpText = getFollowUpContentText(getCompactionFollowUpContent(muxMeta));
   if (followUpText && !muxMeta.rawCommand.includes("\n")) {
     return `${muxMeta.rawCommand}\n${followUpText}`;
   }
