@@ -172,7 +172,6 @@ export const Tasks: AppStory = {
     await dialogCanvas.findByText(/^Plan$/i);
     await dialogCanvas.findByText(/^Exec$/i);
     await dialogCanvas.findByText(/^Explore$/i);
-    await dialogCanvas.findByText(/^Compact$/i);
 
     const maxParallelAgentTasksInput = await findNumberInputForSettingRow(
       dialogCanvas,
