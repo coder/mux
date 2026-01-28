@@ -33,6 +33,8 @@ import {
   type SSHServerConfig,
 } from "../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
+import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "../../src/node/runtime/SSH2ConnectionPool";
 import { execAsync } from "../../src/node/utils/disposableExec";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -117,6 +119,13 @@ describeIntegration("Workspace deletion integration tests", () => {
       await stopSSHServer(sshConfig);
     }
   }, 30000);
+
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests. This allows tests to run concurrently.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
 
   // Test matrix: Run tests for both local and SSH runtimes
   describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(

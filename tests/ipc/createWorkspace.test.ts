@@ -36,6 +36,8 @@ import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace
 import { createRuntime } from "../../src/node/runtime/runtimeFactory";
 import type { SSHRuntime } from "../../src/node/runtime/SSHRuntime";
 import { streamToString } from "../../src/node/runtime/streamUtils";
+import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "../../src/node/runtime/SSH2ConnectionPool";
 
 const execAsync = promisify(exec);
 
@@ -184,6 +186,13 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
       await stopSSHServer(sshConfig);
     }
   }, 30000);
+
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests. This allows tests to run concurrently.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
 
   // Test matrix: Run tests for both local and SSH runtimes
   describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(

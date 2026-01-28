@@ -346,6 +346,15 @@ export class SSHConnectionPool {
   }
 
   /**
+   * Clear all health state. Used in tests to reset between test cases
+   * so backoff from one test doesn't affect subsequent tests.
+   */
+  clearAllHealth(): void {
+    this.health.clear();
+    this.inflight.clear();
+  }
+
+  /**
    * Probe connection health by running a simple command
    */
   private async probeConnection(
