@@ -188,9 +188,13 @@ export function useCreationWorkspace({
   const workspaceContext = useOptionalWorkspaceContext();
   const promoteWorkspaceDraft = workspaceContext?.promoteWorkspaceDraft;
   const deleteWorkspaceDraft = workspaceContext?.deleteWorkspaceDraft;
-  const { currentWorkspaceId, pendingDraftId } = useRouter();
+  const { currentWorkspaceId, currentProjectId, pendingDraftId } = useRouter();
   const isMountedRef = useRef(true);
-  const latestRouteRef = useRef({ currentWorkspaceId, pendingDraftId });
+  const latestRouteRef = useRef({ currentWorkspaceId, currentProjectId, pendingDraftId });
+  const sendRouteRef = useRef<{
+    currentProjectId: string | null;
+    pendingDraftId: string | null;
+  } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -200,8 +204,8 @@ export function useCreationWorkspace({
 
   // Keep router state fresh so we only auto-navigate from drafts when the user is still viewing them.
   useEffect(() => {
-    latestRouteRef.current = { currentWorkspaceId, pendingDraftId };
-  }, [currentWorkspaceId, pendingDraftId]);
+    latestRouteRef.current = { currentWorkspaceId, currentProjectId, pendingDraftId };
+  }, [currentWorkspaceId, currentProjectId, pendingDraftId]);
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -303,6 +307,12 @@ export function useCreationWorkspace({
       if (!messageText.trim() || isSending || !api) {
         return { success: false };
       }
+
+      const routeSnapshot = latestRouteRef.current;
+      sendRouteRef.current = {
+        currentProjectId: routeSnapshot.currentProjectId ?? null,
+        pendingDraftId: routeSnapshot.pendingDraftId ?? null,
+      };
 
       // Build runtime config early (used later for workspace creation)
       let runtimeSelection = settings.selectedRuntime;
@@ -479,9 +489,12 @@ export function useCreationWorkspace({
             if (!isMountedRef.current) return false;
             const latestRoute = latestRouteRef.current;
             if (latestRoute.currentWorkspaceId) return false;
-            // Draft ids are the most reliable signal; project ids can drift if the
-            // route was derived from a different path representation (e.g., symlinks).
-            return latestRoute.pendingDraftId === draftId;
+            const routeAtSend = sendRouteRef.current;
+            if (!routeAtSend) return false;
+            return (
+              latestRoute.currentProjectId === routeAtSend.currentProjectId &&
+              latestRoute.pendingDraftId === routeAtSend.pendingDraftId
+            );
           })();
 
         if (shouldAutoNavigate) {
