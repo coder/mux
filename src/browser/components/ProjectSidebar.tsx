@@ -858,7 +858,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
                               const sortedDrafts = draftsForProject
                                 .slice()
-                                .sort((a, b) => a.createdAt - b.createdAt);
+                                .sort((a, b) => b.createdAt - a.createdAt);
                               const draftNumberById = new Map(
                                 sortedDrafts.map(
                                   (draft, index) => [draft.draftId, index + 1] as const
