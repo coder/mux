@@ -13,6 +13,7 @@ import {
   getInputKey,
   getWorkspaceNameStateKey,
 } from "@/common/constants/storage";
+import { getDisplayTitleFromPersistedState } from "@/browser/hooks/useWorkspaceName";
 import { DndProvider } from "react-dnd";
 import { HTML5Backend, getEmptyImage } from "react-dnd-html5-backend";
 import { useDrag, useDrop, useDragLayer } from "react-dnd";
@@ -208,32 +209,13 @@ function DraftWorkspaceListItemWrapper(props: DraftWorkspaceListItemWrapperProps
     listener: true,
   });
 
-  const workspaceName = (() => {
-    if (!workspaceNameState || typeof workspaceNameState !== "object") {
-      return "";
-    }
-
-    const record = workspaceNameState as Record<string, unknown>;
-    const autoGenerate = record.autoGenerate !== false;
-
-    if (autoGenerate) {
-      const generatedIdentity = record.generatedIdentity;
-      if (!generatedIdentity || typeof generatedIdentity !== "object") {
-        return "";
-      }
-
-      const generatedRecord = generatedIdentity as Record<string, unknown>;
-      return typeof generatedRecord.name === "string" ? generatedRecord.name : "";
-    }
-
-    return typeof record.manualName === "string" ? record.manualName : "";
-  })();
+  const workspaceTitle = getDisplayTitleFromPersistedState(workspaceNameState);
 
   // Collapse whitespace so multi-line prompts show up nicely as a single-line preview.
   const promptPreview =
     typeof draftPrompt === "string" ? draftPrompt.trim().replace(/\s+/g, " ") : "";
 
-  const titleText = workspaceName.trim().length > 0 ? workspaceName.trim() : "Draft";
+  const titleText = workspaceTitle.trim().length > 0 ? workspaceTitle.trim() : "Draft";
 
   return (
     <WorkspaceListItem

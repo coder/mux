@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { z } from "zod";
 import { useAPI } from "@/browser/contexts/API";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceNameStateKey } from "@/common/constants/storage";
@@ -20,12 +21,14 @@ export interface UseWorkspaceNameOptions {
 }
 
 /** Generated workspace identity (name + title) */
-export interface WorkspaceIdentity {
+const WorkspaceIdentitySchema = z.object({
   /** Short git-safe name with suffix (e.g., "plan-a1b2") */
-  name: string;
+  name: z.string(),
   /** Human-readable title (e.g., "Fix plan mode over SSH") */
-  title: string;
-}
+  title: z.string(),
+});
+
+export type WorkspaceIdentity = z.infer<typeof WorkspaceIdentitySchema>;
 
 /** State and actions for workspace name generation, suitable for passing to components */
 export interface WorkspaceNameState {
@@ -50,12 +53,14 @@ export interface UseWorkspaceNameReturn extends WorkspaceNameState {
   waitForGeneration: () => Promise<WorkspaceIdentity | null>;
 }
 
-interface WorkspaceNamePersistedState {
-  generatedIdentity: WorkspaceIdentity | null;
-  manualName: string;
-  autoGenerate: boolean;
-  lastGeneratedFor: string;
-}
+const WorkspaceNamePersistedStateSchema = z.object({
+  generatedIdentity: WorkspaceIdentitySchema.nullable(),
+  manualName: z.string(),
+  autoGenerate: z.boolean(),
+  lastGeneratedFor: z.string(),
+});
+
+export type WorkspaceNamePersistedState = z.infer<typeof WorkspaceNamePersistedStateSchema>;
 
 const DEFAULT_PERSISTED_STATE: WorkspaceNamePersistedState = {
   generatedIdentity: null,
@@ -63,6 +68,33 @@ const DEFAULT_PERSISTED_STATE: WorkspaceNamePersistedState = {
   autoGenerate: true,
   lastGeneratedFor: "",
 };
+
+/**
+ * Extract the display title from persisted workspace name state.
+ * Used by DraftWorkspaceListItem to show the title in the sidebar without
+ * duplicating knowledge of the persisted state structure.
+ *
+ * For auto-generated identities, prefers title (human-readable) over name (git-safe branch name).
+ * This matches how real workspaces display: metadata.title ?? metadata.name.
+ */
+export function getDisplayTitleFromPersistedState(state: unknown): string {
+  const parsed = WorkspaceNamePersistedStateSchema.partial().safeParse(state);
+  if (!parsed.success) {
+    return "";
+  }
+
+  const { autoGenerate, generatedIdentity, manualName } = parsed.data;
+
+  if (autoGenerate !== false) {
+    if (!generatedIdentity) {
+      return "";
+    }
+    // Prefer title (e.g., "Fix plan mode over SSH") over name (e.g., "plan-a1b2")
+    return generatedIdentity.title.trim() || generatedIdentity.name;
+  }
+
+  return manualName ?? "";
+}
 
 /**
  * Hook for managing workspace name generation with debouncing.
