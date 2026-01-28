@@ -294,7 +294,8 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 </HoverCardTrigger>
                 <HoverCardContent
                   align="start"
-                  className="w-auto max-w-[420px] p-2"
+                  sideOffset={8}
+                  className="w-auto max-w-[420px] bg-modal-bg border-separator-light shadow-[0_2px_8px_rgba(0,0,0,0.4)] px-[10px] py-[6px] text-[11px]"
                   onPointerDownOutside={preventHoverCardDismissForRadixPortals}
                   onFocusOutside={preventHoverCardDismissForRadixPortals}
                 >
