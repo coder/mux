@@ -15,7 +15,7 @@ import {
   type QuickJSAsyncContext,
 } from "quickjs-emscripten-core";
 import { QuickJSAsyncFFI } from "@jitl/quickjs-wasmfile-release-asyncify/ffi";
-import { validateTypes } from "./typeValidator";
+import { validateTypes, WRAPPER_PREFIX } from "./typeValidator";
 
 /**
  * Identifiers that don't exist in QuickJS and will cause ReferenceError.
@@ -36,6 +36,8 @@ export const UNAVAILABLE_IDENTIFIERS = new Set([
   "fetch",
   "XMLHttpRequest",
 ]);
+
+const WRAPPER_LINE_OFFSET = WRAPPER_PREFIX.split("\n").length - 1;
 
 // ============================================================================
 // Types
@@ -206,11 +208,15 @@ function detectUnavailablePatterns(code: string): AnalysisError[] {
  * Detect references to unavailable globals (process, window, fetch, etc.)
  * using TypeScript AST to avoid false positives on object keys and string literals.
  */
-function detectUnavailableGlobals(code: string): AnalysisError[] {
+function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): AnalysisError[] {
   const errors: AnalysisError[] = [];
   const seen = new Set<string>();
 
-  const sourceFile = ts.createSourceFile("code.ts", code, ts.ScriptTarget.ES2020, true);
+  const parsedSourceFile =
+    sourceFile ?? ts.createSourceFile("code.ts", code, ts.ScriptTarget.ES2020, true);
+  const codeStartOffset = sourceFile ? WRAPPER_PREFIX.length : 0;
+  const codeEnd = codeStartOffset + code.length;
+  const lineOffset = sourceFile ? WRAPPER_LINE_OFFSET : 0;
 
   function visit(node: ts.Node): void {
     // Only check identifier nodes
@@ -219,23 +225,25 @@ function detectUnavailableGlobals(code: string): AnalysisError[] {
       return;
     }
 
+    const start = node.getStart(parsedSourceFile);
+    if (start < codeStartOffset || node.end > codeEnd) {
+      return;
+    }
+
     const name = node.text;
 
     // Skip 'require' - already handled as forbidden_construct pattern
     if (name === "require") {
-      ts.forEachChild(node, visit);
       return;
     }
 
     // Skip if not an unavailable identifier
     if (!UNAVAILABLE_IDENTIFIERS.has(name)) {
-      ts.forEachChild(node, visit);
       return;
     }
 
     // Skip if already reported
     if (seen.has(name)) {
-      ts.forEachChild(node, visit);
       return;
     }
 
@@ -243,13 +251,11 @@ function detectUnavailableGlobals(code: string): AnalysisError[] {
 
     // Skip property access on RHS (e.g., obj.process)
     if (parent && ts.isPropertyAccessExpression(parent) && parent.name === node) {
-      ts.forEachChild(node, visit);
       return;
     }
 
     // Skip object literal property keys (e.g., { process: ... })
     if (parent && ts.isPropertyAssignment(parent) && parent.name === node) {
-      ts.forEachChild(node, visit);
       return;
     }
 
@@ -258,35 +264,30 @@ function detectUnavailableGlobals(code: string): AnalysisError[] {
 
     // Skip variable declarations (e.g., const process = ...)
     if (parent && ts.isVariableDeclaration(parent) && parent.name === node) {
-      ts.forEachChild(node, visit);
       return;
     }
 
     // Skip function declarations (e.g., function process() {})
     if (parent && ts.isFunctionDeclaration(parent) && parent.name === node) {
-      ts.forEachChild(node, visit);
       return;
     }
 
     // Skip parameter declarations
     if (parent && ts.isParameter(parent) && parent.name === node) {
-      ts.forEachChild(node, visit);
       return;
     }
 
     // This is a real reference to an unavailable global
     seen.add(name);
-    const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+    const { line } = parsedSourceFile.getLineAndCharacterOfPosition(start);
     errors.push({
       type: "unavailable_global",
       message: `'${name}' is not available in the sandbox`,
-      line: line + 1, // 1-indexed
+      line: line - lineOffset + 1, // 1-indexed
     });
-
-    ts.forEachChild(node, visit);
   }
 
-  visit(sourceFile);
+  visit(parsedSourceFile);
   return errors;
 }
 
@@ -321,12 +322,16 @@ export async function analyzeCode(code: string, muxTypes?: string): Promise<Anal
   // 2. Unavailable pattern detection (import, require)
   errors.push(...detectUnavailablePatterns(code));
 
+  let typeResult: ReturnType<typeof validateTypes> | undefined;
+  if (muxTypes) {
+    typeResult = validateTypes(code, muxTypes);
+  }
+
   // 3. Unavailable global detection (process, window, etc.)
-  errors.push(...detectUnavailableGlobals(code));
+  errors.push(...detectUnavailableGlobals(code, typeResult?.sourceFile));
 
   // 4. TypeScript type validation (if muxTypes provided)
-  if (muxTypes) {
-    const typeResult = validateTypes(code, muxTypes);
+  if (typeResult) {
     for (const typeError of typeResult.errors) {
       errors.push({
         type: "type_error",
