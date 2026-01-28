@@ -591,6 +591,8 @@ describeIntegration("Workspace deletion integration tests", () => {
 
   // SSH-specific tests (unpushed refs only matter for SSH, not local worktrees which share .git)
   describe("SSH-only tests", () => {
+    // SSH-only tests run serially to avoid overloading the shared Docker container.
+    const runSshTest = getTestRunner("ssh");
     const getRuntimeConfig = (branchName: string): RuntimeConfig | undefined => {
       if (!sshConfig) {
         throw new Error("SSH config not initialized");
@@ -604,7 +606,7 @@ describeIntegration("Workspace deletion integration tests", () => {
       };
     };
 
-    test.concurrent(
+    runSshTest(
       "should fail to delete SSH workspace with unpushed refs without force flag",
       async () => {
         const env = await createTestEnvironment();
@@ -662,7 +664,7 @@ describeIntegration("Workspace deletion integration tests", () => {
       TEST_TIMEOUT_SSH_MS
     );
 
-    test.concurrent(
+    runSshTest(
       "should delete SSH workspace with unpushed refs when force flag is set",
       async () => {
         const env = await createTestEnvironment();
@@ -723,7 +725,7 @@ describeIntegration("Workspace deletion integration tests", () => {
       TEST_TIMEOUT_SSH_MS
     );
 
-    test.concurrent(
+    runSshTest(
       "should include commit list in error for unpushed refs",
       async () => {
         const env = await createTestEnvironment();
@@ -780,7 +782,7 @@ describeIntegration("Workspace deletion integration tests", () => {
       TEST_TIMEOUT_SSH_MS
     );
 
-    test.concurrent(
+    runSshTest(
       "should allow deletion of squash-merged branches without force flag",
       async () => {
         const env = await createTestEnvironment();
@@ -894,7 +896,7 @@ describeIntegration("Workspace deletion integration tests", () => {
       TEST_TIMEOUT_SSH_MS
     );
 
-    test.concurrent(
+    runSshTest(
       "should block deletion when branch has genuinely unmerged content",
       async () => {
         const env = await createTestEnvironment();
