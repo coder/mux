@@ -8,6 +8,8 @@
  * - Broken agent definitions show error indicators
  */
 
+import "./dom";
+
 import { fireEvent, waitFor } from "@testing-library/react";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
