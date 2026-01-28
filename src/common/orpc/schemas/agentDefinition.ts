@@ -10,6 +10,7 @@ export const AgentIdSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/);
 
+const AgentDefinitionUiRequirementSchema = z.enum(["plan"]);
 const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
 
 const AgentDefinitionUiSchema = z
@@ -25,6 +26,10 @@ const AgentDefinitionUiSchema = z
 
     // UI color (CSS color value). Inherited from base agent if not specified.
     color: z.string().min(1).optional(),
+
+    // Requirements for this agent to be selectable in the UI.
+    // Enforced in agents.list by toggling uiSelectable.
+    requires: z.array(AgentDefinitionUiRequirementSchema).min(1).optional(),
   })
   .strip();
 

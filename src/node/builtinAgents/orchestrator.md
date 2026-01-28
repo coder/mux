@@ -3,7 +3,8 @@ name: Orchestrator
 description: Coordinate sub-agent implementation and apply patches
 base: exec
 ui:
-  hidden: true
+  requires:
+    - plan
 subagent:
   runnable: false
 tools:

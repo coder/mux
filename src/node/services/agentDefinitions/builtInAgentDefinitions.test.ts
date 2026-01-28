@@ -28,7 +28,8 @@ describe("built-in agent definitions", () => {
 
     const orchestrator = byId.get("orchestrator");
     expect(orchestrator).toBeTruthy();
-    expect(orchestrator?.frontmatter.ui?.hidden).toBe(true);
+    expect(orchestrator?.frontmatter.ui?.requires).toEqual(["plan"]);
+    expect(orchestrator?.frontmatter.ui?.hidden).toBeUndefined();
     expect(orchestrator?.frontmatter.subagent?.runnable).toBe(false);
   });
 

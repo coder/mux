@@ -64,6 +64,24 @@ Body
     expect(result.frontmatter.ui?.selectable).toBe(false);
   });
 
+  test("parses ui.requires", () => {
+    const content = `---
+name: Requires Plan
+ui:
+  requires:
+    - plan
+---
+Body
+`;
+
+    const result = parseAgentDefinitionMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf-8"),
+    });
+
+    expect(result.frontmatter.ui?.requires).toEqual(["plan"]);
+  });
+
   test("parses subagent.skip_init_hook", () => {
     const content = `---
 name: Skip Init
