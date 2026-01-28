@@ -37,8 +37,9 @@ describe("agentSkillsService", () => {
 
     const skills = await discoverAgentSkills(runtime, project.path, { roots });
 
-    // Should include project/global skills plus built-in skills
-    expect(skills.map((s) => s.name)).toEqual(["bar", "foo", "init", "mux-docs"]);
+    // Should include project/global skills plus non-hidden built-in skills
+    // Note: master is a hidden built-in skill and is not included in the list
+    expect(skills.map((s) => s.name)).toEqual(["bar", "foo", "init", "master", "mux-docs"]);
 
     const foo = skills.find((s) => s.name === "foo");
     expect(foo).toBeDefined();

@@ -21,12 +21,17 @@ export const AgentSkillFrontmatterSchema = z.object({
   license: z.string().optional(),
   compatibility: z.string().min(1).max(500).optional(),
   metadata: z.record(z.string(), z.string()).optional(),
+  // When true, skill is not listed in the system prompt's <agent-skills> index.
+  // Hidden skills can still be invoked via /skill-name or agent_skill_read({ name: "skill-name" }).
+  // Use for skills that should only be loaded by other skills or advanced users.
+  hidden: z.boolean().optional(),
 });
 
 export const AgentSkillDescriptorSchema = z.object({
   name: SkillNameSchema,
   description: z.string().min(1).max(1024),
   scope: AgentSkillScopeSchema,
+  hidden: z.boolean().optional(),
 });
 
 export const AgentSkillPackageSchema = z

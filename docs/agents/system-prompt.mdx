@@ -131,7 +131,9 @@ ${lines.join("\n")}
 
 async function buildAgentSkillsContext(runtime: Runtime, workspacePath: string): Promise<string> {
   try {
-    const skills = await discoverAgentSkills(runtime, workspacePath);
+    const allSkills = await discoverAgentSkills(runtime, workspacePath);
+    // Hidden skills are not listed in the index (but can still be invoked via /skill-name or agent_skill_read)
+    const skills = allSkills.filter((s) => !s.hidden);
     if (skills.length === 0) return "";
 
     const MAX_SKILLS = 50;
