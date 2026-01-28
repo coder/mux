@@ -512,17 +512,31 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     workspaceMetadataRef.current = workspaceMetadata;
   }, [workspaceMetadata]);
 
+  const initialWorkspaceResolvedRef = useRef(false);
+
   useEffect(() => {
     if (loading) return;
     if (!currentWorkspaceId) return;
-    if (currentWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) return;
-    if (workspaceMetadata.has(currentWorkspaceId)) return;
+
+    if (currentWorkspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
+      initialWorkspaceResolvedRef.current = true;
+      return;
+    }
+
+    if (workspaceMetadata.has(currentWorkspaceId)) {
+      initialWorkspaceResolvedRef.current = true;
+      return;
+    }
+
+    // Only auto-redirect on initial restore so we don't fight archive/delete navigation.
+    if (initialWorkspaceResolvedRef.current) return;
 
     const muxChatMetadata = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID);
     if (!muxChatMetadata) return;
 
     // If the last-restored workspace no longer exists, recover to mux-chat instead
     // of leaving the user on a dead-end "Workspace not found" screen.
+    initialWorkspaceResolvedRef.current = true;
     setSelectedWorkspace(toWorkspaceSelection(muxChatMetadata));
   }, [currentWorkspaceId, loading, setSelectedWorkspace, workspaceMetadata]);
 
