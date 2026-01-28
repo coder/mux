@@ -44,7 +44,7 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, CircleHelp, KeyRound, Pencil, Trash2 } from "lucide-react";
+import { ChevronRight, CircleHelp, KeyRound, Trash2 } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -271,21 +271,10 @@ function DraftWorkspaceListItem(props: DraftWorkspaceListItemProps) {
         <TooltipContent align="start">Delete draft</TooltipContent>
       </Tooltip>
 
-      <div className="grid min-w-0 flex-1 grid-cols-[auto_1fr] items-start gap-x-1.5 gap-y-0.5">
-        {/* Drafts use a pencil badge where runtime icons normally appear. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="border-muted/50 text-muted inline-flex items-center rounded border px-1 py-0.5">
-              <Pencil className="h-2.5 w-2.5" />
-            </span>
-          </TooltipTrigger>
-          <TooltipContent align="start">Draft workspace</TooltipContent>
-        </Tooltip>
+      <div className="flex min-w-0 flex-1 flex-col">
         <span className="text-foreground block truncate text-left text-[14px]">{titleText}</span>
         {promptPreview.length > 0 && (
-          <span className="text-muted col-start-2 block truncate text-left text-xs">
-            {promptPreview}
-          </span>
+          <span className="text-muted block truncate text-left text-xs">{promptPreview}</span>
         )}
       </div>
     </div>
