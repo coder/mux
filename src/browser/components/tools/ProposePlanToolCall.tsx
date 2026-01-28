@@ -372,7 +372,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       await api.workspace.sendMessage({
         workspaceId,
         message:
-          "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `implementor` sub-agents; avoid doing repo work directly here except applying patches.",
+          "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `exec` sub-agents; avoid doing repo work directly here except applying patches.",
         options: { ...sendMessageOptions, agentId: "orchestrator" },
       });
     } catch (err) {

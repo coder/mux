@@ -23,7 +23,6 @@ const BUILT_IN_SOURCES: BuiltInSource[] = [
   { id: "system1_bash", content: BUILTIN_AGENT_CONTENT.system1_bash },
   { id: "mux", content: BUILTIN_AGENT_CONTENT.mux },
   { id: "orchestrator", content: BUILTIN_AGENT_CONTENT.orchestrator },
-  { id: "implementor", content: BUILTIN_AGENT_CONTENT.implementor },
 ];
 
 let cachedPackages: AgentDefinitionPackage[] | null = null;

@@ -2197,11 +2197,11 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const childEntry = this.findWorkspaceEntry(cfg, childWorkspaceId);
 
-    // Only some exec-like subagents are expected to make commits that should be handed back to the parent.
+    // Only exec subagents are expected to make commits that should be handed back to the parent.
     const childAgentId = coerceNonEmptyString(
       childEntry?.workspace.agentId ?? childEntry?.workspace.agentType
     );
-    if (childAgentId !== "exec" && childAgentId !== "implementor") {
+    if (childAgentId !== "exec") {
       return;
     }
 

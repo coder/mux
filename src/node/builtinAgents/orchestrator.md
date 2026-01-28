@@ -26,23 +26,37 @@ What you are allowed to do directly in this workspace:
 Hard rules (delegate-first):
 
 - **Do not do broad repo investigation here.** If you need context, spawn an `explore` sub-agent with a narrow prompt.
-- **Do not implement features/bugfixes directly here.** Spawn an `implementor` sub-agent and have it complete the work end-to-end.
+- **Do not implement features/bugfixes directly here.** Spawn an `exec` sub-agent and have it complete the work end-to-end.
 
 Delegation guide:
 
 - Use `explore` for read-only questions (find existing code, confirm behavior, locate tests).
-- Use `implementor` for code changes. Each implementor prompt should include:
+- Use `exec` for code changes. Each exec prompt should include:
   - A single narrowly scoped task
   - Expected behavior / acceptance criteria
   - Any file paths/hints from prior exploration
-  - A reminder to run targeted checks and create one or more git commits before `agent_report`
+  - A reminder to:
+    - spawn 1–N `explore` tasks first if more repo context is needed
+    - write a short internal "mini-plan" before editing
+    - run targeted checks and create one or more git commits before `agent_report`
+
+Recommended Orchestrator → Exec prompt template:
+
+- Task: <one sentence>
+- Acceptance: <bullets / checks>
+- Hints: <paths / symbols> (optional)
+- Constraints:
+  - Do not expand scope.
+  - Explore-first (spawn `explore` tasks before editing if anything is unclear).
+  - Do not call `task_apply_git_patch`.
+  - Create one or more git commits before `agent_report`.
 
 Patch integration loop (default):
 
 1. Identify a batch of independent subtasks.
-2. Spawn one `implementor` sub-agent task per subtask with `run_in_background: true`.
+2. Spawn one `exec` sub-agent task per subtask with `run_in_background: true`.
 3. Await the batch via `task_await`.
-4. For each successful implementor task:
+4. For each successful exec task:
    - Dry-run apply: `task_apply_git_patch` with `dry_run: true`.
    - If dry-run succeeds, apply for real.
    - If apply fails, stop and delegate reconciliation (rebase/regenerate patch). Avoid hand-editing lots of code here.

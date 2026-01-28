@@ -7,7 +7,7 @@ describe("built-in agent definitions", () => {
     clearBuiltInAgentCache();
   });
 
-  test("includes orchestrator and implementor with expected flags", () => {
+  test("includes orchestrator with expected flags", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
 
@@ -15,11 +15,6 @@ describe("built-in agent definitions", () => {
     expect(orchestrator).toBeTruthy();
     expect(orchestrator?.frontmatter.ui?.hidden).toBe(true);
     expect(orchestrator?.frontmatter.subagent?.runnable).toBe(false);
-
-    const implementor = byId.get("implementor");
-    expect(implementor).toBeTruthy();
-    expect(implementor?.frontmatter.ui?.hidden).toBe(true);
-    expect(implementor?.frontmatter.subagent?.runnable).toBe(true);
   });
 
   test("task_apply_git_patch is restricted to exec/orchestrator", () => {
@@ -41,9 +36,5 @@ describe("built-in agent definitions", () => {
     const explore = byId.get("explore");
     expect(explore).toBeTruthy();
     expect(explore?.frontmatter.tools?.remove ?? []).toContain("task_apply_git_patch");
-
-    const implementor = byId.get("implementor");
-    expect(implementor).toBeTruthy();
-    expect(implementor?.frontmatter.tools?.remove ?? []).toContain("task_apply_git_patch");
   });
 });
