@@ -937,6 +937,12 @@ export function prepareCompactionMessage(options: CompactionOptions): {
       ...options.followUpContent,
       model: existingModel ?? options.sendMessageOptions.model,
       agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? "exec",
+      // Preserve original send options so the follow-up uses the same settings
+      thinkingLevel: options.sendMessageOptions.thinkingLevel,
+      additionalSystemInstructions: options.sendMessageOptions.additionalSystemInstructions,
+      providerOptions: options.sendMessageOptions.providerOptions,
+      experiments: options.sendMessageOptions.experiments,
+      disableWorkspaceAgents: options.sendMessageOptions.disableWorkspaceAgents,
     };
   }
   const isDefaultResume = isDefaultSourceContent(fc);

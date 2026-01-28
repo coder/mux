@@ -3,6 +3,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
@@ -36,17 +37,33 @@ export interface CompactionFollowUpInput extends UserMessageContent {
 }
 
 /**
+ * SendMessageOptions fields that should be preserved across compaction.
+ * These affect how the follow-up message is processed (thinking level, system instructions, etc.)
+ * and should use the user's original settings, not compaction defaults.
+ */
+type PreservedSendOptions = Pick<
+  SendMessageOptions,
+  | "thinkingLevel"
+  | "additionalSystemInstructions"
+  | "providerOptions"
+  | "experiments"
+  | "disableWorkspaceAgents"
+>;
+
+/**
  * Content to send after compaction completes.
- * Extends CompactionFollowUpInput with model/agentId for the follow-up message.
+ * Extends CompactionFollowUpInput with model/agentId for the follow-up message,
+ * plus preserved send options so the follow-up uses the same settings as the
+ * original user message.
  *
  * These fields are required because compaction uses its own agentId ("compact")
  * and potentially a different model for summarization. The follow-up message
- * should use the user's original model and agentId, not the compaction settings.
+ * should use the user's original model, agentId, and send options.
  *
  * Call sites provide CompactionFollowUpInput; prepareCompactionMessage converts
- * it to CompactionFollowUpRequest by adding model/agentId from sendMessageOptions.
+ * it to CompactionFollowUpRequest by adding model/agentId/options from sendMessageOptions.
  */
-export interface CompactionFollowUpRequest extends CompactionFollowUpInput {
+export interface CompactionFollowUpRequest extends CompactionFollowUpInput, PreservedSendOptions {
   /** Model to use for the follow-up message (user's original model, not compaction model) */
   model: string;
   /** Agent ID for the follow-up message (user's original agentId, not "compact") */

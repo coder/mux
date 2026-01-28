@@ -14,6 +14,7 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
+import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import type { WorkspaceChatMessage, SendMessageOptions, FilePart } from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
@@ -1307,7 +1308,12 @@ export class AgentSession {
         // The follow-up is stored on the summary for crash safety - if the app
         // crashes after compaction but before this dispatch, startup recovery
         // will detect the pending follow-up and dispatch it.
-        void this.dispatchPendingFollowUp();
+        //
+        // IMPORTANT: await to ensure the follow-up message is persisted before
+        // sendQueuedMessages runs. Otherwise a queued message could append first,
+        // causing dispatchPendingFollowUp to skip (since summary would no longer
+        // be the last message).
+        await this.dispatchPendingFollowUp();
       }
 
       this.resetActiveStreamState();
@@ -1494,12 +1500,16 @@ export class AgentSession {
     // Normalize attachments: newer metadata uses `fileParts`, older persisted entries used `imageParts`.
     const effectiveFileParts = followUp.fileParts ?? followUp.imageParts;
 
+    // Model fallback for legacy follow-ups that may lack the model field.
+    // DEFAULT_MODEL is a safe fallback that's always available.
+    const effectiveModel = followUp.model ?? DEFAULT_MODEL;
+
     log.debug("Dispatching pending follow-up from compaction summary", {
       workspaceId: this.workspaceId,
       hasText: Boolean(followUp.text),
       hasFileParts: Boolean(effectiveFileParts?.length),
       hasReviews: Boolean(followUp.reviews?.length),
-      model: followUp.model,
+      model: effectiveModel,
       agentId: effectiveAgentId,
     });
 
@@ -1513,13 +1523,20 @@ export class AgentSession {
       followUp.muxMetadata
     );
 
-    // Build options for the follow-up message
+    // Build options for the follow-up message, including preserved send options
+    // from the original user message (thinkingLevel, providerOptions, etc.).
     const options: SendMessageOptions & {
       fileParts?: FilePart[];
       muxMetadata?: MuxFrontendMetadata;
     } = {
-      model: followUp.model,
+      model: effectiveModel,
       agentId: effectiveAgentId,
+      // Preserved send options from original message
+      thinkingLevel: followUp.thinkingLevel,
+      additionalSystemInstructions: followUp.additionalSystemInstructions,
+      providerOptions: followUp.providerOptions,
+      experiments: followUp.experiments,
+      disableWorkspaceAgents: followUp.disableWorkspaceAgents,
     };
 
     if (effectiveFileParts && effectiveFileParts.length > 0) {
