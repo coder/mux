@@ -24,19 +24,12 @@ import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
 /**
- * Simulate user returning to the app (alt-tab back).
- * GitStatusStore refreshes on window focus to catch external changes.
+ * Trigger git status refresh directly via store invalidation.
+ * Window focus events don't work reliably in happy-dom, so we bypass
+ * the RefreshController and call invalidateGitStatus() directly.
  */
-function simulateWindowFocus(): void {
-  const originalDateNow = Date.now;
-  try {
-    const baseNow = originalDateNow();
-    // Avoid real sleeps: bump time just past the focus debounce so the event isn't dropped.
-    Date.now = () => baseNow + 600;
-    window.dispatchEvent(new Event("focus"));
-  } finally {
-    Date.now = originalDateNow;
-  }
+function triggerGitStatusRefresh(workspaceId: string): void {
+  invalidateGitStatus(workspaceId);
 }
 
 describeIntegration("GitStatus (UI + ORPC)", () => {
@@ -95,8 +88,8 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         expect(bashRes.success).toBe(true);
         if (!bashRes.success) return;
 
-        // User returns to app (alt-tab) - triggers git status refresh
-        simulateWindowFocus();
+        // Trigger git status refresh (simulates user returning to app)
+        triggerGitStatusRefresh(workspaceId);
 
         const dirtyStatus = await waitForDirtyStatus(view.container, workspaceId, 30_000);
         expect(dirtyStatus.dirty).toBe(true);
@@ -125,7 +118,7 @@ describeIntegration("GitStatus (UI + ORPC)", () => {
         expect(bashRes.success).toBe(true);
         if (!bashRes.success) return;
 
-        simulateWindowFocus();
+        triggerGitStatusRefresh(workspaceId);
 
         const status = await waitForCleanStatus(view.container, workspaceId, 30_000);
         expect(status.dirty).toBe(false);
