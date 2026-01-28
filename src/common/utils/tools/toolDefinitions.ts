@@ -614,7 +614,7 @@ export const TOOL_DEFINITIONS = {
   file_edit_insert: {
     description:
       "Insert content into a file using substring guards. " +
-      "Provide exactly one of before or after to anchor the operation when editing an existing file. " +
+      "Provide exactly one of insert_before or insert_after to anchor the operation when editing an existing file. " +
       "When the file does not exist, it is created automatically without guards. " +
       "Optional before/after substrings must uniquely match surrounding content. " +
       "Avoid short guards like `}` or `}\\n` that match multiple locations — " +
@@ -623,20 +623,24 @@ export const TOOL_DEFINITIONS = {
       .object({
         file_path: FILE_EDIT_FILE_PATH,
         content: z.string().describe("The content to insert"),
-        before: z
+        insert_before: z
           .string()
           .min(1)
           .optional()
-          .describe("Optional substring that must appear immediately before the insertion point"),
-        after: z
+          .describe(
+            "Anchor text to insert before. Content will be placed immediately before this substring."
+          ),
+        insert_after: z
           .string()
           .min(1)
           .optional()
-          .describe("Optional substring that must appear immediately after the insertion point"),
+          .describe(
+            "Anchor text to insert after. Content will be placed immediately after this substring."
+          ),
       })
-      .refine((data) => !(data.before !== undefined && data.after !== undefined), {
-        message: "Provide only one of before or after (not both).",
-        path: ["before"],
+      .refine((data) => !(data.insert_before !== undefined && data.insert_after !== undefined), {
+        message: "Provide only one of insert_before or insert_after (not both).",
+        path: ["insert_before"],
       }),
   },
   ask_user_question: {

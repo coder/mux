@@ -36,12 +36,12 @@ describe("file_edit_insert tool", () => {
     await fs.rm(testDir, { recursive: true, force: true });
   });
 
-  it("inserts content using before guard", async () => {
+  it("inserts content using insert_after guard", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
       file_path: path.relative(testDir, testFilePath),
       content: "Line 2\n",
-      before: "Line 1\n",
+      insert_after: "Line 1\n",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
@@ -51,14 +51,14 @@ describe("file_edit_insert tool", () => {
     expect(updated).toBe("Line 1\nLine 2\nLine 3");
   });
 
-  it("inserts content using before guard when file uses CRLF", async () => {
+  it("inserts content using insert_after guard when file uses CRLF", async () => {
     await fs.writeFile(testFilePath, "Line 1\r\nLine 3\r\n");
 
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
       file_path: path.relative(testDir, testFilePath),
       content: "Line 2\n",
-      before: "Line 1\n",
+      insert_after: "Line 1\n",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
@@ -68,12 +68,12 @@ describe("file_edit_insert tool", () => {
     expect(updated).toBe("Line 1\r\nLine 2\r\nLine 3\r\n");
   });
 
-  it("inserts content using after guard", async () => {
+  it("inserts content using insert_before guard", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
       file_path: path.relative(testDir, testFilePath),
       content: "Header\n",
-      after: "Line 1",
+      insert_before: "Line 1",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
@@ -87,7 +87,7 @@ describe("file_edit_insert tool", () => {
     const args: FileEditInsertToolArgs = {
       file_path: path.relative(testDir, testFilePath),
       content: "middle\n",
-      before: "repeat\n",
+      insert_after: "repeat\n",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
@@ -104,7 +104,7 @@ describe("file_edit_insert tool", () => {
     const args: FileEditInsertToolArgs = {
       file_path: path.relative(testDir, testFilePath),
       content: "Line 2\n",
-      before: "does not exist\n",
+      insert_after: "does not exist\n",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
@@ -113,19 +113,19 @@ describe("file_edit_insert tool", () => {
     expect(await fs.readFile(testFilePath, "utf-8")).toBe(original);
   });
 
-  it("fails when both before and after are provided", async () => {
+  it("fails when both insert_before and insert_after are provided", async () => {
     const tool = createTestTool(testDir);
     const args: FileEditInsertToolArgs = {
       file_path: path.relative(testDir, testFilePath),
       content: "oops",
-      before: "Line 1",
-      after: "Line 3",
+      insert_after: "Line 1",
+      insert_before: "Line 3",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("only one of before or after");
+      expect(result.error).toContain("only one of insert_before or insert_after");
     }
   });
 
@@ -152,7 +152,7 @@ describe("file_edit_insert tool", () => {
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toContain("Provide either a before or after guard");
+      expect(result.error).toContain("Provide either insert_before or insert_after guard");
     }
   });
 });
@@ -239,7 +239,7 @@ describe("file_edit_insert plan mode enforcement", () => {
     const args: FileEditInsertToolArgs = {
       file_path: testFilePath,
       content: "// header\n",
-      after: "const x = 1;",
+      insert_before: "const x = 1;",
     };
 
     const result = (await tool.execute!(args, mockToolCallOptions)) as FileEditInsertToolResult;

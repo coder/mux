@@ -112,10 +112,10 @@ export interface FileEditErrorResult extends ToolOutputUiOnlyFields {
 export interface FileEditInsertToolArgs {
   file_path: string;
   content: string;
-  /** Optional substring that must appear immediately before the insertion point */
-  before?: string;
-  /** Optional substring that must appear immediately after the insertion point */
-  after?: string;
+  /** Anchor text to insert before. Content will be placed immediately before this substring. */
+  insert_before?: string;
+  /** Anchor text to insert after. Content will be placed immediately after this substring. */
+  insert_after?: string;
 }
 
 // FileEditInsertToolResult derived from Zod schema (single source of truth)
