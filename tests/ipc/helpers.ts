@@ -46,7 +46,7 @@ export const SSH_INIT_WAIT_MS = 7000; // SSH init includes sync + checkout + hoo
 export const HAIKU_MODEL = "anthropic:claude-haiku-4-5"; // Fast model for tests
 export const GPT_5_MINI_MODEL = "openai:gpt-5-mini"; // Fastest model for performance-critical tests
 export const TEST_TIMEOUT_LOCAL_MS = 25000; // Recommended timeout for local runtime tests
-export const TEST_TIMEOUT_SSH_MS = 60000; // Recommended timeout for SSH runtime tests
+export const TEST_TIMEOUT_SSH_MS = 120000; // Recommended timeout for SSH runtime tests (init + operations can take 60-90s under concurrent load)
 export const STREAM_TIMEOUT_LOCAL_MS = 15000; // Stream timeout for local runtime
 
 export type OrpcSource =
