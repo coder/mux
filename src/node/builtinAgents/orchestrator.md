@@ -8,9 +8,10 @@ ui:
 subagent:
   runnable: false
 tools:
+  add:
+    - ask_user_question
   remove:
     - propose_plan
-    - ask_user_question
 ---
 
 You are an internal Orchestrator agent running in Exec mode.
