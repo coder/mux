@@ -3,6 +3,7 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import { setupSimpleChatStory } from "./storyHelpers";
 import {
   STABLE_TIMESTAMP,
@@ -101,6 +102,86 @@ const SKILL_FILE_CONTENT = [
   "4\t- It can contain examples.",
   "5\t- It can contain references.",
 ].join("\n");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SKILL INDICATOR (hover tooltip showing available skills)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ALL_SKILLS: AgentSkillDescriptor[] = [
+  {
+    name: "pull-requests",
+    description: "Guidelines for creating and managing Pull Requests in this repo",
+    scope: "project",
+  },
+  {
+    name: "tests",
+    description: "Testing doctrine, commands, and test layout conventions",
+    scope: "project",
+  },
+  {
+    name: "api-client",
+    description: "Shared API client configuration and auth helpers",
+    scope: "global",
+  },
+  {
+    name: "init",
+    description: "Bootstrap an AGENTS.md file in a new or existing project",
+    scope: "built-in",
+  },
+  {
+    name: "mux-docs",
+    description: "Index + offline snapshot of mux documentation (progressive disclosure)",
+    scope: "built-in",
+  },
+];
+
+/** Shows the SkillIndicator tooltip with all skill scopes (project, global, built-in) */
+export const SkillIndicator_AllScopes: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skill-indicator",
+          messages: [],
+          agentSkills: ALL_SKILLS,
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    // Find the skill indicator button by its aria-label
+    const doc = canvasElement.ownerDocument;
+    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
+    await waitFor(
+      () => {
+        const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
+        if (!skillButton) throw new Error("Skill indicator not found");
+      },
+      { timeout: 5000 }
+    );
+
+    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
+    await userEvent.hover(skillButton);
+
+    // Wait for tooltip to appear (Radix has 200ms delay)
+    await waitFor(
+      () => {
+        const tooltip = doc.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+      },
+      { timeout: 3000 }
+    );
+
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SKILL TOOL CALLS
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export const AgentSkillRead_Collapsed: AppStory = {
   render: () => (

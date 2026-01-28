@@ -70,43 +70,39 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
           </span>
         </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom" align="end" className="max-w-[300px]">
-        <div className="flex flex-col gap-2">
+      <TooltipContent side="bottom" align="end" className="max-w-[280px]">
+        <div className="flex flex-col gap-3">
           {SCOPE_CONFIG.map(({ scope, label }) => {
             const skills = skillsByScope.get(scope);
             if (!skills || skills.length === 0) return null;
 
             return (
-              <div key={scope} className="flex flex-col gap-1">
-                <div className="text-muted-foreground text-[10px] font-medium tracking-wide uppercase">
-                  {label}
+              <div key={scope} className="flex flex-col gap-1.5">
+                <div className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
+                  {label} skills
                 </div>
-                <div className="flex flex-col gap-0.5">
-                  {skills.map((skill) => {
-                    const isLoaded = loadedSkillNames.has(skill.name);
-                    return (
-                      <div key={skill.name} className="flex flex-col">
+                {skills.map((skill) => {
+                  const isLoaded = loadedSkillNames.has(skill.name);
+                  return (
+                    <div key={skill.name} className="flex items-start gap-2">
+                      <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
+                      <div className="flex flex-col">
                         <span
                           className={cn(
-                            "flex items-center gap-1 text-xs",
-                            isLoaded ? "font-medium text-foreground" : "text-muted-foreground/60"
+                            "text-xs font-medium",
+                            isLoaded ? "text-foreground" : "text-muted-foreground"
                           )}
                         >
                           {skill.name}
-                          {isLoaded && <Check className="text-success h-3 w-3" />}
+                          {isLoaded && <Check className="text-success ml-1 inline h-3 w-3" />}
                         </span>
-                        <span
-                          className={cn(
-                            "line-clamp-2 text-[11px]",
-                            isLoaded ? "text-muted-foreground" : "text-muted-foreground/40"
-                          )}
-                        >
+                        <span className="text-muted-foreground text-[11px] leading-snug">
                           {skill.description}
                         </span>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
