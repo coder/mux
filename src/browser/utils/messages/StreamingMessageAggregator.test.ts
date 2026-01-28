@@ -234,6 +234,77 @@ describe("StreamingMessageAggregator", () => {
     });
 
     test("should disable displayed message cap when showAllMessages is enabled", () => {
+      // Test smart truncation: user/assistant messages are always kept,
+      // but tool calls and reasoning blocks from old messages are filtered out.
+      // Create a mix of message types: user messages with tool-heavy assistant responses.
+      const manyMessages: Parameters<
+        typeof StreamingMessageAggregator.prototype.loadHistoricalMessages
+      >[0] = [];
+      for (let i = 0; i < 100; i++) {
+        // User message (always kept)
+        manyMessages.push(
+          createMuxMessage(`u${i}`, "user", `msg-${i}`, {
+            timestamp: i * 2,
+            historySequence: i * 2,
+          })
+        );
+        // Assistant message with tool call (tool calls get filtered in old messages)
+        manyMessages.push({
+          id: `a${i}`,
+          role: "assistant" as const,
+          parts: [
+            { type: "text" as const, text: `response-${i}` },
+            {
+              type: "dynamic-tool" as const,
+              toolCallId: `tool${i}`,
+              toolName: "bash",
+              state: "output-available" as const,
+              input: { script: "echo test" },
+              output: { success: true, output: "test", exitCode: 0 },
+            },
+          ],
+          metadata: {
+            historySequence: i * 2 + 1,
+            timestamp: i * 2 + 1,
+            model: "claude-3-5-sonnet-20241022",
+          },
+        });
+      }
+
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+      aggregator.loadHistoricalMessages(manyMessages, false);
+
+      // Each assistant message produces 2 DisplayedMessages: text + tool
+      // Total: 100 user + 100 assistant text + 100 tool = 300 DisplayedMessages
+      // With cap at 128, the first 172 are candidates for filtering.
+      // In those 172: user + assistant messages are kept, tool calls are filtered.
+      const capped = aggregator.getDisplayedMessages();
+
+      // Verify history-hidden marker is present (some tool calls were filtered)
+      expect(capped[0]?.type).toBe("history-hidden");
+      if (capped[0]?.type === "history-hidden") {
+        // The old section (first 172 items) contains tool messages that get filtered
+        // Count should be the number of tool messages in the old section
+        expect(capped[0].hiddenCount).toBeGreaterThan(0);
+      }
+
+      // All user and assistant text messages should still be present
+      const userMessages = capped.filter((m) => m.type === "user");
+      const assistantMessages = capped.filter((m) => m.type === "assistant");
+      expect(userMessages).toHaveLength(100);
+      expect(assistantMessages).toHaveLength(100);
+
+      // Enable showAllMessages to see full history
+      aggregator.setShowAllMessages(true);
+
+      const displayed = aggregator.getDisplayedMessages();
+      // Now all 300 messages should be visible (100 user + 100 assistant + 100 tool)
+      expect(displayed).toHaveLength(300);
+      expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
+    });
+
+    test("should not show history-hidden when only user messages exceed cap", () => {
+      // When all messages are user/assistant (always-keep types), no filtering occurs
       const manyMessages = Array.from({ length: 200 }, (_, i) =>
         createMuxMessage(`u${i}`, "user", `msg-${i}`, {
           timestamp: i,
@@ -244,16 +315,8 @@ describe("StreamingMessageAggregator", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(manyMessages, false);
 
-      const capped = aggregator.getDisplayedMessages();
-      expect(capped).toHaveLength(129);
-      expect(capped[0]?.type).toBe("history-hidden");
-      if (capped[0]?.type === "history-hidden") {
-        expect(capped[0].hiddenCount).toBe(72);
-      }
-
-      aggregator.setShowAllMessages(true);
-
       const displayed = aggregator.getDisplayedMessages();
+      // All 200 user messages are kept (user type is always preserved)
       expect(displayed).toHaveLength(200);
       expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
     });

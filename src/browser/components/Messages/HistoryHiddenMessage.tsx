@@ -14,6 +14,26 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
   workspaceId,
   className,
 }) => {
+  const omittedParts: string[] = [];
+
+  if (message.omittedMessageCounts?.tool) {
+    omittedParts.push(
+      `${message.omittedMessageCounts.tool} tool call${
+        message.omittedMessageCounts.tool === 1 ? "" : "s"
+      }`
+    );
+  }
+
+  if (message.omittedMessageCounts?.reasoning) {
+    omittedParts.push(
+      `${message.omittedMessageCounts.reasoning} thinking block${
+        message.omittedMessageCounts.reasoning === 1 ? "" : "s"
+      }`
+    );
+  }
+
+  const omittedSuffix = omittedParts.length > 0 ? ` (${omittedParts.join(", ")})` : "";
+
   return (
     <div
       className={cn(
@@ -23,7 +43,7 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
       )}
     >
       {message.hiddenCount} older message{message.hiddenCount !== 1 ? "s" : ""} hidden for
-      performance
+      performance{omittedSuffix}
       {workspaceId && (
         <>
           {" "}

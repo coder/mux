@@ -468,6 +468,11 @@ export type DisplayedMessage =
       id: string; // Display ID for UI/React keys
       hiddenCount: number; // Number of messages hidden
       historySequence: number; // Global ordering across all messages
+      /** Breakdown of omitted message types (when truncating for performance). */
+      omittedMessageCounts?: {
+        tool: number;
+        reasoning: number;
+      };
     }
   | {
       type: "workspace-init";
