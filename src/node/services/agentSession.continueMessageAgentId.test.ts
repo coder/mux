@@ -1,5 +1,5 @@
 import { describe, expect, test, mock } from "bun:test";
-import { buildContinueMessage, type ContinueMessage } from "@/common/types/message";
+import { buildContinueMessage } from "@/common/types/message";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import { AgentSession } from "./agentSession";
 import type { Config } from "@/node/config";
@@ -109,11 +109,10 @@ describe("AgentSession continue-message agentId fallback", () => {
     const internals = session as unknown as SessionInternals;
 
     // Intercept sendMessage to capture what dispatchPendingFollowUp sends
-    const originalSendMessage = internals.sendMessage.bind(session);
-    internals.sendMessage = mock(async (message: string, options?: SendOptions) => {
+    internals.sendMessage = mock((message: string, options?: SendOptions) => {
       dispatchedMessage = message;
       dispatchedOptions = options;
-      return { success: true };
+      return Promise.resolve({ success: true });
     });
 
     // Call dispatchPendingFollowUp directly (normally called after compaction completes)
