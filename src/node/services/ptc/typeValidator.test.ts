@@ -620,45 +620,8 @@ mux.file_read({ path: "wrong" });`,
   });
 
   // ==========================================================================
-  // Patterns that should NOT be modified (already typed)
+  // Multiple arrays and nesting
   // ==========================================================================
-
-  test("respects explicit type annotations on arrays", () => {
-    // With type annotation, TypeScript knows the type - no preprocessing needed
-    const result = validateTypes(
-      `
-      const nums: number[] = [];
-      nums.push(1);
-      return nums;
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
-
-  test("respects as const assertions", () => {
-    // [] as const creates a readonly tuple, not any[]
-    const result = validateTypes(
-      `
-      const empty = [] as const;
-      return empty;
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
-
-  test("respects explicit as Type[] assertions", () => {
-    const result = validateTypes(
-      `
-      const arr = [] as string[];
-      arr.push("hello");
-      return arr;
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
 
   test("handles multiple empty arrays in same statement", () => {
     const result = validateTypes(
@@ -687,36 +650,8 @@ mux.file_read({ path: "wrong" });`,
   });
 
   // ==========================================================================
-  // Edge cases that must not break (preprocessing skip patterns)
+  // Logical expressions with empty arrays
   // ==========================================================================
-
-  // ==========================================================================
-  // Contextual typing should be preserved
-  // ==========================================================================
-
-  test("preserves contextual typing in ternary expressions", () => {
-    const result = validateTypes(
-      `
-      const condition = true;
-      const nums: number[] = condition ? [] : [1];
-      return nums;
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
-
-  test("still reports type mismatches in ternary expressions", () => {
-    const result = validateTypes(
-      `
-      const condition = true;
-      const nums: number[] = condition ? [] : ["oops"];
-      return nums;
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(false);
-  });
 
   test("still fixes empty arrays in logical OR expressions", () => {
     const result = validateTypes(
@@ -746,7 +681,7 @@ mux.file_read({ path: "wrong" });`,
   test("preserves unary numeric operators on empty arrays", () => {
     const result = validateTypes(
       `
-      const value: number = +[];
+      const value = +[];
       return value;
     `,
       muxTypes
@@ -757,7 +692,7 @@ mux.file_read({ path: "wrong" });`,
   test("preserves void on empty arrays", () => {
     const result = validateTypes(
       `
-      const value: void = void [];
+      const value = void [];
       return value;
     `,
       muxTypes
@@ -779,32 +714,9 @@ mux.file_read({ path: "wrong" });`,
     expect(result.valid).toBe(true);
   });
 
-  test("handles angle-bracket type assertions", () => {
-    // <Type[]>[] should not get double-asserted
-    const result = validateTypes(
-      `
-      const arr = <any[]>[];
-      arr.push(1);
-      return arr;
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
-
-  test("handles satisfies operator", () => {
-    // [] satisfies Type[] still needs as any[] because satisfies only validates,
-    // it doesn't change the inferred type (still never[] with our settings)
-    const result = validateTypes(
-      `
-      const arr = [] satisfies any[];
-      arr.push(1);
-      return arr;
-    `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-  });
+  // ==========================================================================
+  // Destructuring patterns (valid JS that must not break)
+  // ==========================================================================
 
   test("handles destructuring assignment on LHS", () => {
     // ([] = foo) should not become ([] as any[] = foo) which is invalid

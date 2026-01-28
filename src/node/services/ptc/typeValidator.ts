@@ -248,24 +248,15 @@ function isNeverArrayType(type: ts.Type, checker: ts.TypeChecker): boolean {
   return elementType !== undefined && (elementType.flags & ts.TypeFlags.Never) !== 0;
 }
 /**
- * Check if an empty array literal has type context (annotation or assertion),
- * or is in a position where adding `as any[]` would be invalid.
+ * Check if an empty array literal is in a position where adding `as any[]` would be invalid.
  * If true, we should NOT add `as any[]`.
+ *
+ * Note: We only check valid JavaScript patterns here. TypeScript-specific syntax
+ * (type annotations, `as` expressions, etc.) cannot reach QuickJS execution, so
+ * handling them here would be dead code.
  */
-function hasTypeContext(node: ts.ArrayLiteralExpression): boolean {
+function hasInvalidAssertionContext(node: ts.ArrayLiteralExpression): boolean {
   const parent = node.parent;
-
-  // Skip: `[] as Type` or `[] as const`
-  if (ts.isAsExpression(parent)) return true;
-
-  // Skip: `<Type[]>[]` (angle-bracket type assertion)
-  if (ts.isTypeAssertionExpression(parent)) return true;
-
-  // Note: We do NOT skip `[] satisfies Type[]` because satisfies only validates
-  // compatibility without changing the inferred type (still never[] with our settings)
-
-  // Skip: `const x: Type[] = []` (variable with type annotation)
-  if (ts.isVariableDeclaration(parent) && parent.type) return true;
 
   // Skip: `const [] = x` (destructuring pattern - array is on LHS)
   if (ts.isArrayBindingPattern(parent)) return true;
@@ -279,9 +270,6 @@ function hasTypeContext(node: ts.ArrayLiteralExpression): boolean {
   ) {
     return true;
   }
-
-  // Skip: `function f(x: Type[] = [])` (parameter with type annotation and default)
-  if (ts.isParameter(parent) && parent.type) return true;
 
   return false;
 }
@@ -299,10 +287,7 @@ function getNeverArrayLiteralStarts(
     if (ts.isArrayLiteralExpression(node) && node.elements.length === 0) {
       const start = node.getStart(sourceFile);
       if (start >= codeStart && node.end <= codeEnd) {
-        // `satisfies` validates compatibility without changing the inferred type.
-        const contextualType = ts.isSatisfiesExpression(node.parent)
-          ? undefined
-          : checker.getContextualType(node);
+        const contextualType = checker.getContextualType(node);
         const type = contextualType ?? checker.getTypeAtLocation(node);
         if (isNeverArrayType(type, checker)) {
           starts.add(start - codeStart);
@@ -337,7 +322,7 @@ function preprocessEmptyArrays(code: string, neverArrayStarts: Set<number>): str
   function visit(node: ts.Node) {
     if (ts.isArrayLiteralExpression(node) && node.elements.length === 0) {
       const start = node.getStart(sourceFile);
-      if (neverArrayStarts.has(start) && !hasTypeContext(node)) {
+      if (neverArrayStarts.has(start) && !hasInvalidAssertionContext(node)) {
         const parent = node.parent;
         // `as` binds looser than unary operators, so wrap to keep the assertion on the literal.
         const needsParens =
