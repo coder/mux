@@ -2159,6 +2159,57 @@ export class StreamingMessageAggregator {
         }
       }
 
+      let resultMessages = displayedMessages;
+
+      // Limit messages for DOM performance (unless explicitly disabled).
+      // Strategy: keep ALL user/assistant text messages (fast to render) but filter out
+      // tool calls and reasoning blocks from older portions of the chat.
+      // Full history is still maintained internally for token counting.
+      if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
+        // Split into "old" (candidates for filtering) and "recent" (always keep intact)
+        const recentMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
+        const oldMessages = displayedMessages.slice(0, -MAX_DISPLAYED_MESSAGES);
+
+        const omittedMessageCounts = { tool: 0, reasoning: 0 };
+        let hiddenCount = 0;
+        let insertionIndex: number | null = null;
+        const filteredOldMessages: DisplayedMessage[] = [];
+
+        for (const msg of oldMessages) {
+          if (ALWAYS_KEEP_MESSAGE_TYPES.has(msg.type)) {
+            filteredOldMessages.push(msg);
+            continue;
+          }
+
+          if (msg.type === "tool") {
+            omittedMessageCounts.tool += 1;
+          } else if (msg.type === "reasoning") {
+            omittedMessageCounts.reasoning += 1;
+          }
+
+          hiddenCount += 1;
+          insertionIndex ??= filteredOldMessages.length;
+        }
+
+        const hasOmissions = hiddenCount > 0;
+
+        if (hasOmissions) {
+          const insertAt = insertionIndex ?? filteredOldMessages.length;
+          const messagesWithMarker = [...filteredOldMessages];
+          messagesWithMarker.splice(insertAt, 0, {
+            type: "history-hidden" as const,
+            id: "history-hidden",
+            hiddenCount,
+            historySequence: -1, // Non-persisted marker for truncated history
+            omittedMessageCounts,
+          });
+
+          resultMessages = this.normalizeLastPartFlags([...messagesWithMarker, ...recentMessages]);
+        } else {
+          resultMessages = [...filteredOldMessages, ...recentMessages];
+        }
+      }
+
       // Add init state if present (ephemeral, appears at top)
       if (this.initState) {
         const durationMs =
@@ -2177,61 +2228,11 @@ export class StreamingMessageAggregator {
           durationMs,
           truncatedLines: this.initState.truncatedLines,
         };
-        displayedMessages.unshift(initMessage);
-      }
-
-      // Limit messages for DOM performance (unless explicitly disabled).
-      // Strategy: keep ALL user/assistant text messages (fast to render) but filter out
-      // tool calls and reasoning blocks from older portions of the chat.
-      // Full history is still maintained internally for token counting.
-      if (!this.showAllMessages && displayedMessages.length > MAX_DISPLAYED_MESSAGES) {
-        // Split into "old" (candidates for filtering) and "recent" (always keep intact)
-        const recentMessages = displayedMessages.slice(-MAX_DISPLAYED_MESSAGES);
-        const oldMessages = displayedMessages.slice(0, -MAX_DISPLAYED_MESSAGES);
-
-        const omittedMessageCounts = { tool: 0, reasoning: 0 };
-        const filteredOldMessages = oldMessages.filter((msg) => {
-          if (ALWAYS_KEEP_MESSAGE_TYPES.has(msg.type)) {
-            return true;
-          }
-
-          if (msg.type === "tool") {
-            omittedMessageCounts.tool += 1;
-          } else if (msg.type === "reasoning") {
-            omittedMessageCounts.reasoning += 1;
-          }
-
-          return false;
-        });
-
-        const hiddenCount = oldMessages.length - filteredOldMessages.length;
-        const hasOmissions = hiddenCount > 0;
-
-        // Combine filtered old messages with recent messages
-        const resultMessages = hasOmissions
-          ? [
-              {
-                type: "history-hidden" as const,
-                id: "history-hidden",
-                hiddenCount,
-                historySequence: -1, // Place it before all messages
-                omittedMessageCounts: omittedMessageCounts,
-              },
-              ...filteredOldMessages,
-              ...recentMessages,
-            ]
-          : [...filteredOldMessages, ...recentMessages];
-
-        const normalizedMessages = hasOmissions
-          ? this.normalizeLastPartFlags(resultMessages)
-          : resultMessages;
-
-        this.cache.displayedMessages = normalizedMessages;
-        return normalizedMessages;
+        resultMessages = [initMessage, ...resultMessages];
       }
 
       // Return the full array
-      this.cache.displayedMessages = displayedMessages;
+      this.cache.displayedMessages = resultMessages;
     }
     return this.cache.displayedMessages;
   }

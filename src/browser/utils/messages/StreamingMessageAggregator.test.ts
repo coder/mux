@@ -241,19 +241,20 @@ describe("StreamingMessageAggregator", () => {
         typeof StreamingMessageAggregator.prototype.loadHistoricalMessages
       >[0] = [];
       for (let i = 0; i < 100; i++) {
+        const baseSequence = i * 3;
         // User message (always kept)
         manyMessages.push(
           createMuxMessage(`u${i}`, "user", `msg-${i}`, {
-            timestamp: i * 2,
-            historySequence: i * 2,
+            timestamp: baseSequence,
+            historySequence: baseSequence,
           })
         );
-        // Assistant message with tool call (tool calls get filtered in old messages)
+        // Assistant message that only contains reasoning + tool calls (omitted in old messages)
         manyMessages.push({
-          id: `a${i}`,
+          id: `tool-msg-${i}`,
           role: "assistant" as const,
           parts: [
-            { type: "text" as const, text: `response-${i}` },
+            { type: "reasoning" as const, text: `thinking-${i}` },
             {
               type: "dynamic-tool" as const,
               toolCallId: `tool${i}`,
@@ -264,28 +265,41 @@ describe("StreamingMessageAggregator", () => {
             },
           ],
           metadata: {
-            historySequence: i * 2 + 1,
-            timestamp: i * 2 + 1,
+            historySequence: baseSequence + 1,
+            timestamp: baseSequence + 1,
             model: "claude-3-5-sonnet-20241022",
           },
         });
+        // Assistant response message (always kept)
+        manyMessages.push(
+          createMuxMessage(`a${i}`, "assistant", `response-${i}`, {
+            historySequence: baseSequence + 2,
+            timestamp: baseSequence + 2,
+            model: "claude-3-5-sonnet-20241022",
+          })
+        );
       }
 
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
       aggregator.loadHistoricalMessages(manyMessages, false);
 
-      // Each assistant message produces 2 DisplayedMessages: text + tool
-      // Total: 100 user + 100 assistant text + 100 tool = 300 DisplayedMessages
-      // With cap at 128, the first 172 are candidates for filtering.
-      // In those 172: user + assistant messages are kept, tool calls are filtered.
+      // Each pair produces 4 DisplayedMessages: user + reasoning + tool + assistant
+      // Total: 100 user + 100 assistant + 100 tool + 100 reasoning = 400 DisplayedMessages
+      // With cap at 128, the first 272 are candidates for filtering.
+      // In those 272: user + assistant messages are kept, tool/reasoning are filtered.
       const capped = aggregator.getDisplayedMessages();
 
       // Verify history-hidden marker is present (some tool calls were filtered)
-      expect(capped[0]?.type).toBe("history-hidden");
-      if (capped[0]?.type === "history-hidden") {
-        // The old section (first 172 items) contains tool messages that get filtered
-        // Count should be the number of tool messages in the old section
-        expect(capped[0].hiddenCount).toBeGreaterThan(0);
+      const hiddenIndex = capped.findIndex((msg) => msg.type === "history-hidden");
+      expect(hiddenIndex).toBeGreaterThan(0);
+      expect(hiddenIndex).toBeLessThan(capped.length - 1);
+      if (hiddenIndex !== -1) {
+        expect(capped[hiddenIndex - 1]?.type).toBe("user");
+        expect(capped[hiddenIndex + 1]?.type).toBe("assistant");
+        expect(capped[hiddenIndex]?.type).toBe("history-hidden");
+        if (capped[hiddenIndex]?.type === "history-hidden") {
+          expect(capped[hiddenIndex].hiddenCount).toBeGreaterThan(0);
+        }
       }
 
       // All user and assistant text messages should still be present
@@ -298,8 +312,8 @@ describe("StreamingMessageAggregator", () => {
       aggregator.setShowAllMessages(true);
 
       const displayed = aggregator.getDisplayedMessages();
-      // Now all 300 messages should be visible (100 user + 100 assistant + 100 tool)
-      expect(displayed).toHaveLength(300);
+      // Now all 400 messages should be visible (100 user + 100 assistant + 100 tool + 100 reasoning)
+      expect(displayed).toHaveLength(400);
       expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
     });
 

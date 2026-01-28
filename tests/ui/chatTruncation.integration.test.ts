@@ -34,12 +34,10 @@ async function seedHistoryWithToolCalls(
 ): Promise<void> {
   for (let i = 0; i < pairCount; i++) {
     const userMessage = createMuxMessage(`user-${i}`, "user", `user-${i}`);
-    const assistantMessage = createMuxMessage(
-      `assistant-${i}`,
-      "assistant",
-      `assistant-${i}`,
-      undefined,
-      [
+    const toolMessage = {
+      id: `assistant-tool-${i}`,
+      role: "assistant" as const,
+      parts: [
         { type: "reasoning" as const, text: `thinking-${i}` },
         {
           type: "dynamic-tool" as const,
@@ -49,12 +47,18 @@ async function seedHistoryWithToolCalls(
           input: { script: "echo test" },
           output: { success: true },
         },
-      ]
-    );
+      ],
+    };
+    const assistantMessage = createMuxMessage(`assistant-${i}`, "assistant", `assistant-${i}`);
 
     const userResult = await historyService.appendToHistory(workspaceId, userMessage);
     if (!userResult.success) {
       throw new Error(`Failed to append user history: ${userResult.error}`);
+    }
+
+    const toolResult = await historyService.appendToHistory(workspaceId, toolMessage);
+    if (!toolResult.success) {
+      throw new Error(`Failed to append tool history: ${toolResult.error}`);
     }
 
     const assistantResult = await historyService.appendToHistory(workspaceId, assistantMessage);
@@ -109,16 +113,26 @@ describe("Chat truncation UI", () => {
       const expectedThinkingCount = oldPairs;
 
       const indicator = await waitFor(() => {
-        const node = view?.getByText(/older messages hidden for performance/i);
+        const node = view?.getByText(/omitted .*performance/i);
         if (!node) {
           throw new Error("Truncation indicator not found");
         }
         return node;
       });
 
-      expect(indicator.textContent).toContain(`${expectedHiddenCount} older message`);
+      expect(indicator.textContent).toContain(`${expectedHiddenCount} message`);
       expect(indicator.textContent).toContain(`${expectedToolCount} tool call`);
       expect(indicator.textContent).toContain(`${expectedThinkingCount} thinking block`);
+
+      const messageBlocks = Array.from(
+        view.container.querySelectorAll('[data-testid="chat-message"]')
+      );
+      const indicatorIndex = messageBlocks.findIndex((node) =>
+        node.textContent?.match(/omitted .*performance/i)
+      );
+      expect(indicatorIndex).toBeGreaterThan(0);
+      expect(messageBlocks[indicatorIndex - 1]?.textContent).toContain("user-0");
+      expect(messageBlocks[indicatorIndex + 1]?.textContent).toContain("assistant-0");
 
       const assistantText = view.getByText("assistant-0");
       const messageBlock = assistantText.closest("[data-message-block]");

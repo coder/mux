@@ -37,25 +37,60 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
   return (
     <div
       className={cn(
-        "my-5 rounded-sm border-l-[3px] border-accent bg-[var(--color-message-hidden-bg)] px-[15px] py-3",
-        "font-sans text-center text-xs font-normal text-muted",
+        "my-4 flex flex-wrap items-center justify-center gap-2 text-center text-xs text-muted",
         className
       )}
     >
-      {message.hiddenCount} older message{message.hiddenCount !== 1 ? "s" : ""} hidden for
-      performance{omittedSuffix}
-      {workspaceId && (
-        <>
-          {" "}
-          <button
-            type="button"
-            className="text-link hover:text-link-hover cursor-pointer border-none bg-transparent p-0 hover:underline"
-            onClick={() => showAllMessages(workspaceId)}
-          >
-            Load all
-          </button>
-        </>
-      )}
+      <svg
+        aria-hidden="true"
+        className="text-border shrink-0"
+        width="24"
+        height="8"
+        viewBox="0 0 24 8"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M0 4 Q4 0, 8 4 Q12 8, 16 4 Q20 0, 24 4"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
+      <span className="text-muted">
+        Omitted {message.hiddenCount} message{message.hiddenCount !== 1 ? "s" : ""} for performance
+        {omittedSuffix}
+        {workspaceId && (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="text-link hover:text-link-hover cursor-pointer border-none bg-transparent p-0 font-medium hover:underline"
+              onClick={() => showAllMessages(workspaceId)}
+            >
+              Load all
+            </button>
+          </>
+        )}
+      </span>
+      <svg
+        aria-hidden="true"
+        className="text-border shrink-0"
+        width="24"
+        height="8"
+        viewBox="0 0 24 8"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <path
+          d="M0 4 Q4 0, 8 4 Q12 8, 16 4 Q20 0, 24 4"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          fill="none"
+        />
+      </svg>
     </div>
   );
 };
