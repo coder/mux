@@ -518,3 +518,61 @@ export const RuntimeBadgeVariations: AppStory = {
     />
   ),
 };
+
+/**
+ * Workspace title hover card with runtime badge.
+ * Shows the HoverCard that appears when hovering over a workspace title,
+ * containing the RuntimeBadge which can be further hovered for details.
+ */
+export const WorkspaceTitleHoverCard: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const sshWorkspace = createSSHWorkspace({
+          id: "ws-ssh-hover",
+          name: "feature-branch",
+          title: "Implement new feature with detailed description",
+          projectName: "hover-demo",
+          host: "dev.example.com",
+          createdAt: new Date(NOW - 3600000).toISOString(),
+        });
+
+        expandProjects(["/home/user/projects/hover-demo"]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject([sshWorkspace]),
+          workspaces: [sshWorkspace],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    // Wait for the workspace row to appear
+    await waitFor(
+      () => {
+        const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-ssh-hover"]');
+        if (!row) throw new Error("ws-ssh-hover row not found");
+      },
+      { timeout: 5000 }
+    );
+
+    const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-ssh-hover"]')!;
+
+    // Find the workspace title span and hover it
+    const titleSpan = within(row).getByText("Implement new feature with detailed description");
+    await userEvent.hover(titleSpan);
+
+    // Wait for HoverCard to appear (portaled to body)
+    await waitFor(
+      () => {
+        const hoverCard = document.body.querySelector<HTMLElement>(
+          "[data-radix-popper-content-wrapper] .bg-modal-bg"
+        );
+        if (!hoverCard) throw new Error("HoverCard not visible");
+        // Verify it contains the runtime badge and title
+        within(hoverCard).getByText("Implement new feature with detailed description");
+      },
+      { timeout: 5000 }
+    );
+  },
+};
