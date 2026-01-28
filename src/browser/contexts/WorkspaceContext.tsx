@@ -24,6 +24,7 @@ import {
   getPendingScopeId,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  getWorkspaceNameStateKey,
   migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
   GATEWAY_ENABLED_KEY,
@@ -213,6 +214,55 @@ function createWorkspaceDraftId(): string {
   }
 
   return `draft_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+/**
+ * Check if a draft workspace is empty (no input text, no attachments, and no workspace name set).
+ * An empty draft can be reused when the user clicks "New Workspace" instead of creating another.
+ */
+function isDraftEmpty(projectPath: string, draftId: string): boolean {
+  const scopeId = getDraftScopeId(projectPath, draftId);
+
+  // Check for input text
+  const inputText = readPersistedState<string>(getInputKey(scopeId), "");
+  if (inputText.trim().length > 0) {
+    return false;
+  }
+
+  // Check for attachments
+  const attachments = readPersistedState<unknown[]>(getInputAttachmentsKey(scopeId), []);
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    return false;
+  }
+
+  // Check for workspace name state (auto-generated or manual)
+  const nameState = readPersistedState<unknown>(getWorkspaceNameStateKey(scopeId), null);
+  if (nameState !== null) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Find an existing empty draft for a project (optionally within a specific section).
+ * Returns the draft ID if found, or null if no empty draft exists.
+ */
+function findExistingEmptyDraft(
+  workspaceDrafts: WorkspaceDraft[],
+  projectPath: string,
+  sectionId?: string
+): string | null {
+  for (const draft of workspaceDrafts) {
+    // If a section is specified, only consider drafts in that section
+    if (sectionId !== undefined && draft.sectionId !== sectionId) {
+      continue;
+    }
+    if (isDraftEmpty(projectPath, draft.draftId)) {
+      return draft.draftId;
+    }
+  }
+  return null;
 }
 
 export interface WorkspaceContext {
@@ -1031,6 +1081,21 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const createWorkspaceDraft = useCallback(
     (projectPath: string, sectionId?: string) => {
+      // Read directly from localStorage to get the freshest value, avoiding stale closure issues.
+      // The React state (workspaceDraftsByProject) may be out of date if this is called rapidly.
+      const freshDrafts = normalizeWorkspaceDraftsByProject(
+        readPersistedState<WorkspaceDraftsByProject>(WORKSPACE_DRAFTS_BY_PROJECT_KEY, {})
+      );
+      const existingDrafts = freshDrafts[projectPath] ?? [];
+
+      // If there's an existing empty draft (optionally in the same section), reuse it
+      // instead of creating yet another empty draft.
+      const existingEmptyDraftId = findExistingEmptyDraft(existingDrafts, projectPath, sectionId);
+      if (existingEmptyDraftId) {
+        navigateToProject(projectPath, sectionId, existingEmptyDraftId);
+        return;
+      }
+
       const draftId = createWorkspaceDraftId();
       const createdAt = Date.now();
       const draft: WorkspaceDraft = {
