@@ -384,8 +384,9 @@ describe("ProposePlanToolCall", () => {
 
     await waitFor(() => expect(sendMessageCalls.length).toBe(1));
     expect(sendMessageCalls[0]?.message).toBe(
-      "Start orchestrating the implementation of the plan."
+      "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `implementor` sub-agents; avoid doing repo work directly here except applying patches."
     );
+    expect(sendMessageCalls[0]?.options.agentId).toBe("orchestrator");
     expect(replaceChatHistoryCalls.length).toBe(0);
 
     // Clicking Start Orchestrator should switch the workspace agent to orchestrator.
@@ -467,8 +468,9 @@ describe("ProposePlanToolCall", () => {
 
     await waitFor(() => expect(sendMessageCalls.length).toBe(1));
     expect(sendMessageCalls[0]?.message).toBe(
-      "Start orchestrating the implementation of the plan."
+      "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `implementor` sub-agents; avoid doing repo work directly here except applying patches."
     );
+    expect(sendMessageCalls[0]?.options.agentId).toBe("orchestrator");
 
     expect(replaceChatHistoryCalls.length).toBe(1);
     expect(calls).toEqual(["replaceChatHistory", "sendMessage"]);
