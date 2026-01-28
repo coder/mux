@@ -327,4 +327,168 @@ describe("ProposePlanToolCall", () => {
     expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
     expect(summaryMessage.parts?.[0]?.text).toContain(planPath);
   });
+
+  test("switches to orchestrator and sends a message when clicking Start Orchestrator", async () => {
+    const workspaceId = "ws-123";
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    // Start in plan mode.
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
+
+    const replaceChatHistoryCalls: unknown[] = [];
+    const sendMessageCalls: SendMessageArgs[] = [];
+
+    mockApi = {
+      config: {
+        getConfig: () =>
+          Promise.resolve({
+            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+            agentAiDefaults: {},
+            subagentAiDefaults: {},
+          }),
+      },
+      workspace: {
+        getPlanContent: () =>
+          Promise.resolve({
+            success: true,
+            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
+          }),
+        replaceChatHistory: (args) => {
+          replaceChatHistoryCalls.push(args);
+          return Promise.resolve({ success: true, data: undefined });
+        },
+        sendMessage: (args: SendMessageArgs) => {
+          sendMessageCalls.push(args);
+          return Promise.resolve({ success: true, data: undefined });
+        },
+      },
+    };
+
+    const view = render(
+      <TooltipProvider>
+        <ProposePlanToolCall
+          args={{}}
+          status="completed"
+          result={{
+            success: true,
+            planPath,
+            planContent: "# My Plan\n\nDo the thing.",
+          }}
+          workspaceId={workspaceId}
+          isLatest={true}
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Start Orchestrator" }));
+
+    await waitFor(() => expect(sendMessageCalls.length).toBe(1));
+    expect(sendMessageCalls[0]?.message).toBe(
+      "Start orchestrating the implementation of the plan."
+    );
+    expect(replaceChatHistoryCalls.length).toBe(0);
+
+    // Clicking Start Orchestrator should switch the workspace agent to orchestrator.
+    const agentKey = getAgentIdKey(workspaceId);
+    const updatePersistedStateMaybeMock = updatePersistedState as unknown as {
+      mock?: { calls: unknown[][] };
+    };
+    if (updatePersistedStateMaybeMock.mock) {
+      expect(updatePersistedState).toHaveBeenCalledWith(agentKey, "orchestrator");
+    } else {
+      expect(JSON.parse(window.localStorage.getItem(agentKey)!)).toBe("orchestrator");
+    }
+  });
+
+  test("replaces chat history before starting orchestrator when setting enabled", async () => {
+    const workspaceId = "ws-123";
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    // Start in plan mode.
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
+
+    const calls: Array<"replaceChatHistory" | "sendMessage"> = [];
+    const replaceChatHistoryCalls: Array<{
+      workspaceId: string;
+      summaryMessage: unknown;
+      deletePlanFile?: boolean;
+    }> = [];
+    const sendMessageCalls: SendMessageArgs[] = [];
+
+    mockApi = {
+      config: {
+        getConfig: () =>
+          Promise.resolve({
+            taskSettings: {
+              maxParallelAgentTasks: 3,
+              maxTaskNestingDepth: 3,
+              proposePlanImplementReplacesChatHistory: true,
+            },
+            agentAiDefaults: {},
+            subagentAiDefaults: {},
+          }),
+      },
+      workspace: {
+        getPlanContent: () =>
+          Promise.resolve({
+            success: true,
+            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
+          }),
+        replaceChatHistory: (args) => {
+          calls.push("replaceChatHistory");
+          replaceChatHistoryCalls.push(args);
+          return Promise.resolve({ success: true, data: undefined });
+        },
+        sendMessage: (args: SendMessageArgs) => {
+          calls.push("sendMessage");
+          sendMessageCalls.push(args);
+          return Promise.resolve({ success: true, data: undefined });
+        },
+      },
+    };
+
+    const view = render(
+      <TooltipProvider>
+        <ProposePlanToolCall
+          args={{}}
+          status="completed"
+          result={{
+            success: true,
+            planPath,
+            planContent: "# My Plan\n\nDo the thing.",
+          }}
+          workspaceId={workspaceId}
+          isLatest={true}
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Start Orchestrator" }));
+
+    await waitFor(() => expect(sendMessageCalls.length).toBe(1));
+    expect(sendMessageCalls[0]?.message).toBe(
+      "Start orchestrating the implementation of the plan."
+    );
+
+    expect(replaceChatHistoryCalls.length).toBe(1);
+    expect(calls).toEqual(["replaceChatHistory", "sendMessage"]);
+
+    const replaceArgs = replaceChatHistoryCalls[0];
+    expect(replaceArgs?.deletePlanFile).toBe(false);
+
+    const summaryMessage = replaceArgs?.summaryMessage as {
+      role?: string;
+      metadata?: { agentId?: string };
+      parts?: Array<{ type?: string; text?: string }>;
+    };
+
+    expect(summaryMessage.role).toBe("assistant");
+    expect(summaryMessage.parts?.[0]?.text).toContain(
+      "Note: This chat already contains the full plan"
+    );
+    expect(summaryMessage.parts?.[0]?.text).not.toContain("Orchestrator mode");
+    expect(summaryMessage.metadata?.agentId).toBe("plan");
+    expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
+    expect(summaryMessage.parts?.[0]?.text).toContain(planPath);
+  });
 });

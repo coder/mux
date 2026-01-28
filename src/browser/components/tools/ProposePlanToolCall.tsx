@@ -307,6 +307,36 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     sourceAgentId: "plan",
   });
 
+  const replaceChatHistoryWithPlan = async (args: { idPrefix: string; errorContext: string }) => {
+    if (!workspaceId || !api) return;
+
+    try {
+      const summaryMessage = createMuxMessage(
+        `${args.idPrefix}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        "assistant",
+        startHereContent,
+        {
+          timestamp: Date.now(),
+          compacted: "user",
+          // Preserve the source agent so plan-origin compactions can be detected.
+          agentId: "plan",
+        }
+      );
+
+      const result = await api.workspace.replaceChatHistory({
+        workspaceId,
+        summaryMessage,
+        deletePlanFile: false,
+      });
+
+      if (!result.success) {
+        console.error(args.errorContext, result.error);
+      }
+    } catch (err) {
+      console.error(args.errorContext, err);
+    }
+  };
+
   const handleStartOrchestrator = async () => {
     if (!workspaceId || !api) return;
     if (isStartingOrchestratorRef.current) return;
@@ -317,43 +347,21 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     }
 
     try {
-      // Always replace history so the orchestrator starts with minimal context.
+      let shouldReplaceChatHistory = false;
+
       try {
-        const summaryParts: string[] = [
-          "# Orchestrator mode",
-          "",
-          "This chat history was replaced to start an internal Orchestrator session with minimal context.",
-          "",
-          planPath ? `Plan file path: \`${planPath}\`` : "",
-          "",
-          "Use `task` to delegate work to `implementor` sub-agents, then apply patches via `task_apply_git_patch`.",
-        ];
+        const cfg = await api.config.getConfig();
+        shouldReplaceChatHistory =
+          cfg.taskSettings.proposePlanImplementReplacesChatHistory ?? false;
+      } catch {
+        // Ignore config read errors (we'll default to old behavior).
+      }
 
-        const summaryMessage = createMuxMessage(
-          `start-orchestrator-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          "assistant",
-          summaryParts.filter(Boolean).join("\n"),
-          {
-            timestamp: Date.now(),
-            compacted: "user",
-            agentId: "orchestrator",
-          }
-        );
-
-        const result = await api.workspace.replaceChatHistory({
-          workspaceId,
-          summaryMessage,
-          deletePlanFile: false,
+      if (shouldReplaceChatHistory) {
+        await replaceChatHistoryWithPlan({
+          idPrefix: "start-orchestrator",
+          errorContext: "Failed to replace chat history before starting orchestrator:",
         });
-
-        if (!result.success) {
-          console.error(
-            "Failed to replace chat history before starting orchestrator:",
-            result.error
-          );
-        }
-      } catch (err) {
-        console.error("Failed to replace chat history before starting orchestrator:", err);
       }
 
       // Switch to orchestrator before sending so send options (agentId/mode) match.
@@ -361,12 +369,11 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
       await api.workspace.sendMessage({
         workspaceId,
-        message:
-          "You are the orchestrator. Await a narrow task and delegate it to implementor sub-agents; apply patches via task_apply_git_patch.",
+        message: "Start orchestrating the implementation of the plan.",
         options: buildSendMessageOptions(workspaceId),
       });
-    } catch {
-      // Best-effort: user can retry manually if sending fails.
+    } catch (err) {
+      console.error("Failed to start orchestrator:", err);
     } finally {
       isStartingOrchestratorRef.current = false;
       if (isMountedRef.current) {
@@ -525,7 +532,9 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         onClick: () => void handleStartOrchestrator(),
         disabled: !api || isStartingOrchestrator || isImplementing,
         icon: <Workflow />,
-        tooltip: "Replace chat history, switch to Orchestrator, and start delegating",
+        tooltip: implementReplacesChatHistory
+          ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
+          : "Switch to Orchestrator and start delegating",
       });
     }
   }
