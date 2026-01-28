@@ -2175,11 +2175,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 >
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
-              </div>
-
-              <div className="ml-4 flex items-center [@container(max-width:480px)]:hidden" data-component="ModelSettingsGroup">
+                <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
                 <ModelSettings model={baseModel || ""} />
               </div>
+              </div>
+
+
 
               {/* Row 2 on mobile: Context Usage + Agent Mode + Send Button */}
               <div
@@ -2204,11 +2205,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       aria-label="Send message"
                       style={{ backgroundColor: focusBorderColor }}
                       className={cn(
-                        "border-border-light inline-flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
+                        "border-border-light inline-flex items-center justify-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
+                        // Mobile: wider tap target + larger icon, keep icon centered.
+                        "[@container(max-width:480px)]:h-9 [@container(max-width:480px)]:w-11 [@container(max-width:480px)]:px-0 [@container(max-width:480px)]:py-0 [@container(max-width:480px)]:text-sm",
                         currentAgent?.uiColor ? "text-white" : "text-text"
                       )}
                     >
-                      <SendHorizontal className="h-3.5 w-3.5" strokeWidth={2.5} />
+                      <SendHorizontal
+                        className="h-3.5 w-3.5 [@container(max-width:480px)]:h-4 [@container(max-width:480px)]:w-4"
+                        strokeWidth={2.5}
+                      />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
