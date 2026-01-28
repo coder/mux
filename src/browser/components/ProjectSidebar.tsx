@@ -365,6 +365,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     pendingNewWorkspaceProject,
     pendingNewWorkspaceDraftId,
     workspaceDraftsByProject,
+    workspaceDraftPromotionsByProject,
     createWorkspaceDraft,
     openWorkspaceDraft,
     deleteWorkspaceDraft,
@@ -861,8 +862,20 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           >
                             {(() => {
                               // Archived workspaces are excluded from workspaceMetadata so won't appear here
+
                               const allWorkspaces =
                                 sortedWorkspacesByProject.get(projectPath) ?? [];
+
+                              const draftPromotionsForProject =
+                                workspaceDraftPromotionsByProject[projectPath] ?? {};
+                              const promotedWorkspaceIds = new Set(
+                                Object.values(draftPromotionsForProject).map(
+                                  (metadata) => metadata.id
+                                )
+                              );
+                              const workspacesForNormalRendering = allWorkspaces.filter(
+                                (workspace) => !promotedWorkspaceIds.has(workspace.id)
+                              );
                               const sections = sortSectionsByLinkedList(config.sections ?? []);
                               const depthByWorkspaceId = computeWorkspaceDepthMap(allWorkspaces);
 
@@ -925,11 +938,21 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const renderDraft = (
                                 draft: (typeof sortedDrafts)[number]
                               ): React.ReactNode => {
+                                const sectionId = normalizeDraftSectionId(draft);
+                                const promotedMetadata = draftPromotionsForProject[draft.draftId];
+
+                                if (promotedMetadata) {
+                                  const liveMetadata =
+                                    allWorkspaces.find(
+                                      (workspace) => workspace.id === promotedMetadata.id
+                                    ) ?? promotedMetadata;
+                                  return renderWorkspace(liveMetadata, sectionId ?? undefined);
+                                }
+
                                 const draftNumber = draftNumberById.get(draft.draftId) ?? 0;
                                 const isSelected =
                                   pendingNewWorkspaceProject === projectPath &&
                                   pendingNewWorkspaceDraftId === draft.draftId;
-                                const sectionId = normalizeDraftSectionId(draft);
 
                                 return (
                                   <DraftWorkspaceListItem
@@ -1062,7 +1085,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
                               // Partition workspaces by section
                               const { unsectioned, bySectionId } = partitionWorkspacesBySection(
-                                allWorkspaces,
+                                workspacesForNormalRendering,
                                 sections
                               );
 

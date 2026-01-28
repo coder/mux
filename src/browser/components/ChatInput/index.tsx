@@ -1512,15 +1512,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         creationFileParts.length > 0 ? creationFileParts : undefined,
         creationOptionsOverride
       );
-      if (creationResult.success && isMountedRef.current) {
-        setInput("");
-        setAttachments([]);
-        // Height is managed by VimTextArea's useLayoutEffect - clear inline style
-        // to let CSS min-height take over
-        if (inputRef.current) {
-          inputRef.current.style.height = "";
+
+      if (creationResult.success) {
+        if (isMountedRef.current) {
+          setInput("");
+          setAttachments([]);
+          // Height is managed by VimTextArea's useLayoutEffect - clear inline style
+          // to let CSS min-height take over
+          if (inputRef.current) {
+            inputRef.current.style.height = "";
+          }
         }
 
+        // Important: the creation ChatInput unmounts immediately after workspace creation,
+        // but we still want to clean up the draft placeholder once the initial send succeeds.
         if (typeof props.pendingDraftId === "string" && props.pendingDraftId.trim().length > 0) {
           deleteWorkspaceDraft(props.projectPath, props.pendingDraftId);
         }

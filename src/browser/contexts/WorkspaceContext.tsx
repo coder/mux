@@ -152,6 +152,8 @@ export interface WorkspaceDraft {
 
 type WorkspaceDraftsByProject = Record<string, WorkspaceDraft[]>;
 
+type WorkspaceDraftPromotionsByProject = Record<string, Record<string, FrontendWorkspaceMetadata>>;
+
 function isWorkspaceDraft(value: unknown): value is WorkspaceDraft {
   if (!value || typeof value !== "object") return false;
 
@@ -205,6 +207,16 @@ export interface WorkspaceContext {
   // Workspace data
   workspaceMetadata: Map<string, FrontendWorkspaceMetadata>;
   loading: boolean;
+
+  // UI-only draft workspace promotions (draftId -> created workspace).
+  // This is intentionally ephemeral: it makes the sidebar feel like the draft
+  // "turns into" the created workspace, but doesn't pin ordering permanently.
+  workspaceDraftPromotionsByProject: WorkspaceDraftPromotionsByProject;
+  promoteWorkspaceDraft: (
+    projectPath: string,
+    draftId: string,
+    metadata: FrontendWorkspaceMetadata
+  ) => void;
 
   // Workspace operations
   createWorkspace: (
@@ -346,6 +358,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   );
   const [loading, setLoading] = useState(true);
 
+  const [workspaceDraftPromotionsByProject, setWorkspaceDraftPromotionsByProject] =
+    useState<WorkspaceDraftPromotionsByProject>({});
   const [workspaceDraftsByProjectState, setWorkspaceDraftsByProjectState] =
     usePersistedState<WorkspaceDraftsByProject>(
       WORKSPACE_DRAFTS_BY_PROJECT_KEY,
@@ -433,10 +447,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     if (!api) return false; // Return false to indicate metadata wasn't loaded
     try {
       const metadataList = await api.workspace.list();
-      console.log(
-        "[WorkspaceContext] Loaded metadata list:",
-        metadataList.map((m) => ({ id: m.id, name: m.name, title: m.title }))
-      );
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
         // Skip archived workspaces - they should not be tracked by the app
@@ -842,6 +852,29 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [api]
   );
 
+  const promoteWorkspaceDraft = useCallback(
+    (projectPath: string, draftId: string, metadata: FrontendWorkspaceMetadata) => {
+      if (projectPath.trim().length === 0) return;
+      if (draftId.trim().length === 0) return;
+
+      setWorkspaceDraftPromotionsByProject((prev) => {
+        const currentProject = prev[projectPath] ?? {};
+        const existing = currentProject[draftId];
+        if (existing?.id === metadata.id) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          [projectPath]: {
+            ...currentProject,
+            [draftId]: metadata,
+          },
+        };
+      });
+    },
+    []
+  );
   const beginWorkspaceCreation = useCallback(
     (projectPath: string, sectionId?: string) => {
       if (workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID)?.projectPath === projectPath) {
@@ -905,6 +938,24 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
   const deleteWorkspaceDraft = useCallback(
     (projectPath: string, draftId: string) => {
+      setWorkspaceDraftPromotionsByProject((prev) => {
+        const currentProject = prev[projectPath];
+        if (!currentProject || !(draftId in currentProject)) {
+          return prev;
+        }
+
+        const nextProject = { ...currentProject };
+        delete nextProject[draftId];
+
+        const next: WorkspaceDraftPromotionsByProject = { ...prev };
+        if (Object.keys(nextProject).length === 0) {
+          delete next[projectPath];
+        } else {
+          next[projectPath] = nextProject;
+        }
+        return next;
+      });
+
       deleteWorkspaceStorage(getDraftScopeId(projectPath, draftId));
 
       setWorkspaceDraftsByProjectState((prev) => {
@@ -921,7 +972,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return next;
       });
     },
-    [setWorkspaceDraftsByProjectState]
+    [setWorkspaceDraftPromotionsByProject, setWorkspaceDraftsByProjectState]
   );
 
   const value = useMemo<WorkspaceContext>(
@@ -942,6 +993,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       pendingNewWorkspaceDraftId,
       beginWorkspaceCreation,
       workspaceDraftsByProject,
+      workspaceDraftPromotionsByProject,
+      promoteWorkspaceDraft,
       createWorkspaceDraft,
       openWorkspaceDraft,
       deleteWorkspaceDraft,
@@ -964,6 +1017,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       pendingNewWorkspaceDraftId,
       beginWorkspaceCreation,
       workspaceDraftsByProject,
+      workspaceDraftPromotionsByProject,
+      promoteWorkspaceDraft,
       createWorkspaceDraft,
       openWorkspaceDraft,
       deleteWorkspaceDraft,
