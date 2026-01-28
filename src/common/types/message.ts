@@ -271,6 +271,21 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
       }
   );
 
+export function getCompactionFollowUpContent(
+  metadata?: MuxFrontendMetadata
+): CompactionRequestData["followUpContent"] | undefined {
+  // Keep follow-up extraction centralized so callers don't duplicate legacy handling.
+  if (!metadata || metadata.type !== "compaction-request") {
+    return undefined;
+  }
+
+  // Legacy compaction requests stored follow-up content in `continueMessage`.
+  const parsed = metadata.parsed as CompactionRequestData & {
+    continueMessage?: CompactionRequestData["followUpContent"];
+  };
+  return parsed.followUpContent ?? parsed.continueMessage;
+}
+
 // Our custom metadata type
 export interface MuxMetadata {
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
