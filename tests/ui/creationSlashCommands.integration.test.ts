@@ -14,9 +14,8 @@ import {
 import { generateBranchName } from "../ipc/helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 
-import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView } from "./helpers";
+import { cleanupView, setupTestDom } from "./helpers";
 import { ChatHarness } from "./harness";
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
@@ -62,12 +61,7 @@ async function setupCreationView(): Promise<CreationView> {
 
   await env.orpc.workspace.archive({ workspaceId });
 
-  const cleanupDom = installDom();
-  // Disable tutorial to prevent it from blocking UI interactions
-  globalThis.localStorage.setItem(
-    "tutorialState",
-    JSON.stringify({ disabled: true, completed: {} })
-  );
+  const cleanupDom = setupTestDom();
 
   const view = renderApp({ apiClient: env.orpc, metadata });
 

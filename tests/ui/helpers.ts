@@ -201,6 +201,36 @@ export async function cleanupView(view: RenderedApp, cleanupDom: () => void): Pr
   cleanupDom();
 }
 
+/**
+ * Disable the tutorial overlay for tests.
+ * Called automatically by setupTestDom().
+ */
+export function disableTutorial(): void {
+  globalThis.localStorage.setItem(
+    "tutorialState",
+    JSON.stringify({ disabled: true, completed: {} })
+  );
+}
+
+/**
+ * Standard test DOM setup: installs happy-dom and disables tutorial by default.
+ * Returns a cleanup function to restore DOM.
+ *
+ * @param options.enableTutorial - Set to true for tests that specifically test tutorial behavior
+ */
+export function setupTestDom(options?: { enableTutorial?: boolean }): () => void {
+  // Import here to avoid circular dependency issues
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { installDom } = require("./dom");
+  const cleanupDom = installDom();
+
+  if (!options?.enableTutorial) {
+    disableTutorial();
+  }
+
+  return cleanupDom;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // GIT STATUS HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════

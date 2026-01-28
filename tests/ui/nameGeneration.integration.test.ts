@@ -27,9 +27,8 @@ import {
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
 
-import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView } from "./helpers";
+import { cleanupView, setupTestDom } from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -60,12 +59,7 @@ describeIntegration("Name generation UI flow", () => {
 
     await env.orpc.workspace.archive({ workspaceId });
 
-    const cleanupDom = installDom();
-    // Disable tutorial to prevent it from blocking UI interactions
-    globalThis.localStorage.setItem(
-      "tutorialState",
-      JSON.stringify({ disabled: true, completed: {} })
-    );
+    const cleanupDom = setupTestDom();
 
     const view = renderApp({ apiClient: env.orpc, metadata });
 

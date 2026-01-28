@@ -96,9 +96,9 @@ Otherwise, tests that live in `src/` run under `bun test` (generally these are u
 
 ### Happy-dom Limitations
 
-- **Radix Popover/Portal components don't render content** — Radix portals content to `document.body` but happy-dom doesn't support this properly. The trigger will render but popover content won't appear.
-- **Workaround:** Components that need tests/ui coverage should use conditional rendering (`{isOpen && <div>...}`) instead of Radix Portal. See `AgentModePicker` for the pattern.
-- If refactoring to conditional rendering isn't feasible, use tests/e2e instead (but note ~2min startup time).
+- **Radix Portal content renders in `document.body`** — happy-dom doesn't place it under `view.container`, so queries scoped to the app root will miss dialog/popover content.
+- **Workaround:** For portal-based UI (Dialog/Popover/Tooltip), query `view.container.ownerDocument.body` (or `within(document.body)`) and drive interactions there. Prefer `userEvent` for typing to ensure controlled inputs update.
+- If portal content still doesn't appear due to missing browser APIs, prefer conditional rendering (`{isOpen && <div>...}`) like `AgentModePicker`, or fall back to tests/e2e (~2min startup time).
 
 ### Test Helper Conventions
 
