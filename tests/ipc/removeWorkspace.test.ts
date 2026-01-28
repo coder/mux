@@ -25,6 +25,7 @@ import {
   TEST_TIMEOUT_SSH_MS,
   INIT_HOOK_WAIT_MS,
   SSH_INIT_WAIT_MS,
+  getTestRunner,
 } from "./helpers";
 import {
   isDockerAvailable,
@@ -33,6 +34,8 @@ import {
   type SSHServerConfig,
 } from "../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
+import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "../../src/node/runtime/SSH2ConnectionPool";
 import { execAsync } from "../../src/node/utils/disposableExec";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -118,11 +121,21 @@ describeIntegration("Workspace deletion integration tests", () => {
     }
   }, 30000);
 
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests. This allows tests to run concurrently.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
+
   // Test matrix: Run tests for both local and SSH runtimes
   describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
     "Runtime: $type",
     ({ type }) => {
       const TEST_TIMEOUT = type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS;
+
+      // SSH tests run serially to avoid Docker container overload
+      const runTest = getTestRunner(type);
 
       // Helper to build runtime config
       const getRuntimeConfig = (_branchName: string): RuntimeConfig | undefined => {
@@ -138,7 +151,7 @@ describeIntegration("Workspace deletion integration tests", () => {
         return undefined; // undefined = defaults to local
       };
 
-      test.concurrent(
+      runTest(
         "should successfully delete workspace",
         async () => {
           const env = await createTestEnvironment();
@@ -194,7 +207,7 @@ describeIntegration("Workspace deletion integration tests", () => {
         TEST_TIMEOUT
       );
 
-      test.concurrent(
+      runTest(
         "should handle deletion of non-existent workspace gracefully",
         async () => {
           const env = await createTestEnvironment();
@@ -214,7 +227,7 @@ describeIntegration("Workspace deletion integration tests", () => {
         TEST_TIMEOUT
       );
 
-      test.concurrent(
+      runTest(
         "should handle deletion when directory is already deleted",
         async () => {
           const env = await createTestEnvironment();
@@ -257,7 +270,7 @@ describeIntegration("Workspace deletion integration tests", () => {
         TEST_TIMEOUT
       );
 
-      test.concurrent(
+      runTest(
         "should fail to delete dirty workspace without force flag",
         async () => {
           const env = await createTestEnvironment();
@@ -299,7 +312,7 @@ describeIntegration("Workspace deletion integration tests", () => {
         TEST_TIMEOUT
       );
 
-      test.concurrent(
+      runTest(
         "should delete dirty workspace with force flag",
         async () => {
           const env = await createTestEnvironment();
@@ -344,7 +357,7 @@ describeIntegration("Workspace deletion integration tests", () => {
 
       // Submodule tests only apply to local runtime (SSH doesn't use git worktrees)
       if (type === "local") {
-        test.concurrent(
+        runTest(
           "should successfully delete clean workspace with submodule",
           async () => {
             const env = await createTestEnvironment();
@@ -396,7 +409,7 @@ describeIntegration("Workspace deletion integration tests", () => {
           30000
         );
 
-        test.concurrent(
+        runTest(
           "should fail to delete dirty workspace with submodule, succeed with force",
           async () => {
             const env = await createTestEnvironment();

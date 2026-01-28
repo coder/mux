@@ -31,8 +31,10 @@ import {
   stopSSHServer,
   type SSHServerConfig,
 } from "../runtime/test-fixtures/ssh-fixture";
-import { resolveOrpcClient } from "./helpers";
+import { resolveOrpcClient, getTestRunner } from "./helpers";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
+import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "../../src/node/runtime/SSH2ConnectionPool";
 
 const execAsync = promisify(exec);
 
@@ -71,6 +73,13 @@ describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
     }
   }, 30000);
 
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests. This allows tests to run concurrently.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
+
   // Test matrix: Run tests for both local and SSH runtimes
   describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
     "Runtime: $type",
@@ -92,7 +101,10 @@ describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
       // Get runtime-specific init wait time (SSH needs more time for rsync)
       const getInitWaitTime = () => (type === "ssh" ? SSH_INIT_WAIT_MS : INIT_HOOK_WAIT_MS);
 
-      test.concurrent(
+      // SSH tests run serially to avoid Docker container overload
+      const runTest = getTestRunner(type);
+
+      runTest(
         "should successfully rename workspace and update all paths",
         async () => {
           const env = await createTestEnvironment();
@@ -172,7 +184,7 @@ describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
         TEST_TIMEOUT_MS
       );
 
-      test.concurrent(
+      runTest(
         "should fail to rename if new name conflicts with existing workspace",
         async () => {
           const env = await createTestEnvironment();

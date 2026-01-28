@@ -21,6 +21,7 @@ import {
   cleanupTempGitRepo,
   generateBranchName,
   createStreamCollector,
+  getTestRunner,
 } from "./helpers";
 import type { OrpcTestClient } from "./orpcTestClient";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
@@ -36,6 +37,8 @@ import type { FrontendWorkspaceMetadata } from "../../src/common/types/workspace
 import { createRuntime } from "../../src/node/runtime/runtimeFactory";
 import type { SSHRuntime } from "../../src/node/runtime/SSHRuntime";
 import { streamToString } from "../../src/node/runtime/streamUtils";
+import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "../../src/node/runtime/SSH2ConnectionPool";
 
 const execAsync = promisify(exec);
 
@@ -185,6 +188,13 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
     }
   }, 30000);
 
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests. This allows tests to run concurrently.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
+
   // Test matrix: Run tests for both local and SSH runtimes
   describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
     "Runtime: $type",
@@ -206,8 +216,11 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
       // Get runtime-specific init wait time (SSH needs more time for rsync)
       const getInitWaitTime = () => (type === "ssh" ? SSH_INIT_WAIT_MS : INIT_HOOK_WAIT_MS);
 
+      // SSH tests run serially to avoid Docker container overload
+      const runTest = getTestRunner(type);
+
       describe("Branch handling", () => {
-        test.concurrent(
+        runTest(
           "creates new branch from trunk when branch doesn't exist",
           async () => {
             const env = await createTestEnvironment();
@@ -247,7 +260,7 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
           TEST_TIMEOUT_MS
         );
 
-        test.concurrent(
+        runTest(
           "checks out existing branch when branch already exists",
           async () => {
             const env = await createTestEnvironment();
@@ -285,7 +298,7 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
           TEST_TIMEOUT_MS
         );
 
-        test.concurrent(
+        runTest(
           "creates new branch from specified trunk branch, not from default branch",
           async () => {
             const env = await createTestEnvironment();
@@ -376,7 +389,7 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
       });
 
       describe("Init hook execution", () => {
-        test.concurrent(
+        runTest(
           "executes .mux/init hook when present and streams logs",
           async () => {
             const env = await createTestEnvironment();
@@ -446,7 +459,7 @@ exit 0
           TEST_TIMEOUT_MS
         );
 
-        test.concurrent(
+        runTest(
           "handles init hook failure gracefully",
           async () => {
             const env = await createTestEnvironment();
@@ -511,7 +524,7 @@ exit 1
           TEST_TIMEOUT_MS
         );
 
-        test.concurrent(
+        runTest(
           "completes successfully when no init hook present",
           async () => {
             const env = await createTestEnvironment();
@@ -548,7 +561,7 @@ exit 1
 
         // SSH-specific test: verify sync output appears in init stream
         if (type === "ssh") {
-          test.concurrent(
+          runTest(
             "streams sync progress to init events (SSH only)",
             async () => {
               const env = await createTestEnvironment();
@@ -621,7 +634,7 @@ exit 1
             TEST_TIMEOUT_MS
           );
 
-          test.concurrent(
+          runTest(
             "resolves tilde paths in srcBaseDir to absolute paths (SSH only)",
             async () => {
               if (!sshConfig) {
@@ -679,7 +692,7 @@ exit 1
             TEST_TIMEOUT_MS
           );
 
-          test.concurrent(
+          runTest(
             "resolves bare tilde in srcBaseDir to home directory (SSH only)",
             async () => {
               if (!sshConfig) {
@@ -737,7 +750,7 @@ exit 1
             TEST_TIMEOUT_MS
           );
 
-          test.concurrent(
+          runTest(
             "can execute commands in workspace immediately after creation (SSH only)",
             async () => {
               const env = await createTestEnvironment();
@@ -789,7 +802,7 @@ exit 1
       });
 
       describe("Validation", () => {
-        test.concurrent(
+        runTest(
           "rejects invalid workspace names",
           async () => {
             const env = await createTestEnvironment();

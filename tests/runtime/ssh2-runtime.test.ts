@@ -19,6 +19,8 @@ import { TestWorkspace } from "./test-fixtures/test-helpers";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { createSSHTransport } from "@/node/runtime/transports";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
+import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "@/node/runtime/SSH2ConnectionPool";
 
 function shouldRunIntegrationTests(): boolean {
   return process.env.TEST_INTEGRATION === "1" || process.env.TEST_INTEGRATION === "true";
@@ -61,6 +63,13 @@ describeIntegration("SSH2 Transport integration tests", () => {
       await stopSSHServer(sshConfig);
     }
   }, 30000);
+
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
 
   describe("exec() - Command execution via SSH2", () => {
     test("returns correct exit code for failed commands", async () => {

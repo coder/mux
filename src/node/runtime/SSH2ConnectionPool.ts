@@ -401,6 +401,15 @@ export class SSH2ConnectionPool {
   }
 
   /**
+   * Clear all health state. Used in tests to reset between test cases
+   * so backoff from one test doesn't affect subsequent tests.
+   */
+  clearAllHealth(): void {
+    this.health.clear();
+    this.inflight.clear();
+  }
+
+  /**
    * Update last activity time and reset idle timer.
    * Called on each acquireConnection() to keep active connections alive.
    */

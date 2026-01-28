@@ -31,6 +31,7 @@ import {
   TEST_TIMEOUT_SSH_MS,
   STREAM_TIMEOUT_LOCAL_MS,
   STREAM_TIMEOUT_SSH_MS,
+  getTestRunner,
 } from "./helpers";
 import {
   isDockerAvailable,
@@ -39,6 +40,8 @@ import {
   type SSHServerConfig,
 } from "../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
+import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "../../src/node/runtime/SSH2ConnectionPool";
 import type { ToolPolicy } from "../../src/common/utils/tools/toolPolicy";
 
 // Tool policy: Only allow file tools (disable bash to isolate file tool issues)
@@ -87,6 +90,13 @@ describeIntegration("Runtime File Editing Tools", () => {
     }
   }, 30000);
 
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests. This allows tests to run concurrently.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
+
   // Test matrix: Run tests for both local and SSH runtimes
   describe.each<{ type: "local" | "ssh" }>([{ type: "local" }, { type: "ssh" }])(
     "Runtime: $type",
@@ -105,7 +115,10 @@ describeIntegration("Runtime File Editing Tools", () => {
         return undefined; // undefined = defaults to local
       };
 
-      test.concurrent(
+      // SSH tests run serially to avoid Docker container overload
+      const runTest = getTestRunner(type);
+
+      runTest(
         "should read file content with file_read tool",
         async () => {
           const env = await createTestEnvironment();
@@ -188,7 +201,7 @@ describeIntegration("Runtime File Editing Tools", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should replace text with file_edit_replace_string tool",
         async () => {
           const env = await createTestEnvironment();
@@ -277,7 +290,7 @@ describeIntegration("Runtime File Editing Tools", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should insert text with file_edit_insert tool",
         async () => {
           const env = await createTestEnvironment();
@@ -367,7 +380,7 @@ describeIntegration("Runtime File Editing Tools", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should handle relative paths correctly when editing files",
         async () => {
           const env = await createTestEnvironment();
