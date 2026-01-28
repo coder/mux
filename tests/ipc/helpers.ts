@@ -49,6 +49,21 @@ export const TEST_TIMEOUT_LOCAL_MS = 25000; // Recommended timeout for local run
 export const TEST_TIMEOUT_SSH_MS = 120000; // Recommended timeout for SSH runtime tests (init + operations can take 60-90s under concurrent load)
 export const STREAM_TIMEOUT_LOCAL_MS = 15000; // Stream timeout for local runtime
 
+/**
+ * Get the appropriate test runner for a runtime type.
+ *
+ * SSH tests run serially because they share a single Docker container.
+ * Multiple concurrent SSH workspace inits overload the container, causing
+ * timeouts. Local tests run concurrently for faster CI.
+ *
+ * Usage:
+ *   const runTest = getTestRunner(type);
+ *   runTest("test name", async () => { ... }, timeout);
+ */
+export function getTestRunner(runtimeType: "local" | "ssh"): typeof test {
+  return runtimeType === "ssh" ? test : test.concurrent;
+}
+
 export type OrpcSource =
   | TestEnvironment
   | OrpcTestClient

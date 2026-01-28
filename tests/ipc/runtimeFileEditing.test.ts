@@ -31,6 +31,7 @@ import {
   TEST_TIMEOUT_SSH_MS,
   STREAM_TIMEOUT_LOCAL_MS,
   STREAM_TIMEOUT_SSH_MS,
+  getTestRunner,
 } from "./helpers";
 import {
   isDockerAvailable,
@@ -114,7 +115,10 @@ describeIntegration("Runtime File Editing Tools", () => {
         return undefined; // undefined = defaults to local
       };
 
-      test.concurrent(
+      // SSH tests run serially to avoid Docker container overload
+      const runTest = getTestRunner(type);
+
+      runTest(
         "should read file content with file_read tool",
         async () => {
           const env = await createTestEnvironment();
@@ -197,7 +201,7 @@ describeIntegration("Runtime File Editing Tools", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should replace text with file_edit_replace_string tool",
         async () => {
           const env = await createTestEnvironment();
@@ -286,7 +290,7 @@ describeIntegration("Runtime File Editing Tools", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should insert text with file_edit_insert tool",
         async () => {
           const env = await createTestEnvironment();
@@ -376,7 +380,7 @@ describeIntegration("Runtime File Editing Tools", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should handle relative paths correctly when editing files",
         async () => {
           const env = await createTestEnvironment();

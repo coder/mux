@@ -24,6 +24,7 @@ import {
   HAIKU_MODEL,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
+  getTestRunner,
 } from "./helpers";
 import {
   isDockerAvailable,
@@ -147,7 +148,10 @@ describeIntegration("Runtime Bash Execution", () => {
         return undefined; // undefined = defaults to local
       };
 
-      test.concurrent(
+      // SSH tests run serially to avoid Docker container overload
+      const runTest = getTestRunner(type);
+
+      runTest(
         "should execute simple bash command",
         async () => {
           const env = await createTestEnvironment();
@@ -216,7 +220,7 @@ describeIntegration("Runtime Bash Execution", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should handle bash command with environment variables",
         async () => {
           const env = await createTestEnvironment();
@@ -371,7 +375,7 @@ describeIntegration("Runtime Bash Execution", () => {
         type === "ssh" ? TEST_TIMEOUT_SSH_MS : TEST_TIMEOUT_LOCAL_MS
       );
 
-      test.concurrent(
+      runTest(
         "should not hang on grep | head pattern over SSH",
         async () => {
           const env = await createTestEnvironment();
