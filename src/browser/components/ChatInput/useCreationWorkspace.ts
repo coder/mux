@@ -490,9 +490,13 @@ export function useCreationWorkspace({
           promoteWorkspaceDraft(projectPath, draftId, metadata);
         }
 
+        // Persistently clear the draft as soon as the workspace exists so a refresh
+        // during the initial send can't resurrect the draft entry in the sidebar.
+        clearPendingDraft();
+
         setIsSending(false);
 
-        // Wait for the initial send result so we can surface errors and clean up draft state.
+        // Wait for the initial send result so we can surface errors.
         const additionalSystemInstructions = [
           sendMessageOptions.additionalSystemInstructions,
           optionsOverride?.additionalSystemInstructions,
@@ -518,11 +522,9 @@ export function useCreationWorkspace({
             // Persist the failure so the workspace view can surface a toast after navigation.
             updatePersistedState(getPendingWorkspaceSendErrorKey(metadata.id), sendResult.error);
           }
-          clearPendingDraft();
           return { success: false, error: sendResult.error };
         }
 
-        clearPendingDraft();
         return { success: true };
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
