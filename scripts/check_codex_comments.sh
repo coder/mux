@@ -95,20 +95,11 @@ if [ $TOTAL_UNRESOLVED -gt 0 ]; then
   echo "Codex comments:"
 
   if [ "$REGULAR_COUNT" -gt 0 ]; then
-    echo "$REGULAR_COMMENTS" | jq -r '.[] | "  - [\(.created_at)] \(.body[0:100] | gsub("\\n"; " "))..."'
+    echo "$REGULAR_COMMENTS" | jq -r '.[] | "  - [\(.createdAt)]\n\(.body)\n"'
   fi
 
   if [ "$UNRESOLVED_COUNT" -gt 0 ]; then
-    THREAD_SUMMARY=$(echo "$UNRESOLVED_THREADS" | jq '[.[] | {
-      createdAt: .comments.nodes[0].createdAt,
-      thread: .id,
-      comment: .comments.nodes[0].id,
-      path: (.comments.nodes[0].path // "comment"),
-      line: (.comments.nodes[0].line // ""),
-      snippet: (.comments.nodes[0].body[0:100] | gsub("\n"; " "))
-    }]')
-
-    echo "$THREAD_SUMMARY" | jq -r '.[] | "  - [\(.createdAt)] thread=\(.thread) comment=\(.comment) \(.path):\(.line) - \(.snippet)..."'
+    echo "$UNRESOLVED_THREADS" | jq -r '.[] | "  - [\(.comments.nodes[0].createdAt)] thread=\(.id) \(.comments.nodes[0].path // "comment"):\(.comments.nodes[0].line // "")\n\(.comments.nodes[0].body)\n"'
     echo ""
     echo "Resolve review threads with: ./scripts/resolve_pr_comment.sh <thread_id>"
   fi

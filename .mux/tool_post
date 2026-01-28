@@ -2,7 +2,8 @@
 # .mux/tool_post - Format TypeScript and Markdown files after edits
 
 if [[ "$MUX_TOOL" == file_edit_* ]]; then
-  file=$(echo "$MUX_TOOL_INPUT" | jq -r '.file_path')
+  file=$(echo "$MUX_TOOL_INPUT" | jq -r '.file_path' 2>/dev/null) || exit 0
+  [[ -z "$file" || "$file" == "null" ]] && exit 0
 
   case "$file" in
     *.ts|*.tsx)
