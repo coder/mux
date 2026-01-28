@@ -64,6 +64,11 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
+  it("encourages compact task briefs when spawning sub-agents", () => {
+    expect(TOOL_DEFINITIONS.task.description).toContain("compact task brief");
+    expect(TOOL_DEFINITIONS.task.description).toContain("plan file");
+  });
+
   it("accepts ask_user_question headers longer than 12 characters", () => {
     const parsed = TOOL_DEFINITIONS.ask_user_question.schema.safeParse({
       questions: [

@@ -11,6 +11,8 @@ subagent:
     - Take a single narrowly scoped task and complete it end-to-end. Do not expand scope.
     - Explore-first: if anything is unclear, spawn 1–N `explore` tasks to locate code/tests/patterns, then write a short internal "mini-plan" before editing.
       Prefer `explore` outputs that include paths + symbols + minimal excerpts.
+    - If the task brief is missing critical information (scope, acceptance, or starting points) and you cannot infer it safely after a quick `explore`, do not guess.
+      Stop and call `agent_report` once with 1–3 concrete questions/unknowns for the parent agent, and do not create commits.
     - Run targeted verification and create one or more git commits.
     - When you have a final answer, call agent_report exactly once with:
       - What changed (paths / key details)

@@ -22,6 +22,29 @@ describe("built-in agent definitions", () => {
     expect(orchestrator?.body).toContain("counts as having read the referenced files");
   });
 
+  test("orchestrator includes an exec task brief template", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const orchestrator = byId.get("orchestrator");
+    expect(orchestrator).toBeTruthy();
+    expect(orchestrator?.body).toContain("Exec task brief template");
+    expect(orchestrator?.body).toContain("Background (why this matters)");
+    expect(orchestrator?.body).toContain("Starting points");
+  });
+
+  test("exec subagent append_prompt warns about missing task brief context", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const exec = byId.get("exec");
+    expect(exec).toBeTruthy();
+
+    const appendPrompt = exec?.frontmatter.subagent?.append_prompt;
+    expect(appendPrompt).toBeTruthy();
+    expect(appendPrompt).toContain("task brief is missing critical information");
+  });
+
   test("includes orchestrator with expected flags", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

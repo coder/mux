@@ -737,7 +737,9 @@ export const TOOL_DEFINITIONS = {
   task: {
     description:
       "Spawn a sub-agent task (child workspace). " +
-      "\n\nProvide subagent_type, prompt, title, run_in_background. " +
+      "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background. " +
+      "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
+      "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
       "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns a completed reportMarkdown. " +
       "If run_in_background is true, returns a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
       "Use the bash tool to run shell commands.",
