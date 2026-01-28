@@ -41,6 +41,7 @@ import {
   getThinkingLevelByModelKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
+  EXPANDED_PROJECTS_KEY,
 } from "@/common/constants/storage";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
@@ -926,6 +927,12 @@ function AppInner() {
           onSuccess={(normalizedPath, projectConfig) => {
             addProject(normalizedPath, projectConfig);
             updatePersistedState(getAgentsInitNudgeKey(normalizedPath), true);
+            // Auto-expand new project in sidebar
+            updatePersistedState<string[]>(
+              EXPANDED_PROJECTS_KEY,
+              (prev) => [...(Array.isArray(prev) ? prev : []), normalizedPath],
+              []
+            );
             beginWorkspaceCreation(normalizedPath);
           }}
         />
