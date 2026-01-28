@@ -202,10 +202,8 @@ export function useCreationWorkspace({
     };
   }, []);
 
-  // Keep router state fresh so we only auto-navigate from drafts when the user is still viewing them.
-  useEffect(() => {
-    latestRouteRef.current = { currentWorkspaceId, currentProjectId, pendingDraftId };
-  }, [currentWorkspaceId, currentProjectId, pendingDraftId]);
+  // Keep router state fresh synchronously so auto-navigation checks don't lag behind route changes.
+  latestRouteRef.current = { currentWorkspaceId, currentProjectId, pendingDraftId };
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
