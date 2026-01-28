@@ -8,7 +8,10 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { TodoItem } from "@/common/types/tools";
 import { MAX_TODOS } from "@/common/constants/toolLimits";
 import { getTodoFilePath, readTodosForSessionDir } from "@/node/services/todos/todoStorage";
-import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import {
+  getWorkspaceFileLockKeyFromSessionDir,
+  workspaceFileLocks,
+} from "@/node/utils/concurrency/workspaceFileLocks";
 
 /**
  * Validate todo sequencing rules before persisting.
@@ -89,9 +92,11 @@ async function writeTodos(
   workspaceSessionDir: string,
   todos: TodoItem[]
 ): Promise<void> {
+  assert(workspaceId.trim().length > 0, "writeTodos requires workspaceId");
   validateTodos(todos);
 
-  await workspaceFileLocks.withLock(workspaceId, async () => {
+  const lockKey = getWorkspaceFileLockKeyFromSessionDir(workspaceSessionDir);
+  await workspaceFileLocks.withLock(lockKey, async () => {
     const todoFile = getTodoFilePath(workspaceSessionDir);
     await fs.mkdir(path.dirname(todoFile), { recursive: true });
     await writeFileAtomic(todoFile, JSON.stringify(todos, null, 2));
@@ -99,7 +104,9 @@ async function writeTodos(
 }
 
 async function clearTodos(workspaceId: string, workspaceSessionDir: string): Promise<void> {
-  await workspaceFileLocks.withLock(workspaceId, async () => {
+  assert(workspaceId.trim().length > 0, "clearTodos requires workspaceId");
+  const lockKey = getWorkspaceFileLockKeyFromSessionDir(workspaceSessionDir);
+  await workspaceFileLocks.withLock(lockKey, async () => {
     const todoFile = getTodoFilePath(workspaceSessionDir);
     try {
       await fs.unlink(todoFile);

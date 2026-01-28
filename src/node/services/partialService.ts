@@ -6,7 +6,10 @@ import { Ok, Err } from "@/common/types/result";
 import type { MuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
-import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import {
+  getWorkspaceFileLockKey,
+  workspaceFileLocks,
+} from "@/node/utils/concurrency/workspaceFileLocks";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
 
@@ -40,6 +43,9 @@ export class PartialService {
     this.historyService = historyService;
   }
 
+  private getLockKey(workspaceId: string): string {
+    return getWorkspaceFileLockKey(this.config, workspaceId);
+  }
   private getPartialPath(workspaceId: string): string {
     return path.join(this.config.getSessionDir(workspaceId), this.PARTIAL_FILE);
   }
@@ -67,7 +73,7 @@ export class PartialService {
    * Write a partial message to disk (with file locking per workspace)
    */
   async writePartial(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const workspaceDir = this.config.getSessionDir(workspaceId);
         await fs.mkdir(workspaceDir, { recursive: true });
@@ -97,7 +103,7 @@ export class PartialService {
    * Delete the partial message file for a workspace (with file locking)
    */
   async deletePartial(workspaceId: string): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const partialPath = this.getPartialPath(workspaceId);
         await fs.unlink(partialPath);

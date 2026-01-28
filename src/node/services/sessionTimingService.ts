@@ -4,7 +4,10 @@ import * as path from "path";
 import { EventEmitter } from "events";
 import writeFileAtomic from "write-file-atomic";
 import type { Config } from "@/node/config";
-import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import {
+  getWorkspaceFileLockKey,
+  workspaceFileLocks,
+} from "@/node/utils/concurrency/workspaceFileLocks";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import type { AgentMode } from "@/common/types/mode";
 import {
@@ -184,6 +187,9 @@ export class SessionTimingService {
     override: "default",
   };
 
+  private getLockKey(workspaceId: string): string {
+    return getWorkspaceFileLockKey(this.config, workspaceId);
+  }
   constructor(config: Config, telemetryService: TelemetryService) {
     this.config = config;
     this.telemetryService = telemetryService;
@@ -345,7 +351,7 @@ export class SessionTimingService {
 
     const next = previous
       .then(async () => {
-        await this.fileLocks.withLock(workspaceId, async () => {
+        await this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
           // If a clear() happened after this persist was scheduled, skip.
           if ((this.writeEpoch.get(workspaceId) ?? 0) !== epoch) {
             return;
@@ -411,7 +417,7 @@ export class SessionTimingService {
       return cached;
     }
 
-    const loaded = await this.fileLocks.withLock(workspaceId, async () => {
+    const loaded = await this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       return this.readTimingFile(workspaceId);
     });
     this.timingFileCache.set(workspaceId, loaded);
@@ -422,7 +428,7 @@ export class SessionTimingService {
     // Invalidate any pending writes.
     this.writeEpoch.set(workspaceId, (this.writeEpoch.get(workspaceId) ?? 0) + 1);
 
-    await this.fileLocks.withLock(workspaceId, async () => {
+    await this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       this.timingFileCache.delete(workspaceId);
       try {
         await fs.unlink(this.getFilePath(workspaceId));
@@ -467,7 +473,7 @@ export class SessionTimingService {
       return { didRollUp: false };
     }
 
-    return this.fileLocks.withLock(parentWorkspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(parentWorkspaceId), async () => {
       const parentTiming = await this.readTimingFile(parentWorkspaceId);
 
       if (parentTiming.rolledUpFrom?.[childWorkspaceId]) {

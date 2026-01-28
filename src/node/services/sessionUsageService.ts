@@ -4,7 +4,10 @@ import writeFileAtomic from "write-file-atomic";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
-import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import {
+  getWorkspaceFileLockKey,
+  workspaceFileLocks,
+} from "@/node/utils/concurrency/workspaceFileLocks";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
@@ -75,6 +78,9 @@ export class SessionUsageService {
   private readonly config: Config;
   private readonly historyService: HistoryService;
 
+  private getLockKey(workspaceId: string): string {
+    return getWorkspaceFileLockKey(this.config, workspaceId);
+  }
   constructor(config: Config, historyService: HistoryService) {
     this.config = config;
     this.historyService = historyService;
@@ -108,7 +114,7 @@ export class SessionUsageService {
    * Model should already be normalized via normalizeGatewayModel().
    */
   async recordUsage(workspaceId: string, model: string, usage: ChatUsageDisplay): Promise<void> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       const current = await this.readFile(workspaceId);
       const existing = current.byModel[model];
       // CRITICAL: Accumulate, don't overwrite
@@ -142,7 +148,7 @@ export class SessionUsageService {
       );
     }
 
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       // Defensive: don't create new session dirs for already-deleted workspaces.
       if (!this.config.findWorkspace(workspaceId)) {
         return;
@@ -201,7 +207,7 @@ export class SessionUsageService {
       return { didRollUp: false };
     }
 
-    return this.fileLocks.withLock(parentWorkspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(parentWorkspaceId), async () => {
       let current: SessionUsageFile;
       try {
         current = await this.readFile(parentWorkspaceId);
@@ -240,7 +246,7 @@ export class SessionUsageService {
    * and no messages to rebuild from.
    */
   async getSessionUsage(workspaceId: string): Promise<SessionUsageFile | undefined> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const filePath = this.getFilePath(workspaceId);
         const data = await fs.readFile(filePath, "utf-8");
@@ -351,7 +357,7 @@ export class SessionUsageService {
    * Public rebuild method (acquires lock).
    */
   async rebuildFromMessages(workspaceId: string, messages: MuxMessage[]): Promise<void> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       await this.rebuildFromMessagesInternal(workspaceId, messages);
     });
   }
@@ -360,7 +366,7 @@ export class SessionUsageService {
    * Delete session usage file (when workspace is deleted).
    */
   async deleteSessionUsage(workspaceId: string): Promise<void> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         await fs.unlink(this.getFilePath(workspaceId));
       } catch (error) {

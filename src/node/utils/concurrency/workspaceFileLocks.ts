@@ -1,3 +1,4 @@
+import type { Config } from "@/node/config";
 import { MutexMap } from "./mutexMap";
 
 /**
@@ -17,10 +18,14 @@ import { MutexMap } from "./mutexMap";
  *
  * Solution:
  * All workspace file services share this single MutexMap instance. This ensures:
- * - Only one file operation per workspace at a time across ALL services
+ * - Only one file operation per workspace session dir at a time across ALL services
  * - Nested calls within the same operation won't try to re-acquire the lock
  *   (MutexMap allows this by queuing operations)
  * - No deadlock from lock ordering issues
+ *
+ * NOTE:
+ * Lock keys are derived from workspace session directory paths (not bare workspace IDs)
+ * so independent MUX_ROOTs don't contend on fixed IDs like "mux-chat" during tests.
  *
  * Trade-off:
  * This is more conservative than separate locks (less concurrency) but guarantees
@@ -28,3 +33,20 @@ import { MutexMap } from "./mutexMap";
  * is negligible compared to AI API calls (seconds range).
  */
 export const workspaceFileLocks = new MutexMap<string>();
+
+/**
+ * Create a lock key for a workspace's session directory.
+ *
+ * We scope locks to the session dir path so separate mux roots can operate
+ * concurrently even when they share a workspace ID.
+ */
+export function getWorkspaceFileLockKey(
+  config: Pick<Config, "getSessionDir">,
+  workspaceId: string
+): string {
+  return getWorkspaceFileLockKeyFromSessionDir(config.getSessionDir(workspaceId));
+}
+
+export function getWorkspaceFileLockKeyFromSessionDir(sessionDir: string): string {
+  return sessionDir;
+}

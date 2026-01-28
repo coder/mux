@@ -5,7 +5,10 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { MuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
-import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import {
+  getWorkspaceFileLockKey,
+  workspaceFileLocks,
+} from "@/node/utils/concurrency/workspaceFileLocks";
 import { log } from "./log";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
@@ -33,6 +36,9 @@ export class HistoryService {
     this.config = config;
   }
 
+  private getLockKey(workspaceId: string): string {
+    return getWorkspaceFileLockKey(this.config, workspaceId);
+  }
   private getChatHistoryPath(workspaceId: string): string {
     return path.join(this.config.getSessionDir(workspaceId), this.CHAT_FILE);
   }
@@ -184,7 +190,7 @@ export class HistoryService {
   }
 
   async appendToHistory(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       return this._appendToHistoryUnlocked(workspaceId, message);
     });
   }
@@ -194,7 +200,7 @@ export class HistoryService {
    * Reads entire history, replaces the matching message, and rewrites the file
    */
   async updateHistory(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const historyPath = this.getChatHistoryPath(workspaceId);
 
@@ -254,7 +260,7 @@ export class HistoryService {
    * messages may already have been appended.
    */
   async deleteMessage(workspaceId: string, messageId: string): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const historyResult = await this.getHistory(workspaceId);
         if (!historyResult.success) {
@@ -301,7 +307,7 @@ export class HistoryService {
    * Removes the message with the given ID and all subsequent messages
    */
   async truncateAfterMessage(workspaceId: string, messageId: string): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const historyResult = await this.getHistory(workspaceId);
         if (!historyResult.success) {
@@ -354,7 +360,7 @@ export class HistoryService {
     workspaceId: string,
     percentage: number
   ): Promise<Result<number[], string>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const historyPath = this.getChatHistoryPath(workspaceId);
 

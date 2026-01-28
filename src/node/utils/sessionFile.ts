@@ -4,7 +4,10 @@ import writeFileAtomic from "write-file-atomic";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
-import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+import {
+  getWorkspaceFileLockKey,
+  workspaceFileLocks,
+} from "@/node/utils/concurrency/workspaceFileLocks";
 import { log } from "@/node/services/log";
 
 /**
@@ -24,6 +27,9 @@ export class SessionFileManager<T> {
     this.fileName = fileName;
   }
 
+  private getLockKey(workspaceId: string): string {
+    return getWorkspaceFileLockKey(this.config, workspaceId);
+  }
   private getFilePath(workspaceId: string): string {
     return path.join(this.config.getSessionDir(workspaceId), this.fileName);
   }
@@ -52,7 +58,7 @@ export class SessionFileManager<T> {
    * Creates session directory if it doesn't exist.
    */
   async write(workspaceId: string, data: T): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const sessionDir = this.config.getSessionDir(workspaceId);
         await fs.mkdir(sessionDir, { recursive: true });
@@ -72,7 +78,7 @@ export class SessionFileManager<T> {
    * Idempotent - no error if file doesn't exist.
    */
   async delete(workspaceId: string): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
+    return this.fileLocks.withLock(this.getLockKey(workspaceId), async () => {
       try {
         const filePath = this.getFilePath(workspaceId);
         await fs.unlink(filePath);
