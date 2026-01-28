@@ -63,10 +63,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       const workspaceId = requireWorkspaceId(config, "task");
       const taskService = requireTaskService(config, "task");
 
-      // Disallow recursive sub-agent spawning.
-      if (config.enableAgentReport) {
-        throw new Error("Sub-agent workspaces may not spawn additional sub-agent tasks.");
-      }
+      // Nested task spawning is allowed and enforced via maxTaskNestingDepth in TaskService
+      // (and by tool policy at/over the depth limit).
 
       // Plan agent is explicitly non-executing. Allow only read-only exploration tasks.
       if (config.planFileOnly && requestedAgentId !== "explore") {

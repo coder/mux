@@ -46,7 +46,7 @@ describe("resolveToolPolicyForAgent", () => {
     ]);
   });
 
-  test("subagents hard-deny task recursion and always allow agent_report", () => {
+  test("subagents hard-deny interactive planning tools and always allow agent_report", () => {
     const agents: AgentLikeForPolicy[] = [{ tools: { add: ["task", "file_read"] } }];
     const policy = resolveToolPolicyForAgent({
       agents,
@@ -58,8 +58,6 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: ".*", action: "disable" },
       { regex_match: "task", action: "enable" },
       { regex_match: "file_read", action: "enable" },
-      { regex_match: "task", action: "disable" },
-      { regex_match: "task_.*", action: "disable" },
       { regex_match: "propose_plan", action: "disable" },
       { regex_match: "ask_user_question", action: "disable" },
       { regex_match: "agent_report", action: "enable" },
@@ -80,6 +78,26 @@ describe("resolveToolPolicyForAgent", () => {
       { regex_match: "file_read", action: "enable" },
       { regex_match: "task", action: "disable" },
       { regex_match: "task_.*", action: "disable" },
+    ]);
+  });
+
+  test("depth limit hard-denies task tools for subagents", () => {
+    const agents: AgentLikeForPolicy[] = [{ tools: { add: ["task", "file_read"] } }];
+    const policy = resolveToolPolicyForAgent({
+      agents,
+      isSubagent: true,
+      disableTaskToolsForDepth: true,
+    });
+
+    expect(policy).toEqual([
+      { regex_match: ".*", action: "disable" },
+      { regex_match: "task", action: "enable" },
+      { regex_match: "file_read", action: "enable" },
+      { regex_match: "task", action: "disable" },
+      { regex_match: "task_.*", action: "disable" },
+      { regex_match: "propose_plan", action: "disable" },
+      { regex_match: "ask_user_question", action: "disable" },
+      { regex_match: "agent_report", action: "enable" },
     ]);
   });
 
