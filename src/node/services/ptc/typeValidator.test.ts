@@ -718,6 +718,44 @@ mux.file_read({ path: "wrong" });`,
   // Destructuring patterns (valid JS that must not break)
   // ==========================================================================
 
+  test("handles empty array destructuring in for-of LHS", () => {
+    // for-of allows destructuring patterns directly in the loop header.
+    const result = validateTypes(
+      `
+      const items = [[1], [2]];
+      let count = 0;
+      for ([] of items) {
+        count += 1;
+      }
+      return count;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  test("handles empty array destructuring in for-in LHS", () => {
+    // for-in does not allow destructuring patterns in TypeScript, but the error
+    // should remain about the pattern (not a rewritten `as any[]` assertion).
+    const result = validateTypes(
+      `
+      const obj = { a: 1, b: 2 };
+      let count = 0;
+      for ([] in obj) {
+        count += 1;
+      }
+      return count;
+    `,
+      muxTypes
+    );
+    expect(result.valid).toBe(false);
+    expect(
+      result.errors.some((error) => error.message.includes("cannot be a destructuring pattern"))
+    ).toBe(true);
+    expect(
+      result.errors.some((error) => error.message.includes('must be of type "string" or "any"'))
+    ).toBe(false);
+  });
   test("handles destructuring assignment on LHS", () => {
     // ([] = foo) should not become ([] as any[] = foo) which is invalid
     const result = validateTypes(

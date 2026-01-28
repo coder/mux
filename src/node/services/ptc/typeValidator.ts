@@ -271,6 +271,12 @@ function hasInvalidAssertionContext(node: ts.ArrayLiteralExpression): boolean {
     return true;
   }
 
+  // Skip: `for ([] of items)` / `for ([] in obj)` (array literal as loop LHS)
+  // Adding `as any[]` here would produce invalid syntax in the loop header.
+  if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === node) {
+    return true;
+  }
+
   return false;
 }
 
