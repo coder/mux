@@ -30,6 +30,8 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { createSSHTransport } from "@/node/runtime/transports";
 import { runFullInit } from "@/node/runtime/runtimeFactory";
+import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
+import { ssh2ConnectionPool } from "@/node/runtime/SSH2ConnectionPool";
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -58,6 +60,13 @@ describeIntegration("Runtime integration tests", () => {
       await stopSSHServer(sshConfig);
     }
   }, 30000);
+
+  // Reset SSH connection pool state before each test to prevent backoff from one
+  // test affecting subsequent tests.
+  beforeEach(() => {
+    sshConnectionPool.clearAllHealth();
+    ssh2ConnectionPool.clearAllHealth();
+  });
 
   // Test matrix: Run all tests for local, SSH, and Docker runtimes
   describe.each<{ type: RuntimeType }>([{ type: "local" }, { type: "ssh" }, { type: "docker" }])(
