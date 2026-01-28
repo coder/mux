@@ -336,6 +336,23 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         uiSelectable: false,
         subagentRunnable: false,
       },
+      // Include System 1 agents so Settings stories cover the internal defaults section.
+      {
+        id: "system1_bash",
+        scope: "built-in",
+        name: "System1 Bash",
+        description: "Bash output compaction (internal)",
+        uiSelectable: false,
+        subagentRunnable: false,
+      },
+      {
+        id: "system1_memory_writer",
+        scope: "built-in",
+        name: "System1 Memory Writer",
+        description: "Background memory writer (internal)",
+        uiSelectable: false,
+        subagentRunnable: false,
+      },
     ] satisfies AgentDefinitionDescriptor[]);
 
   let taskSettings = normalizeTaskSettings(initialTaskSettings ?? DEFAULT_TASK_SETTINGS);

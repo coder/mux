@@ -101,6 +101,32 @@ async function openSettingsToSection(canvasElement: HTMLElement, section?: strin
 // ═══════════════════════════════════════════════════════════════════════════════
 // STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
+async function findNumberInputForSettingRow(
+  dialogCanvas: ReturnType<typeof within>,
+  label: RegExp
+): Promise<HTMLInputElement> {
+  const labelNode: unknown = await dialogCanvas.findByText(label);
+  if (!(labelNode instanceof HTMLElement)) {
+    throw new Error(`Expected label node to be an HTMLElement for ${label.toString()}`);
+  }
+
+  // Settings rows use a consistent structure:
+  //   row (flex ... justify-between)
+  //     left (flex-1)
+  //       title (this node)
+  //     right (input)
+  const row: unknown = labelNode.parentElement?.parentElement;
+  if (!(row instanceof HTMLElement)) {
+    throw new Error(`Could not locate setting row for ${label.toString()}`);
+  }
+
+  const input: unknown = within(row).getByRole("spinbutton");
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Expected spinbutton for ${label.toString()} to be an input element`);
+  }
+
+  return input;
+}
 
 /** General settings section */
 export const General: AppStory = {
@@ -141,21 +167,25 @@ export const Tasks: AppStory = {
     await dialogCanvas.findByText(/Agent Defaults/i);
     await dialogCanvas.findByRole("heading", { name: /UI agents/i });
     await dialogCanvas.findByRole("heading", { name: /Sub-agents/i });
-    await dialogCanvas.findByRole("heading", { name: /Internal/i });
+    await dialogCanvas.findByRole("heading", { name: /System1 Defaults/i });
 
     await dialogCanvas.findByText(/^Plan$/i);
     await dialogCanvas.findByText(/^Exec$/i);
     await dialogCanvas.findByText(/^Explore$/i);
     await dialogCanvas.findByText(/^Compact$/i);
 
-    const inputs = await dialogCanvas.findAllByRole("spinbutton");
-    if (inputs.length !== 2) {
-      throw new Error(`Expected 2 task settings inputs, got ${inputs.length}`);
-    }
+    const maxParallelAgentTasksInput = await findNumberInputForSettingRow(
+      dialogCanvas,
+      /Max Parallel Agent Tasks/i
+    );
+    const maxTaskNestingDepthInput = await findNumberInputForSettingRow(
+      dialogCanvas,
+      /Max Task Nesting Depth/i
+    );
 
     await waitFor(() => {
-      const maxParallelAgentTasks = (inputs[0] as HTMLInputElement).value;
-      const maxTaskNestingDepth = (inputs[1] as HTMLInputElement).value;
+      const maxParallelAgentTasks = maxParallelAgentTasksInput.value;
+      const maxTaskNestingDepth = maxTaskNestingDepthInput.value;
       if (maxParallelAgentTasks !== "2") {
         throw new Error(
           `Expected maxParallelAgentTasks=2, got ${JSON.stringify(maxParallelAgentTasks)}`
@@ -412,6 +442,7 @@ export const System1: AppStory = {
         setupSettingsStory({
           experiments: { [EXPERIMENT_IDS.SYSTEM_1]: true },
           taskSettings: {
+            memoryWriterIntervalMessages: 3,
             bashOutputCompactionMinLines: 12,
             bashOutputCompactionMinTotalBytes: 8192,
             bashOutputCompactionMaxKeptLines: 55,
@@ -442,21 +473,32 @@ export const System1: AppStory = {
     const dialog = await body.findByRole("dialog");
     const dialogCanvas = within(dialog);
 
-    await dialogCanvas.findByText(/System 1 Model/i);
-    await dialogCanvas.findByText(/System 1 Reasoning/i);
+    await dialogCanvas.findByRole("heading", { name: /memories/i });
+    await dialogCanvas.findByText(/Write Interval \(messages\)/i);
     await dialogCanvas.findByRole("heading", { name: /bash output compaction/i });
 
-    const inputs = await dialogCanvas.findAllByRole("spinbutton");
-    if (inputs.length !== 4) {
-      throw new Error(`Expected 4 System 1 inputs, got ${inputs.length}`);
-    }
+    const memoryWriterIntervalMessagesInput = await findNumberInputForSettingRow(
+      dialogCanvas,
+      /Write Interval \(messages\)/i
+    );
+    const minLinesInput = await findNumberInputForSettingRow(dialogCanvas, /Min Lines/i);
+    const minTotalKbInput = await findNumberInputForSettingRow(dialogCanvas, /Min Total \(KB\)/i);
+    const maxKeptLinesInput = await findNumberInputForSettingRow(dialogCanvas, /Max Kept Lines/i);
+    const timeoutSecondsInput = await findNumberInputForSettingRow(
+      dialogCanvas,
+      /Timeout \(seconds\)/i
+    );
 
     await waitFor(() => {
-      const minLines = (inputs[0] as HTMLInputElement).value;
-      const minTotalKb = (inputs[1] as HTMLInputElement).value;
-      const maxKeptLines = (inputs[2] as HTMLInputElement).value;
-      const timeoutSeconds = (inputs[3] as HTMLInputElement).value;
+      const intervalMessages = memoryWriterIntervalMessagesInput.value;
+      const minLines = minLinesInput.value;
+      const minTotalKb = minTotalKbInput.value;
+      const maxKeptLines = maxKeptLinesInput.value;
+      const timeoutSeconds = timeoutSecondsInput.value;
 
+      if (intervalMessages !== "3") {
+        throw new Error(`Expected intervalMessages=3, got ${JSON.stringify(intervalMessages)}`);
+      }
       if (minLines !== "12") {
         throw new Error(`Expected minLines=12, got ${JSON.stringify(minLines)}`);
       }
