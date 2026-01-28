@@ -435,6 +435,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   </span>
                 </HoverCardTrigger>
                 <HoverCardContent
+                  // Keep the workspace title hover card on the right to avoid covering the list.
+                  side="right"
                   align="start"
                   sideOffset={8}
                   className="border-separator-light bg-modal-bg w-auto max-w-[420px] px-[10px] py-[6px] text-[11px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
