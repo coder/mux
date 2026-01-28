@@ -1523,20 +1523,16 @@ export class AgentSession {
       followUp.muxMetadata
     );
 
-    // Build options for the follow-up message, including preserved send options
-    // from the original user message (thinkingLevel, providerOptions, etc.).
+    // Build options for the follow-up message.
+    // Spread the followUp to include preserved send options (thinkingLevel, providerOptions, etc.)
+    // that were captured from the original user message in prepareCompactionMessage().
     const options: SendMessageOptions & {
       fileParts?: FilePart[];
       muxMetadata?: MuxFrontendMetadata;
     } = {
+      ...followUp,
       model: effectiveModel,
       agentId: effectiveAgentId,
-      // Preserved send options from original message
-      thinkingLevel: followUp.thinkingLevel,
-      additionalSystemInstructions: followUp.additionalSystemInstructions,
-      providerOptions: followUp.providerOptions,
-      experiments: followUp.experiments,
-      disableWorkspaceAgents: followUp.disableWorkspaceAgents,
     };
 
     if (effectiveFileParts && effectiveFileParts.length > 0) {
