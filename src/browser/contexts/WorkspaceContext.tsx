@@ -253,9 +253,13 @@ function findExistingEmptyDraft(
   projectPath: string,
   sectionId?: string
 ): string | null {
+  const normalizedSectionId = sectionId ?? null;
+
   for (const draft of workspaceDrafts) {
-    // If a section is specified, only consider drafts in that section
-    if (sectionId !== undefined && draft.sectionId !== sectionId) {
+    // Keep draft reuse scoped to the current section. When sectionId is undefined
+    // (project-level "New Workspace"), only reuse drafts with a null section so
+    // we don't silently move section-specific drafts into the root flow.
+    if ((draft.sectionId ?? null) !== normalizedSectionId) {
       continue;
     }
     if (isDraftEmpty(projectPath, draft.draftId)) {
