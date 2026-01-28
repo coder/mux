@@ -45,6 +45,12 @@ class MuxAgent(BaseInstalledAgent):
         "AZURE_OPENAI_ENDPOINT",
         "AZURE_OPENAI_DEPLOYMENT",
         "AZURE_OPENAI_API_VERSION",
+        # Google provider uses either GOOGLE_GENERATIVE_AI_API_KEY or the legacy
+        # GOOGLE_API_KEY env var. Forward both (and base URL override) into the
+        # sandbox to avoid confusing "api_key_not_found" failures.
+        "GOOGLE_GENERATIVE_AI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GOOGLE_BASE_URL",
     )
 
     _CONFIG_ENV_KEYS: Sequence[str] = (
@@ -127,6 +133,16 @@ class MuxAgent(BaseInstalledAgent):
         if "/" in model_value and ":" not in model_value:
             provider, model_name = model_value.split("/", 1)
             model_value = f"{provider}:{model_name}"
+
+        # Fail fast for Google models if credentials weren't forwarded into the
+        # sandbox env. Otherwise Harbor/mux will fail later with a less actionable
+        # "api_key_not_found" error.
+        if model_value.startswith("google:") and not (
+            env.get("GOOGLE_GENERATIVE_AI_API_KEY") or env.get("GOOGLE_API_KEY")
+        ):
+            raise ValueError(
+                "Google models require GOOGLE_GENERATIVE_AI_API_KEY (preferred) or GOOGLE_API_KEY"
+            )
         env["MUX_MODEL"] = model_value
 
         thinking_value = self._thinking_level or env["MUX_THINKING_LEVEL"]
