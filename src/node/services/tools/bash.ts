@@ -20,6 +20,7 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { toBashTaskId } from "./taskId";
 import { migrateToBackground } from "@/node/services/backgroundProcessExecutor";
+import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { getToolEnvPath } from "@/node/services/hooks";
 
 const CAT_FILE_READ_NOTICE =
@@ -205,6 +206,147 @@ function validateScript(script: string, config: ToolConfiguration): BashToolResu
   }
 
   return null; // Valid
+}
+
+/**
+ * Rewrite cmd.exe-style null-device redirects (e.g. `>nul`, `2>nul`) into `/dev/null`.
+ *
+ * Why: mux executes commands via bash (Git Bash on Windows). In bash, `nul` is a normal filename,
+ * so scripts that try to discard output with `>nul` end up creating a file named `nul` in the
+ * workspace root.
+ *
+ * This is intentionally narrow: only the *redirection target token* `nul`/`NUL` (optionally quoted,
+ * optionally with a trailing `:`) is rewritten.
+ */
+function rewriteWindowsNullRedirects(script: string): { script: string; didRewrite: boolean } {
+  let didRewrite = false;
+
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  const isEscaped = (index: number): boolean => {
+    // Count consecutive backslashes immediately preceding `index`.
+    let backslashes = 0;
+    for (let i = index - 1; i >= 0 && script[i] === "\\"; i--) {
+      backslashes++;
+    }
+    return backslashes % 2 === 1;
+  };
+
+  let out = "";
+  let i = 0;
+
+  while (i < script.length) {
+    const ch = script[i];
+
+    // Track basic quoting to avoid rewriting inside strings.
+    if (!inDoubleQuote && ch === "'" && !isEscaped(i)) {
+      inSingleQuote = !inSingleQuote;
+      out += ch;
+      i++;
+      continue;
+    }
+
+    if (!inSingleQuote && ch === '"' && !isEscaped(i)) {
+      inDoubleQuote = !inDoubleQuote;
+      out += ch;
+      i++;
+      continue;
+    }
+
+    // Only rewrite when not inside quotes.
+    if (!inSingleQuote && !inDoubleQuote) {
+      // Skip escaped operators like `\>nul`.
+      if (ch === ">" && isEscaped(i)) {
+        out += ch;
+        i++;
+        continue;
+      }
+
+      // Parse an output redirection operator at `i`:
+      //   >, >>, 1>, 2>>, &>, etc.
+      const redirectStart = i;
+      let redirectPos = i;
+
+      // Optional fd specifier (digits) or `&`.
+      if (script[redirectPos] === "&") {
+        redirectPos++;
+      } else if (/[0-9]/.test(script[redirectPos] ?? "")) {
+        const fdStart = redirectPos;
+        while (/[0-9]/.test(script[redirectPos] ?? "")) {
+          redirectPos++;
+        }
+
+        // If the digits aren't directly followed by `>`, this isn't a redirection.
+        if (script[redirectPos] !== ">") {
+          redirectPos = fdStart;
+        }
+      }
+
+      if (script[redirectPos] === ">" && !isEscaped(redirectPos)) {
+        // Read `>` or `>>`.
+        redirectPos++;
+        if (script[redirectPos] === ">") {
+          redirectPos++;
+        }
+
+        // Consume whitespace after the operator.
+        let targetStart = redirectPos;
+        while (targetStart < script.length && /\s/.test(script[targetStart] ?? "")) {
+          targetStart++;
+        }
+
+        // Parse target token (quoted or unquoted).
+        if (targetStart < script.length) {
+          const quote = script[targetStart];
+          let token: string | null = null;
+          let tokenEnd = targetStart;
+
+          if (quote === "'" || quote === '"') {
+            const quotedStart = targetStart + 1;
+            tokenEnd = quotedStart;
+
+            while (tokenEnd < script.length) {
+              const c = script[tokenEnd];
+              if (c === quote && !(quote === '"' && isEscaped(tokenEnd))) {
+                break;
+              }
+              tokenEnd++;
+            }
+
+            if (tokenEnd < script.length && script[tokenEnd] === quote) {
+              token = script.slice(quotedStart, tokenEnd);
+              tokenEnd++; // include closing quote
+            }
+          } else {
+            while (tokenEnd < script.length) {
+              const c = script[tokenEnd];
+              if (/\s/.test(c) || /[;&|()<>]/.test(c)) {
+                break;
+              }
+              tokenEnd++;
+            }
+
+            token = script.slice(targetStart, tokenEnd);
+          }
+
+          const lower = token?.toLowerCase();
+          if (lower === "nul" || lower === "nul:") {
+            // Replace the token with /dev/null, preserving operator + whitespace.
+            out += script.slice(redirectStart, targetStart) + "/dev/null";
+            didRewrite = true;
+            i = tokenEnd;
+            continue;
+          }
+        }
+      }
+    }
+
+    out += ch;
+    i++;
+  }
+
+  return { script: out, didRewrite };
 }
 
 /**
@@ -409,15 +551,29 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       // Reading files via bash output is fragile (may be truncated or auto-filtered);
       // file_read supports paging and avoids silent context loss.
       const catNotice = detectCatFileRead(script) ? CAT_FILE_READ_NOTICE : undefined;
-      const withNotice = (result: BashToolResult): BashToolResult =>
-        addNoticeToBashToolResult(result, catNotice);
 
       // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
       const toolEnvPath = config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
       const toolEnvPrelude = buildToolEnvPrelude(toolEnvPath);
-      const scriptWithEnv = toolEnvPrelude + script;
+
+      // On Windows, models sometimes emit cmd.exe-style `>nul` / `2>nul` redirections.
+      // Since the bash tool runs via bash, `nul` becomes a real file in the workspace.
+      // Only rewrite for local Windows runtimes so non-Windows scripts keep their semantics.
+      const shouldRewriteNullRedirects =
+        process.platform === "win32" && config.runtime instanceof LocalBaseRuntime;
+      const nulRedirectRewrite = shouldRewriteNullRedirects
+        ? rewriteWindowsNullRedirects(script)
+        : { script, didRewrite: false };
+      const scriptWithEnv = toolEnvPrelude + nulRedirectRewrite.script;
+
+      const nulRedirectNote = nulRedirectRewrite.didRewrite
+        ? "Rewrote `>nul`/`2>nul` → `/dev/null` (bash tool runs in bash; use `/dev/null` to discard output)."
+        : undefined;
 
       // Handle explicit background execution (run_in_background=true)
+      const withNotice = (result: BashToolResult): BashToolResult =>
+        addNoticeToBashToolResult(addNoticeToBashToolResult(result, nulRedirectNote), catNotice);
+
       if (run_in_background) {
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
           return withNotice({
@@ -955,7 +1111,7 @@ ${scriptWithEnv}`;
           await writerInstance.write(encoder.encode(fullOutput));
           await writerInstance.close();
 
-          const notice = `[OUTPUT OVERFLOW - ${overflowReason ?? "unknown reason"}]
+          const noticeBase = `[OUTPUT OVERFLOW - ${overflowReason ?? "unknown reason"}]
 
 Full output (${lines.length} lines) saved to ${overflowPath}
 
@@ -966,7 +1122,7 @@ File will be automatically cleaned up when stream ends.`;
           return withNotice({
             success: true,
             output: "",
-            note: notice,
+            note: noticeBase,
             exitCode: 0,
             wall_duration_ms,
             truncated: truncationInfo,

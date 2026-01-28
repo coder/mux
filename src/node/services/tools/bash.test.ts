@@ -4,8 +4,8 @@ import { createBashTool } from "./bash";
 import type { BashOutputEvent } from "@/common/types/stream";
 import type { BashToolArgs, BashToolResult } from "@/common/types/tools";
 import { BASH_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
-import * as fs from "fs";
 import * as path from "path";
+import * as fs from "fs";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
@@ -1106,6 +1106,81 @@ describe("bash tool", () => {
       expect(result.exitCode).toBe(-1);
       expect(result.wall_duration_ms).toBe(0);
     }
+  });
+
+  describe("script sanitization", () => {
+    const shouldRewriteNullRedirects = process.platform === "win32";
+
+    it("should rewrite >nul to /dev/null (and not create a `nul` file)", async () => {
+      using tempDir = new TestTempDir("test-bash-nul-redirect");
+      const tool = createBashTool(createTestToolConfig(tempDir.path));
+
+      const args: BashToolArgs = {
+        script: "echo hello >nul",
+        timeout_secs: 5,
+        run_in_background: false,
+        display_name: "test",
+      };
+
+      const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+      expect(result.success).toBe(true);
+      if (isForegroundSuccess(result)) {
+        if (shouldRewriteNullRedirects) {
+          expect(result.note).toContain("Rewrote `>nul`/`2>nul`");
+        } else {
+          expect(result.note).toBeUndefined();
+        }
+      }
+
+      expect(fs.existsSync(path.join(tempDir.path, "nul"))).toBe(!shouldRewriteNullRedirects);
+    });
+
+    it("should rewrite 2>nul to /dev/null (and not create a `nul` file)", async () => {
+      using tempDir = new TestTempDir("test-bash-nul-redirect-stderr");
+      const tool = createBashTool(createTestToolConfig(tempDir.path));
+
+      const args: BashToolArgs = {
+        script: "ls does-not-exist 2>nul || true",
+        timeout_secs: 5,
+        run_in_background: false,
+        display_name: "test",
+      };
+
+      const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+      expect(result.success).toBe(true);
+      if (isForegroundSuccess(result)) {
+        if (shouldRewriteNullRedirects) {
+          expect(result.note).toContain("Rewrote `>nul`/`2>nul`");
+        } else {
+          expect(result.note).toBeUndefined();
+        }
+      }
+
+      expect(fs.existsSync(path.join(tempDir.path, "nul"))).toBe(!shouldRewriteNullRedirects);
+    });
+
+    it("should not rewrite an explicit path like >./nul", async () => {
+      using tempDir = new TestTempDir("test-bash-dot-nul");
+      const tool = createBashTool(createTestToolConfig(tempDir.path));
+
+      const args: BashToolArgs = {
+        script: "echo hello >./nul",
+        timeout_secs: 5,
+        run_in_background: false,
+        display_name: "test",
+      };
+
+      const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+      expect(result.success).toBe(true);
+      if (isForegroundSuccess(result)) {
+        expect(result.note).toBeUndefined();
+      }
+
+      expect(fs.existsSync(path.join(tempDir.path, "nul"))).toBe(true);
+    });
   });
 
   it("should fail immediately when script is only whitespace", async () => {

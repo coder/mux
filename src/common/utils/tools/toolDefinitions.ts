@@ -438,7 +438,8 @@ export const TOOL_DEFINITIONS = {
       `Output is strictly limited to ${BASH_HARD_MAX_LINES} lines, ${BASH_MAX_LINE_BYTES} bytes per line, and ${BASH_MAX_TOTAL_BYTES} bytes total. ` +
       "Commands that exceed these limits will FAIL with an error (no partial output returned). " +
       "Be conservative: use 'head', 'tail', 'grep', or other filters to limit output before running commands. " +
-      "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.",
+      "Large outputs may be automatically filtered; when this happens, the result includes a note explaining what was kept and (if available) where the full output was saved.\n" +
+      "On Windows this runs in Git Bash; to discard output use `>/dev/null` (not `>nul`).",
     schema: z.preprocess(
       (value) => {
         // Compatibility: some models emit { command: "..." } instead of { script: "..." }.
