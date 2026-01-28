@@ -6,7 +6,7 @@ import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
 import { ChatInput } from "./ChatInput/index";
-import type { ChatInputAPI } from "./ChatInput/types";
+import type { ChatInputAPI, WorkspaceCreatedOptions } from "./ChatInput/types";
 import { ProjectMCPOverview } from "./ProjectMCPOverview";
 import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
@@ -40,7 +40,10 @@ interface ProjectPageProps {
   /** Section ID to pre-select when creating (from sidebar section "+" button) */
   pendingSectionId?: string | null;
   onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
-  onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+  onWorkspaceCreated: (
+    metadata: FrontendWorkspaceMetadata,
+    options?: WorkspaceCreatedOptions
+  ) => void;
 }
 
 /** Compare archived workspace lists by ID set (order doesn't matter for equality) */

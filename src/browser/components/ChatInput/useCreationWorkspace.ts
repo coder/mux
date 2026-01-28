@@ -31,6 +31,7 @@ import { useRouter } from "@/browser/contexts/RouterContext";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
+import type { WorkspaceCreatedOptions } from "@/browser/components/ChatInput/types";
 import {
   useWorkspaceName,
   type WorkspaceNameState,
@@ -46,7 +47,10 @@ export type CreationSendResult = { success: true } | { success: false; error?: S
 
 interface UseCreationWorkspaceOptions {
   projectPath: string;
-  onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+  onWorkspaceCreated: (
+    metadata: FrontendWorkspaceMetadata,
+    options?: WorkspaceCreatedOptions
+  ) => void;
   /** Current message input for name generation */
   message: string;
   /** Section ID to assign the new workspace to */
@@ -481,9 +485,7 @@ export function useCreationWorkspace({
             return latestRoute.pendingDraftId === draftId;
           })();
 
-        if (shouldAutoNavigate) {
-          onWorkspaceCreated(metadata);
-        }
+        onWorkspaceCreated(metadata, { autoNavigate: shouldAutoNavigate });
 
         if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
           // UI-only: show the created workspace in-place where the draft was rendered.

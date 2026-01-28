@@ -13,6 +13,11 @@ export interface ChatInputAPI {
   restoreAttachments: (fileParts: FilePart[]) => void;
 }
 
+export interface WorkspaceCreatedOptions {
+  /** When false, register metadata without navigating to the new workspace. */
+  autoNavigate?: boolean;
+}
+
 // Workspace variant: full functionality for existing workspaces
 export interface ChatInputWorkspaceVariant {
   variant: "workspace";
@@ -61,7 +66,10 @@ export interface ChatInputCreationVariant {
   pendingSectionId?: string | null;
   /** Draft ID for UI-only workspace creation drafts (from URL) */
   pendingDraftId?: string | null;
-  onWorkspaceCreated: (metadata: FrontendWorkspaceMetadata) => void;
+  onWorkspaceCreated: (
+    metadata: FrontendWorkspaceMetadata,
+    options?: WorkspaceCreatedOptions
+  ) => void;
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;
   disabled?: boolean;

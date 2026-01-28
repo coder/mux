@@ -838,7 +838,7 @@ function AppInner() {
                     pendingSectionId={pendingNewWorkspaceSectionId}
                     pendingDraftId={pendingNewWorkspaceDraftId}
                     onProviderConfig={handleProviderConfig}
-                    onWorkspaceCreated={(metadata) => {
+                    onWorkspaceCreated={(metadata, options) => {
                       // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
                       // the store knows about it before React processes the state updates.
                       // This prevents race conditions where the UI tries to access the
@@ -848,15 +848,17 @@ function AppInner() {
                       // Add to workspace metadata map (triggers React state update)
                       setWorkspaceMetadata((prev) => new Map(prev).set(metadata.id, metadata));
 
-                      // Only switch to new workspace if user hasn't selected another one
-                      // during the creation process (selectedWorkspace was null when creation started)
-                      setSelectedWorkspace((current) => {
-                        if (current !== null) {
-                          // User has already selected another workspace - don't override
-                          return current;
-                        }
-                        return toWorkspaceSelection(metadata);
-                      });
+                      if (options?.autoNavigate !== false) {
+                        // Only switch to new workspace if user hasn't selected another one
+                        // during the creation process (selectedWorkspace was null when creation started)
+                        setSelectedWorkspace((current) => {
+                          if (current !== null) {
+                            // User has already selected another workspace - don't override
+                            return current;
+                          }
+                          return toWorkspaceSelection(metadata);
+                        });
+                      }
 
                       // Track telemetry
                       telemetry.workspaceCreated(
