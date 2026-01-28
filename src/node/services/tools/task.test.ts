@@ -41,6 +41,45 @@ describe("task tool", () => {
     expect(result).toEqual({ status: "queued", taskId: "child-task" });
   });
 
+  it("should allow sub-agent workspaces to spawn nested tasks", async () => {
+    using tempDir = new TestTempDir("test-task-tool");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "child-workspace" });
+
+    const create = mock(() =>
+      Ok({ taskId: "grandchild-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
+    const taskService = { create, waitForAgentReport } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      enableAgentReport: true,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "do it",
+          title: "Grandchild task",
+          run_in_background: true,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parentWorkspaceId: "child-workspace",
+        kind: "agent",
+        agentId: "explore",
+        agentType: "explore",
+      })
+    );
+    expect(result).toEqual({ status: "queued", taskId: "grandchild-task" });
+  });
+
   it("should block and return report when run_in_background is false", async () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

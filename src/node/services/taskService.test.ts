@@ -251,7 +251,7 @@ describe("TaskService", () => {
           },
         ],
       ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 1 },
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 2 },
     });
     const { taskService } = createTaskServiceHarness(config);
 
@@ -272,9 +272,19 @@ describe("TaskService", () => {
       prompt: "nested explore",
       title: "Test task",
     });
-    expect(second.success).toBe(false);
-    if (!second.success) {
-      expect(second.error).toContain("maxTaskNestingDepth");
+    expect(second.success).toBe(true);
+    if (!second.success) return;
+
+    const third = await taskService.create({
+      parentWorkspaceId: second.data.taskId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "nested explore again",
+      title: "Test task",
+    });
+    expect(third.success).toBe(false);
+    if (!third.success) {
+      expect(third.error).toContain("maxTaskNestingDepth");
     }
   }, 20_000);
 
