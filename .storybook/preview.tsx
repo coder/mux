@@ -10,6 +10,7 @@ import {
   type TutorialState,
 } from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/mockFactory";
+import { updatePersistedState } from "../src/browser/hooks/usePersistedState";
 
 const STORYBOOK_FONTS_READY_TIMEOUT_MS = 2500;
 
@@ -70,10 +71,9 @@ function collapseProjects() {
 
 // Clear workspace drafts to ensure deterministic snapshots.
 // Drafts persist in localStorage and can leak between stories causing flaky diffs.
+// Uses updatePersistedState to notify subscribers (WorkspaceContext uses listener: true).
 function clearWorkspaceDrafts() {
-  if (typeof localStorage !== "undefined") {
-    localStorage.setItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY, JSON.stringify({}));
-  }
+  updatePersistedState(WORKSPACE_DRAFTS_BY_PROJECT_KEY, {});
 }
 
 const preview: Preview = {
