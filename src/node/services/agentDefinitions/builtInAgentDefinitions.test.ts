@@ -7,6 +7,21 @@ describe("built-in agent definitions", () => {
     clearBuiltInAgentCache();
   });
 
+  test("exec and orchestrator trust Explore sub-agent reports", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const exec = byId.get("exec");
+    expect(exec).toBeTruthy();
+    expect(exec?.body).toContain("sub-agent reports as authoritative for repo facts");
+    expect(exec?.body).toContain("counts as having read the referenced files");
+
+    const orchestrator = byId.get("orchestrator");
+    expect(orchestrator).toBeTruthy();
+    expect(orchestrator?.body).toContain("sub-agent reports as authoritative for repo facts");
+    expect(orchestrator?.body).toContain("counts as having read the referenced files");
+  });
+
   test("includes orchestrator with expected flags", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

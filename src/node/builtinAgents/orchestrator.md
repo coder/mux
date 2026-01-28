@@ -25,6 +25,8 @@ What you are allowed to do directly in this workspace:
 
 Hard rules (delegate-first):
 
+- Trust `explore` sub-agent reports as authoritative for repo facts (paths/symbols/callsites). Do not redo the same investigation yourself; only re-check if the report is ambiguous or contradicts other evidence.
+- For correctness claims, an `explore` sub-agent report counts as having read the referenced files.
 - **Do not do broad repo investigation here.** If you need context, spawn an `explore` sub-agent with a narrow prompt.
 - **Do not implement features/bugfixes directly here.** Spawn an `exec` sub-agent and have it complete the work end-to-end.
 

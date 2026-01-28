@@ -63,6 +63,10 @@ When the user asks you to remember something:
 - If it's about the general codebase: encode that lesson into the project's AGENTS.md file, matching its existing tone and structure.
 - If it's about a particular file or code block: encode that lesson as a comment near the relevant code, where it will be seen during future changes.
 </memory>
+
+<subagent-reports>
+Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). Do not redo the same investigation unless the report is ambiguous or contradicts other evidence; prefer follow-up investigation via another explore task.
+</subagent-reports>
 </prelude>
 `;
 
