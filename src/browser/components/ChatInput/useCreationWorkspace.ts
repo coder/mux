@@ -40,7 +40,6 @@ import {
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
-import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
@@ -189,9 +188,9 @@ export function useCreationWorkspace({
   const workspaceContext = useOptionalWorkspaceContext();
   const promoteWorkspaceDraft = workspaceContext?.promoteWorkspaceDraft;
   const deleteWorkspaceDraft = workspaceContext?.deleteWorkspaceDraft;
-  const { currentWorkspaceId, currentProjectId, pendingDraftId } = useRouter();
+  const { currentWorkspaceId, pendingDraftId } = useRouter();
   const isMountedRef = useRef(true);
-  const latestRouteRef = useRef({ currentWorkspaceId, currentProjectId, pendingDraftId });
+  const latestRouteRef = useRef({ currentWorkspaceId, pendingDraftId });
 
   useEffect(() => {
     return () => {
@@ -201,8 +200,8 @@ export function useCreationWorkspace({
 
   // Keep router state fresh so we only auto-navigate from drafts when the user is still viewing them.
   useEffect(() => {
-    latestRouteRef.current = { currentWorkspaceId, currentProjectId, pendingDraftId };
-  }, [currentWorkspaceId, currentProjectId, pendingDraftId]);
+    latestRouteRef.current = { currentWorkspaceId, pendingDraftId };
+  }, [currentWorkspaceId, pendingDraftId]);
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -480,11 +479,9 @@ export function useCreationWorkspace({
             if (!isMountedRef.current) return false;
             const latestRoute = latestRouteRef.current;
             if (latestRoute.currentWorkspaceId) return false;
-            if (!projectPath.trim().length) return false;
-            return (
-              latestRoute.currentProjectId === getProjectRouteId(projectPath) &&
-              latestRoute.pendingDraftId === draftId
-            );
+            // Draft ids are the most reliable signal; project ids can drift if the
+            // route was derived from a different path representation (e.g., symlinks).
+            return latestRoute.pendingDraftId === draftId;
           })();
 
         if (shouldAutoNavigate) {
