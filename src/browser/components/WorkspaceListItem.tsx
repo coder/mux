@@ -10,7 +10,7 @@ import React, { useState, useEffect } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
-import { RuntimeBadgeInline } from "./RuntimeBadgeInline";
+import { RuntimeBadge } from "./RuntimeBadge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
@@ -256,7 +256,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <Tooltip disableHoverableContent>
+              <Tooltip>
                 <TooltipTrigger asChild>
                   <span
                     className={cn(
@@ -281,7 +281,11 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 <TooltipContent align="start" className="max-w-[420px]">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                      <RuntimeBadgeInline runtimeConfig={metadata.runtimeConfig} />
+                      <RuntimeBadge
+                        runtimeConfig={metadata.runtimeConfig}
+                        workspaceName={metadata.name}
+                        workspacePath={namedWorkspacePath}
+                      />
                       <span className="text-foreground font-medium break-words whitespace-normal">
                         {displayTitle}
                       </span>
