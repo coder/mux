@@ -48,7 +48,6 @@ Recommended Orchestrator → Exec prompt template:
 - Constraints:
   - Do not expand scope.
   - Explore-first (spawn `explore` tasks before editing if anything is unclear).
-  - Do not call `task_apply_git_patch`.
   - Create one or more git commits before `agent_report`.
 
 Patch integration loop (default):
