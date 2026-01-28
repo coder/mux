@@ -191,9 +191,10 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
     await cleanupSharedRepo();
   });
 
-  test("newly archived workspace appears immediately in archive list when already on project page", async () => {
-    // Bug regression: archiving a workspace while viewing the Archive page
-    // didn't update the list - required a refresh.
+  test("newly archived workspace appears immediately in archive list after archiving from workspace view", async () => {
+    // Bug regression: archiving a workspace didn't update the archive list reactively.
+    // When archiving the currently-viewed workspace, app navigates to project page
+    // and the archived workspace should appear in the list immediately.
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
     const trunkBranch = await detectDefaultTrunkBranch(projectPath);
@@ -258,16 +259,9 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
       );
       fireEvent.click(archiveButton);
 
-      // Wait for navigation to project page (archive redirects there)
-      await waitFor(
-        () => {
-          const textarea = view.container.querySelector("textarea");
-          if (!textarea) throw new Error("Project page not rendered");
-        },
-        { timeout: 5_000 }
-      );
-
-      // ArchivedWorkspaces is collapsed by default; expand so archived rows are visible.
+      // Wait for navigation to project page (archive redirects there).
+      // We need to wait for the archived workspaces section to appear, not just a textarea,
+      // since workspace views also have textareas and we might still be there briefly.
       const expandArchivedButton = await waitFor(
         () => {
           const expand = view.container.querySelector(
@@ -278,12 +272,14 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
           ) as HTMLElement | null;
 
           if (!expand && !collapse) {
-            throw new Error("Archived workspaces toggle not found");
+            throw new Error(
+              "Archived workspaces toggle not found - navigation may not have completed"
+            );
           }
 
           return expand;
         },
-        { timeout: 5_000 }
+        { timeout: 10_000 }
       );
 
       if (expandArchivedButton) {
