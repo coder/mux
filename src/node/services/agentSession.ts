@@ -1480,21 +1480,34 @@ export class AgentSession {
       return;
     }
 
-    const followUp = muxMeta.pendingFollowUp;
+    // Handle legacy formats: older persisted requests may have `mode` instead of `agentId`,
+    // and `imageParts` instead of `fileParts`.
+    const followUp = muxMeta.pendingFollowUp as typeof muxMeta.pendingFollowUp & {
+      mode?: "exec" | "plan";
+      imageParts?: FilePart[];
+    };
+
+    // Derive agentId: new field has it directly, legacy may use `mode` field.
+    // Legacy `mode` was "exec" | "plan" and maps directly to agentId.
+    const effectiveAgentId = followUp.agentId ?? followUp.mode ?? "exec";
+
+    // Normalize attachments: newer metadata uses `fileParts`, older persisted entries used `imageParts`.
+    const effectiveFileParts = followUp.fileParts ?? followUp.imageParts;
+
     log.debug("Dispatching pending follow-up from compaction summary", {
       workspaceId: this.workspaceId,
       hasText: Boolean(followUp.text),
-      hasFileParts: Boolean(followUp.fileParts?.length),
+      hasFileParts: Boolean(effectiveFileParts?.length),
       hasReviews: Boolean(followUp.reviews?.length),
       model: followUp.model,
-      agentId: followUp.agentId,
+      agentId: effectiveAgentId,
     });
 
     // Process the follow-up content (handles reviews -> text formatting + metadata)
     const { finalText, metadata } = prepareUserMessageForSend(
       {
         text: followUp.text,
-        fileParts: followUp.fileParts,
+        fileParts: effectiveFileParts,
         reviews: followUp.reviews,
       },
       followUp.muxMetadata
@@ -1506,11 +1519,11 @@ export class AgentSession {
       muxMetadata?: MuxFrontendMetadata;
     } = {
       model: followUp.model,
-      agentId: followUp.agentId,
+      agentId: effectiveAgentId,
     };
 
-    if (followUp.fileParts && followUp.fileParts.length > 0) {
-      options.fileParts = followUp.fileParts;
+    if (effectiveFileParts && effectiveFileParts.length > 0) {
+      options.fileParts = effectiveFileParts;
     }
 
     if (metadata) {
