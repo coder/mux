@@ -191,10 +191,6 @@ export function useCreationWorkspace({
   const { currentWorkspaceId, currentProjectId, pendingDraftId } = useRouter();
   const isMountedRef = useRef(true);
   const latestRouteRef = useRef({ currentWorkspaceId, currentProjectId, pendingDraftId });
-  const sendRouteRef = useRef<{
-    currentProjectId: string | null;
-    pendingDraftId: string | null;
-  } | null>(null);
 
   useEffect(() => {
     return () => {
@@ -305,12 +301,6 @@ export function useCreationWorkspace({
       if (!messageText.trim() || isSending || !api) {
         return { success: false };
       }
-
-      const routeSnapshot = latestRouteRef.current;
-      sendRouteRef.current = {
-        currentProjectId: routeSnapshot.currentProjectId ?? null,
-        pendingDraftId: routeSnapshot.pendingDraftId ?? null,
-      };
 
       // Build runtime config early (used later for workspace creation)
       let runtimeSelection = settings.selectedRuntime;
@@ -487,12 +477,7 @@ export function useCreationWorkspace({
             if (!isMountedRef.current) return false;
             const latestRoute = latestRouteRef.current;
             if (latestRoute.currentWorkspaceId) return false;
-            const routeAtSend = sendRouteRef.current;
-            if (!routeAtSend) return false;
-            return (
-              latestRoute.currentProjectId === routeAtSend.currentProjectId &&
-              latestRoute.pendingDraftId === routeAtSend.pendingDraftId
-            );
+            return latestRoute.pendingDraftId === draftId;
           })();
 
         if (shouldAutoNavigate) {
