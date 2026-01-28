@@ -280,6 +280,16 @@ export class SSHConnectionPool {
   }
 
   /**
+   * Clear all cached health/backoff state.
+   *
+   * Intended for tests to avoid cross-test contention in the shared pool.
+   */
+  clear(): void {
+    this.health.clear();
+    this.inflight.clear();
+  }
+
+  /**
    * Reset backoff for a connection (e.g., after user intervention)
    */
   resetBackoff(config: SSHConnectionConfig): void {

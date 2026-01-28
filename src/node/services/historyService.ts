@@ -492,7 +492,11 @@ export class HistoryService {
    * IMPORTANT: Should be called AFTER the session directory has been renamed
    */
   async migrateWorkspaceId(oldWorkspaceId: string, newWorkspaceId: string): Promise<Result<void>> {
-    return this.fileLocks.withLock(newWorkspaceId, async () => {
+    // Sort lock keys so concurrent migrations never deadlock on opposite ordering.
+    const lockKeys = [this.getLockKey(oldWorkspaceId), this.getLockKey(newWorkspaceId)].sort();
+    const [primaryKey, secondaryKey] = lockKeys;
+
+    const runMigration = async (): Promise<Result<void>> => {
       try {
         // Read messages from the NEW workspace location (directory was already renamed)
         const historyResult = await this.getHistory(newWorkspaceId);
@@ -532,6 +536,15 @@ export class HistoryService {
         const message = error instanceof Error ? error.message : String(error);
         return Err(`Failed to migrate workspace ID: ${message}`);
       }
+    };
+
+    return this.fileLocks.withLock(primaryKey, async () => {
+      if (secondaryKey === primaryKey) {
+        return runMigration();
+      }
+
+      // Lock both old/new session dirs to block concurrent history writes during rename.
+      return this.fileLocks.withLock(secondaryKey, runMigration);
     });
   }
 }

@@ -837,7 +837,9 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     // Compute workspace path using canonical method
+    // Bound stderr reads so delete checks can't hang if SSH streams never close.
     const deletedPath = this.getWorkspacePath(projectPath, workspaceName);
+    const stderrTimeoutMs = 10_000;
 
     try {
       // Combine all pre-deletion checks into a single bash script to minimize round trips
@@ -945,7 +947,7 @@ export class SSHRuntime extends RemoteRuntime {
 
       if (checkExitCode === 2) {
         // Read stderr which contains the unpushed commits output
-        const stderr = await streamToString(checkStream.stderr);
+        const stderr = await streamToString(checkStream.stderr, { timeoutMs: stderrTimeoutMs });
         const commitList = stderr.trim();
         const errorMsg = commitList
           ? `Workspace contains unpushed commits:\n\n${commitList}`
@@ -959,7 +961,7 @@ export class SSHRuntime extends RemoteRuntime {
 
       if (checkExitCode !== 0) {
         // Unexpected error
-        const stderr = await streamToString(checkStream.stderr);
+        const stderr = await streamToString(checkStream.stderr, { timeoutMs: stderrTimeoutMs });
         return {
           success: false,
           error: `Failed to check workspace state: ${stderr.trim() || `exit code ${checkExitCode}`}`,
@@ -983,7 +985,7 @@ export class SSHRuntime extends RemoteRuntime {
 
       if (exitCode !== 0) {
         // Read stderr for error message
-        const stderr = await streamToString(stream.stderr);
+        const stderr = await streamToString(stream.stderr, { timeoutMs: stderrTimeoutMs });
         return {
           success: false,
           error: `Failed to delete directory: ${stderr.trim() || "Unknown error"}`,

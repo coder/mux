@@ -280,7 +280,21 @@ export abstract class RemoteRuntime implements Runtime {
         });
       },
       abort: () => {
-        childProcess.stdin?.destroy();
+        const nodeStdin = childProcess.stdin;
+        if (!nodeStdin || nodeStdin.destroyed) {
+          return;
+        }
+
+        // Prefer end() before destroy() so remote commands see an EOF.
+        try {
+          if (!nodeStdin.writableEnded) {
+            nodeStdin.end();
+          }
+        } catch {
+          // Ignore stdin close errors.
+        }
+
+        nodeStdin.destroy();
       },
     });
 

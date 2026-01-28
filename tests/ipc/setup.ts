@@ -3,6 +3,7 @@ import * as path from "path";
 import * as fs from "fs/promises";
 import type { BrowserWindow, WebContents } from "electron";
 import { Config } from "../../src/node/config";
+import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
 import { ServiceContainer } from "../../src/node/services/serviceContainer";
 import {
   generateBranchName,
@@ -128,6 +129,9 @@ export async function cleanupTestEnvironment(env: TestEnvironment): Promise<void
   } catch (error) {
     console.warn("Failed to dispose test services:", error);
   }
+
+  // Reset shared SSH connection pool state between tests to avoid backoff contention.
+  sshConnectionPool.clear();
 
   const maxRetries = 3;
   let lastError: unknown;

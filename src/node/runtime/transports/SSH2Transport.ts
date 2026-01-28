@@ -36,6 +36,22 @@ class SSH2ChildProcess extends EventEmitter {
 
     channel.pipe(stdoutPipe);
     (channel.stderr ?? new PassThrough()).pipe(stderrPipe);
+
+    // Ensure stdin EOF reaches the remote command; destroying the local pipe alone
+    // doesn't always propagate an EOF through the SSH channel.
+    const endChannelStdin = () => {
+      if (channel.writableEnded || channel.destroyed) {
+        return;
+      }
+      try {
+        channel.end();
+      } catch {
+        // Ignore close errors.
+      }
+    };
+
+    stdinPipe.on("finish", endChannelStdin);
+    stdinPipe.on("close", endChannelStdin);
     stdinPipe.pipe(channel);
 
     this.stdout = stdoutPipe;
