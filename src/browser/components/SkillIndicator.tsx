@@ -1,5 +1,5 @@
 import React from "react";
-import { Check } from "lucide-react";
+import { Check, EyeOff } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SkillIcon } from "@/browser/components/icons/SkillIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
@@ -83,6 +83,7 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
                 </div>
                 {skills.map((skill) => {
                   const isLoaded = loadedSkillNames.has(skill.name);
+                  const isUnadvertised = skill.advertise === false;
                   return (
                     <div key={skill.name} className="flex items-start gap-2">
                       <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
@@ -94,6 +95,12 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
                           )}
                         >
                           {skill.name}
+                          {isUnadvertised && (
+                            <EyeOff
+                              className="text-muted-foreground ml-1 inline h-3 w-3"
+                              aria-label="Not advertised in system prompt"
+                            />
+                          )}
                           {isLoaded && <Check className="text-success ml-1 inline h-3 w-3" />}
                         </span>
                         <span className="text-muted-foreground text-[11px] leading-snug">

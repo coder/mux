@@ -476,7 +476,7 @@ async function syncAutoLabelWorkflow(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 function generateMasterSkillBlock(): string {
-  const skillPath = path.join(import.meta.dir, "..", "src", "node", "builtinSkills", "master.md");
+  const skillPath = path.join(import.meta.dir, "..", ".mux", "skills", "master", "SKILL.md");
   const content = fs.readFileSync(skillPath, "utf-8");
   // Use 5 backticks to wrap the skill content since it contains nested code blocks with 3 backticks
   return "`````md\n" + content.trim() + "\n`````";
@@ -485,7 +485,7 @@ function generateMasterSkillBlock(): string {
 async function syncMasterSkill(): Promise<boolean> {
   return syncDoc({
     docsFile: "agents/agent-skills.mdx",
-    sourceLabel: "src/node/builtinSkills/master.md",
+    sourceLabel: ".mux/skills/master/SKILL.md",
     markerName: "MASTER_SKILL",
     generateBlock: generateMasterSkillBlock,
   });
