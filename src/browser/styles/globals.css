@@ -1899,6 +1899,13 @@ pre code {
   }
 }
 
+/* Disable shimmer effect while keeping same element structure */
+.shimmer-text.no-shimmer {
+  background: none;
+  color: inherit;
+  animation: none;
+}
+
 @keyframes toastSlideIn {
   from {
     transform: translateY(10px);

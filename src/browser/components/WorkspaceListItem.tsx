@@ -123,7 +123,9 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
     }
   };
 
-  const { canInterrupt, awaitingUserQuestion, isStarting } = useWorkspaceSidebarState(workspaceId);
+  const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
+    useWorkspaceSidebarState(workspaceId);
+  const hasStatusText = Boolean(agentStatus ?? awaitingUserQuestion);
 
   const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
   const barColorClass =
@@ -232,9 +234,14 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
         ) : (
           unreadBar
         )}
-        {/* Archive button - vertically centered against entire item */}
+        {/* Archive button - centered when status text visible, top-aligned otherwise */}
         {!isMuxHelpChat && !isCreating && !isEditing && (
-          <div className="relative inline-flex h-4 w-4 shrink-0 items-center self-center">
+          <div
+            className={cn(
+              "relative inline-flex h-4 w-4 shrink-0 items-center",
+              hasStatusText ? "self-center" : "self-start mt-0.5"
+            )}
+          >
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -274,7 +281,7 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                 <HoverCardTrigger asChild>
                   <span
                     className={cn(
-                      "text-foreground block truncate text-left text-[14px] transition-colors duration-200",
+                      "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
                       !isDisabled && "cursor-pointer"
                     )}
                     onDoubleClick={(e) => {
@@ -283,19 +290,19 @@ const WorkspaceListItemInner: React.FC<WorkspaceListItemProps> = ({
                       startEditing();
                     }}
                   >
-                    {isWorking || isCreating ? (
-                      <Shimmer className="w-full truncate" colorClass="var(--color-foreground)">
-                        {displayTitle}
-                      </Shimmer>
-                    ) : (
-                      displayTitle
-                    )}
+                    {/* Always render text in same structure; Shimmer just adds animation class */}
+                    <Shimmer
+                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
+                      colorClass="var(--color-foreground)"
+                    >
+                      {displayTitle}
+                    </Shimmer>
                   </span>
                 </HoverCardTrigger>
                 <HoverCardContent
                   align="start"
                   sideOffset={8}
-                  className="w-auto max-w-[420px] bg-modal-bg border-separator-light shadow-[0_2px_8px_rgba(0,0,0,0.4)] px-[10px] py-[6px] text-[11px]"
+                  className="border-separator-light bg-modal-bg w-auto max-w-[420px] px-[10px] py-[6px] text-[11px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
                   onPointerDownOutside={preventHoverCardDismissForRadixPortals}
                   onFocusOutside={preventHoverCardDismissForRadixPortals}
                 >

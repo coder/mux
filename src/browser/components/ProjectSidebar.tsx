@@ -93,7 +93,7 @@ const MuxChatHelpButton: React.FC<{
 };
 
 const PROJECT_ITEM_BASE_CLASS =
-  "py-2 px-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
+  "py-2 pl-2 pr-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
 
 function getProjectItemClassName(opts: {
   isDragging: boolean;
@@ -650,7 +650,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             }}
                             aria-label={`${isExpanded ? "Collapse" : "Expand"} project ${projectName}`}
                             data-project-path={projectPath}
-                            className="text-secondary hover:bg-hover hover:border-border-light mr-2 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
+                            className="text-secondary hover:bg-hover hover:border-border-light mr-1.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded border border-transparent bg-transparent p-0 transition-all duration-200"
                           >
                             <ChevronRight
                               size={12}
