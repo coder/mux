@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import {
   Settings,
   Key,
@@ -11,6 +11,8 @@ import {
   Layout,
   BrainCircuit,
 } from "lucide-react";
+import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
@@ -84,8 +86,25 @@ const BASE_SECTIONS: SettingsSection[] = [
 
 export function SettingsModal() {
   const { isOpen, close, activeSection, setActiveSection } = useSettings();
+  const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
 
-  const sections = BASE_SECTIONS;
+  const sections = system1Enabled
+    ? BASE_SECTIONS
+    : BASE_SECTIONS.filter((section) => section.id !== "system1");
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (system1Enabled) {
+      return;
+    }
+    if (activeSection !== "system1") {
+      return;
+    }
+
+    setActiveSection("general");
+  }, [activeSection, isOpen, setActiveSection, system1Enabled]);
 
   const currentSection = sections.find((s) => s.id === activeSection) ?? sections[0];
   const SectionComponent = currentSection.component;
