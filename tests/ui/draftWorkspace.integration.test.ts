@@ -17,9 +17,8 @@ import {
 import { generateBranchName } from "../ipc/helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 
-import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView } from "./helpers";
+import { cleanupView, openProjectCreationView, setupTestDom } from "./helpers";
 
 import { WORKSPACE_DRAFTS_BY_PROJECT_KEY } from "@/common/constants/storage";
 
@@ -58,12 +57,7 @@ async function setupDraftTestView(): Promise<DraftTestView> {
   // Archive the workspace so we have a project but no active workspaces
   await env.orpc.workspace.archive({ workspaceId });
 
-  const cleanupDom = installDom();
-  // Disable tutorial to prevent it from blocking UI interactions
-  globalThis.localStorage.setItem(
-    "tutorialState",
-    JSON.stringify({ disabled: true, completed: {} })
-  );
+  const cleanupDom = setupTestDom();
   // Clear any existing drafts from previous tests
   globalThis.localStorage.removeItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY);
 
@@ -141,30 +135,12 @@ describeIntegration("Draft workspace behavior", () => {
       await setupDraftTestView();
 
     try {
-      // Click the project row to create the first draft
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
-          if (!el) throw new Error("Project not found in sidebar");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
+      // Open the project creation view (creates a draft and navigates to it)
+      await openProjectCreationView(view, projectPath);
 
-      // Wait for the creation screen textarea to appear (confirms navigation)
-      await waitFor(
-        () => {
-          const textarea = view.container.querySelector(
-            'textarea[aria-label="Message Claude"]'
-          ) as HTMLTextAreaElement | null;
-          if (!textarea) throw new Error("Creation textarea not found");
-        },
-        { timeout: 5_000 }
-      );
-
-      // Wait for first draft to be created in localStorage
+      // Wait for first draft to be created in localStorage and verify it exists
       const [firstDraftId] = await waitForDraftCount(projectPath, 1);
+      expect(firstDraftId).toBeTruthy();
 
       // Click "New Workspace" button again - should NOT create a new draft
       // because the existing one is empty

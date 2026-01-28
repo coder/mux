@@ -23,9 +23,8 @@ import {
 import { generateBranchName } from "../ipc/helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 
-import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView, setupWorkspaceView } from "./helpers";
+import { cleanupView, setupTestDom, setupWorkspaceView } from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -175,7 +174,7 @@ describeIntegration("Agent Picker (UI)", () => {
 
   test("built-in agents appear in dropdown", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+      const cleanupDom = setupTestDom();
       const view = renderApp({ apiClient: env.orpc, metadata });
 
       try {
@@ -219,7 +218,7 @@ You are a code review agent. Review code for quality, readability, and best prac
 `;
       await createAgentFile(workspacePath, "code-review", customAgentContent);
 
-      const cleanupDom = installDom();
+      const cleanupDom = setupTestDom();
       const view = renderApp({ apiClient: env.orpc, metadata });
 
       try {
@@ -251,7 +250,7 @@ You are a code review agent. Review code for quality, readability, and best prac
       // With workspaceId provided, agents are discovered from workspace worktree path.
       const workspacePath = metadata.namedWorkspacePath;
 
-      const cleanupDom = installDom();
+      const cleanupDom = setupTestDom();
       const view = renderApp({ apiClient: env.orpc, metadata });
 
       try {
@@ -290,7 +289,7 @@ This is a test agent.
 
   test("agents with descriptions show help indicators", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+      const cleanupDom = setupTestDom();
       const view = renderApp({ apiClient: env.orpc, metadata });
 
       try {
@@ -308,7 +307,7 @@ This is a test agent.
 
   test("selecting an agent updates the picker trigger", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+      const cleanupDom = setupTestDom();
       const view = renderApp({ apiClient: env.orpc, metadata });
 
       try {
@@ -383,12 +382,7 @@ This is a test agent.
 
     await env.orpc.workspace.archive({ workspaceId });
 
-    const cleanupDom = installDom();
-    // Disable tutorial to prevent it from blocking UI interactions
-    globalThis.localStorage.setItem(
-      "tutorialState",
-      JSON.stringify({ disabled: true, completed: {} })
-    );
+    const cleanupDom = setupTestDom();
 
     const view = renderApp({ apiClient: env.orpc, metadata });
 
@@ -433,7 +427,7 @@ This is a test agent.
   // trigger onChange handlers. The filtering logic is covered by unit tests.
   test.skip("search filters agents by name and id", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
-      const cleanupDom = installDom();
+      const cleanupDom = setupTestDom();
       const view = renderApp({ apiClient: env.orpc, metadata });
 
       try {
