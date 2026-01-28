@@ -475,12 +475,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   }, [currentWorkspaceId, workspaceMetadata]);
 
   // Keep a ref to the current selectedWorkspace for use in functional updates.
-  // This ensures setSelectedWorkspace always has access to the latest value,
-  // avoiding stale closure issues when called with a functional updater.
+  // Update synchronously so route-driven selection changes are visible before
+  // any async creation callbacks decide whether to auto-navigate.
   const selectedWorkspaceRef = useRef(selectedWorkspace);
-  useEffect(() => {
-    selectedWorkspaceRef.current = selectedWorkspace;
-  }, [selectedWorkspace]);
+  selectedWorkspaceRef.current = selectedWorkspace;
 
   // setSelectedWorkspace navigates to the workspace URL (or clears if null)
   const setSelectedWorkspace = useCallback(
