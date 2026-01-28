@@ -10,6 +10,9 @@ tools:
     # Allow all tools by default (includes MCP tools which have dynamic names)
     # Use tools.remove in child agents to restrict specific tools
     - .*
+  remove:
+    # Plan should not apply sub-agent patches.
+    - task_apply_git_patch
   # Note: file_edit_* tools ARE available but restricted to plan file only at runtime
   # Note: task tools ARE enabled - Plan delegates to Explore sub-agents
 ---

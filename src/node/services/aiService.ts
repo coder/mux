@@ -1538,10 +1538,10 @@ export class AIService extends EventEmitter {
           : nestingInstruction;
       }
 
-      // Read plan content for agent transition (plan-like → exec-like)
-      // Only read if switching to exec-like agent and last assistant was plan-like.
+      // Read plan content for agent transition (plan-like → exec).
+      // Only read if switching to the built-in exec agent and last assistant was plan-like.
       let planContentForTransition: string | undefined;
-      if (effectiveMode === "exec" && !chatHasStartHerePlanSummary) {
+      if (effectiveAgentId === "exec" && !chatHasStartHerePlanSummary) {
         const lastAssistantMessage = [...filteredMessages]
           .reverse()
           .find((m) => m.role === "assistant");
@@ -1577,7 +1577,7 @@ export class AIService extends EventEmitter {
             planContentForTransition = planResult.content;
           }
         }
-      } else if (effectiveMode === "exec" && chatHasStartHerePlanSummary) {
+      } else if (effectiveAgentId === "exec" && chatHasStartHerePlanSummary) {
         workspaceLog.debug(
           "Skipping plan content injection for plan→exec transition: Start Here already includes the plan in chat history."
         );

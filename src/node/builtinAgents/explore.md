@@ -19,6 +19,7 @@ tools:
   remove:
     - file_edit_.*
     - task
+    - task_apply_git_patch
     - task_.*
     - agent_skill_read
     - agent_skill_read_file
