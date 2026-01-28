@@ -51,6 +51,20 @@ type PreservedSendOptions = Pick<
 >;
 
 /**
+ * Extract the send options that should be preserved across compaction.
+ * Use this helper to avoid duplicating the field list when building CompactionFollowUpRequest.
+ */
+export function pickPreservedSendOptions(options: SendMessageOptions): PreservedSendOptions {
+  return {
+    thinkingLevel: options.thinkingLevel,
+    additionalSystemInstructions: options.additionalSystemInstructions,
+    providerOptions: options.providerOptions,
+    experiments: options.experiments,
+    disableWorkspaceAgents: options.disableWorkspaceAgents,
+  };
+}
+
+/**
  * Content to send after compaction completes.
  * Extends CompactionFollowUpInput with model/agentId for the follow-up message,
  * plus preserved send options so the follow-up uses the same settings as the

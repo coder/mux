@@ -15,6 +15,7 @@ import {
   type CompactionFollowUpRequest,
   type CompactionFollowUpInput,
   isDefaultSourceContent,
+  pickPreservedSendOptions,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -937,12 +938,7 @@ export function prepareCompactionMessage(options: CompactionOptions): {
       ...options.followUpContent,
       model: existingModel ?? options.sendMessageOptions.model,
       agentId: existingAgentId ?? options.sendMessageOptions.agentId ?? "exec",
-      // Preserve original send options so the follow-up uses the same settings
-      thinkingLevel: options.sendMessageOptions.thinkingLevel,
-      additionalSystemInstructions: options.sendMessageOptions.additionalSystemInstructions,
-      providerOptions: options.sendMessageOptions.providerOptions,
-      experiments: options.sendMessageOptions.experiments,
-      disableWorkspaceAgents: options.sendMessageOptions.disableWorkspaceAgents,
+      ...pickPreservedSendOptions(options.sendMessageOptions),
     };
   }
   const isDefaultResume = isDefaultSourceContent(fc);
