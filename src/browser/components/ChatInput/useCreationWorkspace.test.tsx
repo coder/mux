@@ -63,6 +63,26 @@ void mock.module("@/browser/hooks/useDraftWorkspaceSettings", () => ({
 }));
 
 let currentORPCClient: MockOrpcClient | null = null;
+const noop = () => undefined;
+const routerState = {
+  currentWorkspaceId: null as string | null,
+  currentProjectId: null as string | null,
+  pendingDraftId: null as string | null,
+};
+
+void mock.module("@/browser/contexts/RouterContext", () => ({
+  useRouter: () => ({
+    navigateToWorkspace: noop,
+    navigateToProject: noop,
+    navigateToHome: noop,
+    currentWorkspaceId: routerState.currentWorkspaceId,
+    currentProjectId: routerState.currentProjectId,
+    currentProjectPathFromState: null,
+    pendingSectionId: null,
+    pendingDraftId: routerState.pendingDraftId,
+  }),
+}));
+
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => {
     if (!currentORPCClient) {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
   RuntimeConfig,
@@ -27,6 +27,7 @@ import {
 } from "@/common/constants/storage";
 import type { SendMessageError } from "@/common/types/errors";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useRouter } from "@/browser/contexts/RouterContext";
 import type { Toast } from "@/browser/components/ChatInputToast";
 import { useAPI } from "@/browser/contexts/API";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
@@ -39,6 +40,7 @@ import {
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
@@ -187,6 +189,20 @@ export function useCreationWorkspace({
   const workspaceContext = useOptionalWorkspaceContext();
   const promoteWorkspaceDraft = workspaceContext?.promoteWorkspaceDraft;
   const deleteWorkspaceDraft = workspaceContext?.deleteWorkspaceDraft;
+  const { currentWorkspaceId, currentProjectId, pendingDraftId } = useRouter();
+  const isMountedRef = useRef(true);
+  const latestRouteRef = useRef({ currentWorkspaceId, currentProjectId, pendingDraftId });
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Keep router state fresh so we only auto-navigate from drafts when the user is still viewing them.
+  useEffect(() => {
+    latestRouteRef.current = { currentWorkspaceId, currentProjectId, pendingDraftId };
+  }, [currentWorkspaceId, currentProjectId, pendingDraftId]);
   const { api } = useAPI();
   const [branches, setBranches] = useState<string[]>([]);
   const [branchesLoaded, setBranchesLoaded] = useState(false);
@@ -456,9 +472,24 @@ export function useCreationWorkspace({
         // Sync preferences before switching (keeps workspace settings consistent).
         syncCreationPreferences(projectPath, metadata.id);
 
-        // Switch to the workspace IMMEDIATELY after creation to exit splash faster.
-        // The user sees the workspace UI while sendMessage kicks off the stream.
-        onWorkspaceCreated(metadata);
+        // Switch to the workspace immediately after creation unless the user navigated away
+        // from the draft that initiated the creation (avoid yanking focus to the new workspace).
+        const shouldAutoNavigate =
+          !isDraftScope ||
+          (() => {
+            if (!isMountedRef.current) return false;
+            const latestRoute = latestRouteRef.current;
+            if (latestRoute.currentWorkspaceId) return false;
+            if (!projectPath.trim().length) return false;
+            return (
+              latestRoute.currentProjectId === getProjectRouteId(projectPath) &&
+              latestRoute.pendingDraftId === draftId
+            );
+          })();
+
+        if (shouldAutoNavigate) {
+          onWorkspaceCreated(metadata);
+        }
 
         if (typeof draftId === "string" && draftId.trim().length > 0 && promoteWorkspaceDraft) {
           // UI-only: show the created workspace in-place where the draft was rendered.
