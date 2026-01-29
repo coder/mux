@@ -570,8 +570,8 @@ export const WorkspaceTitleHoverCard: AppStory = {
           "[data-radix-popper-content-wrapper] .bg-modal-bg"
         );
         if (!hoverCard) throw new Error("HoverCard not visible");
-        // Verify it contains the runtime badge and title
-        within(hoverCard).getByText("Implement new feature with detailed description");
+        // Verify it contains the project name (WorkspaceHoverPreview content)
+        within(hoverCard).getByText("hover-demo");
       },
       { timeout: 5000 }
     );
