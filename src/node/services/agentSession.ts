@@ -609,7 +609,19 @@ export class AgentSession {
       );
     }
 
+    const rawModelString = options.model.trim();
+    const rawSystem1Model = options.system1Model?.trim();
+
     options = this.normalizeGatewaySendOptions(options);
+
+    // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
+    // honor the opt-in even before muxGatewayModels has synchronized.
+    const modelForStream = rawModelString.startsWith("mux-gateway:")
+      ? rawModelString
+      : options.model;
+    const optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
+      ? { ...options, system1Model: rawSystem1Model }
+      : options;
 
     // Defense-in-depth: reject PDFs for models we know don't support them.
     // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
@@ -762,7 +774,7 @@ export class AgentSession {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned. This keeps streamStarting=true
       // for the entire duration of streaming, allowing follow-up messages to be queued.
-      const result = await this.streamWithHistory(options.model, options);
+      const result = await this.streamWithHistory(modelForStream, optionsForStream);
       return result;
     } finally {
       this.streamStarting = false;
@@ -776,7 +788,18 @@ export class AgentSession {
     const { model } = options;
     assert(typeof model === "string" && model.trim().length > 0, "resumeStream requires a model");
 
+    const rawModelString = options.model.trim();
+    const rawSystem1Model = options.system1Model?.trim();
     const normalizedOptions = this.normalizeGatewaySendOptions(options);
+
+    // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
+    // honor the opt-in even before muxGatewayModels has synchronized.
+    const modelForStream = rawModelString.startsWith("mux-gateway:")
+      ? rawModelString
+      : normalizedOptions.model;
+    const optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
+      ? { ...normalizedOptions, system1Model: rawSystem1Model }
+      : normalizedOptions;
 
     // Guard against auto-retry starting a second stream while the initial send is
     // still waiting for init hooks to complete.
@@ -788,7 +811,7 @@ export class AgentSession {
     try {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned.
-      const result = await this.streamWithHistory(normalizedOptions.model, normalizedOptions);
+      const result = await this.streamWithHistory(modelForStream, optionsForStream);
       return result;
     } finally {
       this.streamStarting = false;
