@@ -347,6 +347,8 @@ export interface MuxMetadata {
   mode?: AgentMode;
   timestamp?: number;
   model?: string;
+  /** True when this response was routed through Mux Gateway (model stays canonical). */
+  routedThroughGateway?: boolean;
   // Total usage across all steps (for cost calculation)
   usage?: LanguageModelV2Usage;
   // Last step's usage only (for context window display - inputTokens = current context size)
@@ -477,6 +479,7 @@ export type DisplayedMessage =
       isCompacted: boolean; // Whether this is a compacted summary
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       model?: string;
+      routedThroughGateway?: boolean;
       agentId?: string; // Agent id active when this message was sent (assistant messages only)
       /** @deprecated Legacy base mode derived from agent definition. */
       mode?: AgentMode;
@@ -529,6 +532,7 @@ export type DisplayedMessage =
       historySequence: number; // Global ordering across all messages
       timestamp?: number;
       model?: string;
+      routedThroughGateway?: boolean;
       errorCount?: number; // Number of consecutive identical errors merged into this message
     }
   | {

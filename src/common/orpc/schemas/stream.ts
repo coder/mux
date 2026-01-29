@@ -63,6 +63,7 @@ export const StreamStartEventSchema = z.object({
     .optional()
     .meta({ description: "True when this event is emitted during stream replay" }),
   model: z.string(),
+  routedThroughGateway: z.boolean().optional(),
   historySequence: z.number().meta({
     description: "Backend assigns global message ordering",
   }),
@@ -131,6 +132,7 @@ export const StreamEndEventSchema = z.object({
   metadata: z
     .object({
       model: z.string(),
+      routedThroughGateway: z.boolean().optional(),
       // Total usage across all steps (for cost calculation)
       usage: LanguageModelV2UsageSchema.optional(),
       // Last step's usage only (for context window display - inputTokens = current context size)

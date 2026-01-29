@@ -444,7 +444,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "workspace" ? props.workspaceId : getProjectScopeId(props.projectPath)
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
-  // - preferredModel: gateway-transformed model for API calls
+  // - preferredModel: canonical model used for backend routing
   // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
   const preferredModel = sendMessageOptions.model;
   const baseModel = sendMessageOptions.baseModel;
