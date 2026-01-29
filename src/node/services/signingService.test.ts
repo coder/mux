@@ -27,6 +27,19 @@ function startSshAgent(): { sshAuthSock: string; sshAgentPid: string } {
   return { sshAuthSock: sockMatch[1], sshAgentPid: pidMatch[1] };
 }
 
+/** Run test body with SSH_AUTH_SOCK cleared to ensure disk keys are used */
+async function withoutSshAgent<T>(fn: () => Promise<T>): Promise<T> {
+  const savedSock = process.env.SSH_AUTH_SOCK;
+  delete process.env.SSH_AUTH_SOCK;
+  try {
+    return await fn();
+  } finally {
+    if (savedSock !== undefined) {
+      process.env.SSH_AUTH_SOCK = savedSock;
+    }
+  }
+}
+
 describe("SigningService", () => {
   // Create isolated temp directory for each test run
   const testDir = join(
@@ -72,51 +85,56 @@ describe("SigningService", () => {
   });
 
   describe("with Ed25519 key", () => {
-    it("should load key and return capabilities", async () => {
-      const service = new SigningService([ed25519KeyPath]);
-      const capabilities = await service.getCapabilities();
+    it("should load key and return capabilities", () =>
+      withoutSshAgent(async () => {
+        const service = new SigningService([ed25519KeyPath]);
+        const capabilities = await service.getCapabilities();
 
-      expect(capabilities.publicKey).toBeDefined();
-      expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
-    });
+        expect(capabilities.publicKey).toBeDefined();
+        expect(capabilities.publicKey).toStartWith("ssh-ed25519 ");
+      }));
 
-    it("should sign messages", async () => {
-      const service = new SigningService([ed25519KeyPath]);
-      const content = "hello world";
-      const envelope = await service.signMessage(content);
+    it("should sign messages", () =>
+      withoutSshAgent(async () => {
+        const service = new SigningService([ed25519KeyPath]);
+        const content = "hello world";
+        const envelope = await service.signMessage(content);
 
-      expect(envelope.publicKey).toStartWith("ssh-ed25519 ");
-      await expectValidSignature(content, envelope);
-    });
+        expect(envelope.publicKey).toStartWith("ssh-ed25519 ");
+        await expectValidSignature(content, envelope);
+      }));
 
-    it("should return consistent public key across multiple calls", async () => {
-      const service = new SigningService([ed25519KeyPath]);
-      const caps1 = await service.getCapabilities();
-      const caps2 = await service.getCapabilities();
-      const envelope = await service.signMessage("consistency");
+    it("should return consistent public key across multiple calls", () =>
+      withoutSshAgent(async () => {
+        const service = new SigningService([ed25519KeyPath]);
+        const caps1 = await service.getCapabilities();
+        const caps2 = await service.getCapabilities();
+        const envelope = await service.signMessage("consistency");
 
-      expect(caps1.publicKey).toBe(caps2.publicKey);
-      expect(caps1.publicKey).toBe(envelope.publicKey);
-    });
+        expect(caps1.publicKey).toBe(caps2.publicKey);
+        expect(caps1.publicKey).toBe(envelope.publicKey);
+      }));
   });
 
   describe("with ECDSA key", () => {
-    it("should load key and return capabilities", async () => {
-      const service = new SigningService([ecdsaKeyPath]);
-      const capabilities = await service.getCapabilities();
+    it("should load key and return capabilities", () =>
+      withoutSshAgent(async () => {
+        const service = new SigningService([ecdsaKeyPath]);
+        const capabilities = await service.getCapabilities();
 
-      expect(capabilities.publicKey).toBeDefined();
-      expect(capabilities.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
-    });
+        expect(capabilities.publicKey).toBeDefined();
+        expect(capabilities.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
+      }));
 
-    it("should sign messages", async () => {
-      const service = new SigningService([ecdsaKeyPath]);
-      const content = "hello ecdsa";
-      const envelope = await service.signMessage(content);
+    it("should sign messages", () =>
+      withoutSshAgent(async () => {
+        const service = new SigningService([ecdsaKeyPath]);
+        const content = "hello ecdsa";
+        const envelope = await service.signMessage(content);
 
-      expect(envelope.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
-      await expectValidSignature(content, envelope);
-    });
+        expect(envelope.publicKey).toStartWith("ecdsa-sha2-nistp256 ");
+        await expectValidSignature(content, envelope);
+      }));
   });
 
   describe("with no key", () => {
