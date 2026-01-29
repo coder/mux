@@ -105,8 +105,11 @@ export default defineConfig(({ mode }) => {
   const aliasMap: Record<string, string> = { ...alias };
 
   if (isProfiling) {
-    aliasMap["react-dom$"] = "react-dom/profiling";
-    aliasMap["scheduler/tracing"] = "scheduler/tracing-profiling";
+    // Alias react-dom to profiling build for React DevTools Profiler support.
+    // Must use path.resolve to point to the actual profiling entrypoint.
+    // The profiling.js file selects react-dom.profiling.min.js when NODE_ENV=production.
+    // Note: scheduler/tracing was removed in React 18, so no alias needed for it.
+    aliasMap["react-dom"] = path.resolve(__dirname, "node_modules/react-dom/profiling");
   }
 
   return {
