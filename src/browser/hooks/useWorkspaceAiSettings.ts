@@ -9,9 +9,6 @@ import {
 import {
   AGENT_AI_DEFAULTS_KEY,
   getAgentIdKey,
-  getModelKey,
-  getThinkingLevelByModelKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
@@ -45,15 +42,11 @@ export interface UseWorkspaceAiSettingsProps {
 }
 
 interface ResolveWorkspaceAiSettingsProps {
-  workspaceId: string;
   agentId: string;
   agents?: AgentDefinitionDescriptor[];
   defaultModel: string;
   workspaceByAgent: WorkspaceAiSettingsCache;
   agentAiDefaults: AgentAiDefaults;
-  legacyModel: string | undefined;
-  legacyThinking: ThinkingLevel | undefined;
-  readLegacyThinkingByModel: (model: string) => ThinkingLevel | undefined;
 }
 
 interface ResolveWorkspaceAiSettingsResult {
@@ -92,6 +85,16 @@ function getFallbackAgentIds(
   return [agentId];
 }
 
+/**
+ * Resolve workspace AI settings from cache and configured defaults.
+ *
+ * Fallback order:
+ * 1. Explicit cache entry for agentId
+ * 2. Fallback cache entry (e.g., exec for custom agents)
+ * 3. Configured agent defaults (user settings)
+ * 4. Descriptor defaults (built-in agent definitions)
+ * 5. Global default model + "off" thinking
+ */
 function resolveWorkspaceAiSettings(
   props: ResolveWorkspaceAiSettingsProps
 ): ResolveWorkspaceAiSettingsResult {
@@ -119,7 +122,6 @@ function resolveWorkspaceAiSettings(
     .find((entry) => entry !== undefined);
 
   const explicitModelRaw = normalizeModel(explicitEntry?.model);
-  const legacyModelRaw = normalizeModel(props.legacyModel);
   const fallbackModelRaw = normalizeModel(fallbackEntry?.model);
   const configuredModelRaw = normalizeModel(configuredDefaults?.modelString);
   const descriptorModelRaw = normalizeModel(descriptorDefaults?.model);
@@ -127,7 +129,6 @@ function resolveWorkspaceAiSettings(
 
   const modelCandidate =
     explicitModelRaw ??
-    legacyModelRaw ??
     fallbackModelRaw ??
     configuredModelRaw ??
     descriptorModelRaw ??
@@ -136,29 +137,18 @@ function resolveWorkspaceAiSettings(
   const resolvedModel = normalizeModel(canonicalModel) ?? defaultModelRaw;
 
   const explicitThinkingRaw = coerceThinkingLevel(explicitEntry?.thinkingLevel);
-  const legacyThinkingRaw = coerceThinkingLevel(props.legacyThinking);
   const fallbackThinkingRaw = coerceThinkingLevel(fallbackEntry?.thinkingLevel);
   const configuredThinkingRaw = coerceThinkingLevel(configuredDefaults?.thinkingLevel);
   const descriptorThinkingRaw = coerceThinkingLevel(descriptorDefaults?.thinkingLevel);
 
-  let resolvedThinking =
+  const resolvedThinking =
     explicitThinkingRaw ??
-    legacyThinkingRaw ??
     fallbackThinkingRaw ??
     configuredThinkingRaw ??
-    descriptorThinkingRaw;
+    descriptorThinkingRaw ??
+    "off";
 
-  let usedLegacyThinkingByModel = false;
-  if (!resolvedThinking) {
-    const legacyByModel = props.readLegacyThinkingByModel(resolvedModel);
-    if (legacyByModel) {
-      resolvedThinking = legacyByModel;
-      usedLegacyThinkingByModel = true;
-    }
-  }
-
-  resolvedThinking ??= "off";
-
+  // Self-heal: persist if explicit entry has invalid/stale model or thinking
   const explicitModelCanonical = explicitModelRaw
     ? migrateGatewayModel(explicitModelRaw)
     : undefined;
@@ -168,12 +158,7 @@ function resolveWorkspaceAiSettings(
   const explicitThinkingNeedsFix =
     explicitEntry !== undefined && explicitThinkingRaw !== resolvedThinking;
 
-  const usedLegacy =
-    legacyModelRaw !== undefined || legacyThinkingRaw !== undefined || usedLegacyThinkingByModel;
-  const shouldPersist =
-    explicitModelNeedsFix ||
-    explicitThinkingNeedsFix ||
-    (explicitEntry === undefined && usedLegacy);
+  const shouldPersist = explicitModelNeedsFix || explicitThinkingNeedsFix;
 
   return {
     settings: {
@@ -215,23 +200,13 @@ export function readWorkspaceAiSettings(props: ReadWorkspaceAiSettingsProps): Wo
     {}
   );
   const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
-  const legacyModel = readPersistedState<string | undefined>(getModelKey(workspaceId), undefined);
-  const legacyThinking = readPersistedState<ThinkingLevel | undefined>(
-    getThinkingLevelKey(workspaceId),
-    undefined
-  );
 
   const result = resolveWorkspaceAiSettings({
-    workspaceId,
     agentId,
     agents: props.agents,
     defaultModel,
     workspaceByAgent,
     agentAiDefaults,
-    legacyModel,
-    legacyThinking,
-    readLegacyThinkingByModel: (model) =>
-      coerceThinkingLevel(readPersistedState(getThinkingLevelByModelKey(model), undefined)),
   });
 
   if (props.persist !== false && result.shouldPersist) {
@@ -264,23 +239,12 @@ export function useWorkspaceAiSettings(props: UseWorkspaceAiSettingsProps): Work
     }
   );
 
-  const legacyModel = readPersistedState<string | undefined>(getModelKey(workspaceId), undefined);
-  const legacyThinking = readPersistedState<ThinkingLevel | undefined>(
-    getThinkingLevelKey(workspaceId),
-    undefined
-  );
-
   const result = resolveWorkspaceAiSettings({
-    workspaceId,
     agentId,
     agents: props.agents,
     defaultModel,
     workspaceByAgent,
     agentAiDefaults,
-    legacyModel,
-    legacyThinking,
-    readLegacyThinkingByModel: (model) =>
-      coerceThinkingLevel(readPersistedState(getThinkingLevelByModelKey(model), undefined)),
   });
 
   const nextAgentId = result.settings.agentId;

@@ -7,8 +7,7 @@ import { fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import { getModelKey } from "@/common/constants/storage";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { readWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import { createAppHarness } from "./harness";
@@ -54,7 +53,7 @@ async function selectModel(
   fireEvent.click(option);
 
   await waitFor(() => {
-    const persisted = readPersistedState(getModelKey(workspaceId), "");
+    const { model: persisted } = readWorkspaceAiSettings({ workspaceId, persist: false });
     if (persisted !== model) {
       throw new Error(`Expected model ${model} but got ${persisted}`);
     }
