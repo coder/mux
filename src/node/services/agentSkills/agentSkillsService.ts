@@ -128,7 +128,7 @@ async function readSkillDescriptorFromDir(
       name: parsed.frontmatter.name,
       description: parsed.frontmatter.description,
       scope,
-      hidden: parsed.frontmatter.hidden,
+      advertise: parsed.frontmatter.advertise,
     };
 
     const validated = AgentSkillDescriptorSchema.safeParse(descriptor);

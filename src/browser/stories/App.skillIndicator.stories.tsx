@@ -1,7 +1,7 @@
 /**
  * Storybook stories for the SkillIndicator tooltip component.
  *
- * Tests the skill tooltip display including hidden skills with EyeOff icon.
+ * Tests the skill tooltip display including unadvertised skills (advertise: false) with EyeOff icon.
  */
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
@@ -55,7 +55,7 @@ const PROJECT_SKILLS: AgentSkillDescriptor[] = [
     name: "master",
     description: "Orchestration mode that aggressively uses sub-agents for parallel exploration",
     scope: "project",
-    hidden: true,
+    advertise: false,
   },
 ];
 
@@ -125,15 +125,15 @@ export const MultipleHiddenSkills: StoryFn<typeof SkillIndicator> = () => (
       ...PROJECT_SKILLS,
       {
         name: "internal-debug",
-        description: "Internal debugging utilities (hidden from system prompt)",
+        description: "Internal debugging utilities (not advertised in system prompt)",
         scope: "project",
-        hidden: true,
+        advertise: false,
       },
       {
         name: "orchestrator",
         description: "Advanced orchestration patterns for complex workflows",
         scope: "global",
-        hidden: true,
+        advertise: false,
       },
       ...BUILTIN_SKILLS,
     ]}

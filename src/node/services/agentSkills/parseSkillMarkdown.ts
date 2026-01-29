@@ -104,5 +104,12 @@ export function parseSkillMarkdown(input: {
     );
   }
 
-  return { frontmatter: parsed.data, body };
+  // Normalize deprecated `hidden: true` into the canonical `advertise: false`.
+  // We keep parsing `hidden` for backwards compatibility with existing user skills.
+  const normalizedFrontmatter = {
+    ...parsed.data,
+    advertise: parsed.data.advertise ?? (parsed.data.hidden === true ? false : undefined),
+  };
+
+  return { frontmatter: normalizedFrontmatter, body };
 }
