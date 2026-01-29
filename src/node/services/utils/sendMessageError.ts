@@ -80,6 +80,11 @@ export const formatSendMessageError = (
         message: error.raw,
         errorType: "unknown",
       };
+    case "policy_denied":
+      return {
+        message: error.message,
+        errorType: "unknown",
+      };
   }
 };
 

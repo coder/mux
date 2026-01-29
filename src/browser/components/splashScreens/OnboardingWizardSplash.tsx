@@ -33,7 +33,9 @@ import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { getAgentsInitNudgeKey } from "@/common/constants/storage";
-import { PROVIDER_DISPLAY_NAMES, SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 
 interface OAuthMessage {
   type?: unknown;
@@ -183,6 +185,13 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [stepIndex, setStepIndex] = useState(0);
 
   const { open: openSettings } = useSettings();
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
+  const visibleProviders = useMemo(
+    () => getAllowedProvidersForUi(effectivePolicy),
+    [effectivePolicy]
+  );
   const { config: providersConfig, loading: providersLoading } = useProvidersConfig();
   const { addProject, projects } = useProjectContext();
 
@@ -438,9 +447,8 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           : "Login with Mux Gateway";
 
   const configuredProviders = useMemo(
-    () =>
-      SUPPORTED_PROVIDERS.filter((provider) => providersConfig?.[provider]?.isConfigured === true),
-    [providersConfig]
+    () => visibleProviders.filter((provider) => providersConfig?.[provider]?.isConfigured === true),
+    [providersConfig, visibleProviders]
   );
 
   const configuredProvidersSummary = useMemo(() => {
@@ -608,7 +616,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           <div className="mt-3">
             <div className="text-foreground mb-2 text-xs font-medium">Available providers</div>
             <div className="grid grid-cols-2 gap-2">
-              {SUPPORTED_PROVIDERS.map((provider) => {
+              {visibleProviders.map((provider) => {
                 const configured = providersConfig?.[provider]?.isConfigured === true;
 
                 return (
@@ -845,6 +853,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     projects.size,
     providersConfig,
     startMuxGatewayLogin,
+    visibleProviders,
   ]);
 
   useEffect(() => {

@@ -7,11 +7,12 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
-import { Eye, Settings, Star } from "lucide-react";
+import { Eye, Settings, ShieldCheck, Star } from "lucide-react";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
@@ -53,6 +54,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     ref
   ) => {
     useSettings(); // Context must be available for nested components
+    const policyState = usePolicy();
+    const policyEnforced = policyState.status.state === "enforced";
     const gateway = useGateway();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
@@ -460,7 +463,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
             {/* Footer actions */}
             {(hiddenModels.length > 0 || onOpenSettings) && (
-              <div className="border-border-light flex items-center justify-between gap-2 border-t px-2.5 py-1.5">
+              <div className="border-border-light flex items-center gap-2 border-t px-2.5 py-1.5">
                 {hiddenModels.length > 0 && (
                   <button
                     type="button"
@@ -475,26 +478,36 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     {showAllModels ? "Show fewer models" : "Show all models…"}
                   </button>
                 )}
-                {onOpenSettings && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          onOpenSettings();
-                        }}
-                        className="text-muted-light hover:text-foreground ml-auto flex items-center text-[10px] transition-colors"
-                        aria-label="Model Settings"
-                      >
-                        <Settings className="h-3 w-3" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent align="center">Model Settings</TooltipContent>
-                  </Tooltip>
-                )}
+
+                <div className="ml-auto flex items-center gap-2">
+                  {policyEnforced && (
+                    <div className="text-muted-light flex items-center gap-1 text-[10px]">
+                      <ShieldCheck className="h-3 w-3" aria-hidden />
+                      <span>Your settings are controlled by a policy.</span>
+                    </div>
+                  )}
+
+                  {onOpenSettings && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onOpenSettings();
+                          }}
+                          className="text-muted-light hover:text-foreground flex items-center text-[10px] transition-colors"
+                          aria-label="Model Settings"
+                        >
+                          <Settings className="h-3 w-3" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent align="center">Model Settings</TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
               </div>
             )}
           </div>

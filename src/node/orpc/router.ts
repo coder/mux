@@ -590,6 +590,50 @@ export const router = (authToken?: string) => {
           }
         }),
     },
+    policy: {
+      get: t
+        .input(schemas.policy.get.input)
+        .output(schemas.policy.get.output)
+        .handler(({ context }) => context.policyService.getPolicyGetResponse()),
+      onChanged: t
+        .input(schemas.policy.onChanged.input)
+        .output(schemas.policy.onChanged.output)
+        .handler(async function* ({ context }) {
+          let resolveNext: (() => void) | null = null;
+          let pendingNotification = false;
+          let ended = false;
+
+          const push = () => {
+            if (ended) return;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            } else {
+              pendingNotification = true;
+            }
+          };
+
+          const unsubscribe = context.policyService.onPolicyChanged(push);
+
+          try {
+            while (!ended) {
+              if (pendingNotification) {
+                pendingNotification = false;
+                yield undefined;
+                continue;
+              }
+              await new Promise<void>((resolve) => {
+                resolveNext = resolve;
+              });
+              yield undefined;
+            }
+          } finally {
+            ended = true;
+            unsubscribe();
+          }
+        }),
+    },
     muxGatewayOauth: {
       startDesktopFlow: t
         .input(schemas.muxGatewayOauth.startDesktopFlow.input)
@@ -724,7 +768,22 @@ export const router = (authToken?: string) => {
         list: t
           .input(schemas.projects.mcp.list.input)
           .output(schemas.projects.mcp.list.output)
-          .handler(({ context, input }) => context.mcpConfigService.listServers(input.projectPath)),
+          .handler(async ({ context, input }) => {
+            const servers = await context.mcpConfigService.listServers(input.projectPath);
+
+            if (!context.policyService.isEnforced()) {
+              return servers;
+            }
+
+            const filtered: typeof servers = {};
+            for (const [name, info] of Object.entries(servers)) {
+              if (context.policyService.isMcpTransportAllowed(info.transport)) {
+                filtered[name] = info;
+              }
+            }
+
+            return filtered;
+          }),
         add: t
           .input(schemas.projects.mcp.add.input)
           .output(schemas.projects.mcp.add.output)
@@ -733,6 +792,11 @@ export const router = (authToken?: string) => {
             const existingServer = existing[input.name];
 
             const transport = input.transport ?? "stdio";
+            if (context.policyService.isEnforced()) {
+              if (!context.policyService.isMcpTransportAllowed(transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
             const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
             const usesSecretHeaders = Boolean(
               input.headers &&
@@ -787,6 +851,12 @@ export const router = (authToken?: string) => {
             const existing = await context.mcpConfigService.listServers(input.projectPath);
             const server = existing[input.name];
 
+            if (context.policyService.isEnforced() && server) {
+              if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
+
             const result = await context.mcpConfigService.removeServer(
               input.projectPath,
               input.name
@@ -832,6 +902,12 @@ export const router = (authToken?: string) => {
 
             const transport =
               configuredTransport ?? (input.command ? "stdio" : (input.transport ?? "auto"));
+
+            if (context.policyService.isEnforced()) {
+              if (!context.policyService.isMcpTransportAllowed(transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
 
             const result = await context.mcpServerManager.test({
               projectPath: input.projectPath,
@@ -885,6 +961,12 @@ export const router = (authToken?: string) => {
             const existing = await context.mcpConfigService.listServers(input.projectPath);
             const server = existing[input.name];
 
+            if (context.policyService.isEnforced() && server) {
+              if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
+
             const result = await context.mcpConfigService.setServerEnabled(
               input.projectPath,
               input.name,
@@ -923,6 +1005,12 @@ export const router = (authToken?: string) => {
           .handler(async ({ context, input }) => {
             const existing = await context.mcpConfigService.listServers(input.projectPath);
             const server = existing[input.name];
+
+            if (context.policyService.isEnforced() && server) {
+              if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
 
             const result = await context.mcpConfigService.setToolAllowlist(
               input.projectPath,
@@ -1668,6 +1756,16 @@ export const router = (authToken?: string) => {
           .input(schemas.workspace.mcp.get.input)
           .output(schemas.workspace.mcp.get.output)
           .handler(async ({ context, input }) => {
+            const policy = context.policyService.getEffectivePolicy();
+            const mcpDisabledByPolicy =
+              context.policyService.isEnforced() &&
+              policy?.mcp.allowUserDefined.stdio === false &&
+              policy.mcp.allowUserDefined.remote === false;
+
+            if (mcpDisabledByPolicy) {
+              return {};
+            }
+
             try {
               return await context.workspaceMcpOverridesService.getOverridesForWorkspace(
                 input.workspaceId
