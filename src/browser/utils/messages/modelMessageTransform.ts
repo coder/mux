@@ -142,14 +142,14 @@ export function addInterruptedSentinel(messages: MuxMessage[]): MuxMessage[] {
  * Inserts a synthetic user message before the final user message to signal the agent switch.
  * This provides temporal context that helps models understand they should follow new agent instructions.
  *
- * When transitioning from plan → exec with plan content, includes the plan so the model
+ * When transitioning from plan → exec/orchestrator with plan content, includes the plan so the model
  * can evaluate its relevance to the current request.
  *
  * @param messages The conversation history
  * @param currentAgentId The agent id for the upcoming assistant response
  * @param toolNames Optional list of available tool names to include in transition message
- * @param planContent Optional plan content to include when transitioning plan → exec
- * @param planFilePath Optional plan file path to include when transitioning plan → exec
+ * @param planContent Optional plan content to include when transitioning plan → exec/orchestrator
+ * @param planFilePath Optional plan file path to include when transitioning plan → exec/orchestrator
  * @returns Messages with agent transition context injected if needed
  */
 export function injectAgentTransition(
@@ -212,16 +212,25 @@ export function injectAgentTransition(
     transitionText += "]";
   }
 
-  // When transitioning from the plan agent to the exec agent, include the plan for context.
-  // Keep this narrow so internal exec-like agents (e.g. orchestrators) don't auto-ingest big plans.
+  // When transitioning from the plan agent to exec/orchestrator, include the plan for context.
+  // This avoids wasting tokens on tool calls just to re-read the plan file.
   const transitioningFromPlan = lastAgentId === "plan";
-  const transitioningToExec = currentAgentId === "exec";
-  if (planContent && transitioningFromPlan && transitioningToExec) {
+  const transitioningToExecOrOrchestrator =
+    currentAgentId === "exec" || currentAgentId === "orchestrator";
+  if (planContent && transitioningFromPlan && transitioningToExecOrOrchestrator) {
     const planFilePathText = planFilePath ? `Plan file path: ${planFilePath}\n\n` : "";
+    const nextStepText =
+      currentAgentId === "orchestrator"
+        ? "orchestrate its implementation (do not re-plan)."
+        : "implement it directly (do not re-plan).";
+    const followupText =
+      currentAgentId === "orchestrator"
+        ? "Only do extra exploration if the plan is missing critical details or conflicts with the repo:"
+        : "Only do extra exploration or spawn sub-agents if the plan is missing critical details or conflicts with the repo:";
     transitionText += `
 
-${planFilePathText}The following plan was developed in the plan agent. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, implement it directly (do not re-plan).
-Only do extra exploration or spawn sub-agents if the plan is missing critical details or conflicts with the repo:
+${planFilePathText}The following plan was developed in the plan agent. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, ${nextStepText}
+${followupText}
 
 <plan>
 ${planContent}

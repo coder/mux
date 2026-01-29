@@ -1140,7 +1140,7 @@ describe("injectAgentTransition", () => {
     }
   });
 
-  it("should NOT include plan content when transitioning from plan to orchestrator", () => {
+  it("should include plan content when transitioning from plan to orchestrator", () => {
     const messages: MuxMessage[] = [
       {
         id: "user-1",
@@ -1175,13 +1175,17 @@ describe("injectAgentTransition", () => {
     expect(result.length).toBe(4);
     const transitionMessage = result[2];
     const textPart = transitionMessage.parts[0];
+    expect(textPart.type).toBe("text");
     if (textPart.type === "text") {
-      expect(textPart.text).toBe(
+      expect(textPart.text).toContain(
         "[Agent switched from plan to orchestrator. Follow orchestrator agent instructions.]"
       );
-      expect(textPart.text).not.toContain("<plan>");
-      expect(textPart.text).not.toContain(planContent);
-      expect(textPart.text).not.toContain(planFilePath);
+      expect(textPart.text).toContain(`Plan file path: ${planFilePath}`);
+      expect(textPart.text).toContain("orchestrate its implementation");
+      expect(textPart.text).not.toContain("spawn sub-agents");
+      expect(textPart.text).toContain("<plan>");
+      expect(textPart.text).toContain(planContent);
+      expect(textPart.text).toContain("</plan>");
     }
   });
 
