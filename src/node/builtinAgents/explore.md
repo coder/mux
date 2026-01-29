@@ -1,6 +1,6 @@
 ---
 name: Explore
-description: Read-only repository exploration
+description: Read-only exploration of repository, environment, web, etc. Useful for investigation before making changes.
 base: exec
 ui:
   hidden: true

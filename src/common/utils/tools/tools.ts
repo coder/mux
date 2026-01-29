@@ -39,6 +39,8 @@ import type { BackgroundProcessManager } from "@/node/services/backgroundProcess
 import type { TaskService } from "@/node/services/taskService";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { FileState } from "@/node/services/agentSession";
+import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
+import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
 /**
  * Configuration for tools that need runtime context
@@ -79,6 +81,10 @@ export interface ToolConfiguration {
   enableAgentReport?: boolean;
   /** PTC experiments inherited from parent (for subagent spawning) */
   experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean };
+  /** Available sub-agents for the task tool description (dynamic context) */
+  availableSubagents?: AgentDefinitionDescriptor[];
+  /** Available skills for the agent_skill_read tool description (dynamic context) */
+  availableSkills?: AgentSkillDescriptor[];
 }
 
 /**
