@@ -205,6 +205,16 @@ export async function addProjectViaUI(view: RenderedApp, projectPath: string): P
       .filter((value): value is string => !!value)
   );
 
+  // Shared UI test state can already include the project; avoid re-adding it and
+  // triggering the "Project already exists" dialog error.
+  const normalizedInputPath = projectPath.replace(/[\\/]+$/, "");
+  const existingMatch = Array.from(existingProjectPaths).find((existingPath) => {
+    return existingPath.replace(/[\\/]+$/, "") === normalizedInputPath;
+  });
+  if (existingMatch) {
+    return existingMatch;
+  }
+
   const addProjectButton = await waitFor(
     () => {
       const button = view.container.querySelector('[aria-label="Add project"]');
