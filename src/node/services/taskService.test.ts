@@ -1882,7 +1882,15 @@ describe("TaskService", () => {
       }) => Promise<void>;
     };
 
-    await internal.handleAgentReport({
+    const parentSessionDir = config.getSessionDir(parentId);
+    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
+
+    const waiter = taskService.waitForAgentReport(childId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentId,
+    });
+
+    const handleReportPromise = internal.handleAgentReport({
       type: "tool-call-end",
       workspaceId: childId,
       messageId: "assistant-child-partial",
@@ -1892,11 +1900,17 @@ describe("TaskService", () => {
       timestamp: Date.now(),
     });
 
+    const report = await waiter;
+    expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
+
+    const artifactAfterWait = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(artifactAfterWait).not.toBeNull();
+    expect(["pending", "ready"]).toContain(artifactAfterWait!.status);
+
+    await handleReportPromise;
+
     // Cleanup should be deferred until git-format-patch generation completes.
     expect(remove).not.toHaveBeenCalled();
-
-    const parentSessionDir = config.getSessionDir(parentId);
-    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
 
     const start = Date.now();
     let lastArtifact: unknown = null;

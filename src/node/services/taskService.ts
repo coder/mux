@@ -2126,14 +2126,13 @@ export class TaskService {
 
     await this.deliverReportToParent(parentWorkspaceId, latestChildEntry, reportArgs);
 
-    // Resolve foreground waiters.
-    this.resolveWaiters(childWorkspaceId, reportArgs);
-
-    // Free slot and start queued tasks.
-    await this.maybeStartQueuedTasks();
-
-    // Begin git-format-patch generation (best-effort). This must run before cleanup so the
-    // reported task workspace isn't deleted while we're still reading commits from it.
+    // Begin git-format-patch generation (best-effort).
+    //
+    // This must run before cleanup so the reported task workspace isn't deleted while we're still
+    // reading commits from it.
+    //
+    // It must also run before resolving waiters so an immediate `task_await` result after
+    // `agent_report` can include at least a pending artifact record.
     try {
       await this.maybeStartSubagentGitPatchArtifactGeneration(parentWorkspaceId, childWorkspaceId);
     } catch (error: unknown) {
@@ -2143,6 +2142,12 @@ export class TaskService {
         error,
       });
     }
+
+    // Resolve foreground waiters.
+    this.resolveWaiters(childWorkspaceId, reportArgs);
+
+    // Free slot and start queued tasks.
+    await this.maybeStartQueuedTasks();
 
     // Attempt cleanup of reported tasks (leaf-first).
     await this.cleanupReportedLeafTask(childWorkspaceId);
