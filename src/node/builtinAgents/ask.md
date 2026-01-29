@@ -3,7 +3,7 @@ name: Ask
 description: Delegate questions to Explore sub-agents and synthesize an answer.
 base: exec
 ui:
-  color: "#6b5bff"
+  color: var(--color-ask-mode)
 subagent:
   runnable: false
 tools:
