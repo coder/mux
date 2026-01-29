@@ -101,7 +101,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
       <ToolHeader onClick={toggleExpanded}>
         <ExpandIcon expanded={expanded}>▶</ExpandIcon>
         <ToolIcon toolName="task_apply_git_patch" />
-        <ToolName>task_apply_git_patch</ToolName>
+        <ToolName>Apply patch</ToolName>
         <span className="text-muted ml-1 max-w-40 truncate text-[10px]">{taskId}</span>
         {isDryRun && <span className="text-backgrounded text-[10px] font-medium">dry-run</span>}
         {successResult && (
