@@ -348,10 +348,13 @@ export class SSHRuntime extends RemoteRuntime {
       this.ensureReadyWorkspaceName
     );
     const gitDir = path.posix.join(workspacePath, ".git");
+    const gitDirProbe = this.quoteForRemote(gitDir);
 
     let testResult: { exitCode: number; stderr: string };
     try {
-      testResult = await execBuffered(this, `test -d ${this.quoteForRemote(gitDir)}`, {
+      // .git is a file for worktrees; accept either file or directory so existing SSH/Coder
+      // worktree checkouts don't get flagged as setup failures.
+      testResult = await execBuffered(this, `test -d ${gitDirProbe} || test -f ${gitDirProbe}`, {
         cwd: "~",
         timeout: 10,
         abortSignal: options?.signal,
