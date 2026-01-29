@@ -936,7 +936,19 @@ export const ApiServerStatusSchema = z.object({
   configuredServeWebUi: z.boolean(),
 });
 
+export const StartupNoticeSchema = z.object({
+  id: z.string(),
+  level: z.enum(["info", "warning"]),
+  title: z.string(),
+  message: z.string(),
+  details: z.array(z.string()).optional(),
+});
+
 export const server = {
+  getStartupNotices: {
+    input: z.void(),
+    output: z.array(StartupNoticeSchema),
+  },
   getLaunchProject: {
     input: z.void(),
     output: z.string().nullable(),

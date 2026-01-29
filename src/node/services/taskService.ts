@@ -1165,8 +1165,24 @@ export class TaskService {
     const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
     const result: string[] = [];
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
+    const visited = new Set<string>();
+    let warned = false;
+    const warnCycle = () => {
+      if (warned) return;
+      warned = true;
+      log.warn("Detected possible parentWorkspaceId cycle while listing active descendants", {
+        workspaceId,
+      });
+    };
+
     while (stack.length > 0) {
       const next = stack.pop()!;
+      if (visited.has(next)) {
+        warnCycle();
+        continue;
+      }
+      visited.add(next);
+
       const status = index.byId.get(next)?.taskStatus;
       if (status && activeStatuses.has(status)) {
         result.push(next);
@@ -1174,6 +1190,10 @@ export class TaskService {
       const children = index.childrenByParent.get(next);
       if (children) {
         for (const child of children) {
+          if (visited.has(child)) {
+            warnCycle();
+            continue;
+          }
           stack.push(child);
         }
       }
@@ -1200,8 +1220,24 @@ export class TaskService {
       stack.push({ taskId: childTaskId, depth: 1 });
     }
 
+    const visited = new Set<string>();
+    let warned = false;
+    const warnCycle = () => {
+      if (warned) return;
+      warned = true;
+      log.warn("Detected possible parentWorkspaceId cycle while listing descendants", {
+        workspaceId,
+      });
+    };
+
     while (stack.length > 0) {
       const next = stack.pop()!;
+      if (visited.has(next.taskId)) {
+        warnCycle();
+        continue;
+      }
+      visited.add(next.taskId);
+
       const entry = index.byId.get(next.taskId);
       if (!entry) continue;
 
@@ -1227,6 +1263,10 @@ export class TaskService {
       }
 
       for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
+        if (visited.has(childTaskId)) {
+          warnCycle();
+          continue;
+        }
         stack.push({ taskId: childTaskId, depth: next.depth + 1 });
       }
     }
@@ -1287,12 +1327,31 @@ export class TaskService {
 
     const result: string[] = [];
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
+    const visited = new Set<string>();
+    let warned = false;
+    const warnCycle = () => {
+      if (warned) return;
+      warned = true;
+      log.warn("Detected possible parentWorkspaceId cycle while listing descendant IDs", {
+        workspaceId,
+      });
+    };
+
     while (stack.length > 0) {
       const next = stack.pop()!;
+      if (visited.has(next)) {
+        warnCycle();
+        continue;
+      }
+      visited.add(next);
       result.push(next);
       const children = index.childrenByParent.get(next);
       if (children) {
         for (const child of children) {
+          if (visited.has(child)) {
+            warnCycle();
+            continue;
+          }
           stack.push(child);
         }
       }
@@ -1434,8 +1493,24 @@ export class TaskService {
 
     const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
     const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
+    const visited = new Set<string>();
+    let warned = false;
+    const warnCycle = () => {
+      if (warned) return;
+      warned = true;
+      log.warn("Detected possible parentWorkspaceId cycle while checking active descendants", {
+        workspaceId,
+      });
+    };
+
     while (stack.length > 0) {
       const next = stack.pop()!;
+      if (visited.has(next)) {
+        warnCycle();
+        continue;
+      }
+      visited.add(next);
+
       const status = index.byId.get(next)?.taskStatus;
       if (status && activeStatuses.has(status)) {
         return true;
@@ -1443,6 +1518,10 @@ export class TaskService {
       const children = index.childrenByParent.get(next);
       if (children) {
         for (const child of children) {
+          if (visited.has(child)) {
+            warnCycle();
+            continue;
+          }
           stack.push(child);
         }
       }

@@ -330,16 +330,20 @@ export function partitionWorkspacesBySection(
 
   // Resolve effective section for a workspace (inherit from parent if unset)
   const resolveSection = (workspace: FrontendWorkspaceMetadata): string | undefined => {
-    if (workspace.sectionId && sectionIds.has(workspace.sectionId)) {
-      return workspace.sectionId;
-    }
-    // Inherit from parent if child has no section
-    if (workspace.parentWorkspaceId) {
-      const parent = byId.get(workspace.parentWorkspaceId);
-      if (parent) {
-        return resolveSection(parent);
+    const visited = new Set<string>();
+    let current: FrontendWorkspaceMetadata | undefined = workspace;
+
+    for (let depth = 0; depth < 32 && current; depth++) {
+      if (current.sectionId && sectionIds.has(current.sectionId)) {
+        return current.sectionId;
       }
+      const parentId = current.parentWorkspaceId;
+      if (!parentId) return undefined;
+      if (visited.has(parentId)) return undefined;
+      visited.add(parentId);
+      current = byId.get(parentId);
     }
+
     return undefined;
   };
 

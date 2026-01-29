@@ -330,6 +330,12 @@ async function loadServices(): Promise<void> {
   ]);
   /* eslint-enable no-restricted-syntax */
   config = new ConfigClass();
+  try {
+    // Best-effort config repair before services initialize (avoid startup crashes on corrupted state).
+    await config.sanitizePersistedConfig();
+  } catch (error) {
+    console.warn(`[${timestamp()}] Failed to sanitize config.json:`, error);
+  }
 
   services = new ServiceContainerClass(config);
   await services.initialize();

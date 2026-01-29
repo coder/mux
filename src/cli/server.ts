@@ -86,6 +86,12 @@ const mockWindow: BrowserWindow = {
   }
 
   const config = new Config();
+  try {
+    await config.sanitizePersistedConfig();
+  } catch (error) {
+    console.warn("Failed to sanitize config.json:", error);
+  }
+
   const serviceContainer = new ServiceContainer(config);
   await serviceContainer.initialize();
   serviceContainer.windowService.setMainWindow(mockWindow);

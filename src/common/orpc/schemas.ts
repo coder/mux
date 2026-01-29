@@ -159,6 +159,7 @@ export {
 // API router schemas
 export {
   ApiServerStatusSchema,
+  StartupNoticeSchema,
   AWSCredentialStatusSchema,
   coder,
   CoderInfoSchema,

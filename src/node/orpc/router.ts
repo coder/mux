@@ -138,6 +138,12 @@ export const router = (authToken?: string) => {
         }),
     },
     server: {
+      getStartupNotices: t
+        .input(schemas.server.getStartupNotices.input)
+        .output(schemas.server.getStartupNotices.output)
+        .handler(({ context }) => {
+          return context.config.consumeStartupNotices();
+        }),
       getLaunchProject: t
         .input(schemas.server.getLaunchProject.input)
         .output(schemas.server.getLaunchProject.output)

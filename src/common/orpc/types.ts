@@ -39,6 +39,7 @@ export type FrontendWorkspaceMetadataSchemaType = z.infer<
 
 // Server types (single source of truth - derived from schemas)
 export type ApiServerStatus = z.infer<typeof schemas.ApiServerStatusSchema>;
+export type StartupNotice = z.infer<typeof schemas.StartupNoticeSchema>;
 // Experiment types (single source of truth - derived from schemas)
 
 // Policy types (single source of truth - derived from schemas)

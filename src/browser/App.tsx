@@ -70,6 +70,7 @@ import { ExperimentsProvider } from "./contexts/ExperimentsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
+import { StartupNoticeBanner } from "./components/StartupNoticeBanner";
 import { isDesktopMode } from "./hooks/useDesktopTitlebar";
 import { cn } from "@/common/lib/utils";
 
@@ -800,6 +801,7 @@ function AppInner() {
         <div className="mobile-main-content flex min-w-0 flex-1 flex-col overflow-hidden">
           <WindowsToolchainBanner />
           <RosettaBanner />
+          <StartupNoticeBanner />
           <div className="mobile-layout flex flex-1 overflow-hidden">
             {selectedWorkspace ? (
               (() => {

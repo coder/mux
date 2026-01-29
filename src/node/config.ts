@@ -4,6 +4,8 @@ import * as crypto from "crypto";
 import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
+import { SectionConfigSchema, WorkspaceConfigSchema } from "@/common/orpc/schemas";
+import type { StartupNotice } from "@/common/orpc/types";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { Secret, SecretsConfig } from "@/common/types/secrets";
 import type {
@@ -90,6 +92,27 @@ function parseOptionalPort(value: unknown): number | undefined {
 }
 export type ProvidersConfig = Record<string, ProviderConfig>;
 
+const SANITIZATION_DETAIL_LIMIT = 6;
+
+export interface SanitizationSummary {
+  workspaceListsReset: number;
+  workspacesDropped: number;
+  pathsRepaired: number;
+  orphanParentsCleared: number;
+  cycleParentsCleared: number;
+  cyclesBroken: number;
+  sectionsDropped: number;
+  fieldsNormalized: number;
+  projectsTouched: number;
+  details: string[];
+  detailsOverflow: number;
+}
+
+export interface SanitizationResult {
+  config: ProjectsConfig;
+  summary: SanitizationSummary;
+}
+
 /**
  * Config - Centralized configuration management
  *
@@ -103,6 +126,7 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private pendingStartupNotices: StartupNotice[] = [];
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
@@ -322,6 +346,46 @@ export class Config {
     await this.saveConfig(newConfig);
   }
 
+  consumeStartupNotices(): StartupNotice[] {
+    const notices = [...this.pendingStartupNotices];
+    this.pendingStartupNotices = [];
+    return notices;
+  }
+
+  async sanitizePersistedConfig(): Promise<void> {
+    try {
+      const config = this.loadConfigOrDefault();
+      const result = sanitizeProjectsConfig(config);
+      if (!hasSanitizationChanges(result.summary)) {
+        return;
+      }
+
+      await this.saveConfig(result.config);
+
+      const notice = buildConfigSanitizationNotice(result.summary);
+      if (notice) {
+        // Surface auto-repairs to avoid silent data loss when config.json is sanitized on startup.
+        this.pendingStartupNotices.push(notice);
+      }
+
+      log.warn("Sanitized mux config.json at startup", {
+        workspaceListsReset: result.summary.workspaceListsReset,
+        workspacesDropped: result.summary.workspacesDropped,
+        pathsRepaired: result.summary.pathsRepaired,
+        orphanParentsCleared: result.summary.orphanParentsCleared,
+        cycleParentsCleared: result.summary.cycleParentsCleared,
+        cyclesBroken: result.summary.cyclesBroken,
+        sectionsDropped: result.summary.sectionsDropped,
+        fieldsNormalized: result.summary.fieldsNormalized,
+        projectsTouched: result.summary.projectsTouched,
+      });
+    } catch (error) {
+      log.warn("sanitizePersistedConfig failed; continuing", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   /**
    * Cross-client feature flag overrides (shared via ~/.mux/config.json).
    */
@@ -453,14 +517,38 @@ export class Config {
       for (const workspace of project.workspaces) {
         // NEW FORMAT: Check config first (primary source of truth after migration)
         if (workspace.id === workspaceId) {
+          if (typeof workspace.path !== "string" || workspace.path.trim().length === 0) {
+            log.warn("Skipping workspace with invalid path in config", {
+              projectPath,
+              workspaceId,
+            });
+            continue;
+          }
           return { workspacePath: workspace.path, projectPath };
         }
 
         // LEGACY FORMAT: Fall back to metadata.json and legacy ID for unmigrated workspaces
         if (!workspace.id) {
+          if (typeof workspace.path !== "string") {
+            log.warn("Skipping workspace with invalid path in config", {
+              projectPath,
+              workspaceId,
+            });
+            continue;
+          }
+
+          const workspacePath = workspace.path.trim();
+          if (!workspacePath) {
+            log.warn("Skipping workspace with invalid path in config", {
+              projectPath,
+              workspaceId,
+            });
+            continue;
+          }
+
           // Extract workspace basename (could be stable ID or legacy name)
           const workspaceBasename =
-            workspace.path.split("/").pop() ?? workspace.path.split("\\").pop() ?? "unknown";
+            workspacePath.split("/").pop() ?? workspacePath.split("\\").pop() ?? "unknown";
 
           // Try loading metadata with basename as ID (works for old workspaces)
           const metadataPath = path.join(this.getSessionDir(workspaceBasename), "metadata.json");
@@ -469,7 +557,7 @@ export class Config {
               const data = fs.readFileSync(metadataPath, "utf-8");
               const metadata = JSON.parse(data) as WorkspaceMetadata;
               if (metadata.id === workspaceId) {
-                return { workspacePath: workspace.path, projectPath };
+                return { workspacePath, projectPath };
               }
             } catch {
               // Ignore parse errors, try legacy ID
@@ -477,9 +565,9 @@ export class Config {
           }
 
           // Try legacy ID format as last resort
-          const legacyId = this.generateLegacyId(projectPath, workspace.path);
+          const legacyId = this.generateLegacyId(projectPath, workspacePath);
           if (legacyId === workspaceId) {
-            return { workspacePath: workspace.path, projectPath };
+            return { workspacePath, projectPath };
           }
         }
       }
@@ -547,9 +635,18 @@ export class Config {
       const projectName = this.getProjectName(projectPath);
 
       for (const workspace of projectConfig.workspaces) {
+        if (typeof workspace.path !== "string" || workspace.path.trim().length === 0) {
+          log.warn("Skipping workspace with invalid path in config", {
+            projectPath,
+            workspaceId: workspace.id,
+          });
+          continue;
+        }
+
+        const workspacePath = workspace.path.trim();
         // Extract workspace basename from path (could be stable ID or legacy name)
         const workspaceBasename =
-          workspace.path.split("/").pop() ?? workspace.path.split("\\").pop() ?? "unknown";
+          workspacePath.split("/").pop() ?? workspacePath.split("\\").pop() ?? "unknown";
 
         try {
           // NEW FORMAT: If workspace has metadata in config, use it directly
@@ -622,13 +719,13 @@ export class Config {
               };
             }
 
-            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspacePath, projectPath));
             continue; // Skip metadata file lookup
           }
 
           // LEGACY FORMAT: Fall back to reading metadata.json
           // Try legacy ID format first (project-workspace) - used by E2E tests and old workspaces
-          const legacyId = this.generateLegacyId(projectPath, workspace.path);
+          const legacyId = this.generateLegacyId(projectPath, workspacePath);
           const metadataPath = path.join(this.getSessionDir(legacyId), "metadata.json");
           let metadataFound = false;
 
@@ -684,13 +781,13 @@ export class Config {
             workspace.runtimeConfig = metadata.runtimeConfig;
             configModified = true;
 
-            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspacePath, projectPath));
             metadataFound = true;
           }
 
           // No metadata found anywhere - create basic metadata
           if (!metadataFound) {
-            const legacyId = this.generateLegacyId(projectPath, workspace.path);
+            const legacyId = this.generateLegacyId(projectPath, workspacePath);
             const metadata: WorkspaceMetadata = {
               id: legacyId,
               name: workspaceBasename,
@@ -729,12 +826,12 @@ export class Config {
             workspace.runtimeConfig = metadata.runtimeConfig;
             configModified = true;
 
-            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+            workspaceMetadata.push(this.addPathsToMetadata(metadata, workspacePath, projectPath));
           }
         } catch (error) {
           log.error(`Failed to load/migrate workspace metadata:`, error);
           // Fallback to basic metadata if migration fails
-          const legacyId = this.generateLegacyId(projectPath, workspace.path);
+          const legacyId = this.generateLegacyId(projectPath, workspacePath);
           const metadata: WorkspaceMetadata = {
             id: legacyId,
             name: workspaceBasename,
@@ -763,7 +860,7 @@ export class Config {
             taskTrunkBranch: workspace.taskTrunkBranch,
             sectionId: workspace.sectionId,
           };
-          workspaceMetadata.push(this.addPathsToMetadata(metadata, workspace.path, projectPath));
+          workspaceMetadata.push(this.addPathsToMetadata(metadata, workspacePath, projectPath));
         }
       }
     }
@@ -981,6 +1078,319 @@ ${jsonString}`;
     config[projectPath] = secrets;
     await this.saveSecretsConfig(config);
   }
+}
+
+function createSanitizationSummary(): SanitizationSummary {
+  return {
+    workspaceListsReset: 0,
+    workspacesDropped: 0,
+    pathsRepaired: 0,
+    orphanParentsCleared: 0,
+    cycleParentsCleared: 0,
+    cyclesBroken: 0,
+    sectionsDropped: 0,
+    fieldsNormalized: 0,
+    projectsTouched: 0,
+    details: [],
+    detailsOverflow: 0,
+  };
+}
+
+function addSanitizationDetail(summary: SanitizationSummary, detail: string): void {
+  if (summary.details.length < SANITIZATION_DETAIL_LIMIT) {
+    summary.details.push(detail);
+    return;
+  }
+
+  summary.detailsOverflow += 1;
+}
+
+function formatWorkspaceLabel(workspace: Workspace, projectPath: string): string {
+  const workspacePath = typeof workspace.path === "string" ? workspace.path : "";
+  const pathLabel = workspacePath ? path.basename(workspacePath) : "unknown workspace";
+  const name = workspace.title ?? workspace.name ?? workspace.id ?? pathLabel;
+  const projectLabel = path.basename(projectPath) || projectPath;
+  return `${name} (${projectLabel})`;
+}
+
+function formatCount(count: number, label: string): string {
+  if (count === 1) {
+    return `${count} ${label}`;
+  }
+  return `${count} ${label}s`;
+}
+
+function hasSanitizationChanges(summary: SanitizationSummary): boolean {
+  return (
+    summary.workspaceListsReset > 0 ||
+    summary.workspacesDropped > 0 ||
+    summary.pathsRepaired > 0 ||
+    summary.orphanParentsCleared > 0 ||
+    summary.cycleParentsCleared > 0 ||
+    summary.cyclesBroken > 0 ||
+    summary.sectionsDropped > 0 ||
+    summary.fieldsNormalized > 0 ||
+    summary.projectsTouched > 0
+  );
+}
+
+function buildConfigSanitizationNotice(summary: SanitizationSummary): StartupNotice | null {
+  if (!hasSanitizationChanges(summary)) {
+    return null;
+  }
+
+  const changes: string[] = [];
+  if (summary.workspacesDropped > 0) {
+    changes.push(formatCount(summary.workspacesDropped, "workspace removed"));
+  }
+  if (summary.pathsRepaired > 0) {
+    changes.push(formatCount(summary.pathsRepaired, "path repaired"));
+  }
+  if (summary.orphanParentsCleared > 0) {
+    changes.push(formatCount(summary.orphanParentsCleared, "orphan parent cleared"));
+  }
+  if (summary.cycleParentsCleared > 0) {
+    changes.push(formatCount(summary.cycleParentsCleared, "cycle link cleared"));
+  }
+  if (summary.sectionsDropped > 0) {
+    changes.push(formatCount(summary.sectionsDropped, "invalid section removed"));
+  }
+  if (summary.fieldsNormalized > 0 && changes.length === 0) {
+    changes.push(formatCount(summary.fieldsNormalized, "field normalized"));
+  }
+
+  const message =
+    changes.length > 0
+      ? `Mux repaired config.json on startup: ${changes.join(", ")}.`
+      : "Mux repaired config.json on startup.";
+
+  const details =
+    summary.detailsOverflow > 0
+      ? [
+          ...summary.details,
+          `and ${summary.detailsOverflow} more change${summary.detailsOverflow === 1 ? "" : "s"}.`,
+        ]
+      : summary.details;
+
+  const level: StartupNotice["level"] =
+    summary.workspacesDropped > 0 || summary.cycleParentsCleared > 0 ? "warning" : "info";
+
+  return {
+    id: `config-sanitized-${Date.now()}`,
+    level,
+    title: "Mux repaired your config.json",
+    message,
+    details: details.length > 0 ? details : undefined,
+  };
+}
+
+type WorkspaceStringField = "id" | "name" | "title" | "parentWorkspaceId" | "sectionId";
+
+export function sanitizeProjectsConfig(config: ProjectsConfig): SanitizationResult {
+  const summary = createSanitizationSummary();
+
+  for (const [projectPath, project] of config.projects) {
+    let projectTouched = false;
+    const projectLabel = path.basename(projectPath) || projectPath;
+
+    if (!Array.isArray(project.workspaces)) {
+      summary.workspaceListsReset += 1;
+      project.workspaces = [];
+      projectTouched = true;
+    }
+
+    const rawWorkspaces = Array.isArray(project.workspaces)
+      ? (project.workspaces as unknown[])
+      : [];
+    const sanitizedWorkspaces: Workspace[] = [];
+
+    const normalizeWorkspaceField = (workspace: Workspace, field: WorkspaceStringField) => {
+      const value = workspace[field];
+      if (typeof value !== "string") return;
+      const trimmed = value.trim();
+      const nextValue = trimmed.length > 0 ? trimmed : undefined;
+      if (nextValue !== value) {
+        workspace[field] = nextValue;
+        summary.fieldsNormalized += 1;
+        projectTouched = true;
+      }
+    };
+
+    for (const candidate of rawWorkspaces) {
+      if (!candidate || typeof candidate !== "object") {
+        summary.workspacesDropped += 1;
+        projectTouched = true;
+        addSanitizationDetail(summary, `Dropped malformed workspace entry in ${projectLabel}.`);
+        continue;
+      }
+
+      const workspace = candidate as Workspace;
+
+      if (typeof workspace.path === "string") {
+        const trimmedPath = workspace.path.trim();
+        if (trimmedPath !== workspace.path) {
+          workspace.path = trimmedPath;
+          summary.fieldsNormalized += 1;
+          projectTouched = true;
+        }
+      }
+
+      normalizeWorkspaceField(workspace, "id");
+      normalizeWorkspaceField(workspace, "name");
+      normalizeWorkspaceField(workspace, "title");
+      normalizeWorkspaceField(workspace, "parentWorkspaceId");
+      normalizeWorkspaceField(workspace, "sectionId");
+
+      const hasValidPath =
+        typeof workspace.path === "string" &&
+        workspace.path.trim().length > 0 &&
+        path.isAbsolute(workspace.path);
+
+      if (!hasValidPath) {
+        const fallbackName = typeof workspace.name === "string" ? workspace.name.trim() : undefined;
+        if (fallbackName) {
+          workspace.path = path.join(projectPath, fallbackName);
+          summary.pathsRepaired += 1;
+          projectTouched = true;
+          addSanitizationDetail(
+            summary,
+            `Repaired path for workspace ${formatWorkspaceLabel(workspace, projectPath)}.`
+          );
+        }
+      }
+
+      const hasRepairedPath =
+        typeof workspace.path === "string" &&
+        workspace.path.trim().length > 0 &&
+        path.isAbsolute(workspace.path);
+      if (!hasRepairedPath) {
+        summary.workspacesDropped += 1;
+        projectTouched = true;
+        addSanitizationDetail(
+          summary,
+          `Dropped workspace ${formatWorkspaceLabel(workspace, projectPath)} due to invalid path.`
+        );
+        continue;
+      }
+
+      if (!WorkspaceConfigSchema.safeParse(workspace).success) {
+        summary.workspacesDropped += 1;
+        projectTouched = true;
+        addSanitizationDetail(
+          summary,
+          `Dropped invalid workspace entry ${formatWorkspaceLabel(workspace, projectPath)}.`
+        );
+        continue;
+      }
+
+      sanitizedWorkspaces.push(workspace);
+    }
+
+    project.workspaces = sanitizedWorkspaces;
+
+    if (Array.isArray(project.sections)) {
+      const rawSections = project.sections as unknown[];
+      const sanitizedSections: NonNullable<ProjectConfig["sections"]> = [];
+      for (const section of rawSections) {
+        if (SectionConfigSchema.safeParse(section).success) {
+          sanitizedSections.push(section as NonNullable<ProjectConfig["sections"]>[number]);
+        } else {
+          summary.sectionsDropped += 1;
+          projectTouched = true;
+          addSanitizationDetail(summary, `Dropped invalid section in ${projectLabel}.`);
+        }
+      }
+
+      if (sanitizedSections.length !== rawSections.length) {
+        project.sections = sanitizedSections.length > 0 ? sanitizedSections : undefined;
+      }
+    } else if (project.sections !== undefined) {
+      summary.sectionsDropped += 1;
+      projectTouched = true;
+      project.sections = undefined;
+      addSanitizationDetail(summary, `Dropped invalid section data in ${projectLabel}.`);
+    }
+
+    const byId = new Map<string, Workspace>();
+    for (const workspace of project.workspaces) {
+      if (typeof workspace.id !== "string") continue;
+      const trimmedId = workspace.id.trim();
+      if (!trimmedId) continue;
+      if (trimmedId !== workspace.id) {
+        workspace.id = trimmedId;
+        summary.fieldsNormalized += 1;
+        projectTouched = true;
+      }
+      byId.set(trimmedId, workspace);
+    }
+
+    for (const workspace of project.workspaces) {
+      if (typeof workspace.parentWorkspaceId !== "string") continue;
+      const parentId = workspace.parentWorkspaceId.trim();
+      if (!parentId || !byId.has(parentId)) {
+        workspace.parentWorkspaceId = undefined;
+        summary.orphanParentsCleared += 1;
+        projectTouched = true;
+        addSanitizationDetail(
+          summary,
+          `Cleared missing parent for workspace ${formatWorkspaceLabel(workspace, projectPath)}.`
+        );
+      } else if (parentId !== workspace.parentWorkspaceId) {
+        workspace.parentWorkspaceId = parentId;
+        summary.fieldsNormalized += 1;
+        projectTouched = true;
+      }
+    }
+
+    const processed = new Set<string>();
+    for (const id of byId.keys()) {
+      if (processed.has(id)) continue;
+      const chain: string[] = [];
+      const indexById = new Map<string, number>();
+      let current: string | undefined = id;
+      while (current) {
+        if (processed.has(current)) break;
+        const existingIndex = indexById.get(current);
+        if (existingIndex !== undefined) {
+          const cycleIds = chain.slice(existingIndex);
+          if (cycleIds.length > 0) {
+            summary.cyclesBroken += 1;
+            summary.cycleParentsCleared += cycleIds.length;
+            for (const cycleId of cycleIds) {
+              const node = byId.get(cycleId);
+              if (node) {
+                node.parentWorkspaceId = undefined;
+              }
+            }
+            projectTouched = true;
+            addSanitizationDetail(
+              summary,
+              `Broke parent cycle among ${cycleIds.length} workspace${
+                cycleIds.length === 1 ? "" : "s"
+              } in ${projectLabel}.`
+            );
+          }
+          break;
+        }
+
+        indexById.set(current, chain.length);
+        chain.push(current);
+        const parentId: string | undefined = byId.get(current)?.parentWorkspaceId;
+        if (typeof parentId !== "string" || !byId.has(parentId)) break;
+        current = parentId;
+      }
+
+      for (const visitedId of chain) {
+        processed.add(visitedId);
+      }
+    }
+
+    if (projectTouched) {
+      summary.projectsTouched += 1;
+    }
+  }
+
+  return { config, summary };
 }
 
 // Default instance for application use
