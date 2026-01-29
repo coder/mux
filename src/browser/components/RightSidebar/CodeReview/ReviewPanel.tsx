@@ -429,10 +429,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Keep showReadHunksRef in sync for stable callbacks
   showReadHunksRef.current = filters.showReadHunks;
 
-  // Ref to track when user is interacting (pauses auto-refresh)
-  const isInteractingRef = useRef(false);
-
-  // Track if user is composing a review note (pauses auto-refresh to prevent losing work)
+  // Track if user is composing a review note. We only pause scheduled refreshes while
+  // composing so tool-driven refresh stays unified (and keeps the untracked banner in sync)
+  // when the panel is focused.
   // Uses a Set to track which hunks have active selections (multiple hunks possible)
   const isComposingReviewNoteRef = useRef(false);
   const composingHunksRef = useRef(new Set<string>());
@@ -473,10 +472,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   useEffect(() => {
     const controller = new RefreshController({
       debounceMs: 3000,
-      // Pause scheduled refresh while user is interacting (scrolling, hovering)
-      isPaused: () => isInteractingRef.current,
-      // Block ALL refresh (including manual) while composing review note
-      // This prevents losing work-in-progress when user clicks refresh or presses Ctrl+R
+      // Pause scheduled refreshes while composing to avoid wiping draft notes.
+      isPaused: () => isComposingReviewNoteRef.current,
+      // Block manual refresh while composing (e.g., user clicks refresh or presses Ctrl+R).
       isManualBlocked: () => isComposingReviewNoteRef.current,
       onRefresh: () => {
         lastFetchTimeRef.current = Date.now();
@@ -511,17 +509,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   const handleRefresh = () => {
     controllerRef.current?.requestImmediate();
   };
-
-  // Sync panel focus with interaction tracking (pauses auto-refresh while user is focused)
-  useEffect(() => {
-    const wasFocused = isInteractingRef.current;
-    isInteractingRef.current = isPanelFocused;
-
-    // If focus was lost, flush any pending refresh that was paused during interaction
-    if (wasFocused && !isPanelFocused) {
-      controllerRef.current?.notifyUnpaused();
-    }
-  }, [isPanelFocused]);
 
   // Focus panel when focusTrigger changes (preserves current hunk selection)
   useEffect(() => {

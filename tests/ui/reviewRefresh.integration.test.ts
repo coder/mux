@@ -381,7 +381,7 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
     });
   }, 120_000);
 
-  test("refresh paused while panel focused, flushed on blur", async () => {
+  test("refresh runs while panel focused", async () => {
     await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
@@ -402,29 +402,19 @@ describeIntegration("ReviewPanel simulated tool refresh (UI + ORPC, no LLM)", ()
         fireEvent.focus(reviewPanel!);
 
         // Make a file change while panel is focused
-        const FOCUS_MARKER = "FOCUS_BLUR_TEST_MARKER";
+        const FOCUS_MARKER = "FOCUS_MARKER_WHILE_FOCUSED";
         await env.orpc.workspace.executeBash({
           workspaceId,
           script: `echo "${FOCUS_MARKER}" >> README.md`,
         });
 
-        // Simulate tool completion - this should be PAUSED because panel is focused
+        // Simulate tool completion - refresh should still run while focused
         simulateFileModifyingToolEnd(workspaceId);
-
-        // Wait a bit for debounce timer to fire (if it wasn't paused, it would refresh)
-        await new Promise((r) => setTimeout(r, 4000));
-
-        // Verify the change is NOT visible yet (refresh was paused)
-        expect(view.queryByText(new RegExp(FOCUS_MARKER))).toBeNull();
-
-        // Now blur the panel - this should flush the pending refresh
-        fireEvent.blur(reviewPanel!);
 
         // Wait for the refresh to complete
         await view.findByText(new RegExp(FOCUS_MARKER), {}, { timeout: 60_000 });
 
-        // Verify lastRefreshInfo - trigger is "scheduled" since it was originally scheduled,
-        // just deferred by the pause. notifyUnpaused() uses the pending trigger.
+        // Verify lastRefreshInfo
         await waitForRefreshButtonIdle(refreshButton);
         await assertRefreshButtonHasLastRefreshInfo(refreshButton, "scheduled");
       } finally {
