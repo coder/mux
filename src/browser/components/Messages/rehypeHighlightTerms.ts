@@ -83,12 +83,33 @@ export function rehypeHighlightTerms(options: { patterns: HighlightPattern[] }) 
   return (tree: Root) => {
     if (patterns.length === 0) return;
 
-    const walk = (parent: Parent, inSkipTag: boolean) => {
+    // Prevent re-highlighting text we already wrapped in a highlight span.
+    const skipClassNames = new Set(patterns.map((pattern) => pattern.className));
+
+    const hasSkipClass = (element: Element): boolean => {
+      const className = element.properties?.className;
+      if (!className) return false;
+
+      if (Array.isArray(className)) {
+        return className.some((entry) => typeof entry === "string" && skipClassNames.has(entry));
+      }
+
+      if (typeof className === "string") {
+        return className
+          .split(/\s+/)
+          .filter(Boolean)
+          .some((entry) => skipClassNames.has(entry));
+      }
+
+      return false;
+    };
+
+    const walk = (parent: Parent, shouldSkip: boolean) => {
       for (let i = 0; i < parent.children.length; i += 1) {
         const child = parent.children[i];
 
         if (child.type === "text") {
-          if (inSkipTag) continue;
+          if (shouldSkip) continue;
 
           const matches = collectMatches(child.value, patterns);
           const replacements = buildReplacements(child.value, matches);
@@ -100,8 +121,8 @@ export function rehypeHighlightTerms(options: { patterns: HighlightPattern[] }) 
         }
 
         if (child.type === "element") {
-          const nextSkipTag = inSkipTag || SKIP_TAGS.has(child.tagName);
-          walk(child, nextSkipTag);
+          const nextShouldSkip = shouldSkip || SKIP_TAGS.has(child.tagName) || hasSkipClass(child);
+          walk(child, nextShouldSkip);
         }
       }
     };
