@@ -34,12 +34,21 @@ export function extractCommandPrefix(input: string): string | null {
   return commandLine;
 }
 
+interface CommandPrefixTextProps {
+  children: React.ReactNode;
+  /** Additional className - use to add font-mono when not inheriting from parent */
+  className?: string;
+}
+
 /**
  * Shared styling for command prefix text (e.g., "/compact" or "/skill-name").
  * Used in both the chat input overlay and sent message display.
+ *
+ * Font-family is inherited by default. When used outside of VimTextArea
+ * (e.g., in UserMessageContent), pass className="font-mono" explicitly.
  */
-export const CommandPrefixText: React.FC<{ children: React.ReactNode }> = (props) => (
-  <span className="font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]">
+export const CommandPrefixText: React.FC<CommandPrefixTextProps> = (props) => (
+  <span className={`font-medium text-[var(--color-plan-mode-light)] ${props.className ?? ""}`}>
     {props.children}
   </span>
 );
@@ -47,24 +56,28 @@ export const CommandPrefixText: React.FC<{ children: React.ReactNode }> = (props
 interface CommandHighlightOverlayProps {
   /** The current input text value */
   value: string;
-  /** Whether vim mode is enabled (affects font) */
-  vimEnabled?: boolean;
   /** Additional className for the container */
   className?: string;
+  /** Whether there's a command prefix (controls visibility) */
+  hasCommand: boolean;
 }
 
 /**
  * Renders a highlight overlay for slash command prefixes.
- * This component should be positioned absolutely ABOVE the textarea,
- * showing the highlighted command text while keeping the rest transparent
- * so the original textarea text shows through.
  *
- * The overlay mirrors the textarea's text layout exactly.
+ * Uses the "transparent textarea text" pattern:
+ * - Overlay is positioned BEHIND the textarea
+ * - Textarea text is made transparent (via parent) so overlay shows through
+ * - Caret remains visible via caret-color on textarea
+ *
+ * All typography is inherited from the parent wrapper container,
+ * eliminating duplication and ensuring perfect alignment.
  */
 export const CommandHighlightOverlay: React.FC<CommandHighlightOverlayProps> = (props) => {
   const commandPrefix = extractCommandPrefix(props.value);
 
-  if (!commandPrefix) {
+  // Don't render if no command or parent says no command
+  if (!props.hasCommand || !commandPrefix) {
     return null;
   }
 
@@ -75,10 +88,10 @@ export const CommandHighlightOverlay: React.FC<CommandHighlightOverlayProps> = (
     <div
       className={props.className}
       style={{
-        // Match textarea exactly - these match VimTextArea's styling
-        padding: "6px 8px", // py-1.5 px-2
-        fontSize: "13px",
-        lineHeight: "1.5",
+        // Inherit ALL typography from parent container
+        font: "inherit",
+        letterSpacing: "inherit",
+        // Text handling - match textarea behavior
         whiteSpace: "pre-wrap",
         wordWrap: "break-word",
         overflowWrap: "break-word",
@@ -90,8 +103,8 @@ export const CommandHighlightOverlay: React.FC<CommandHighlightOverlayProps> = (
     >
       {/* Command prefix in highlight color */}
       <CommandPrefixText>{commandPrefix}</CommandPrefixText>
-      {/* Rest of text is transparent so textarea text shows through */}
-      <span style={{ color: "transparent" }}>{rest}</span>
+      {/* Rest of text in normal color - textarea is transparent so this shows */}
+      <span className="text-light">{rest}</span>
     </div>
   );
 };

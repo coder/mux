@@ -129,7 +129,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     // Space after prefix: inline layout (prefix + content on same line)
     return (
       <div className={hasNewlineAfterPrefix ? "" : "flex flex-wrap items-baseline"}>
-        <CommandPrefixText>{shouldHighlightPrefix}</CommandPrefixText>
+        <CommandPrefixText className="font-mono">{shouldHighlightPrefix}</CommandPrefixText>
         {hasSpaceAfterPrefix && <span>&nbsp;</span>}
         {remainingContent.trim() && (
           <MarkdownRenderer
