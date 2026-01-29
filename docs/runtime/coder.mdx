@@ -13,7 +13,7 @@ Mux can use [Coder Workspaces](https://coder.com/docs) as SSH hosts. When enable
 
 ## Create a new Coder workspace
 
-1. Choose **SSH** as the runtime and enable **Use Coder Workspace**.
+1. Choose **Coder** as the runtime.
 2. Select **New**.
 3. Pick a template and (if available) a preset.
 4. Mux creates a Coder workspace named `mux-<workspace-name>` (derived from your Mux workspace name), waits for startup scripts, then connects over SSH.
@@ -22,7 +22,7 @@ If multiple organizations have templates with the same name, Mux shows the organ
 
 ## Use an existing Coder workspace
 
-1. Choose **Existing**.
+1. Choose **Coder** as the runtime and select **Existing**.
 2. Select a workspace from the list (status is shown).
 3. Mux will start the workspace if it is stopped, then connect to `<workspace-name>.coder`.
 
@@ -32,5 +32,5 @@ Mux runs `coder config-ssh --yes` before connecting, which creates SSH aliases l
 
 ## Notes
 
-- If the **Use Coder Workspace** checkbox is missing, verify that the Coder CLI is found on the PATH.
+- If the **Coder** runtime option is missing, verify that the Coder CLI is found on the PATH.
 - Each Mux workspace still lives in its own directory on the remote machine, even when sharing a single Coder workspace.

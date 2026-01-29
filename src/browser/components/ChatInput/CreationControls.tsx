@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect } from "react";
-import { RUNTIME_MODE, type RuntimeMode, type ParsedRuntime } from "@/common/types/runtime";
-import { type RuntimeAvailabilityState } from "./useCreationWorkspace";
+import {
+  RUNTIME_MODE,
+  type RuntimeMode,
+  type ParsedRuntime,
+  CODER_RUNTIME_PLACEHOLDER,
+} from "@/common/types/runtime";
+import type { RuntimeAvailabilityMap, RuntimeAvailabilityState } from "./useCreationWorkspace";
 import {
   resolveDevcontainerSelection,
   DEFAULT_DEVCONTAINER_CONFIG_PATH,
@@ -20,11 +25,76 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { DocsLink } from "../DocsLink";
-import { RUNTIME_UI, type RuntimeIconProps } from "@/browser/utils/runtimeUi";
+import {
+  RUNTIME_CHOICE_UI,
+  type RuntimeChoice,
+  type RuntimeIconProps,
+} from "@/browser/utils/runtimeUi";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import type { CoderInfo } from "@/common/orpc/schemas/coder";
 import type { SectionConfig } from "@/common/types/project";
 import { resolveSectionColor } from "@/common/constants/ui";
-import { CoderControls, type CoderControlsProps } from "./CoderControls";
+import {
+  CoderAvailabilityMessage,
+  CoderWorkspaceForm,
+  resolveCoderAvailability,
+  type CoderControlsProps,
+} from "./CoderControls";
+
+/** Shared runtime config text input - used for SSH host, Docker image, etc. */
+function RuntimeConfigInput(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  hasError?: boolean;
+  id?: string;
+  ariaLabel?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <label htmlFor={props.id} className="text-muted-foreground text-xs">
+        {props.label}
+      </label>
+      <input
+        id={props.id}
+        aria-label={props.ariaLabel}
+        type="text"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        placeholder={props.placeholder}
+        disabled={props.disabled}
+        className={cn(
+          "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+          props.hasError && "border-red-500"
+        )}
+      />
+    </div>
+  );
+}
+
+/** Credential sharing checkbox - used by Docker and Devcontainer runtimes */
+function CredentialSharingCheckbox(props: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  docsPath: string;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs">
+      <input
+        type="checkbox"
+        checked={props.checked}
+        onChange={(e) => props.onChange(e.target.checked)}
+        disabled={props.disabled}
+        className="accent-accent"
+      />
+      <span className="text-muted">Share credentials (SSH, Git)</span>
+      <DocsLink path={props.docsPath} />
+    </label>
+  );
+}
 
 interface CreationControlsProps {
   branches: string[];
@@ -34,7 +104,7 @@ interface CreationControlsProps {
   onTrunkBranchChange: (branch: string) => void;
   /** Currently selected runtime (discriminated union: SSH has host, Docker has image) */
   selectedRuntime: ParsedRuntime;
-  defaultRuntimeMode: RuntimeMode;
+  defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
   onSetDefaultRuntime: (mode: RuntimeMode) => void;
@@ -61,24 +131,26 @@ interface CreationControlsProps {
 
 /** Runtime type button group with icons and colors */
 interface RuntimeButtonGroupProps {
-  value: RuntimeMode;
-  onChange: (mode: RuntimeMode) => void;
-  defaultMode: RuntimeMode;
+  value: RuntimeChoice;
+  onChange: (mode: RuntimeChoice) => void;
+  defaultMode: RuntimeChoice;
   onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
   runtimeAvailabilityState?: RuntimeAvailabilityState;
+  coderInfo?: CoderInfo | null;
 }
 
-const RUNTIME_ORDER: RuntimeMode[] = [
+const RUNTIME_CHOICE_ORDER: RuntimeChoice[] = [
   RUNTIME_MODE.LOCAL,
   RUNTIME_MODE.WORKTREE,
   RUNTIME_MODE.SSH,
+  "coder",
   RUNTIME_MODE.DOCKER,
   RUNTIME_MODE.DEVCONTAINER,
 ];
 
-const RUNTIME_OPTIONS: Array<{
-  value: RuntimeMode;
+const RUNTIME_CHOICE_OPTIONS: Array<{
+  value: RuntimeChoice;
   label: string;
   description: string;
   docsPath: string;
@@ -86,8 +158,8 @@ const RUNTIME_OPTIONS: Array<{
   // Active state colors using CSS variables for theme support
   activeClass: string;
   idleClass: string;
-}> = RUNTIME_ORDER.map((mode) => {
-  const ui = RUNTIME_UI[mode];
+}> = RUNTIME_CHOICE_ORDER.map((mode) => {
+  const ui = RUNTIME_CHOICE_UI[mode];
   return {
     value: mode,
     label: ui.label,
@@ -98,6 +170,33 @@ const RUNTIME_OPTIONS: Array<{
     idleClass: ui.button.idleClass,
   };
 });
+
+interface RuntimeButtonState {
+  isModeDisabled: boolean;
+  disabledReason?: string;
+  isDefault: boolean;
+}
+
+const resolveRuntimeButtonState = (
+  value: RuntimeChoice,
+  availabilityMap: RuntimeAvailabilityMap | null,
+  defaultMode: RuntimeChoice
+): RuntimeButtonState => {
+  // Coder is SSH under the hood; all other RuntimeChoice values are RuntimeMode identity.
+  const availabilityKey = value === "coder" ? RUNTIME_MODE.SSH : value;
+  const availability = availabilityMap?.[availabilityKey];
+  // Disable only if availability is explicitly known and unavailable.
+  // When availability is undefined (loading or fetch failed), allow selection
+  // as fallback - the config picker will validate before creation.
+  const isModeDisabled = availability !== undefined && !availability.available;
+  const disabledReason = availability && !availability.available ? availability.reason : undefined;
+
+  return {
+    isModeDisabled,
+    disabledReason,
+    isDefault: defaultMode === value,
+  };
+};
 
 /** Aesthetic section picker with color accent */
 interface SectionPickerProps {
@@ -163,6 +262,8 @@ function SectionPicker(props: SectionPickerProps) {
 function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const state = props.runtimeAvailabilityState;
   const availabilityMap = state?.status === "loaded" ? state.data : null;
+  const coderInfo = props.coderInfo ?? null;
+  const coderAvailability = resolveCoderAvailability(coderInfo);
 
   // Hide devcontainer while loading OR when confirmed missing.
   // Only show when availability is loaded and devcontainer is available.
@@ -172,23 +273,35 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     (availabilityMap?.devcontainer?.available === false &&
       availabilityMap.devcontainer.reason === "No devcontainer.json found");
 
-  const runtimeOptions = hideDevcontainer
-    ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
-    : RUNTIME_OPTIONS;
+  // Match devcontainer UX: only surface Coder once availability is confirmed (no flash).
+  const hideCoder = !coderAvailability.shouldShowRuntimeButton;
+
+  const runtimeVisibilityOverrides: Partial<Record<RuntimeChoice, boolean>> = {
+    [RUNTIME_MODE.DEVCONTAINER]: !hideDevcontainer,
+    coder: !hideCoder,
+  };
+
+  const runtimeOptions = RUNTIME_CHOICE_OPTIONS.filter(
+    (option) => runtimeVisibilityOverrides[option.value] ?? true
+  );
 
   return (
     <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
-        const isDefault = props.defaultMode === option.value;
-        const availability = availabilityMap?.[option.value];
-        // Disable only if availability is explicitly known and unavailable.
-        // When availability is undefined (loading or fetch failed), allow selection
-        // as fallback - the config picker will validate before creation.
-        const isModeDisabled = availability !== undefined && !availability.available;
-        const disabledReason =
-          availability && !availability.available ? availability.reason : undefined;
+        const { isModeDisabled, disabledReason, isDefault } = resolveRuntimeButtonState(
+          option.value,
+          availabilityMap,
+          props.defaultMode
+        );
+
         const Icon = option.Icon;
+
+        const handleSetDefault = () => {
+          // Coder maps to SSH mode (Coder config persisted separately)
+          const mode = option.value === "coder" ? RUNTIME_MODE.SSH : option.value;
+          props.onSetDefault(mode);
+        };
 
         return (
           <Tooltip key={option.value}>
@@ -225,7 +338,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                   <input
                     type="checkbox"
                     checked={isDefault}
-                    onChange={() => props.onSetDefault(option.value)}
+                    onChange={handleSetDefault}
                     className="accent-accent h-3 w-3"
                   />
                   <span className="text-muted">Default for project</span>
@@ -251,6 +364,10 @@ export function CreationControls(props: CreationControlsProps) {
   // Extract mode from discriminated union for convenience
   const runtimeMode = props.selectedRuntime.mode;
   const { selectedRuntime, onSelectedRuntimeChange } = props;
+  // Coder is surfaced as a separate runtime option while keeping SSH as the config mode.
+  const isCoderSelected =
+    selectedRuntime.mode === RUNTIME_MODE.SSH && selectedRuntime.coder != null;
+  const runtimeChoice: RuntimeChoice = isCoderSelected ? "coder" : runtimeMode;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const availabilityMap =
@@ -427,16 +544,33 @@ export function CreationControls(props: CreationControlsProps) {
         <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
         <div className="flex flex-wrap items-center gap-3">
           <RuntimeButtonGroup
-            value={runtimeMode}
+            value={runtimeChoice}
             onChange={(mode) => {
+              if (mode === "coder") {
+                if (!props.coderProps) {
+                  return;
+                }
+                if (props.coderProps.coderConfig) {
+                  props.coderProps.onCoderConfigChange(props.coderProps.coderConfig);
+                } else {
+                  props.coderProps.onEnabledChange(true);
+                }
+                return;
+              }
               // Convert mode to ParsedRuntime with appropriate defaults
               switch (mode) {
-                case RUNTIME_MODE.SSH:
+                case RUNTIME_MODE.SSH: {
+                  const sshHost =
+                    selectedRuntime.mode === "ssh" &&
+                    selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
+                      ? selectedRuntime.host
+                      : "";
                   onSelectedRuntimeChange({
                     mode: "ssh",
-                    host: selectedRuntime.mode === "ssh" ? selectedRuntime.host : "",
+                    host: sshHost,
                   });
                   break;
+                }
                 case RUNTIME_MODE.DOCKER:
                   onSelectedRuntimeChange({
                     mode: "docker",
@@ -475,6 +609,7 @@ export function CreationControls(props: CreationControlsProps) {
             onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
             runtimeAvailabilityState={runtimeAvailabilityState}
+            coderInfo={props.coderProps?.coderInfo ?? null}
           />
 
           {/* Branch selector - shown for worktree/SSH */}
@@ -505,54 +640,37 @@ export function CreationControls(props: CreationControlsProps) {
             </div>
           )}
 
-          {/* SSH Host Input - hidden when Coder is enabled or will be enabled after checking */}
-          {selectedRuntime.mode === "ssh" &&
-            !props.coderProps?.enabled &&
-            // Also hide when Coder is still checking but has saved config (will enable after check)
-            !(props.coderProps?.coderInfo === null && props.coderProps?.coderConfig) && (
-              <div className="flex items-center gap-2">
-                <label className="text-muted-foreground text-xs">host</label>
-                <input
-                  type="text"
-                  value={selectedRuntime.host}
-                  onChange={(e) => onSelectedRuntimeChange({ mode: "ssh", host: e.target.value })}
-                  placeholder="user@host"
-                  disabled={props.disabled}
-                  className={cn(
-                    "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
-                    props.runtimeFieldError === "ssh" && "border-red-500"
-                  )}
-                />
-              </div>
-            )}
+          {/* SSH Host Input - hidden when Coder runtime is selected */}
+          {selectedRuntime.mode === "ssh" && !isCoderSelected && (
+            <RuntimeConfigInput
+              label="host"
+              value={selectedRuntime.host}
+              onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
+              placeholder="user@host"
+              disabled={props.disabled}
+              hasError={props.runtimeFieldError === "ssh"}
+            />
+          )}
 
           {/* Runtime-specific config inputs */}
 
           {selectedRuntime.mode === "docker" && (
-            <div className="flex items-center gap-2">
-              <label htmlFor="docker-image" className="text-muted-foreground text-xs">
-                image
-              </label>
-              <input
-                id="docker-image"
-                aria-label="Docker image"
-                type="text"
-                value={selectedRuntime.image}
-                onChange={(e) =>
-                  onSelectedRuntimeChange({
-                    mode: "docker",
-                    image: e.target.value,
-                    shareCredentials: selectedRuntime.shareCredentials,
-                  })
-                }
-                placeholder="node:20"
-                disabled={props.disabled}
-                className={cn(
-                  "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
-                  props.runtimeFieldError === "docker" && "border-red-500"
-                )}
-              />
-            </div>
+            <RuntimeConfigInput
+              label="image"
+              value={selectedRuntime.image}
+              onChange={(value) =>
+                onSelectedRuntimeChange({
+                  mode: "docker",
+                  image: value,
+                  shareCredentials: selectedRuntime.shareCredentials,
+                })
+              }
+              placeholder="node:20"
+              disabled={props.disabled}
+              hasError={props.runtimeFieldError === "docker"}
+              id="docker-image"
+              ariaLabel="Docker image"
+            />
           )}
         </div>
 
@@ -613,54 +731,57 @@ export function CreationControls(props: CreationControlsProps) {
             {devcontainerSelection.helperText && (
               <p className="text-muted-foreground text-xs">{devcontainerSelection.helperText}</p>
             )}
-            <label className="flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
-                checked={selectedRuntime.shareCredentials ?? false}
-                onChange={(e) =>
-                  onSelectedRuntimeChange({
-                    mode: "devcontainer",
-                    configPath: devcontainerSelection.configPath,
-                    shareCredentials: e.target.checked,
-                  })
-                }
-                disabled={props.disabled}
-                className="accent-accent"
-              />
-              <span className="text-muted">Share credentials (SSH, Git)</span>
-              <DocsLink path="/runtime/docker#credential-sharing" />
-            </label>
+            <CredentialSharingCheckbox
+              checked={selectedRuntime.shareCredentials ?? false}
+              onChange={(checked) =>
+                onSelectedRuntimeChange({
+                  mode: "devcontainer",
+                  configPath: devcontainerSelection.configPath,
+                  shareCredentials: checked,
+                })
+              }
+              disabled={props.disabled}
+              docsPath="/runtime/docker#credential-sharing"
+            />
           </div>
         )}
 
         {/* Credential sharing - separate row for consistency with Coder controls */}
         {selectedRuntime.mode === "docker" && (
-          <label className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              checked={selectedRuntime.shareCredentials ?? false}
-              onChange={(e) =>
-                onSelectedRuntimeChange({
-                  mode: "docker",
-                  image: selectedRuntime.image,
-                  shareCredentials: e.target.checked,
-                })
-              }
-              disabled={props.disabled}
-              className="accent-accent"
-            />
-            <span className="text-muted">Share credentials (SSH, Git)</span>
-            <DocsLink path="/runtime/docker#credential-sharing" />
-          </label>
+          <CredentialSharingCheckbox
+            checked={selectedRuntime.shareCredentials ?? false}
+            onChange={(checked) =>
+              onSelectedRuntimeChange({
+                mode: "docker",
+                image: selectedRuntime.image,
+                shareCredentials: checked,
+              })
+            }
+            disabled={props.disabled}
+            docsPath="/runtime/docker#credential-sharing"
+          />
         )}
 
-        {/* Coder Controls - shown when SSH mode is selected and Coder is available */}
-        {selectedRuntime.mode === "ssh" && props.coderProps && (
-          <CoderControls
-            {...props.coderProps}
-            disabled={props.disabled}
-            hasError={props.runtimeFieldError === "ssh"}
-          />
+        {/* Coder Controls - shown when Coder runtime is selected */}
+        {isCoderSelected && props.coderProps && (
+          <div className="flex flex-col gap-1.5" data-testid="coder-controls">
+            {/* Coder runtime needs availability status without the SSH-only toggle. */}
+            <CoderAvailabilityMessage coderInfo={props.coderProps.coderInfo} />
+            {props.coderProps.enabled && (
+              <CoderWorkspaceForm
+                coderConfig={props.coderProps.coderConfig}
+                onCoderConfigChange={props.coderProps.onCoderConfigChange}
+                templates={props.coderProps.templates}
+                presets={props.coderProps.presets}
+                existingWorkspaces={props.coderProps.existingWorkspaces}
+                loadingTemplates={props.coderProps.loadingTemplates}
+                loadingPresets={props.coderProps.loadingPresets}
+                loadingWorkspaces={props.coderProps.loadingWorkspaces}
+                disabled={props.disabled}
+                hasError={props.runtimeFieldError === "ssh"}
+              />
+            )}
+          </div>
         )}
       </div>
     </div>
