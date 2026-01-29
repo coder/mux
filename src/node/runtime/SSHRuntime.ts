@@ -510,7 +510,8 @@ export class SSHRuntime extends RemoteRuntime {
               errorMsg.includes("pack-objects died") ||
               errorMsg.includes("Connection reset") ||
               errorMsg.includes("Connection closed") ||
-              errorMsg.includes("Broken pipe");
+              errorMsg.includes("Broken pipe") ||
+              errorMsg.includes("EPIPE");
 
             if (!isRetryable || attempt === maxSyncAttempts) {
               initLogger.logStderr(`Failed to sync project: ${errorMsg}`);
