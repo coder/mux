@@ -11,6 +11,7 @@ import { harden } from "rehype-harden";
 import "katex/dist/katex.min.css";
 import { normalizeMarkdown } from "./MarkdownStyles";
 import { markdownComponents } from "./MarkdownComponents";
+import { rehypeHighlightTerms, type HighlightPattern } from "./rehypeHighlightTerms";
 
 interface MarkdownCoreProps {
   content: string;
@@ -30,6 +31,11 @@ interface MarkdownCoreProps {
    * are intentional. Default: false.
    */
   preserveLineBreaks?: boolean;
+  /**
+   * Optional text patterns to highlight with CSS classes.
+   * Used for hash skill mentions like #react-effects.
+   */
+  highlightTerms?: HighlightPattern[];
 }
 
 // Plugin arrays are defined at module scope to maintain stable references.
@@ -120,16 +126,32 @@ const REHYPE_PLUGINS: Pluggable[] = [
  * Memoized to prevent expensive re-parsing when content hasn't changed.
  */
 export const MarkdownCore = React.memo<MarkdownCoreProps>(
-  ({ content, children, parseIncompleteMarkdown = false, preserveLineBreaks = false }) => {
+  ({
+    content,
+    children,
+    parseIncompleteMarkdown = false,
+    preserveLineBreaks = false,
+    highlightTerms,
+  }) => {
     // Memoize the normalized content to avoid recalculating on every render
     const normalizedContent = useMemo(() => normalizeMarkdown(content), [content]);
+
+    // Build rehype plugins array, adding highlight plugin when patterns are provided.
+    // Memoize to maintain stable reference for Streamdown (which re-parses on array changes).
+    const rehypePlugins = useMemo((): Pluggable[] => {
+      if (!highlightTerms || highlightTerms.length === 0) {
+        return REHYPE_PLUGINS;
+      }
+      // Append highlight plugin after sanitization so our spans aren't stripped
+      return [...REHYPE_PLUGINS, [rehypeHighlightTerms, { patterns: highlightTerms }]];
+    }, [highlightTerms]);
 
     return (
       <>
         <Streamdown
           components={markdownComponents}
           remarkPlugins={preserveLineBreaks ? REMARK_PLUGINS_WITH_BREAKS : REMARK_PLUGINS}
-          rehypePlugins={REHYPE_PLUGINS}
+          rehypePlugins={rehypePlugins}
           parseIncompleteMarkdown={parseIncompleteMarkdown}
           // Use "static" mode for completed content to bypass useTransition() deferral.
           // After ORPC migration, async event boundaries let React deprioritize transitions indefinitely.

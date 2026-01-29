@@ -54,6 +54,7 @@ import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
 } from "@/browser/utils/slashCommands/suggestions";
+import { getHashSkillSuggestions } from "@/browser/utils/hashSkillSuggestions";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
 import { AgentModePicker } from "../AgentModePicker";
 import { ContextUsageIndicatorButton } from "../ContextUsageIndicatorButton";
@@ -107,11 +108,16 @@ import { RecordingOverlay } from "./RecordingOverlay";
 import { AttachedReviewsPanel } from "./AttachedReviewsPanel";
 import {
   buildSkillInvocationMetadata,
+  buildHashSkillMentionsMetadata,
   parseCommandWithSkillInvocation,
   validateCreationRuntime,
   filePartsToChatAttachments,
   type SkillResolutionTarget,
 } from "./utils";
+import {
+  extractHashSkillMentions,
+  formatHashSkillInvocationText,
+} from "@/common/utils/hashSkillMentions";
 
 // localStorage quotas are environment-dependent and relatively small.
 // Be conservative here so we can warn the user before writes start failing.
@@ -195,6 +201,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const lastAtMentionQueryRef = useRef<string | null>(null);
   const lastAtMentionInputRef = useRef<string>(input);
   const [showCommandSuggestions, setShowCommandSuggestions] = useState(false);
+  const [showHashSkillSuggestions, setShowHashSkillSuggestions] = useState(false);
+  const [hashSkillSuggestions, setHashSkillSuggestions] = useState<SlashSuggestion[]>([]);
+  const hashSkillMatchRef = useRef<{ startIndex: number; endIndex: number } | null>(null);
+  const lastHashSkillQueryRef = useRef<string | null>(null);
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
@@ -356,6 +366,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   );
   const atMentionListId = useId();
   const commandListId = useId();
+  const hashSkillListId = useId();
   const telemetry = useTelemetry();
   const [vimEnabled, setVimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, {
     listener: true,
@@ -990,6 +1001,44 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setShowCommandSuggestions(suggestions.length > 0);
   }, [input, providerNames, agentSkillDescriptors, variant]);
 
+  // Watch input/cursor for #skill mentions
+  useEffect(() => {
+    // Don't show hash skill suggestions when slash command suggestions are active.
+    if (input.trimStart().startsWith("/")) {
+      setHashSkillSuggestions([]);
+      setShowHashSkillSuggestions(false);
+      hashSkillMatchRef.current = null;
+      lastHashSkillQueryRef.current = null;
+      return;
+    }
+
+    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const result = getHashSkillSuggestions(input, cursor, {
+      agentSkills: agentSkillDescriptors,
+    });
+
+    if (!result.match) {
+      setHashSkillSuggestions([]);
+      setShowHashSkillSuggestions(false);
+      hashSkillMatchRef.current = null;
+      lastHashSkillQueryRef.current = null;
+      return;
+    }
+
+    // Extract query from the match for tracking.
+    const query = input.slice(result.match.startIndex + 1, result.match.endIndex);
+
+    // Avoid redundant updates if query hasn't changed.
+    if (lastHashSkillQueryRef.current === query && showHashSkillSuggestions) {
+      return;
+    }
+
+    lastHashSkillQueryRef.current = query;
+    hashSkillMatchRef.current = result.match;
+    setHashSkillSuggestions(result.suggestions);
+    setShowHashSkillSuggestions(result.suggestions.length > 0);
+  }, [input, agentSkillDescriptors, atMentionCursorNonce, showHashSkillSuggestions]);
+
   // Load provider names for suggestions
   useEffect(() => {
     let isMounted = true;
@@ -1470,6 +1519,43 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput]
   );
 
+  const handleHashSkillSelect = useCallback(
+    (suggestion: SlashSuggestion) => {
+      const match = hashSkillMatchRef.current;
+      if (!match) {
+        return;
+      }
+
+      // Replace the hash skill mention with the selected suggestion.
+      // Add trailing space so user can continue typing naturally.
+      const next =
+        input.slice(0, match.startIndex) +
+        suggestion.replacement +
+        " " +
+        input.slice(match.endIndex);
+
+      setInput(next);
+      setHashSkillSuggestions([]);
+      setShowHashSkillSuggestions(false);
+      hashSkillMatchRef.current = null;
+      lastHashSkillQueryRef.current = null;
+
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el || el.disabled) {
+          return;
+        }
+
+        el.focus();
+        // +1 for the trailing space we added.
+        const newCursor = match.startIndex + suggestion.replacement.length + 1;
+        el.selectionStart = newCursor;
+        el.selectionEnd = newCursor;
+      });
+    },
+    [input, setInput]
+  );
+
   const handleSend = async () => {
     if (!canSend) {
       return;
@@ -1505,6 +1591,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       let creationMessageTextForSend = messageText;
       let creationOptionsOverride: Partial<SendMessageOptions> | undefined;
 
+      // Check for hash skill mentions if no slash skill invocation
+      const creationValidSkillNames = new Set(agentSkillDescriptors.map((s) => s.name));
+      const creationHashSkillMentions = !skillInvocation
+        ? extractHashSkillMentions(messageText, creationValidSkillNames)
+        : [];
+
       if (skillInvocation) {
         if (!api) {
           pushToast({ type: "error", message: "Not connected to server" });
@@ -1520,6 +1612,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...(skillInvocation.descriptor.scope === "project"
             ? { disableWorkspaceAgents: true }
             : {}),
+        };
+      } else if (creationHashSkillMentions.length > 0) {
+        // Hash skill mentions in creation mode
+        creationMessageTextForSend = formatHashSkillInvocationText(
+          messageText,
+          creationHashSkillMentions
+        );
+        creationOptionsOverride = {
+          muxMetadata: buildHashSkillMentionsMetadata(creationHashSkillMentions.map((m) => m.name)),
         };
       }
 
@@ -1565,10 +1666,29 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
 
       // Regular message - send directly via API
-      const messageTextForSend = skillInvocation?.userText ?? messageText;
-      const skillMuxMetadata = skillInvocation
-        ? buildSkillInvocationMetadata(messageText, skillInvocation.descriptor)
-        : undefined;
+      // Check for hash skill mentions if no slash skill invocation
+      const validSkillNames = new Set(agentSkillDescriptors.map((s) => s.name));
+      const hashSkillMentions = !skillInvocation
+        ? extractHashSkillMentions(messageText, validSkillNames)
+        : [];
+
+      // Determine text and metadata based on invocation type
+      let messageTextForSend: string;
+      let skillMuxMetadata: MuxFrontendMetadata | undefined;
+
+      if (skillInvocation) {
+        // Slash skill invocation: /skill-name
+        messageTextForSend = skillInvocation.userText;
+        skillMuxMetadata = buildSkillInvocationMetadata(messageText, skillInvocation.descriptor);
+      } else if (hashSkillMentions.length > 0) {
+        // Hash skill mentions: #skill-name (multiple allowed)
+        messageTextForSend = formatHashSkillInvocationText(messageText, hashSkillMentions);
+        skillMuxMetadata = buildHashSkillMentionsMetadata(hashSkillMentions.map((m) => m.name));
+      } else {
+        // Normal message
+        messageTextForSend = messageText;
+        skillMuxMetadata = undefined;
+      }
 
       if (!api) {
         pushToast({ type: "error", message: "Not connected to server" });
@@ -1931,12 +2051,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     const hasCommandSuggestionMenu = showCommandSuggestions && commandSuggestions.length > 0;
     const hasAtMentionSuggestionMenu = showAtMentionSuggestions && atMentionSuggestions.length > 0;
+    const hasHashSkillSuggestionMenu = showHashSkillSuggestions && hashSkillSuggestions.length > 0;
 
     // Don't handle keys if suggestions are visible.
-    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for both slash and @mention menus.
+    // Enter/Tab/arrows/Escape are handled by CommandSuggestions for slash, @mention, and #skill menus.
     if (
       (hasCommandSuggestionMenu && COMMAND_SUGGESTION_KEYS.includes(e.key)) ||
-      (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key))
+      (hasAtMentionSuggestionMenu && FILE_SUGGESTION_KEYS.includes(e.key)) ||
+      (hasHashSkillSuggestionMenu && COMMAND_SUGGESTION_KEYS.includes(e.key))
     ) {
       return; // Let CommandSuggestions handle it
     }
@@ -2077,6 +2199,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             anchorRef={variant === "creation" ? inputRef : undefined}
           />
 
+          {/* Hash skill suggestions (#skill) - can appear anywhere in input */}
+          <CommandSuggestions
+            suggestions={hashSkillSuggestions}
+            onSelectSuggestion={handleHashSkillSelect}
+            onDismiss={() => setShowHashSkillSuggestions(false)}
+            isVisible={showHashSkillSuggestions}
+            ariaLabel="Skill suggestions"
+            listId={hashSkillListId}
+            anchorRef={variant === "creation" ? inputRef : undefined}
+            highlightQuery={lastHashSkillQueryRef.current ?? ""}
+          />
+
           <div className="relative flex items-end" data-component="ChatInputControls">
             {/* Recording/transcribing overlay - replaces textarea when active */}
             {voiceInput.state !== "idle" ? (
@@ -2107,7 +2241,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       ? FILE_SUGGESTION_KEYS
                       : showCommandSuggestions
                         ? COMMAND_SUGGESTION_KEYS
-                        : undefined
+                        : showHashSkillSuggestions
+                          ? COMMAND_SUGGESTION_KEYS
+                          : undefined
                   }
                   placeholder={placeholder}
                   disabled={!editingMessage && (disabled || sendInFlightBlocksInput)}
@@ -2118,11 +2254,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       ? commandListId
                       : showAtMentionSuggestions && atMentionSuggestions.length > 0
                         ? atMentionListId
-                        : undefined
+                        : showHashSkillSuggestions && hashSkillSuggestions.length > 0
+                          ? hashSkillListId
+                          : undefined
                   }
                   aria-expanded={
                     (showCommandSuggestions && commandSuggestions.length > 0) ||
-                    (showAtMentionSuggestions && atMentionSuggestions.length > 0)
+                    (showAtMentionSuggestions && atMentionSuggestions.length > 0) ||
+                    (showHashSkillSuggestions && hashSkillSuggestions.length > 0)
                   }
                   className={variant === "creation" ? "min-h-24" : undefined}
                 />

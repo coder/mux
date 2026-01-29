@@ -1,6 +1,7 @@
 import React from "react";
 import { MarkdownCore } from "./MarkdownCore";
 import { cn } from "@/common/lib/utils";
+import type { HighlightPattern } from "./rehypeHighlightTerms";
 
 interface MarkdownRendererProps {
   content: string;
@@ -13,6 +14,11 @@ interface MarkdownRendererProps {
    * are intentional. Default: false.
    */
   preserveLineBreaks?: boolean;
+  /**
+   * Optional text patterns to highlight with CSS classes.
+   * Used for hash skill mentions like #react-effects.
+   */
+  highlightTerms?: HighlightPattern[];
 }
 
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
@@ -20,10 +26,15 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   className,
   style,
   preserveLineBreaks,
+  highlightTerms,
 }) => {
   return (
     <div className={cn("markdown-content", className)} style={style}>
-      <MarkdownCore content={content} preserveLineBreaks={preserveLineBreaks} />
+      <MarkdownCore
+        content={content}
+        preserveLineBreaks={preserveLineBreaks}
+        highlightTerms={highlightTerms}
+      />
     </div>
   );
 };

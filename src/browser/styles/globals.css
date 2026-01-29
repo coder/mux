@@ -1434,6 +1434,14 @@ code {
   white-space: normal;
 }
 
+/* Hash skill mentions (e.g., #react-effects) highlighted via rehype plugin */
+.skill-mention-badge {
+  font-family: var(--font-monospace);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-plan-mode-light);
+}
+
 .markdown-content h1,
 .markdown-content h2,
 .markdown-content h3,

@@ -1915,12 +1915,16 @@ export class StreamingMessageAggregator {
       // Extract reviews from muxMetadata for rich UI display (orthogonal to message type)
       const reviews = muxMeta?.reviews;
 
+      // Extract hash skill mentions for inline highlighting
+      const hashSkillMentions = muxMeta?.hashSkillMentions;
+
       displayedMessages.push({
         type: "user",
         id: message.id,
         historyId: message.id,
         content,
         commandPrefix,
+        hashSkillMentions,
         fileParts: fileParts.length > 0 ? fileParts : undefined,
         historySequence,
         isSynthetic: message.metadata?.synthetic === true ? true : undefined,

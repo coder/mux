@@ -1,5 +1,5 @@
 import React from "react";
-import { Check } from "lucide-react";
+import { Check, Plus } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SkillIcon } from "@/browser/components/icons/SkillIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
@@ -11,6 +11,8 @@ interface SkillIndicatorProps {
   loadedSkills: LoadedSkill[];
   /** All available skills discovered for this project */
   availableSkills: AgentSkillDescriptor[];
+  /** Callback to insert a skill mention (#skill-name) into the chat input */
+  onInsertSkill?: (skillName: string) => void;
   className?: string;
 }
 
@@ -86,16 +88,31 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
                   return (
                     <div key={skill.name} className="flex items-start gap-2">
                       <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
-                      <div className="flex flex-col">
-                        <span
-                          className={cn(
-                            "text-xs font-medium",
-                            isLoaded ? "text-foreground" : "text-muted-foreground"
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <div className="flex items-center gap-1">
+                          <span
+                            className={cn(
+                              "text-xs font-medium",
+                              isLoaded ? "text-foreground" : "text-muted-foreground"
+                            )}
+                          >
+                            {skill.name}
+                            {isLoaded && <Check className="text-success ml-1 inline h-3 w-3" />}
+                          </span>
+                          {props.onInsertSkill && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                props.onInsertSkill?.(skill.name);
+                              }}
+                              className="text-muted-foreground hover:text-foreground hover:bg-sidebar-hover ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded"
+                              title={`Insert #${skill.name} into chat`}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </button>
                           )}
-                        >
-                          {skill.name}
-                          {isLoaded && <Check className="text-success ml-1 inline h-3 w-3" />}
-                        </span>
+                        </div>
                         <span className="text-muted-foreground text-[11px] leading-snug">
                           {skill.description}
                         </span>
