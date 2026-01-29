@@ -24,6 +24,7 @@ export {
 export {
   CostsTabLabel,
   ExplorerTabLabel,
+  HarnessTabLabel,
   FileTabLabel,
   ReviewTabLabel,
   StatsTabLabel,

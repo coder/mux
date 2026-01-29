@@ -17,6 +17,8 @@ interface SendMessageArgs {
   options: SendMessageOptions;
 }
 
+type SendMessageResult = { success: true; data: undefined } | { success: false; error: string };
+
 type GetPlanContentResult =
   | { success: true; data: { content: string; path: string } }
   | { success: false; error: string };
@@ -44,7 +46,8 @@ interface MockApi {
       summaryMessage: unknown;
       deletePlanFile?: boolean;
     }) => Promise<ResultVoid>;
-    sendMessage: (args: SendMessageArgs) => Promise<{ success: true; data: undefined }>;
+    sendMessage: (args: SendMessageArgs) => Promise<SendMessageResult>;
+    loop: Record<string, unknown>;
   };
 }
 
@@ -89,8 +92,11 @@ void mock.module("@/browser/hooks/useOpenInEditor", () => ({
 }));
 
 void mock.module("@/browser/contexts/WorkspaceContext", () => ({
+  useOptionalWorkspaceContext: () => ({
+    workspaceMetadata: new Map<string, { runtimeConfig?: unknown; name?: string }>(),
+  }),
   useWorkspaceContext: () => ({
-    workspaceMetadata: new Map<string, { runtimeConfig?: unknown }>(),
+    workspaceMetadata: new Map<string, { runtimeConfig?: unknown; name?: string }>(),
   }),
 }));
 
@@ -199,6 +205,7 @@ describe("ProposePlanToolCall", () => {
             data: { content: "# My Plan\n\nDo the thing.", path: planPath },
           }),
         replaceChatHistory: (_args) => Promise.resolve({ success: true, data: undefined }),
+        loop: {},
         sendMessage: (args: SendMessageArgs) => {
           sendMessageCalls.push(args);
           return Promise.resolve({ success: true, data: undefined });
@@ -285,6 +292,7 @@ describe("ProposePlanToolCall", () => {
           sendMessageCalls.push(args);
           return Promise.resolve({ success: true, data: undefined });
         },
+        loop: {},
       },
     };
 
@@ -326,5 +334,89 @@ describe("ProposePlanToolCall", () => {
     expect(summaryMessage.metadata?.agentId).toBe("plan");
     expect(summaryMessage.parts?.[0]?.text).toContain("*Plan file preserved at:*");
     expect(summaryMessage.parts?.[0]?.text).toContain(planPath);
+  });
+
+  test("switches to harness-init and sends a harness proposal request when clicking Start Ralph loop", async () => {
+    const workspaceId = "ws-123";
+    const planPath = "~/.mux/plans/demo/ws-123.md";
+
+    // Start in plan mode.
+    window.localStorage.setItem(getAgentIdKey(workspaceId), JSON.stringify("plan"));
+
+    const sendMessageCalls: SendMessageArgs[] = [];
+
+    let resolveSendMessage!: (value: SendMessageResult) => void;
+    const sendMessagePromise = new Promise<SendMessageResult>((resolve) => {
+      resolveSendMessage = resolve;
+    });
+
+    mockApi = {
+      config: {
+        getConfig: () =>
+          Promise.resolve({
+            taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+            agentAiDefaults: {},
+            subagentAiDefaults: {},
+          }),
+      },
+      workspace: {
+        getPlanContent: () =>
+          Promise.resolve({
+            success: true,
+            data: { content: "# My Plan\n\nDo the thing.", path: planPath },
+          }),
+        replaceChatHistory: () => Promise.resolve({ success: true, data: undefined }),
+        sendMessage: (args: SendMessageArgs) => {
+          sendMessageCalls.push(args);
+          return sendMessagePromise;
+        },
+        loop: {},
+      },
+    };
+
+    const view = render(
+      <TooltipProvider>
+        <ProposePlanToolCall
+          args={{}}
+          status="completed"
+          result={{
+            success: true,
+            planPath,
+            planContent: "# My Plan\n\nDo the thing.",
+          }}
+          workspaceId={workspaceId}
+          isLatest={true}
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByRole("button", { name: "Start Ralph loop" }));
+
+    await waitFor(() => expect(sendMessageCalls.length).toBe(1));
+    expect(sendMessageCalls[0]?.message).toBe(
+      "Generate a Ralph harness from the current plan and propose it"
+    );
+
+    await waitFor(() => {
+      const button = view.getByRole("button", { name: "Start Ralph loop" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+
+    resolveSendMessage({ success: true, data: undefined });
+
+    await waitFor(() => {
+      const button = view.getByRole("button", { name: "Start Ralph loop" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
+
+    const agentKey = getAgentIdKey(workspaceId);
+    const updatePersistedStateMaybeMock = updatePersistedState as unknown as {
+      mock?: { calls: unknown[][] };
+    };
+    if (updatePersistedStateMaybeMock.mock) {
+      expect(updatePersistedState).toHaveBeenCalledWith(agentKey, "harness-init");
+    } else {
+      expect(JSON.parse(window.localStorage.getItem(agentKey)!)).toBe("harness-init");
+    }
   });
 });

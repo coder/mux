@@ -69,6 +69,11 @@
     --color-exec-mode-hover: hsl(268.56 94.04% 67%);
     --color-exec-mode-light: hsl(268.56 94.04% 78%);
 
+    --color-harness-init-mode: hsl(175 60% 42%);
+    --color-harness-init-mode-hover: hsl(175 60% 52%);
+    --color-harness-init-mode-light: hsl(175 60% 62%);
+    --color-harness-init-mode-alpha: hsla(175 60% 42% / 0.1);
+
     /* Edit mode: amber/gold for editing warnings and barriers */
     --color-edit-mode: hsl(38 80% 45%);
     --color-edit-mode-hover: hsl(38 80% 55%);
@@ -366,6 +371,11 @@
   --color-exec-mode-hover: hsl(268.56 94.04% 67%);
   --color-exec-mode-light: hsl(268.56 94.04% 78%);
 
+  --color-harness-init-mode: hsl(175 60% 38%);
+  --color-harness-init-mode-hover: hsl(175 60% 46%);
+  --color-harness-init-mode-light: hsl(175 60% 58%);
+  --color-harness-init-mode-alpha: hsla(175 60% 38% / 0.08);
+
   --color-pending: hsl(30 100% 64%);
 
   --color-debug-mode: hsl(214 100% 56%);
@@ -604,6 +614,11 @@
   --color-exec-mode-hover: color-mix(in srgb, var(--color-exec-mode), white 18%);
   --color-exec-mode-light: color-mix(in srgb, var(--color-exec-mode), white 42%);
 
+  --color-harness-init-mode: #24837b; /* Flexoki cyan-600 */
+  --color-harness-init-mode-hover: color-mix(in srgb, var(--color-harness-init-mode), white 18%);
+  --color-harness-init-mode-light: color-mix(in srgb, var(--color-harness-init-mode), white 42%);
+  --color-harness-init-mode-alpha: hsl(from var(--color-harness-init-mode) h s l / 0.08);
+
   --color-edit-mode: #ad8301; /* Flexoki yellow-600 */
   --color-edit-mode-hover: color-mix(in srgb, var(--color-edit-mode), white 18%);
   --color-edit-mode-light: color-mix(in srgb, var(--color-edit-mode), white 42%);
@@ -814,6 +829,11 @@
   --color-exec-mode: #8b7ec8; /* Flexoki purple-400 */
   --color-exec-mode-hover: color-mix(in srgb, var(--color-exec-mode), white 10%);
   --color-exec-mode-light: color-mix(in srgb, var(--color-exec-mode), white 22%);
+
+  --color-harness-init-mode: #3aa99f; /* Flexoki cyan-400 */
+  --color-harness-init-mode-hover: color-mix(in srgb, var(--color-harness-init-mode), white 10%);
+  --color-harness-init-mode-light: color-mix(in srgb, var(--color-harness-init-mode), white 22%);
+  --color-harness-init-mode-alpha: hsl(from var(--color-harness-init-mode) h s l / 0.12);
 
   --color-edit-mode: #d0a215; /* Flexoki yellow-400 */
   --color-edit-mode-hover: color-mix(in srgb, var(--color-edit-mode), white 10%);

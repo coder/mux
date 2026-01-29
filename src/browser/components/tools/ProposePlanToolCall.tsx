@@ -5,6 +5,7 @@ import type {
   LegacyProposePlanToolArgs,
   LegacyProposePlanToolResult,
 } from "@/common/types/tools";
+import type { HarnessLoopState } from "@/common/types/harness";
 import {
   ToolContainer,
   ToolHeader,
@@ -29,6 +30,7 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
 import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import {
   Clipboard,
@@ -38,6 +40,7 @@ import {
   ListStart,
   Pencil,
   Play,
+  RefreshCw,
   X,
 } from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
@@ -131,13 +134,18 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   } = props;
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
+  const [isStartingLoop, setIsStartingLoop] = useState(false);
+  const isStartingLoopRef = useRef(false);
   const [isImplementing, setIsImplementing] = useState(false);
   const [implementReplacesChatHistory, setImplementReplacesChatHistory] = useState(false);
+  const [loopState, setLoopState] = useState<HarnessLoopState | null>(null);
   const isImplementingRef = useRef(false);
   const isMountedRef = useRef(true);
   const { api } = useAPI();
   const openInEditor = useOpenInEditor();
+  const loopError = usePopoverError();
   const workspaceContext = useOptionalWorkspaceContext();
+  const startLoopButtonRef = useRef<HTMLDivElement>(null);
   const editorError = usePopoverError();
   const editButtonRef = useRef<HTMLDivElement>(null);
 
@@ -219,6 +227,31 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     return () => window.removeEventListener("focus", handleFocus);
     // status in deps ensures refetch when tool completes (captures final file state)
   }, [api, workspaceId, isLatest, isEphemeralPreview, cacheKey, status]);
+
+  // Keep loop state live for the latest plan.
+  useEffect(() => {
+    if (isEphemeralPreview || !isLatest || !workspaceId || !api) return;
+
+    const abortController = new AbortController();
+    const { signal } = abortController;
+
+    (async () => {
+      try {
+        const iterator = await api.workspace.loop.subscribe({ workspaceId }, { signal });
+
+        for await (const nextLoopState of iterator) {
+          if (signal.aborted) break;
+          setLoopState(nextLoopState);
+        }
+      } catch (err) {
+        if (!signal.aborted) {
+          console.error("Failed to subscribe to loop state:", err);
+        }
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api, workspaceId, isLatest, isEphemeralPreview]);
 
   // Determine plan content and title based on result type
   // For ephemeral previews, use direct content/path props
@@ -369,6 +402,47 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       }
     }
   };
+
+  const handleStartRalphLoop = () => {
+    if (!workspaceId || !api) return;
+    if (isStartingLoopRef.current) return;
+
+    // Capture positioning from the ref for error popover placement
+    const anchorPosition = startLoopButtonRef.current
+      ? (() => {
+          const { bottom, left } = startLoopButtonRef.current.getBoundingClientRect();
+          return { top: bottom + 8, left };
+        })()
+      : { top: 100, left: 100 };
+
+    isStartingLoopRef.current = true;
+    setIsStartingLoop(true);
+
+    // Switch to harness-init before sending so send options (agentId/mode) match.
+    updatePersistedState(getAgentIdKey(workspaceId), "harness-init");
+
+    api.workspace
+      .sendMessage({
+        workspaceId,
+        message: "Generate a Ralph harness from the current plan and propose it",
+        options: buildSendMessageOptions(workspaceId),
+      })
+      .then((result) => {
+        if (!result.success) {
+          const formatted = formatSendMessageError(result.error);
+          loopError.showError("start-ralph-loop", formatted.message, anchorPosition);
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        loopError.showError("start-ralph-loop", message, anchorPosition);
+      })
+      .finally(() => {
+        isStartingLoopRef.current = false;
+        setIsStartingLoop(false);
+      });
+  };
+
   // Copy to clipboard with feedback
   const { copied, copyToClipboard } = useCopyToClipboard();
 
@@ -394,6 +468,25 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     }
   };
 
+  const showPlanPlaceholder =
+    !errorMessage && !showRaw && planContent.trim().length === 0 && status !== "completed";
+  const planPlaceholderText =
+    status === "executing" ? "Generating plan preview…" : "Preparing plan…";
+
+  const showInlineLoopState =
+    !isEphemeralPreview &&
+    !!api &&
+    !!workspaceId &&
+    isLatest &&
+    status === "completed" &&
+    !errorMessage;
+
+  const isLoopStateRelevant = (state: HarnessLoopState) =>
+    state.status !== "stopped" ||
+    state.iteration > 0 ||
+    state.consecutiveFailures > 0 ||
+    state.lastError !== null ||
+    state.stoppedReason !== null;
   const statusDisplay = getStatusDisplay(status);
 
   // Build action buttons array (similar to AssistantMessage)
@@ -447,6 +540,23 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         tooltip: implementReplacesChatHistory
           ? "Replace chat history with this plan, switch to Exec, and start implementing"
           : "Switch to Exec and start implementing",
+      });
+
+      actionButtons.push({
+        label: "Start Ralph loop",
+        component: (
+          <div ref={startLoopButtonRef}>
+            <IconActionButton
+              button={{
+                label: "Start Ralph loop",
+                onClick: handleStartRalphLoop,
+                disabled: !api || isStartingLoop,
+                icon: <RefreshCw className={cn(isStartingLoop && "animate-spin")} />,
+                tooltip: "Switch to Harness Init and propose a harness for approval",
+              }}
+            />
+          </div>
+        ),
       });
     }
   }
@@ -502,18 +612,51 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
             </Button>
           </div>
         </div>
+      ) : showPlanPlaceholder ? (
+        <div className="border-border-light text-muted rounded-sm border border-dashed p-3 font-mono text-xs">
+          {planPlaceholderText}
+        </div>
       ) : (
         <div className="plan-content">
           <MarkdownRenderer content={planContent} />
         </div>
       )}
 
-      {/* Completion guidance: only for completed tool calls without errors, not ephemeral previews */}
+      {/* Loop status + completion guidance */}
+
+      {showInlineLoopState && loopState && isLoopStateRelevant(loopState) && (
+        <div className="border-border-light mt-3 rounded border p-3">
+          <div className="text-secondary text-xs">Loop status</div>
+          <div className="mt-1 text-sm">{`${loopState.status} • iteration ${loopState.iteration}`}</div>
+          {loopState.currentItemTitle && (
+            <div className="text-secondary mt-1 text-xs">
+              Current: <span className="text-light">{loopState.currentItemTitle}</span>
+            </div>
+          )}
+          {loopState.consecutiveFailures > 0 && (
+            <div className="text-error mt-1 text-xs">
+              Consecutive failures: {loopState.consecutiveFailures}
+            </div>
+          )}
+          {loopState.stoppedReason && (
+            <div className="text-secondary mt-1 text-xs">Stopped: {loopState.stoppedReason}</div>
+          )}
+          {loopState.lastError && (
+            <div className="text-error mt-2 text-xs">{loopState.lastError}</div>
+          )}
+        </div>
+      )}
       {!isEphemeralPreview && status === "completed" && !errorMessage && (
         <div className="plan-divider text-muted mt-3 border-t pt-3 text-[11px] leading-normal italic">
           Respond with revisions or switch to the Exec agent (
           <span className="font-primary not-italic">{formatKeybind(KEYBINDS.CYCLE_AGENT)}</span> to
           cycle) and ask to implement.
+        </div>
+      )}
+
+      {isStartingLoop && (
+        <div className="text-muted mt-3 text-[11px] leading-normal italic">
+          Starting Ralph loop… (generating harness if needed)
         </div>
       )}
 
@@ -538,6 +681,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       <>
         <div className={cn("px-4 py-2", className)}>{planUI}</div>
         <PopoverError error={editorError.error} prefix="Failed to open editor" />
+        <PopoverError error={loopError.error} prefix="Failed to start Ralph loop" />
       </>
     );
   }
@@ -557,6 +701,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         {modal}
       </ToolContainer>
       <PopoverError error={editorError.error} prefix="Failed to open editor" />
+      <PopoverError error={loopError.error} prefix="Failed to start Ralph loop" />
     </>
   );
 };

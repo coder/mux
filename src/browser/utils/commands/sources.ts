@@ -90,6 +90,7 @@ export const COMMAND_SECTIONS = {
   WORKSPACES: "Workspaces",
   LAYOUTS: "Layouts",
   NAVIGATION: "Navigation",
+  HARNESS: "Harness",
   CHAT: "Chat",
   MODE: "Modes & Model",
   HELP: "Help",
@@ -102,6 +103,7 @@ const section = {
   layouts: COMMAND_SECTIONS.LAYOUTS,
   workspaces: COMMAND_SECTIONS.WORKSPACES,
   navigation: COMMAND_SECTIONS.NAVIGATION,
+  harness: COMMAND_SECTIONS.HARNESS,
   chat: COMMAND_SECTIONS.CHAT,
   appearance: COMMAND_SECTIONS.APPEARANCE,
   mode: COMMAND_SECTIONS.MODE,
@@ -639,6 +641,75 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         run: () => {
           // Dispatch custom event; ChatInput listens for it
           window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.TOGGLE_VOICE_INPUT));
+        },
+      });
+      list.push({
+        id: CommandIds.harnessRunGates(),
+        title: "Run harness gates",
+        subtitle: "Run the workspace harness gate commands",
+        section: section.harness,
+        run: async () => {
+          const result = await p.api?.workspace.harness?.runGates({ workspaceId: id });
+          if (result && !result.success) {
+            console.error(result.error);
+          }
+        },
+      });
+      list.push({
+        id: CommandIds.harnessCheckpoint(),
+        title: "Harness checkpoint",
+        subtitle: "Commit changes if gates are passing",
+        section: section.harness,
+        run: async () => {
+          const result = await p.api?.workspace.harness?.checkpoint({ workspaceId: id });
+          if (result && !result.success) {
+            console.error(result.error);
+          }
+        },
+      });
+      list.push({
+        id: CommandIds.harnessLoopStart(),
+        title: "Harness loop: Start",
+        section: section.harness,
+        run: async () => {
+          const result = await p.api?.workspace.loop?.start({ workspaceId: id });
+          if (result && !result.success) {
+            console.error(result.error);
+          }
+        },
+      });
+      list.push({
+        id: CommandIds.harnessLoopPause(),
+        title: "Harness loop: Pause",
+        section: section.harness,
+        run: async () => {
+          const result = await p.api?.workspace.loop?.pause({ workspaceId: id });
+          if (result && !result.success) {
+            console.error(result.error);
+          }
+        },
+      });
+      list.push({
+        id: CommandIds.harnessLoopStop(),
+        title: "Harness loop: Stop",
+        section: section.harness,
+        run: async () => {
+          const result = await p.api?.workspace.loop?.stop({ workspaceId: id });
+          if (result && !result.success) {
+            console.error(result.error);
+          }
+        },
+      });
+      list.push({
+        id: CommandIds.harnessResetContext(),
+        title: "Harness reset context",
+        subtitle: "Replace chat history with a harness bearings summary",
+        section: section.harness,
+        run: async () => {
+          const result = await p.api?.workspace.harness?.resetContext({ workspaceId: id });
+          if (result && !result.success) {
+            console.error(result.error);
+          }
         },
       });
       list.push({

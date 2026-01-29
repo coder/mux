@@ -690,6 +690,34 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         yield* [];
         await new Promise<void>(() => undefined);
       },
+      loop: {
+        subscribe: async function* (
+          _input: { workspaceId: string },
+          options?: { signal?: AbortSignal }
+        ) {
+          // Yield initial state, then keep the subscription open (like a real eventIterator).
+          yield {
+            status: "stopped" as const,
+            startedAt: null,
+            iteration: 0,
+            consecutiveFailures: 0,
+            currentItemId: null,
+            currentItemTitle: null,
+            lastGateRun: null,
+            lastCheckpoint: null,
+            lastError: null,
+            stoppedReason: null,
+          };
+
+          await new Promise<void>((resolve) => {
+            if (options?.signal?.aborted) {
+              resolve();
+              return;
+            }
+            options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+        },
+      },
       activity: {
         list: () => Promise.resolve({}),
         subscribe: async function* () {

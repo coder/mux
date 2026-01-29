@@ -278,6 +278,21 @@ export interface LegacyProposePlanToolResult {
   message: string;
 }
 
+// Propose Harness Tool Types
+// Args derived from schema
+export type ProposeHarnessToolArgs = z.infer<typeof TOOL_DEFINITIONS.propose_harness.schema>;
+
+export interface ProposeHarnessToolResult {
+  success: true;
+  harnessPath: string;
+  message: string;
+}
+
+export interface ProposeHarnessToolError {
+  success: false;
+  error: string;
+}
+
 // Todo Tool Types
 export interface TodoItem {
   content: string;

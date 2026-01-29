@@ -17,7 +17,9 @@ import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { getPlanFilePath } from "@/common/utils/planStorage";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
+import { createMuxMessage } from "@/common/types/message";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
@@ -1690,6 +1692,287 @@ export const router = (authToken?: string) => {
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
               return { success: false, error: message };
+            }
+          }),
+      },
+      harness: {
+        exists: t
+          .input(schemas.workspace.harness.exists.input)
+          .output(schemas.workspace.harness.exists.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const presence = await context.workspaceHarnessService.getHarnessPresenceForWorkspace(
+                input.workspaceId
+              );
+              return { success: true, data: presence };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+        get: t
+          .input(schemas.workspace.harness.get.input)
+          .output(schemas.workspace.harness.get.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const harness = await context.workspaceHarnessService.getHarnessForWorkspace(
+                input.workspaceId
+              );
+              const [lastGateRun, lastCheckpoint, loopState] = await Promise.all([
+                context.gateRunnerService.getLastGateRun(input.workspaceId),
+                context.gitCheckpointService.getLastCheckpoint(input.workspaceId),
+                context.loopRunnerService.getState(input.workspaceId),
+              ]);
+
+              return {
+                success: true,
+                data: {
+                  config: harness.config,
+                  paths: harness.paths,
+                  exists: harness.exists,
+                  lastGateRun,
+                  lastCheckpoint,
+                  loopState,
+                },
+              };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+        set: t
+          .input(schemas.workspace.harness.set.input)
+          .output(schemas.workspace.harness.set.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const normalized = await context.workspaceHarnessService.setHarnessForWorkspace(
+                input.workspaceId,
+                input.config
+              );
+              return { success: true, data: normalized };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+        runGates: t
+          .input(schemas.workspace.harness.runGates.input)
+          .output(schemas.workspace.harness.runGates.output)
+          .handler(async ({ context, input }) => {
+            const result = await context.gateRunnerService.runGates(input.workspaceId);
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+            return { success: true, data: result.data };
+          }),
+        checkpoint: t
+          .input(schemas.workspace.harness.checkpoint.input)
+          .output(schemas.workspace.harness.checkpoint.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const harness = await context.workspaceHarnessService.getHarnessForWorkspace(
+                input.workspaceId
+              );
+              const loopState = await context.loopRunnerService.getState(input.workspaceId);
+
+              const template =
+                input.messageTemplate ??
+                harness.config.loop?.commitMessageTemplate ??
+                "mux(harness): {{item}}";
+
+              const result = await context.gitCheckpointService.checkpoint(input.workspaceId, {
+                messageTemplate: template,
+                itemTitle: loopState.currentItemTitle ?? "checkpoint",
+                iteration: loopState.iteration,
+              });
+
+              if (!result.success) {
+                return { success: false, error: result.error };
+              }
+
+              return { success: true, data: result.data };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+        resetContext: t
+          .input(schemas.workspace.harness.resetContext.input)
+          .output(schemas.workspace.harness.resetContext.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const [harness, loopState, lastGateRun, lastCheckpoint, workspaceInfo] =
+                await Promise.all([
+                  context.workspaceHarnessService.getHarnessForWorkspace(input.workspaceId),
+                  context.loopRunnerService.getState(input.workspaceId),
+                  context.gateRunnerService.getLastGateRun(input.workspaceId),
+                  context.gitCheckpointService.getLastCheckpoint(input.workspaceId),
+                  context.workspaceService.getInfo(input.workspaceId),
+                ]);
+
+              const workspaceName = workspaceInfo?.name ?? input.workspaceId;
+              const configPathHint = `.mux/harness/${workspaceName}.jsonc`;
+              const progressPathHint = `.mux/harness/${workspaceName}.progress.md`;
+              const planPathHint = (() => {
+                if (!workspaceInfo) {
+                  return null;
+                }
+
+                const runtime = createRuntime(workspaceInfo.runtimeConfig, {
+                  projectPath: workspaceInfo.projectPath,
+                });
+                const muxHome = runtime.getMuxHome();
+
+                return getPlanFilePath(workspaceName, workspaceInfo.projectName, muxHome);
+              })();
+
+              const lines: string[] = [];
+              lines.push("# Harness bearings");
+              lines.push("");
+              lines.push(`- Loop status: ${loopState.status}`);
+              lines.push(`- Iteration: ${loopState.iteration}`);
+              if (loopState.currentItemTitle) {
+                lines.push(`- Current item: ${loopState.currentItemTitle}`);
+              }
+              if (lastGateRun) {
+                lines.push(`- Last gates: ${lastGateRun.ok ? "PASS" : "FAIL"}`);
+              }
+              if (lastCheckpoint?.commitSha) {
+                lines.push(`- Last commit: ${lastCheckpoint.commitSha}`);
+              }
+              if (input.note) {
+                lines.push(`- Note: ${input.note}`);
+              }
+              lines.push("");
+              lines.push("Harness files:");
+              lines.push(`- ${progressPathHint}`);
+              lines.push(`- ${configPathHint}`);
+              if (planPathHint) {
+                lines.push(`- Plan: ${planPathHint}`);
+              }
+              lines.push("");
+              lines.push("Checklist:");
+              if (harness.config.checklist.length === 0) {
+                lines.push("(no checklist items)");
+              } else {
+                for (const item of harness.config.checklist) {
+                  const marker =
+                    item.status === "done"
+                      ? "[x]"
+                      : item.status === "doing"
+                        ? "[~]"
+                        : item.status === "blocked"
+                          ? "[!]"
+                          : "[ ]";
+                  lines.push(`- ${marker} ${item.title}`);
+                }
+              }
+
+              const summary = lines.join("\n");
+
+              const summaryMessage = createMuxMessage(
+                `harness-reset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+                "assistant",
+                summary,
+                {
+                  timestamp: Date.now(),
+                  compacted: "user",
+                  mode: "exec",
+                  muxMetadata: { type: "harness-bearings" },
+                }
+              );
+
+              const replaceResult = await context.workspaceService.replaceHistory(
+                input.workspaceId,
+                summaryMessage
+              );
+              if (!replaceResult.success) {
+                return { success: false, error: replaceResult.error };
+              }
+
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+      },
+      loop: {
+        getState: t
+          .input(schemas.workspace.loop.getState.input)
+          .output(schemas.workspace.loop.getState.output)
+          .handler(async ({ context, input }) => {
+            return context.loopRunnerService.getState(input.workspaceId);
+          }),
+        start: t
+          .input(schemas.workspace.loop.start.input)
+          .output(schemas.workspace.loop.start.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const result = await context.loopRunnerService.start(input.workspaceId);
+              if (!result.success) {
+                return { success: false, error: result.error };
+              }
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+        pause: t
+          .input(schemas.workspace.loop.pause.input)
+          .output(schemas.workspace.loop.pause.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const result = await context.loopRunnerService.pause(input.workspaceId, input.reason);
+              if (!result.success) {
+                return { success: false, error: result.error };
+              }
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+        stop: t
+          .input(schemas.workspace.loop.stop.input)
+          .output(schemas.workspace.loop.stop.output)
+          .handler(async ({ context, input }) => {
+            try {
+              const result = await context.loopRunnerService.stop(input.workspaceId, input.reason);
+              if (!result.success) {
+                return { success: false, error: result.error };
+              }
+              return { success: true, data: undefined };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              return { success: false, error: message };
+            }
+          }),
+        subscribe: t
+          .input(schemas.workspace.loop.subscribe.input)
+          .output(schemas.workspace.loop.subscribe.output)
+          .handler(async function* ({ context, input }) {
+            const { workspaceId } = input;
+            const service = context.loopRunnerService;
+
+            const queue = createAsyncEventQueue<Awaited<ReturnType<typeof service.getState>>>();
+
+            const onChange = (changedWorkspaceId: string) => {
+              if (changedWorkspaceId !== workspaceId) {
+                return;
+              }
+              void service.getState(workspaceId).then(queue.push);
+            };
+
+            service.on("change", onChange);
+
+            try {
+              queue.push(await service.getState(workspaceId));
+              yield* queue.iterate();
+            } finally {
+              queue.end();
+              service.off("change", onChange);
             }
           }),
       },

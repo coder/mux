@@ -41,6 +41,7 @@ import type { BashOutputEvent } from "@/common/types/stream";
 import type { MuxMessage, MuxTextPart } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config, ProviderConfig } from "@/node/config";
+import { maybeAppendHarnessConfigSchemaToAdditionalInstructions } from "./harnessConfigSchemaPrompt";
 import { StreamManager } from "./streamManager";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
@@ -1416,7 +1417,12 @@ export class AIService extends EventEmitter {
           runtime: earlyRuntime,
           runtimeTempDir: os.tmpdir(),
           secrets: {},
-          planFileOnly: agentIsPlanLike,
+          mode: effectiveMode === "plan" ? "plan" : "exec",
+          agentId: effectiveAgentId,
+          allowedEditPaths:
+            effectiveAgentId === "harness-init"
+              ? [".mux/harness/*.jsonc", ".mux/harness/**/*.jsonc"]
+              : undefined,
         },
         "", // Empty workspace ID for early stub config
         this.initStateManager,
@@ -1498,6 +1504,14 @@ export class AIService extends EventEmitter {
           ? `${effectiveAdditionalInstructions}\n\n${nestingInstruction}`
           : nestingInstruction;
       }
+
+      // Harness agents need a schema-aware prompt so they don't web-search for an internal/WIP spec.
+      // This block is generated from the Zod schema at runtime to avoid schema drift.
+      effectiveAdditionalInstructions = maybeAppendHarnessConfigSchemaToAdditionalInstructions({
+        agentId: effectiveAgentId,
+        workspaceName: metadata.name,
+        additionalInstructions: effectiveAdditionalInstructions,
+      });
 
       // Read plan content for agent transition (plan-like → exec-like)
       // Only read if switching to exec-like agent and last assistant was plan-like.
@@ -1760,10 +1774,15 @@ export class AIService extends EventEmitter {
           ),
           runtimeTempDir,
           backgroundProcessManager: this.backgroundProcessManager,
-          // Plan agent configuration for plan file access.
-          // - read: plan file is readable in all agents (useful context)
-          // - write: enforced by file_edit_* tools (plan file is read-only outside plan agent)
-          planFileOnly: agentIsPlanLike,
+          // Plan/exec mode configuration for plan file access.
+          // - read: plan file is readable in all modes (useful context)
+          // - write: enforced by file_edit_* tools (plan file is read-only outside plan mode)
+          mode: effectiveMode === "plan" ? "plan" : "exec",
+          agentId: effectiveAgentId,
+          allowedEditPaths:
+            effectiveAgentId === "harness-init"
+              ? [".mux/harness/*.jsonc", ".mux/harness/**/*.jsonc"]
+              : undefined,
           emitChatEvent: (event) => {
             // Defensive: tools should only emit events for the workspace they belong to.
             if ("workspaceId" in event && event.workspaceId !== workspaceId) {

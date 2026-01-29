@@ -44,6 +44,14 @@ export const CommandIds = {
   chatInterrupt: () => "chat:interrupt" as const,
   chatJumpBottom: () => "chat:jumpBottom" as const,
   chatVoiceInput: () => "chat:voiceInput" as const,
+
+  // Harness commands
+  harnessRunGates: () => "harness:runGates" as const,
+  harnessCheckpoint: () => "harness:checkpoint" as const,
+  harnessResetContext: () => "harness:resetContext" as const,
+  harnessLoopStart: () => "harness:loop:start" as const,
+  harnessLoopPause: () => "harness:loop:pause" as const,
+  harnessLoopStop: () => "harness:loop:stop" as const,
   chatClearTimingStats: () => "chat:clearTimingStats" as const,
 
   // Mode commands

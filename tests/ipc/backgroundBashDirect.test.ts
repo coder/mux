@@ -19,7 +19,12 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { createTestEnvironment, cleanupTestEnvironment, type TestEnvironment } from "./setup";
-import { createTempGitRepo, cleanupTempGitRepo, generateBranchName } from "./helpers";
+import {
+  createTempGitRepo,
+  cleanupTempGitRepo,
+  generateBranchName,
+  waitForInitComplete,
+} from "./helpers";
 import { detectDefaultTrunkBranch } from "../../src/node/git";
 import { LocalRuntime } from "../../src/node/runtime/LocalRuntime";
 import { BackgroundProcessManager } from "../../src/node/services/backgroundProcessManager";
@@ -70,6 +75,9 @@ describe("Background Bash Direct Integration", () => {
     }
     workspaceId = result.metadata.id;
     workspacePath = result.metadata.namedWorkspacePath ?? tempGitRepo;
+
+    // Avoid race conditions on slower platforms (Windows) where tools may run before init finishes.
+    await waitForInitComplete(env, workspaceId, 30_000);
   });
 
   afterAll(async () => {
@@ -263,6 +271,9 @@ describe("Background Bash Output Capture", () => {
     }
     workspaceId = result.metadata.id;
     workspacePath = result.metadata.namedWorkspacePath ?? tempGitRepo;
+
+    // Avoid race conditions on slower platforms (Windows) where tools may run before init finishes.
+    await waitForInitComplete(env, workspaceId, 30_000);
   });
 
   afterAll(async () => {
@@ -379,6 +390,9 @@ describe("Foreground to Background Migration", () => {
     }
     workspaceId = result.metadata.id;
     workspacePath = result.metadata.namedWorkspacePath ?? tempGitRepo;
+
+    // Avoid race conditions on slower platforms (Windows) where tools may run before init finishes.
+    await waitForInitComplete(env, workspaceId, 30_000);
   });
 
   afterAll(async () => {
@@ -519,8 +533,8 @@ describe("Foreground to Background Migration", () => {
       { toolCallId, messages: [] }
     ) as Promise<ToolExecuteResult>;
 
-    // Wait for marker1 to output
-    await new Promise((resolve) => setTimeout(resolve, FOREGROUND_MIGRATION_READY_MS));
+    // Wait for marker1 to output (extra slack for slower CI runners)
+    await new Promise((resolve) => setTimeout(resolve, 800));
 
     // Send to background mid-execution
     manager.sendToBackground(toolCallId);
@@ -589,7 +603,27 @@ describe("Foreground to Background Migration", () => {
 
     // Either it completed normally or was backgrounded
     expect(result.success).toBe(true);
-    expect(result.output).toContain(marker);
+    if (!result.success) return;
+
+    if (result.output?.includes(marker)) {
+      expect(result.output).toContain(marker);
+      return;
+    }
+
+    // On some platforms the process can exit during send-to-background, before output is collected.
+    // Verify the marker still exists in the persisted output log.
+    if (result.backgroundProcessId) {
+      const proc = await manager.getProcess(result.backgroundProcessId);
+      expect(proc).toBeDefined();
+
+      const outputPath = path.join(proc!.outputDir, "output.log");
+      const fullOutput = await fs.readFile(outputPath, "utf-8");
+      expect(fullOutput).toContain(marker);
+      return;
+    }
+
+    // If we weren't backgrounded, the marker should have been included in the immediate output.
+    expect(result.output ?? "").toContain(marker);
   });
 
   it("should not kill backgrounded process when abort signal fires", async () => {

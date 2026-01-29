@@ -11,4 +11,9 @@ export const NON_INTERACTIVE_ENV_VARS = {
   VISUAL: "true", // Another common editor environment variable
   // Prevent git from prompting for credentials
   GIT_TERMINAL_PROMPT: "0", // Disables git credential prompts
+
+  // Some Git installs (notably on Windows) can still try to prompt via askpass helpers.
+  // Force a non-interactive askpass implementation so commands fail quickly.
+  GIT_ASKPASS: "echo",
+  SSH_ASKPASS: "echo",
 } as const;
