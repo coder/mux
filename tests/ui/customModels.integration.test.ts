@@ -15,6 +15,7 @@
  * persist the wrong config and the UI will appear to "revert".
  */
 
+import "./dom";
 import React, { useEffect, useRef } from "react";
 import { cleanup, render, waitFor } from "@testing-library/react";
 

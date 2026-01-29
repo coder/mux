@@ -1,9 +1,12 @@
 /**
- * Shared UI test helpers for review panel and git status testing.
+ * Shared UI test helpers for integration coverage (review panel, project creation, git status, etc.).
  */
 
-import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { TUTORIAL_STATE_KEY, WORKSPACE_DRAFTS_BY_PROJECT_KEY } from "@/common/constants/storage";
 import type { RenderedApp } from "./renderReviewPanel";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 import { useGitStatusStoreRaw } from "@/browser/stores/GitStatusStore";
@@ -190,6 +193,114 @@ export async function openProjectCreationView(
 }
 
 /**
+ * Add a project through the sidebar modal.
+ * Radix Dialog content is portaled to document.body, so query the body instead of the app container.
+ */
+export async function addProjectViaUI(view: RenderedApp, projectPath: string): Promise<string> {
+  await view.waitForReady();
+
+  const existingProjectPaths = new Set(
+    Array.from(view.container.querySelectorAll("[data-project-path]"))
+      .map((element) => element.getAttribute("data-project-path"))
+      .filter((value): value is string => !!value)
+  );
+
+  // Shared UI test state can already include the project; avoid re-adding it and
+  // triggering the "Project already exists" dialog error.
+  const normalizedInputPath = projectPath.replace(/[\\/]+$/, "");
+  const existingMatch = Array.from(existingProjectPaths).find((existingPath) => {
+    return existingPath.replace(/[\\/]+$/, "") === normalizedInputPath;
+  });
+  if (existingMatch) {
+    return existingMatch;
+  }
+
+  const addProjectButton = await waitFor(
+    () => {
+      const button = view.container.querySelector('[aria-label="Add project"]');
+      if (!button) {
+        throw new Error("Add project button not found");
+      }
+      return button as HTMLElement;
+    },
+    { timeout: 10_000 }
+  );
+
+  fireEvent.click(addProjectButton);
+
+  const body = within(view.container.ownerDocument.body);
+  const dialog = await body.findByRole("dialog", {}, { timeout: 10_000 });
+  const dialogCanvas = within(dialog);
+
+  const pathInput = await dialogCanvas.findByRole("textbox", {}, { timeout: 10_000 });
+  const user = userEvent.setup({ document: view.container.ownerDocument });
+  await user.clear(pathInput);
+  await user.type(pathInput, projectPath);
+
+  const submitButton = await dialogCanvas.findByRole(
+    "button",
+    { name: /add project/i },
+    { timeout: 10_000 }
+  );
+  fireEvent.click(submitButton);
+
+  const projectRow = await waitFor(
+    () => {
+      const error = dialog.querySelector(".text-error");
+      if (error?.textContent) {
+        throw new Error(`Project creation failed: ${error.textContent}`);
+      }
+
+      const rows = Array.from(view.container.querySelectorAll("[data-project-path]"));
+      const newRow = rows.find((row) => {
+        const path = row.getAttribute("data-project-path");
+        return !!path && !existingProjectPaths.has(path);
+      });
+
+      if (!newRow) {
+        throw new Error("Project row not found after adding project");
+      }
+
+      return newRow as HTMLElement;
+    },
+    { timeout: 10_000 }
+  );
+
+  const normalizedPath = projectRow.getAttribute("data-project-path");
+  if (!normalizedPath) {
+    throw new Error("Project row missing data-project-path");
+  }
+
+  return normalizedPath;
+}
+
+export function getWorkspaceDraftIds(projectPath: string): string[] {
+  const parsedDrafts = readPersistedState<Record<string, { draftId: string }[]>>(
+    WORKSPACE_DRAFTS_BY_PROJECT_KEY,
+    {}
+  );
+  const draftsForProject = parsedDrafts[projectPath] ?? [];
+  return draftsForProject.map((draft) => draft.draftId);
+}
+
+export async function waitForLatestDraftId(
+  projectPath: string,
+  timeoutMs: number = 5_000
+): Promise<string> {
+  return waitFor(
+    () => {
+      const drafts = getWorkspaceDraftIds(projectPath);
+      const latestDraft = drafts[drafts.length - 1];
+      if (!latestDraft) {
+        throw new Error("Draft not registered yet");
+      }
+      return latestDraft;
+    },
+    { timeout: timeoutMs }
+  );
+}
+
+/**
  * Clean up after a UI test: unmount view, run RTL cleanup, then restore DOM.
  * Use in finally blocks to ensure consistent cleanup.
  */
@@ -206,10 +317,7 @@ export async function cleanupView(view: RenderedApp, cleanupDom: () => void): Pr
  * Called automatically by setupTestDom().
  */
 export function disableTutorial(): void {
-  globalThis.localStorage.setItem(
-    "tutorialState",
-    JSON.stringify({ disabled: true, completed: {} })
-  );
+  updatePersistedState(TUTORIAL_STATE_KEY, { disabled: true, completed: {} });
 }
 
 /**

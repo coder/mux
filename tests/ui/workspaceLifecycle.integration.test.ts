@@ -10,6 +10,7 @@
  * not calling backend APIs directly for the actions being tested.
  */
 
+import "./dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";

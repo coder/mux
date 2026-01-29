@@ -7,12 +7,13 @@
  * - Clicking "Run git init" initializes the repo and refreshes branch list
  */
 
+import "./dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView } from "./helpers";
+import { cleanupView, openProjectCreationView } from "./helpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import type { ProjectConfig } from "@/node/config";
 import { expandProjects } from "@/browser/stories/storyHelpers";
@@ -22,32 +23,6 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 
 /** Helper to create a project config for a path with no workspaces */
 
-async function openProjectCreationView(container: HTMLElement, projectPath: string): Promise<void> {
-  const projectRow = await waitFor(
-    () => {
-      const el = container.querySelector(
-        `[data-project-path="${projectPath}"][aria-controls]`
-      ) as HTMLElement | null;
-      if (!el) {
-        throw new Error(`Project row not found for ${projectPath}`);
-      }
-      return el;
-    },
-    { timeout: 5_000 }
-  );
-
-  fireEvent.click(projectRow);
-
-  await waitFor(
-    () => {
-      const textarea = container.querySelector("textarea");
-      if (!textarea) {
-        throw new Error("Project creation page not rendered");
-      }
-    },
-    { timeout: 5_000 }
-  );
-}
 function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
   return [path, { workspaces: [] }];
 }
@@ -80,7 +55,7 @@ describeIntegration("Git Init Banner (UI)", () => {
 
     try {
       await view.waitForReady();
-      await openProjectCreationView(view.container, "/Users/dev/non-git-project");
+      await openProjectCreationView(view, "/Users/dev/non-git-project");
 
       // Wait for the git init banner to appear
       await waitFor(
@@ -128,7 +103,7 @@ describeIntegration("Git Init Banner (UI)", () => {
 
     try {
       await view.waitForReady();
-      await openProjectCreationView(view.container, "/Users/dev/git-project");
+      await openProjectCreationView(view, "/Users/dev/git-project");
 
       // Wait for creation controls to load (branches need to load first)
       await waitFor(
@@ -189,7 +164,7 @@ describeIntegration("Git Init Banner (UI)", () => {
 
     try {
       await view.waitForReady();
-      await openProjectCreationView(view.container, "/Users/dev/non-git-project");
+      await openProjectCreationView(view, "/Users/dev/non-git-project");
 
       // Wait for the git init banner to appear
       const banner = await waitFor(

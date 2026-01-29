@@ -9,7 +9,8 @@
  * - tests/ipc/nameGeneration.test.ts (backend API with real LLM)
  */
 
-import { act, fireEvent, waitFor } from "@testing-library/react";
+import "./dom";
+import { act, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -18,17 +19,17 @@ import {
   getSharedEnv,
   getSharedRepoPath,
 } from "../ipc/sendMessageTestHelpers";
-import { generateBranchName } from "../ipc/helpers";
-import { detectDefaultTrunkBranch } from "../../src/node/git";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  getDraftScopeId,
-  getInputKey,
-  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
-} from "@/common/constants/storage";
+import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
 
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView, setupTestDom } from "./helpers";
+import {
+  addProjectViaUI,
+  cleanupView,
+  openProjectCreationView,
+  setupTestDom,
+  waitForLatestDraftId,
+} from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -44,66 +45,21 @@ describeIntegration("Name generation UI flow", () => {
   test("shows generated name when typing message in creation mode", async () => {
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
-    const branchName = generateBranchName("test-name-gen");
-    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-
-    // Create and archive a workspace to register the project in sidebar (setup - OK to use API)
-    const createResult = await env.orpc.workspace.create({
-      projectPath,
-      branchName,
-      trunkBranch,
-    });
-    if (!createResult.success) throw new Error(createResult.error);
-    const metadata = createResult.metadata;
-    const workspaceId = metadata.id;
-
-    await env.orpc.workspace.archive({ workspaceId });
 
     const cleanupDom = setupTestDom();
 
-    const view = renderApp({ apiClient: env.orpc, metadata });
+    const view = renderApp({ apiClient: env.orpc });
 
     try {
       await view.waitForReady();
 
-      // Click project to navigate to creation mode (no workspace selected)
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
-          if (!el) throw new Error("Project not found in sidebar");
-          return el as HTMLElement;
-        },
-        { timeout: 10_000 }
-      );
-      fireEvent.click(projectRow);
-
-      // Wait for creation controls to appear (textarea + workspace name input)
-      await waitFor(
-        () => {
-          const el = view.container.querySelector("textarea") as HTMLTextAreaElement;
-          if (!el) throw new Error("Creation textarea not found");
-        },
-        { timeout: 5_000 }
-      );
+      const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+      await openProjectCreationView(view, normalizedProjectPath);
 
       // Set input text via persisted state (happy-dom fireEvent.change can be flaky)
       // This mimics how ChatHarness.send() works
-      const draftId = await waitFor(
-        () => {
-          const rawDrafts = globalThis.localStorage.getItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY);
-          const parsedDrafts = rawDrafts
-            ? (JSON.parse(rawDrafts) as Record<string, { draftId: string }[]>)
-            : {};
-          const draftsForProject = parsedDrafts[projectPath] ?? [];
-          const latestDraft = draftsForProject[draftsForProject.length - 1];
-          if (!latestDraft?.draftId) {
-            throw new Error("Draft not registered yet");
-          }
-          return latestDraft.draftId;
-        },
-        { timeout: 5_000 }
-      );
-      const inputKey = getInputKey(getDraftScopeId(projectPath, draftId));
+      const draftId = await waitForLatestDraftId(normalizedProjectPath);
+      const inputKey = getInputKey(getDraftScopeId(normalizedProjectPath, draftId));
       act(() => {
         updatePersistedState(inputKey, "Fix the sidebar layout bug on mobile devices");
       });
@@ -130,8 +86,6 @@ describeIntegration("Name generation UI flow", () => {
       expect(generatedName).toMatch(/^[a-z0-9-]+-[a-z0-9]{4}$/);
       expect(generatedName.length).toBeLessThanOrEqual(30);
     } finally {
-      // Cleanup: remove the archived workspace
-      await env.orpc.workspace.remove({ workspaceId, options: { force: true } }).catch(() => {});
       await cleanupView(view, cleanupDom);
     }
   }, 60_000);

@@ -5,6 +5,7 @@
  * that changing the diff base works correctly. Pattern follows agentPicker tests.
  */
 
+import "./dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";

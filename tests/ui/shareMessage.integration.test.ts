@@ -8,6 +8,7 @@
  * - Delete functionality
  */
 
+import "./dom";
 import { shouldRunIntegrationTests } from "../testUtils";
 import { uploadToMuxMd, deleteFromMuxMd } from "../../src/common/lib/muxMd";
 

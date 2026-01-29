@@ -16,6 +16,7 @@
  * - DnD gestures tested in Storybook (react-dnd-html5-backend doesn't work in happy-dom)
  */
 
+import "./dom";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";

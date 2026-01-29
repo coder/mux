@@ -11,6 +11,7 @@
  * completes, even when the user is actively viewing the workspace.
  */
 
+import "./dom";
 import { waitFor } from "@testing-library/react";
 
 import { preloadTestModules } from "../ipc/setup";

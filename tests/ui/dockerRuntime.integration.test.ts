@@ -6,12 +6,14 @@
  * - Docker runtime is disabled for non-git projects (requires git)
  */
 
+import "./dom";
 import { fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView } from "./helpers";
+import { cleanupView, openProjectCreationView } from "./helpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "@/browser/stories/storyHelpers";
 import type { ProjectConfig } from "@/node/config";
@@ -21,34 +23,6 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 /** Helper to create a project config for a path with no workspaces */
 function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
   return [path, { workspaces: [] }];
-}
-
-async function openProjectCreationView(container: HTMLElement, projectPath: string): Promise<void> {
-  const projectRow = await waitFor(
-    () => {
-      const el = container.querySelector(
-        `[data-project-path="${projectPath}"][aria-controls]`
-      ) as HTMLElement | null;
-      if (!el) {
-        throw new Error(`Project row not found for ${projectPath}`);
-      }
-      return el;
-    },
-    { timeout: 5_000 }
-  );
-
-  fireEvent.click(projectRow);
-
-  // ProjectPage renders a branch selector textarea + runtime controls.
-  await waitFor(
-    () => {
-      const textarea = container.querySelector("textarea");
-      if (!textarea) {
-        throw new Error("Project creation page not rendered");
-      }
-    },
-    { timeout: 5_000 }
-  );
 }
 
 function findRuntimeButton(container: HTMLElement, label: string): HTMLButtonElement | null {
@@ -80,7 +54,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
 
     try {
       await view.waitForReady();
-      await openProjectCreationView(view.container, projectPath);
+      await openProjectCreationView(view, projectPath);
 
       // Wait for runtime controls to render (depends on listBranches finishing)
       await waitFor(
@@ -127,7 +101,9 @@ describeIntegration("Docker runtime selection (UI)", () => {
       const hostInput = view.container.querySelector('input[placeholder="user@host"]');
       expect(hostInput).toBeNull();
 
-      fireEvent.change(imageInput, { target: { value: "node:20" } });
+      const user = userEvent.setup({ document: view.container.ownerDocument });
+      await user.clear(imageInput);
+      await user.type(imageInput, "node:20");
       expect(imageInput.value).toBe("node:20");
 
       // Switching to SSH should hide Docker image input and show host input
@@ -177,7 +153,7 @@ describeIntegration("Docker runtime selection (UI)", () => {
 
     try {
       await view.waitForReady();
-      await openProjectCreationView(view.container, projectPath);
+      await openProjectCreationView(view, projectPath);
 
       // Wait for the git init banner to confirm the project is treated as non-git
       await waitFor(

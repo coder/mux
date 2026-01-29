@@ -5,6 +5,7 @@
  * 2. Show manual "Compact & retry" UI if no suggestion is available
  */
 
+import "./dom";
 import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";

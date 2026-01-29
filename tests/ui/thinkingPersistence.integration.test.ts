@@ -2,7 +2,9 @@
  * Integration test for thinking level persistence across model switches.
  */
 
+import "./dom";
 import { fireEvent, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { getModelKey } from "@/common/constants/storage";
@@ -37,7 +39,9 @@ async function selectModel(
 ): Promise<void> {
   const input = await openModelSelector(container);
 
-  fireEvent.change(input, { target: { value: model } });
+  const user = userEvent.setup({ document: container.ownerDocument });
+  await user.clear(input);
+  await user.type(input, model);
 
   const option = await waitFor(() => {
     const match = within(container).getByText(model);
