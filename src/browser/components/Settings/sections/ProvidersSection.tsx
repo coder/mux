@@ -21,6 +21,10 @@ import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import {
+  formatMuxGatewayBalance,
+  useMuxGatewayAccountStatus,
+} from "@/browser/hooks/useMuxGatewayAccountStatus";
 import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import { Button } from "@/browser/components/ui/button";
@@ -144,6 +148,12 @@ export function ProvidersSection() {
 
   const { api } = useAPI();
   const { config, updateOptimistically } = useProvidersConfig();
+  const {
+    data: muxGatewayAccountStatus,
+    error: muxGatewayAccountError,
+    isLoading: muxGatewayAccountLoading,
+    refresh: refreshMuxGatewayAccountStatus,
+  } = useMuxGatewayAccountStatus();
 
   const gateway = useGateway();
 
@@ -318,6 +328,7 @@ export function ProvidersSection() {
           }
 
           setMuxGatewayLoginStatus("success");
+          void refreshMuxGatewayAccountStatus();
           return;
         }
 
@@ -426,6 +437,7 @@ export function ProvidersSection() {
         }
 
         setMuxGatewayLoginStatus("success");
+        void refreshMuxGatewayAccountStatus();
         return;
       }
 
@@ -444,6 +456,7 @@ export function ProvidersSection() {
     api,
     config,
     applyGatewayModels,
+    refreshMuxGatewayAccountStatus,
   ]);
   const muxGatewayCouponCodeSet = config?.["mux-gateway"]?.couponCodeSet ?? false;
   const muxGatewayLoginInProgress =
@@ -471,6 +484,25 @@ export function ProvidersSection() {
     setExpandedProvider(providersExpandedProvider);
     setProvidersExpandedProvider(null);
   }, [providersExpandedProvider, setProvidersExpandedProvider]);
+
+  useEffect(() => {
+    if (expandedProvider !== "mux-gateway" || !muxGatewayIsLoggedIn) {
+      return;
+    }
+
+    // Fetch lazily when the user expands the Mux Gateway provider.
+    if (muxGatewayAccountStatus || muxGatewayAccountLoading) {
+      return;
+    }
+
+    void refreshMuxGatewayAccountStatus();
+  }, [
+    expandedProvider,
+    muxGatewayAccountLoading,
+    muxGatewayAccountStatus,
+    muxGatewayIsLoggedIn,
+    refreshMuxGatewayAccountStatus,
+  ]);
   const [editingField, setEditingField] = useState<{
     provider: string;
     field: string;
@@ -706,6 +738,46 @@ export function ProvidersSection() {
                   </div>
                 )}
 
+                {provider === "mux-gateway" && muxGatewayIsLoggedIn && (
+                  <div className="border-border-light space-y-2 border-t pt-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <label className="text-foreground block text-xs font-medium">Account</label>
+                        <span className="text-muted text-xs">
+                          Balance and limits from Mux Gateway
+                        </span>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          void refreshMuxGatewayAccountStatus();
+                        }}
+                        disabled={muxGatewayAccountLoading}
+                      >
+                        {muxGatewayAccountLoading ? "Refreshing..." : "Refresh"}
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-muted text-xs">Balance</span>
+                      <span className="text-foreground font-mono text-xs">
+                        {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-muted text-xs">Concurrent requests per user</span>
+                      <span className="text-foreground font-mono text-xs">
+                        {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
+                      </span>
+                    </div>
+
+                    {muxGatewayAccountError && (
+                      <p className="text-destructive text-xs">{muxGatewayAccountError}</p>
+                    )}
+                  </div>
+                )}
                 {fields.map((fieldConfig) => {
                   const isEditing =
                     editingField?.provider === provider && editingField?.field === fieldConfig.key;

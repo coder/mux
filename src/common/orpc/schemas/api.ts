@@ -196,6 +196,20 @@ export const muxGatewayOauth = {
   },
 };
 
+// Mux Gateway
+export const muxGateway = {
+  getAccountStatus: {
+    input: z.void(),
+    output: ResultSchema(
+      z.object({
+        remaining_microdollars: z.number().int().nonnegative(),
+        ai_gateway_concurrent_requests_per_user: z.number().int().nonnegative(),
+      }),
+      z.string()
+    ),
+  },
+};
+
 // Projects
 export const projects = {
   create: {

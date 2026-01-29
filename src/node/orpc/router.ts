@@ -1,6 +1,9 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
+import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
+import { Err, Ok } from "@/common/types/result";
+import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import {
   selectModelForNameGeneration,
   generateWorkspaceIdentity,
@@ -664,6 +667,86 @@ export const router = (authToken?: string) => {
           }
         }),
     },
+    muxGateway: {
+      getAccountStatus: t
+        .input(schemas.muxGateway.getAccountStatus.input)
+        .output(schemas.muxGateway.getAccountStatus.output)
+        .handler(async ({ context }) => {
+          const providersConfig = context.config.loadProvidersConfig() ?? {};
+          const muxConfig = (providersConfig["mux-gateway"] ?? {}) as Record<string, unknown>;
+          const creds = resolveProviderCredentials("mux-gateway", {
+            couponCode: typeof muxConfig.couponCode === "string" ? muxConfig.couponCode : undefined,
+            voucher: typeof muxConfig.voucher === "string" ? muxConfig.voucher : undefined,
+          });
+
+          if (!creds.isConfigured || !creds.couponCode) {
+            return Err("Mux Gateway is not logged in");
+          }
+
+          let response: Awaited<ReturnType<typeof fetch>>;
+          try {
+            response = await fetch(`${MUX_GATEWAY_ORIGIN}/api/v1/balance`, {
+              headers: {
+                Accept: "application/json",
+                Authorization: `Bearer ${creds.couponCode}`,
+              },
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(`Mux Gateway balance request failed: ${message}`);
+          }
+
+          if (!response.ok) {
+            let body = "";
+            try {
+              body = await response.text();
+            } catch {
+              // Ignore errors reading response body
+            }
+            const prefix = body.trim().slice(0, 200);
+            return Err(
+              `Mux Gateway balance request failed (HTTP ${response.status}): ${
+                prefix || response.statusText
+              }`
+            );
+          }
+
+          let json: unknown;
+          try {
+            json = await response.json();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(`Mux Gateway balance response was not valid JSON: ${message}`);
+          }
+
+          const payload = json as {
+            remaining_microdollars?: unknown;
+            ai_gateway_concurrent_requests_per_user?: unknown;
+          };
+
+          const remaining = payload.remaining_microdollars;
+          const concurrency = payload.ai_gateway_concurrent_requests_per_user;
+
+          if (
+            typeof remaining !== "number" ||
+            !Number.isFinite(remaining) ||
+            !Number.isInteger(remaining) ||
+            remaining < 0 ||
+            typeof concurrency !== "number" ||
+            !Number.isFinite(concurrency) ||
+            !Number.isInteger(concurrency) ||
+            concurrency < 0
+          ) {
+            return Err("Mux Gateway returned an invalid balance payload");
+          }
+
+          return Ok({
+            remaining_microdollars: remaining,
+            ai_gateway_concurrent_requests_per_user: concurrency,
+          });
+        }),
+    },
+
     muxGatewayOauth: {
       startDesktopFlow: t
         .input(schemas.muxGatewayOauth.startDesktopFlow.input)

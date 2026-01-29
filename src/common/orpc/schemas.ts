@@ -178,6 +178,7 @@ export {
   nameGeneration,
   projects,
   ProviderConfigInfoSchema,
+  muxGateway,
   muxGatewayOauth,
   policy,
   providers,

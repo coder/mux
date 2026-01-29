@@ -2,6 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
+import { GatewayIcon } from "./icons/GatewayIcon";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import {
+  formatMuxGatewayBalance,
+  useMuxGatewayAccountStatus,
+} from "@/browser/hooks/useMuxGatewayAccountStatus";
+import { Button } from "./ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
 import { Download, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
@@ -66,6 +74,17 @@ export function TitleBar() {
   const { api } = useAPI();
   const policyState = usePolicy();
   const policyEnforced = policyState.status.state === "enforced";
+
+  const { config: providersConfig } = useProvidersConfig();
+  const muxGatewayIsLoggedIn = providersConfig?.["mux-gateway"]?.couponCodeSet ?? false;
+  const {
+    data: muxGatewayAccountStatus,
+    error: muxGatewayAccountError,
+    isLoading: muxGatewayAccountLoading,
+    refresh: refreshMuxGatewayAccountStatus,
+  } = useMuxGatewayAccountStatus();
+  const [muxGatewayPopoverOpen, setMuxGatewayPopoverOpen] = useState(false);
+
   const { extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
@@ -275,6 +294,65 @@ export function TitleBar() {
         </Tooltip>
       </div>
       <div className={cn("flex items-center gap-1.5", isDesktop && "titlebar-no-drag")}>
+        {muxGatewayIsLoggedIn && (
+          <Popover
+            open={muxGatewayPopoverOpen}
+            onOpenChange={(open) => {
+              setMuxGatewayPopoverOpen(open);
+              if (open) {
+                void refreshMuxGatewayAccountStatus();
+              }
+            }}
+          >
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 h-5 w-5 border"
+                aria-label="Show Mux Gateway balance"
+              >
+                <GatewayIcon className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-3">
+              <div className="text-foreground text-sm font-medium">Mux Gateway</div>
+
+              <div className="mt-2 space-y-1 text-xs">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted">Balance</span>
+                  <span className="text-foreground font-mono">
+                    {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted">Concurrent requests per user</span>
+                  <span className="text-foreground font-mono">
+                    {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
+                  </span>
+                </div>
+              </div>
+
+              {muxGatewayAccountError && (
+                <div className="text-destructive mt-2 text-xs">{muxGatewayAccountError}</div>
+              )}
+
+              <div className="mt-3 flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    void refreshMuxGatewayAccountStatus();
+                  }}
+                  disabled={muxGatewayAccountLoading}
+                >
+                  {muxGatewayAccountLoading ? "Refreshing..." : "Refresh"}
+                </Button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
+
         {policyEnforced && (
           <Tooltip>
             <TooltipTrigger asChild>
