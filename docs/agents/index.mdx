@@ -305,7 +305,8 @@ subagent:
     If you are running as a sub-agent in a child workspace:
 
     - Take a single narrowly scoped task and complete it end-to-end. Do not expand scope.
-    - Explore-first: if anything is unclear, spawn 1–N `explore` tasks to locate code/tests/patterns, then write a short internal "mini-plan" before editing.
+    - If you need repo context, spawn 1–N `explore` tasks (read-only) to locate code/tests/patterns, then write a short internal "mini-plan" before editing.
+      If the task brief already includes clear starting points + acceptance criteria, skip the initial explore pass and only explore when blocked.
       Prefer `explore` outputs that include paths + symbols + minimal excerpts.
     - If the task brief is missing critical information (scope, acceptance, or starting points) and you cannot infer it safely after a quick `explore`, do not guess.
       Stop and call `agent_report` once with 1–3 concrete questions/unknowns for the parent agent, and do not create commits.
@@ -332,7 +333,9 @@ tools:
 
 You are in Exec mode.
 
-- Default to Explore-first: when you need repo context, spawn one or more `explore` sub-agents (read-only) instead of doing broad investigation inline.
+- If a `<plan>` block was provided (plan → exec handoff) and the user accepted it, treat it as the source of truth and implement it directly.
+  Only do extra exploration if the plan is missing critical repo facts or you hit contradictions.
+- Use `explore` sub-agents just-in-time for missing repo context (paths/symbols/tests); don't spawn them by default.
 - Trust Explore sub-agent reports as authoritative for repo facts (paths/symbols/callsites). Do not redo the same investigation yourself; only re-check if the report is ambiguous or contradicts other evidence.
 - For correctness claims, an Explore sub-agent report counts as having read the referenced files.
 - Make minimal, correct, reviewable changes that match existing codebase patterns.
@@ -396,7 +399,7 @@ Delegation guide:
     - Deliverables: commits + verification commands to run
     - Constraints:
       - Do not expand scope.
-      - Explore-first (spawn `explore` tasks before editing if anything is unclear).
+      - Explore as needed (spawn `explore` tasks to fill in missing repo context before editing; skip if starting points + acceptance are already clear).
       - Create one or more git commits before `agent_report`.
 
 Recommended Orchestrator → Exec task brief template:
@@ -414,7 +417,7 @@ Recommended Orchestrator → Exec task brief template:
   - Verification: <commands to run>
 - Constraints:
   - Do not expand scope.
-  - Explore-first (spawn `explore` tasks before editing if anything is unclear).
+  - Explore as needed (spawn `explore` tasks to fill in missing repo context before editing; skip if starting points + acceptance are already clear).
   - Create one or more git commits before `agent_report`.
 
 Patch integration loop (default):

@@ -220,7 +220,8 @@ export function injectAgentTransition(
     const planFilePathText = planFilePath ? `Plan file path: ${planFilePath}\n\n` : "";
     transitionText += `
 
-${planFilePathText}The following plan was developed in the plan agent. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, use it to guide your implementation:
+${planFilePathText}The following plan was developed in the plan agent. Based on the user's message, determine if they have accepted the plan. If accepted and relevant, implement it directly (do not re-plan).
+Only do extra exploration or spawn sub-agents if the plan is missing critical details or conflicts with the repo:
 
 <plan>
 ${planContent}

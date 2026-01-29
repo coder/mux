@@ -45,7 +45,7 @@ Delegation guide:
     - Deliverables: commits + verification commands to run
     - Constraints:
       - Do not expand scope.
-      - Explore-first (spawn `explore` tasks before editing if anything is unclear).
+      - Explore as needed (spawn `explore` tasks to fill in missing repo context before editing; skip if starting points + acceptance are already clear).
       - Create one or more git commits before `agent_report`.
 
 Recommended Orchestrator → Exec task brief template:
@@ -63,7 +63,7 @@ Recommended Orchestrator → Exec task brief template:
   - Verification: <commands to run>
 - Constraints:
   - Do not expand scope.
-  - Explore-first (spawn `explore` tasks before editing if anything is unclear).
+  - Explore as needed (spawn `explore` tasks to fill in missing repo context before editing; skip if starting points + acceptance are already clear).
   - Create one or more git commits before `agent_report`.
 
 Patch integration loop (default):
