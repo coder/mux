@@ -1,3 +1,4 @@
+import "./dom";
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
   cleanupSharedRepo,

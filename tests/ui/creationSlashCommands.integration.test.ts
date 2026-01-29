@@ -2,7 +2,8 @@
  * Integration tests for slash commands in workspace creation mode.
  */
 
-import { fireEvent, waitFor } from "@testing-library/react";
+import "./dom";
+import { waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -11,20 +12,19 @@ import {
   getSharedEnv,
   getSharedRepoPath,
 } from "../ipc/sendMessageTestHelpers";
-import { generateBranchName } from "../ipc/helpers";
-import { detectDefaultTrunkBranch } from "../../src/node/git";
 
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView, setupTestDom } from "./helpers";
+import {
+  addProjectViaUI,
+  cleanupView,
+  openProjectCreationView,
+  setupTestDom,
+  waitForLatestDraftId,
+} from "./helpers";
 import { ChatHarness } from "./harness";
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import {
-  getDraftScopeId,
-  getModelKey,
-  getProjectScopeId,
-  WORKSPACE_DRAFTS_BY_PROJECT_KEY,
-} from "@/common/constants/storage";
+import { getDraftScopeId, getModelKey, getProjectScopeId } from "@/common/constants/storage";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -32,7 +32,6 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
 type CreationView = {
   env: ReturnType<typeof getSharedEnv>;
   projectPath: string;
-  workspaceId: string;
   view: ReturnType<typeof renderApp>;
   cleanupDom: () => void;
   chat: ChatHarness;
@@ -41,74 +40,21 @@ type CreationView = {
 async function setupCreationView(): Promise<CreationView> {
   const env = getSharedEnv();
   const projectPath = getSharedRepoPath();
-  const branchName = generateBranchName("creation-commands");
-  const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-
-  const createResult = await env.orpc.workspace.create({
-    projectPath,
-    branchName,
-    trunkBranch,
-  });
-  if (!createResult.success) {
-    throw new Error(createResult.error);
-  }
-
-  const metadata = createResult.metadata;
-  const workspaceId = metadata.id;
-  if (!workspaceId) {
-    throw new Error("Workspace ID not returned from creation");
-  }
-
-  await env.orpc.workspace.archive({ workspaceId });
 
   const cleanupDom = setupTestDom();
 
-  const view = renderApp({ apiClient: env.orpc, metadata });
+  const view = renderApp({ apiClient: env.orpc });
 
-  await view.waitForReady();
+  const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+  await openProjectCreationView(view, normalizedProjectPath);
 
-  const projectRow = await waitFor(
-    () => {
-      const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
-      if (!el) throw new Error("Project not found in sidebar");
-      return el as HTMLElement;
-    },
-    { timeout: 10_000 }
-  );
-  fireEvent.click(projectRow);
+  const draftId = await waitForLatestDraftId(normalizedProjectPath);
 
-  await waitFor(
-    () => {
-      const textarea = view.container.querySelector(
-        'textarea[aria-label="Message Claude"]'
-      ) as HTMLTextAreaElement | null;
-      if (!textarea) throw new Error("Creation textarea not found");
-    },
-    { timeout: 5_000 }
-  );
-
-  const draftId = await waitFor(
-    () => {
-      const rawDrafts = globalThis.localStorage.getItem(WORKSPACE_DRAFTS_BY_PROJECT_KEY);
-      const parsedDrafts = rawDrafts
-        ? (JSON.parse(rawDrafts) as Record<string, { draftId: string }[]>)
-        : {};
-      const draftsForProject = parsedDrafts[projectPath] ?? [];
-      const latestDraft = draftsForProject[draftsForProject.length - 1];
-      if (!latestDraft?.draftId) {
-        throw new Error("Draft not registered yet");
-      }
-      return latestDraft.draftId;
-    },
-    { timeout: 5_000 }
-  );
-
-  const chat = new ChatHarness(view.container, getDraftScopeId(projectPath, draftId));
+  const chat = new ChatHarness(view.container, getDraftScopeId(normalizedProjectPath, draftId));
 
   return {
     env,
-    projectPath,
-    workspaceId,
+    projectPath: normalizedProjectPath,
     view,
     cleanupDom,
     chat,
@@ -125,7 +71,7 @@ describeIntegration("Creation slash commands", () => {
   });
 
   test("/model updates project-scoped model in creation mode", async () => {
-    const { env, projectPath, workspaceId, view, cleanupDom, chat } = await setupCreationView();
+    const { projectPath, view, cleanupDom, chat } = await setupCreationView();
 
     try {
       const alias = "sonnet";
@@ -153,13 +99,12 @@ describeIntegration("Creation slash commands", () => {
 
       await chat.expectInputValue("");
     } finally {
-      await env.orpc.workspace.remove({ workspaceId, options: { force: true } }).catch(() => {});
       await cleanupView(view, cleanupDom);
     }
   }, 30_000);
 
   test("workspace-only commands show a toast and keep input", async () => {
-    const { env, projectPath, workspaceId, view, cleanupDom, chat } = await setupCreationView();
+    const { view, cleanupDom, chat } = await setupCreationView();
 
     try {
       const command = "/compact";
@@ -176,7 +121,6 @@ describeIntegration("Creation slash commands", () => {
 
       await chat.expectInputValue(command);
     } finally {
-      await env.orpc.workspace.remove({ workspaceId, options: { force: true } }).catch(() => {});
       await cleanupView(view, cleanupDom);
     }
   }, 30_000);

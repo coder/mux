@@ -1,3 +1,4 @@
+import "./dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests, validateApiKeys } from "../testUtils";
@@ -24,6 +25,7 @@ import {
 } from "./helpers";
 import type { APIClient } from "@/browser/contexts/API";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 configureTestRetries(2);
 
@@ -62,10 +64,7 @@ function renderReviewPanelForRefreshTests(params: {
   // With the app's default review base now set to a branch ref (e.g. origin/main), the default
   // diff would exclude uncommitted changes unless includeUncommitted is enabled. Force HEAD so the
   // diff always reflects the working tree.
-  window.localStorage.setItem(
-    STORAGE_KEYS.reviewDiffBase(params.workspaceId),
-    JSON.stringify("HEAD")
-  );
+  updatePersistedState(STORAGE_KEYS.reviewDiffBase(params.workspaceId), "HEAD");
 
   return renderReviewPanel({
     apiClient: params.apiClient,
@@ -637,9 +636,9 @@ describeIntegration("ReviewPanel auto refresh (UI + ORPC + live LLM)", () => {
         // Ensure the review was persisted before asserting UI updates.
         await waitFor(
           () => {
-            const raw = window.localStorage.getItem(getReviewsKey(workspaceId));
-            if (!raw) throw new Error("Review not persisted");
-            expect(raw).toContain(NOTE_TEXT);
+            const persisted = readPersistedState<unknown>(getReviewsKey(workspaceId), null);
+            if (!persisted) throw new Error("Review not persisted");
+            expect(JSON.stringify(persisted)).toContain(NOTE_TEXT);
           },
           { timeout: 10_000 }
         );

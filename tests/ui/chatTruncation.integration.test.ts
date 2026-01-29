@@ -3,6 +3,7 @@
  * Verifies tool/reasoning omissions are surfaced and assistant meta rows remain intact.
  */
 
+import "./dom";
 import { waitFor } from "@testing-library/react";
 
 import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } from "../ipc/setup";

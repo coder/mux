@@ -9,6 +9,7 @@
  * - Persist expansion state across re-renders
  */
 
+import "./dom";
 import { fireEvent, waitFor } from "@testing-library/react";
 
 import { shouldRunIntegrationTests } from "../testUtils";
@@ -23,6 +24,7 @@ import { renderReviewPanel, type RenderedApp } from "./renderReviewPanel";
 import { cleanupView, setupWorkspaceView, waitForRefreshButtonIdle } from "./helpers";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { APIClient } from "@/browser/contexts/API";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { STORAGE_KEYS } from "@/constants/workspaceDefaults";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -139,10 +141,7 @@ async function withReviewPanel(
 
   // Tests in this file diff against HEAD (uncommitted changes).
   // Set the workspace diff base to HEAD explicitly since the app default is origin/main.
-  window.localStorage.setItem(
-    STORAGE_KEYS.reviewDiffBase(params.metadata.id),
-    JSON.stringify("HEAD")
-  );
+  updatePersistedState(STORAGE_KEYS.reviewDiffBase(params.metadata.id), "HEAD");
 
   const view = renderReviewPanel({ apiClient: params.apiClient, metadata: params.metadata });
 

@@ -6,6 +6,7 @@
  * These tests run with the mock AI router enabled via createAppHarness().
  */
 
+import "./dom";
 import { waitFor } from "@testing-library/react";
 
 import { preloadTestModules, type TestEnvironment } from "../ipc/setup";

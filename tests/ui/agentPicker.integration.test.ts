@@ -11,6 +11,7 @@
 import "./dom";
 
 import { fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -22,11 +23,15 @@ import {
   getSharedRepoPath,
   withSharedWorkspace,
 } from "../ipc/sendMessageTestHelpers";
-import { generateBranchName } from "../ipc/helpers";
-import { detectDefaultTrunkBranch } from "../../src/node/git";
 
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView, setupTestDom, setupWorkspaceView } from "./helpers";
+import {
+  addProjectViaUI,
+  cleanupView,
+  openProjectCreationView,
+  setupTestDom,
+  setupWorkspaceView,
+} from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -369,47 +374,16 @@ This is a test agent.
     // The bug occurs because ModeProvider doesn't load agents when there's no workspaceId.
     const env = getSharedEnv();
     const projectPath = getSharedRepoPath();
-    const branchName = generateBranchName("test-agent-picker-project");
-    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
-
-    // Create and archive a workspace to register the project (setup - OK to use API)
-    const createResult = await env.orpc.workspace.create({
-      projectPath,
-      branchName,
-      trunkBranch,
-    });
-    if (!createResult.success) throw new Error(createResult.error);
-    const metadata = createResult.metadata;
-    const workspaceId = metadata.id;
-
-    await env.orpc.workspace.archive({ workspaceId });
 
     const cleanupDom = setupTestDom();
 
-    const view = renderApp({ apiClient: env.orpc, metadata });
+    const view = renderApp({ apiClient: env.orpc });
 
     try {
       await view.waitForReady();
 
-      // Click project to navigate to project page (new workspace creation)
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(`[data-project-path="${projectPath}"]`);
-          if (!el) throw new Error("Project not found");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
-
-      // Wait for project page (textarea for new workspace creation)
-      await waitFor(
-        () => {
-          const textarea = view.container.querySelector("textarea");
-          if (!textarea) throw new Error("Project page not rendered");
-        },
-        { timeout: 5_000 }
-      );
+      const normalizedProjectPath = await addProjectViaUI(view, projectPath);
+      await openProjectCreationView(view, normalizedProjectPath);
 
       // Open agent picker
       await openAgentPicker(view.container);
@@ -420,7 +394,6 @@ This is a test agent.
       expect(agentNames).toContain("Exec");
       expect(agentNames).toContain("Plan");
     } finally {
-      await env.orpc.workspace.remove({ workspaceId, options: { force: true } }).catch(() => {});
       await cleanupView(view, cleanupDom);
     }
   }, 30_000);
@@ -446,7 +419,9 @@ This is a test agent.
           '[placeholder="Search agents…"]'
         ) as HTMLInputElement;
         expect(searchInput).toBeTruthy();
-        fireEvent.change(searchInput, { target: { value: "exec" } });
+        const user = userEvent.setup({ document: view.container.ownerDocument });
+        await user.clear(searchInput);
+        await user.type(searchInput, "exec");
 
         // Should filter to just exec
         await waitFor(() => {
@@ -456,7 +431,8 @@ This is a test agent.
         });
 
         // Clear and search by partial name
-        fireEvent.change(searchInput, { target: { value: "pla" } });
+        await user.clear(searchInput);
+        await user.type(searchInput, "pla");
         await waitFor(() => {
           agentNames = getVisibleAgentNames(view.container);
           expect(agentNames).toContain("Plan");

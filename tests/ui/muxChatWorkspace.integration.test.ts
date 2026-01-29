@@ -7,6 +7,7 @@
  * - Chat with Mux is permanent: no Archive button + Ctrl+N does not start workspace creation.
  */
 
+import "./dom";
 import { act, fireEvent, waitFor } from "@testing-library/react";
 
 import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } from "../ipc/setup";
