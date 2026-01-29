@@ -479,15 +479,16 @@ export class AgentSession {
     assert(typeof message === "string", "sendMessage requires a string message");
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
+    const editMessageId = options?.editMessageId;
 
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
     let preservedEditFileParts: MuxFilePart[] | undefined;
-    if (options?.editMessageId && fileParts === undefined) {
+    if (editMessageId && fileParts === undefined) {
       const historyResult = await this.historyService.getHistory(this.workspaceId);
       if (historyResult.success) {
         const targetMessage: MuxMessage | undefined = historyResult.data.find(
-          (msg) => msg.id === options.editMessageId
+          (msg) => msg.id === editMessageId
         );
         const fileParts = targetMessage?.parts.filter(
           (part): part is MuxFilePart => part.type === "file"
@@ -508,7 +509,7 @@ export class AgentSession {
       );
     }
 
-    if (options?.editMessageId) {
+    if (editMessageId) {
       // Interrupt an existing stream or compaction, if active
       if (this.aiService.isStreaming(this.workspaceId)) {
         // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
@@ -521,11 +522,11 @@ export class AgentSession {
 
       // Find the truncation target: the edited message or any immediately-preceding snapshots.
       // (snapshots are persisted immediately before their corresponding user message)
-      let truncateTargetId = options.editMessageId;
+      let truncateTargetId = editMessageId;
       const historyResult = await this.historyService.getHistory(this.workspaceId);
       if (historyResult.success) {
         const messages = historyResult.data;
-        const editIndex = messages.findIndex((m) => m.id === options.editMessageId);
+        const editIndex = messages.findIndex((m) => m.id === editMessageId);
         if (editIndex > 0) {
           // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
           for (let i = editIndex - 1; i >= 0; i--) {
@@ -553,7 +554,7 @@ export class AgentSession {
           // shows it as editable). Treat as a no-op truncation so the user can recover.
           log.warn("editMessageId not found in history; proceeding without truncation", {
             workspaceId: this.workspaceId,
-            editMessageId: options.editMessageId,
+            editMessageId,
             error: truncateResult.error,
           });
         } else {
