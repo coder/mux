@@ -59,6 +59,7 @@ Optional fields:
 - `compatibility`
 - `metadata` (string key/value map)
 - `advertise` (boolean) — set to `false` to omit a skill from the system prompt index (see [Unadvertised skills](#unadvertised-skills) below)
+- `hidden` (boolean, deprecated) — legacy alias for `advertise: false` (kept for backwards compatibility)
 
 Mux ignores unknown frontmatter keys (for example `allowed-tools`).
 
@@ -110,10 +111,13 @@ agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
 
 ## Unadvertised skills
 
-Set `advertise: false` in the frontmatter to exclude a skill from the system prompt's `<agent-skills>` index. Unadvertised skills:
+By default, Mux _advertises_ skills by listing them in the system prompt’s `<agent-skills>` index.
+
+Set `advertise: false` in the frontmatter to exclude a skill from that index. Unadvertised skills:
 
 - **Are not listed** in the system prompt (reducing token overhead)
 - **Can still be invoked** via `/{skill-name}` slash command or `agent_skill_read({ name: "skill-name" })`
+- **Still appear** in Mux’s UI lists (for example `/` slash suggestions)
 - **Are useful for**: skills meant only for sub-agents, advanced users, or internal orchestration
 
 <Info>
