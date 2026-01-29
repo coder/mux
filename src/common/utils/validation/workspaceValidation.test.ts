@@ -57,7 +57,7 @@ describe("validateWorkspaceName", () => {
     test("rejects uppercase letters", () => {
       const result = validateWorkspaceName("MyBranch");
       expect(result.valid).toBe(false);
-      expect(result.error).toContain("a-z");
+      expect(result.error).toContain("lowercase");
     });
 
     test("rejects spaces", () => {

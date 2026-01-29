@@ -17,7 +17,10 @@ export function validateWorkspaceName(name: string): { valid: boolean; error?: s
   if (!validPattern.test(name)) {
     return {
       valid: false,
-      error: "Use only: a-z, 0-9, _, -",
+      // Workspace names become folder names, git branches, and session directories,
+      // so they need to be filesystem-safe across platforms.
+      error:
+        "Workspace names can only contain lowercase letters, numbers, hyphens, and underscores",
     };
   }
 

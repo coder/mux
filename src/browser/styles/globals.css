@@ -300,9 +300,10 @@
     --color-init-output-error-text: hsl(6 93% 71%); /* error text */
 
     /* Toast and notification backgrounds */
-    --color-toast-success-bg: hsl(207 100% 37% / 0.13); /* #0e639c with 20% opacity */
+    /* Use solid colors to avoid transparency bleed from underlying elements */
+    --color-toast-success-bg: hsl(207 42% 18%); /* solid approximation of #0e639c @ 13% on dark bg */
     --color-toast-success-text: hsl(207 100% 60%); /* #3794ff */
-    --color-toast-error-bg: hsl(5 89% 60% / 0.15); /* #f14836 with 15% opacity */
+    --color-toast-error-bg: hsl(5 35% 20%); /* solid approximation of #f14836 @ 15% on dark bg */
     --color-toast-error-text: hsl(5 89% 60%); /* #f14836 */
     --color-toast-error-border: hsl(5 89% 60%); /* #f14836 */
     --color-toast-fatal-bg: hsl(0 33% 18%); /* #2d1f1f - fatal error bg */
@@ -539,9 +540,10 @@
   --color-code-type: hsl(200 84% 28%);
   --color-code-keyword: hsl(210 88% 24%);
 
-  --color-toast-success-bg: hsl(207 90% 46% / 0.18);
+  /* Use solid colors to avoid transparency bleed from underlying elements */
+  --color-toast-success-bg: hsl(207 50% 88%); /* solid approximation of #0e639c @ 18% on light bg */
   --color-toast-success-text: hsl(207 90% 34%);
-  --color-toast-error-bg: hsl(5 80% 55% / 0.18);
+  --color-toast-error-bg: hsl(5 45% 90%); /* solid approximation of error @ 18% on light bg */
   --color-toast-error-text: hsl(5 78% 46%);
   --color-toast-error-border: hsl(5 78% 46%);
   --color-toast-fatal-bg: hsl(0 72% 94%);
