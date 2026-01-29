@@ -491,13 +491,18 @@ export function ProvidersSection() {
     }
 
     // Fetch lazily when the user expands the Mux Gateway provider.
-    if (muxGatewayAccountStatus || muxGatewayAccountLoading) {
+    //
+    // Important: avoid auto-retrying after a failure. If the request fails,
+    // `muxGatewayAccountStatus` remains null and we'd otherwise trigger a refresh
+    // on every render while the provider stays expanded.
+    if (muxGatewayAccountStatus || muxGatewayAccountLoading || muxGatewayAccountError) {
       return;
     }
 
     void refreshMuxGatewayAccountStatus();
   }, [
     expandedProvider,
+    muxGatewayAccountError,
     muxGatewayAccountLoading,
     muxGatewayAccountStatus,
     muxGatewayIsLoggedIn,
