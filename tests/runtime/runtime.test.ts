@@ -1025,7 +1025,7 @@ describeIntegration("Runtime integration tests", () => {
     });
 
     describe("forkWorkspace", () => {
-      test.concurrent("forks from the source workspace's current branch", async () => {
+      test("forks from the source workspace's current branch", async () => {
         const runtime = createSSHRuntime();
         const projectName = `fork-test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
         const projectPath = `/some/path/${projectName}`;
@@ -1052,6 +1052,8 @@ describeIntegration("Runtime integration tests", () => {
             `echo "feature" > feature.txt`,
             `git add feature.txt`,
             `git commit -m "feature"`,
+            `echo "untracked" > untracked.txt`,
+            `echo "local-change" >> feature.txt`,
           ].join(" && "),
           { cwd: "/home/testuser", timeout: 30 }
         );
@@ -1097,7 +1099,23 @@ describeIntegration("Runtime integration tests", () => {
           `test -f "${newWorkspacePath}/feature.txt" && echo "exists" || echo "missing"`,
           { cwd: "/home/testuser", timeout: 30 }
         );
+
         expect(fileCheck.stdout.trim()).toBe("exists");
+
+        // Fork should preserve uncommitted working tree changes from the source workspace.
+        const untrackedCheck = await execBuffered(
+          runtime,
+          `test -f "${newWorkspacePath}/untracked.txt" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(untrackedCheck.stdout.trim()).toBe("exists");
+
+        const modifiedCheck = await execBuffered(
+          runtime,
+          `grep -q "local-change" "${newWorkspacePath}/feature.txt" && echo "present" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(modifiedCheck.stdout.trim()).toBe("present");
 
         // runFullInit (and thus initWorkspace) should be able to run on a forked repo
         // without trying to re-sync. (The absence of a .mux/init hook means it will
@@ -1452,159 +1470,151 @@ describeIntegration("Runtime integration tests", () => {
     };
 
     describe("forkWorkspace", () => {
-      test.concurrent(
-        "marks both source and fork with existingWorkspace=true",
-        async () => {
-          const runtime = await createCoderSSHRuntime();
-          const projectName = `coder-fork-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-          const projectPath = `/some/path/${projectName}`;
+      test("marks both source and fork with existingWorkspace=true", async () => {
+        const runtime = await createCoderSSHRuntime();
+        const projectName = `coder-fork-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+        const projectPath = `/some/path/${projectName}`;
 
-          const sourceWorkspaceName = "source";
-          const newWorkspaceName = "forked";
-          const sourceWorkspacePath = `${srcBaseDir}/${projectName}/${sourceWorkspaceName}`;
+        const sourceWorkspaceName = "source";
+        const newWorkspaceName = "forked";
+        const sourceWorkspacePath = `${srcBaseDir}/${projectName}/${sourceWorkspaceName}`;
 
-          // Create a source workspace repo
-          await execBuffered(
-            runtime,
-            [
-              `mkdir -p "${sourceWorkspacePath}"`,
-              `cd "${sourceWorkspacePath}"`,
-              `git init`,
-              `git config user.email "test@example.com"`,
-              `git config user.name "Test"`,
-              `echo "root" > root.txt`,
-              `git add root.txt`,
-              `git commit -m "root"`,
-            ].join(" && "),
-            { cwd: "/home/testuser", timeout: 30 }
-          );
+        // Create a source workspace repo
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${sourceWorkspacePath}"`,
+            `cd "${sourceWorkspacePath}"`,
+            `git init`,
+            `git config user.email "test@example.com"`,
+            `git config user.name "Test"`,
+            `echo "root" > root.txt`,
+            `git add root.txt`,
+            `git commit -m "root"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
 
-          const initLogger = {
-            logStep(_message: string) {},
-            logStdout(_line: string) {},
-            logStderr(_line: string) {},
-            logComplete(_exitCode: number) {},
-          };
+        const initLogger = {
+          logStep(_message: string) {},
+          logStdout(_line: string) {},
+          logStderr(_line: string) {},
+          logComplete(_exitCode: number) {},
+        };
 
-          const forkResult = await runtime.forkWorkspace({
-            projectPath,
-            sourceWorkspaceName,
-            newWorkspaceName,
-            initLogger,
-          });
+        const forkResult = await runtime.forkWorkspace({
+          projectPath,
+          sourceWorkspaceName,
+          newWorkspaceName,
+          initLogger,
+        });
 
-          expect(forkResult.success).toBe(true);
-          if (!forkResult.success) return;
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
 
-          // Both configs should have existingWorkspace=true
-          expect(forkResult.forkedRuntimeConfig).toBeDefined();
-          expect(forkResult.sourceRuntimeConfig).toBeDefined();
+        // Both configs should have existingWorkspace=true
+        expect(forkResult.forkedRuntimeConfig).toBeDefined();
+        expect(forkResult.sourceRuntimeConfig).toBeDefined();
 
-          if (
-            forkResult.forkedRuntimeConfig?.type === "ssh" &&
-            forkResult.sourceRuntimeConfig?.type === "ssh"
-          ) {
-            expect(forkResult.forkedRuntimeConfig.coder?.existingWorkspace).toBe(true);
-            expect(forkResult.sourceRuntimeConfig.coder?.existingWorkspace).toBe(true);
-          } else {
-            throw new Error("Expected SSH runtime configs with coder field");
-          }
-        },
-        60000
-      );
+        if (
+          forkResult.forkedRuntimeConfig?.type === "ssh" &&
+          forkResult.sourceRuntimeConfig?.type === "ssh"
+        ) {
+          expect(forkResult.forkedRuntimeConfig.coder?.existingWorkspace).toBe(true);
+          expect(forkResult.sourceRuntimeConfig.coder?.existingWorkspace).toBe(true);
+        } else {
+          throw new Error("Expected SSH runtime configs with coder field");
+        }
+      }, 60000);
 
-      test.concurrent(
-        "postCreateSetup after fork does not call coder create",
-        async () => {
-          const { CoderSSHRuntime } = await import("@/node/runtime/CoderSSHRuntime");
-          const { CoderService } = await import("@/node/services/coderService");
+      test("postCreateSetup after fork does not call coder create", async () => {
+        const { CoderSSHRuntime } = await import("@/node/runtime/CoderSSHRuntime");
+        const { CoderService } = await import("@/node/services/coderService");
 
-          // Track whether createWorkspace was called
-          let createWorkspaceCalled = false;
-          const mockCoderService = {
-            createWorkspace: async function* () {
-              createWorkspaceCalled = true;
-              yield "should not happen";
-            },
-            ensureSSHConfig: async () => {
-              // This SHOULD be called - it's safe and idempotent
-            },
-            getWorkspaceStatus: () =>
-              Promise.resolve({ kind: "running" as const, status: "running" as const }),
-            waitForStartupScripts: async function* () {
-              // Yield nothing - workspace is already running
-            },
-          } as unknown as InstanceType<typeof CoderService>;
+        // Track whether createWorkspace was called
+        let createWorkspaceCalled = false;
+        const mockCoderService = {
+          createWorkspace: async function* () {
+            createWorkspaceCalled = true;
+            yield "should not happen";
+          },
+          ensureSSHConfig: async () => {
+            // This SHOULD be called - it's safe and idempotent
+          },
+          getWorkspaceStatus: () =>
+            Promise.resolve({ kind: "running" as const, status: "running" as const }),
+          waitForStartupScripts: async function* () {
+            // Yield nothing - workspace is already running
+          },
+        } as unknown as InstanceType<typeof CoderService>;
 
-          const config = {
-            host: "testuser@localhost",
-            srcBaseDir,
-            identityFile: sshConfig!.privateKeyPath,
-            port: sshConfig!.port,
-            coder: {
-              workspaceName: "test-coder-ws",
-              template: "test-template",
-              existingWorkspace: false, // Source was mux-created
-            },
-          };
-          const transport = createSSHTransport(config, false);
-          const runtime = new CoderSSHRuntime(config, transport, mockCoderService);
+        const config = {
+          host: "testuser@localhost",
+          srcBaseDir,
+          identityFile: sshConfig!.privateKeyPath,
+          port: sshConfig!.port,
+          coder: {
+            workspaceName: "test-coder-ws",
+            template: "test-template",
+            existingWorkspace: false, // Source was mux-created
+          },
+        };
+        const transport = createSSHTransport(config, false);
+        const runtime = new CoderSSHRuntime(config, transport, mockCoderService);
 
-          const projectName = `coder-fork-postcreate-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-          const projectPath = `/some/path/${projectName}`;
-          const sourceWorkspaceName = "source";
-          const newWorkspaceName = "forked";
-          const sourceWorkspacePath = `${srcBaseDir}/${projectName}/${sourceWorkspaceName}`;
-          const forkedWorkspacePath = `${srcBaseDir}/${projectName}/${newWorkspaceName}`;
+        const projectName = `coder-fork-postcreate-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+        const projectPath = `/some/path/${projectName}`;
+        const sourceWorkspaceName = "source";
+        const newWorkspaceName = "forked";
+        const sourceWorkspacePath = `${srcBaseDir}/${projectName}/${sourceWorkspaceName}`;
+        const forkedWorkspacePath = `${srcBaseDir}/${projectName}/${newWorkspaceName}`;
 
-          // Create a source workspace repo
-          await execBuffered(
-            runtime,
-            [
-              `mkdir -p "${sourceWorkspacePath}"`,
-              `cd "${sourceWorkspacePath}"`,
-              `git init`,
-              `git config user.email "test@example.com"`,
-              `git config user.name "Test"`,
-              `echo "root" > root.txt`,
-              `git add root.txt`,
-              `git commit -m "root"`,
-            ].join(" && "),
-            { cwd: "/home/testuser", timeout: 30 }
-          );
+        // Create a source workspace repo
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${sourceWorkspacePath}"`,
+            `cd "${sourceWorkspacePath}"`,
+            `git init`,
+            `git config user.email "test@example.com"`,
+            `git config user.name "Test"`,
+            `echo "root" > root.txt`,
+            `git add root.txt`,
+            `git commit -m "root"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
 
-          const initLogger = {
-            logStep(_message: string) {},
-            logStdout(_line: string) {},
-            logStderr(_line: string) {},
-            logComplete(_exitCode: number) {},
-          };
+        const initLogger = {
+          logStep(_message: string) {},
+          logStdout(_line: string) {},
+          logStderr(_line: string) {},
+          logComplete(_exitCode: number) {},
+        };
 
-          // Fork the workspace
-          const forkResult = await runtime.forkWorkspace({
-            projectPath,
-            sourceWorkspaceName,
-            newWorkspaceName,
-            initLogger,
-          });
-          expect(forkResult.success).toBe(true);
+        // Fork the workspace
+        const forkResult = await runtime.forkWorkspace({
+          projectPath,
+          sourceWorkspaceName,
+          newWorkspaceName,
+          initLogger,
+        });
+        expect(forkResult.success).toBe(true);
 
-          // Now run postCreateSetup on the SAME runtime instance (simulating what
-          // workspaceService does after fork - it runs init on the forked workspace)
-          await runtime.postCreateSetup({
-            projectPath,
-            branchName: newWorkspaceName,
-            trunkBranch: sourceWorkspaceName,
-            workspacePath: forkedWorkspacePath,
-            initLogger,
-          });
+        // Now run postCreateSetup on the SAME runtime instance (simulating what
+        // workspaceService does after fork - it runs init on the forked workspace)
+        await runtime.postCreateSetup({
+          projectPath,
+          branchName: newWorkspaceName,
+          trunkBranch: sourceWorkspaceName,
+          workspacePath: forkedWorkspacePath,
+          initLogger,
+        });
 
-          // The key assertion: createWorkspace should NOT have been called
-          // because forkWorkspace() should have set existingWorkspace=true
-          expect(createWorkspaceCalled).toBe(false);
-        },
-        60000
-      );
+        // The key assertion: createWorkspace should NOT have been called
+        // because forkWorkspace() should have set existingWorkspace=true
+        expect(createWorkspaceCalled).toBe(false);
+      }, 60000);
     });
   });
 });
