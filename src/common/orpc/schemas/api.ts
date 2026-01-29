@@ -817,10 +817,8 @@ export const nameGeneration = {
   generate: {
     input: z.object({
       message: z.string(),
-      /** Models to try in order (defaults to small/cheap models like Haiku, GPT-Mini) */
-      preferredModels: z.array(z.string()).optional(),
-      /** User's selected model to try after preferred models (for Ollama/Bedrock/custom providers) */
-      userModel: z.string().optional(),
+      /** Ordered list of model candidates to try (frontend applies gateway prefs) */
+      candidates: z.array(z.string()),
     }),
     output: ResultSchema(
       z.object({

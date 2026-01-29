@@ -4,10 +4,7 @@ import type { ORPCContext } from "./context";
 import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
-import {
-  selectModelForNameGeneration,
-  generateWorkspaceIdentity,
-} from "@/node/services/workspaceTitleGenerator";
+import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
 import type {
   UpdateStatus,
   WorkspaceActivitySnapshot,
@@ -1227,31 +1224,23 @@ export const router = (authToken?: string) => {
         .input(schemas.nameGeneration.generate.input)
         .output(schemas.nameGeneration.generate.output)
         .handler(async ({ context, input }) => {
-          // Select model with intelligent fallback:
-          // 1. Try preferred models (Haiku, GPT-Mini) or caller-specified models
-          // 2. Try OpenRouter variants of preferred models
-          // 3. Fallback to any available known model
-          const model = await selectModelForNameGeneration(
-            context.aiService,
-            input.preferredModels,
-            input.userModel
+          // Frontend provides ordered candidate list with gateway prefs applied.
+          // Backend tries candidates in order with retry on API errors.
+          const result = await generateWorkspaceIdentity(
+            input.message,
+            input.candidates,
+            context.aiService
           );
-          if (!model) {
-            return {
-              success: false,
-              error: {
-                type: "unknown" as const,
-                raw: "No model available for name generation.",
-              },
-            };
-          }
-          const result = await generateWorkspaceIdentity(input.message, model, context.aiService);
           if (!result.success) {
             return result;
           }
           return {
             success: true,
-            data: { name: result.data.name, title: result.data.title, modelUsed: model },
+            data: {
+              name: result.data.name,
+              title: result.data.title,
+              modelUsed: result.data.modelUsed,
+            },
           };
         }),
     },

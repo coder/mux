@@ -6,10 +6,6 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import crypto from "crypto";
-import { KNOWN_MODELS, getKnownModel } from "@/common/constants/knownModels";
-
-/** Small, fast models preferred for name generation (cheap and quick) */
-const DEFAULT_NAME_GENERATION_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
 
 /** Schema for AI-generated workspace identity (area name + descriptive title) */
 const workspaceIdentitySchema = z.object({
@@ -35,119 +31,6 @@ export interface WorkspaceIdentity {
   title: string;
 }
 
-/**
- * Find the first model from the list that the AIService can create.
- * Frontend is responsible for providing models in the correct format
- * (direct or gateway) based on user configuration.
- */
-export async function findAvailableModel(
-  aiService: AIService,
-  models: string[]
-): Promise<string | null> {
-  for (const modelId of models) {
-    const result = await aiService.createModel(modelId);
-    if (result.success) {
-      return modelId;
-    }
-  }
-  return null;
-}
-
-/**
- * Convert a model ID to a gateway variant (mux-gateway or openrouter).
- * e.g., toGatewayVariant("anthropic:claude-haiku-4-5", "mux-gateway") -> "mux-gateway:anthropic/claude-haiku-4-5"
- */
-function toGatewayVariant(modelId: string, gateway: "mux-gateway" | "openrouter"): string {
-  const [provider, model] = modelId.split(":");
-  if (!provider || !model) return modelId;
-  return `${gateway}:${provider}/${model}`;
-}
-
-/**
- * Select a model for name generation with intelligent fallback.
- *
- * Priority order:
- * 1. Try preferred models (Haiku, GPT-Mini) directly
- * 2. Try Mux Gateway variants of preferred models
- * 3. Try OpenRouter variants of preferred models
- * 4. Try user's selected model (for Ollama/Bedrock/custom providers)
- * 5. Fallback to any available model from the known models list
- *
- * This ensures name generation works with any provider setup:
- * direct API keys, Mux Gateway (coupon), OpenRouter, or custom providers.
- *
- * Note: createModel() validates provider configuration internally,
- * returning Err({ type: "api_key_not_found" }) for unconfigured providers.
- * We only use models where createModel succeeds.
- */
-export async function selectModelForNameGeneration(
-  aiService: Pick<AIService, "createModel">,
-  preferredModels: string[] = DEFAULT_NAME_GENERATION_MODELS,
-  userModel?: string
-): Promise<string | null> {
-  // 1. Try preferred models directly
-  for (const modelId of preferredModels) {
-    const result = await aiService.createModel(modelId);
-    if (result.success) {
-      return modelId;
-    }
-  }
-
-  // 2. Try Mux Gateway variants of preferred models
-  for (const modelId of preferredModels) {
-    const gatewayVariant = toGatewayVariant(modelId, "mux-gateway");
-    const result = await aiService.createModel(gatewayVariant);
-    if (result.success) {
-      return gatewayVariant;
-    }
-  }
-
-  // 3. Try OpenRouter variants of preferred models
-  for (const modelId of preferredModels) {
-    const openRouterVariant = toGatewayVariant(modelId, "openrouter");
-    const result = await aiService.createModel(openRouterVariant);
-    if (result.success) {
-      return openRouterVariant;
-    }
-  }
-
-  // 4. Try user's selected model (supports Ollama, Bedrock, custom providers)
-  if (userModel) {
-    const result = await aiService.createModel(userModel);
-    if (result.success) {
-      return userModel;
-    }
-  }
-
-  // 5. Fallback to any available model from known models
-  // Try each known model directly, then via gateway/OpenRouter
-  const knownModelIds = Object.values(KNOWN_MODELS).map((m) => m.id);
-  for (const modelId of knownModelIds) {
-    // Try direct first
-    const directResult = await aiService.createModel(modelId);
-    if (directResult.success) {
-      return modelId;
-    }
-
-    // Try Mux Gateway variant
-    const gatewayVariant = toGatewayVariant(modelId, "mux-gateway");
-    const gatewayResult = await aiService.createModel(gatewayVariant);
-    if (gatewayResult.success) {
-      return gatewayVariant;
-    }
-
-    // Try OpenRouter variant
-    const openRouterVariant = toGatewayVariant(modelId, "openrouter");
-    const openRouterResult = await aiService.createModel(openRouterVariant);
-    if (openRouterResult.success) {
-      return openRouterVariant;
-    }
-  }
-
-  // No models available at all
-  return null;
-}
-
 // Crockford Base32 alphabet (excludes I, L, O, U to avoid confusion)
 const CROCKFORD_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
@@ -166,67 +49,74 @@ function generateNameSuffix(): string {
   );
 }
 
+export interface GenerateWorkspaceIdentityResult extends WorkspaceIdentity {
+  /** The model that successfully generated the identity */
+  modelUsed: string;
+}
+
 /**
  * Generate workspace identity (name + title) using AI.
+ * Tries candidates in order, retrying on API errors (invalid keys, quota, etc.).
+ *
  * - name: Codebase area with 4-char suffix (e.g., "sidebar-a1b2")
  * - title: Human-readable description (e.g., "Fix plan mode over SSH")
- *
- * If AI cannot be used (e.g. missing credentials, unsupported provider, invalid model),
- * returns a SendMessageError so callers can surface the standard provider error UX.
  */
 export async function generateWorkspaceIdentity(
   message: string,
-  modelString: string,
+  candidates: string[],
   aiService: AIService
-): Promise<Result<WorkspaceIdentity, SendMessageError>> {
-  try {
+): Promise<Result<GenerateWorkspaceIdentityResult, SendMessageError>> {
+  if (candidates.length === 0) {
+    return Err({ type: "unknown", raw: "No model candidates provided for name generation" });
+  }
+
+  // Try up to 3 candidates
+  const maxAttempts = Math.min(candidates.length, 3);
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const modelString = candidates[i];
+
     const modelResult = await aiService.createModel(modelString);
     if (!modelResult.success) {
-      return Err(modelResult.error);
+      // No credentials for this model, try next
+      log.debug(`Name generation: skipping ${modelString} (${modelResult.error.type})`);
+      continue;
     }
 
-    const result = await generateObject({
-      model: modelResult.data,
-      schema: workspaceIdentitySchema,
-      mode: "json",
-      prompt: `Generate a workspace name and title for this development task:
+    try {
+      const result = await generateObject({
+        model: modelResult.data,
+        schema: workspaceIdentitySchema,
+        mode: "json",
+        prompt: `Generate a workspace name and title for this development task:
 
 "${message}"
 
 Requirements:
 - name: The area of the codebase being worked on (1-2 words, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"
 - title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
-    });
+      });
 
-    const suffix = generateNameSuffix();
-    const sanitizedName = sanitizeBranchName(result.object.name, 20);
-    const nameWithSuffix = `${sanitizedName}-${suffix}`;
+      const suffix = generateNameSuffix();
+      const sanitizedName = sanitizeBranchName(result.object.name, 20);
+      const nameWithSuffix = `${sanitizedName}-${suffix}`;
 
-    return Ok({
-      name: nameWithSuffix,
-      title: result.object.title.trim(),
-    });
-  } catch (error) {
-    const messageText = error instanceof Error ? error.message : String(error);
-    log.error("Failed to generate workspace identity with AI", error);
-    return Err({ type: "unknown", raw: `Failed to generate workspace identity: ${messageText}` });
+      return Ok({
+        name: nameWithSuffix,
+        title: result.object.title.trim(),
+        modelUsed: modelString,
+      });
+    } catch (error) {
+      // API error (invalid key, quota, network, etc.) - try next candidate
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      log.warn(`Name generation failed with ${modelString}, trying next candidate`, {
+        error: errorMsg,
+      });
+      continue;
+    }
   }
-}
 
-/**
- * @deprecated Use generateWorkspaceIdentity instead
- * Generate workspace name using AI (legacy function for backwards compatibility).
- */
-export async function generateWorkspaceName(
-  message: string,
-  modelString: string,
-  aiService: AIService
-): Promise<Result<string, SendMessageError>> {
-  const result = await generateWorkspaceIdentity(message, modelString, aiService);
-  if (!result.success) {
-    return result;
-  }
-  return Ok(result.data.name);
+  return Err({ type: "unknown", raw: "Name generation failed - no working model found" });
 }
 
 /**
