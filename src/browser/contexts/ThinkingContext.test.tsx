@@ -8,7 +8,6 @@ import { AgentProvider } from "@/browser/contexts/AgentContext";
 import {
   getModelKey,
   getProjectScopeId,
-  getThinkingLevelByModelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { APIClient } from "@/browser/contexts/API";
@@ -127,11 +126,16 @@ describe("ThinkingContext", () => {
 
     expect(unmounts).toBe(0);
   });
-  test("migrates legacy per-model thinking to the workspace-scoped key", async () => {
+  test("workspace scope reads from cache (not legacy keys)", async () => {
     const workspaceId = "ws-1";
 
-    updatePersistedState(getModelKey(workspaceId), "openai:gpt-5.2");
-    updatePersistedState(getThinkingLevelByModelKey("openai:gpt-5.2"), "low");
+    // Workspace scope reads from the cache, not legacy keys.
+    // Seed the cache directly (as the backend would).
+    updatePersistedState<WorkspaceAISettingsByAgentCache>(
+      getWorkspaceAISettingsByAgentKey(workspaceId),
+      { exec: { model: "openai:gpt-5.2", thinkingLevel: "low" } },
+      {}
+    );
 
     const view = render(
       <AgentProvider workspaceId={workspaceId}>
@@ -143,13 +147,6 @@ describe("ThinkingContext", () => {
 
     await waitFor(() => {
       expect(view.getByTestId("thinking").textContent).toBe("low:ws-1");
-    });
-
-    // Migration should have populated the workspace AI settings cache.
-    const persisted = window.localStorage.getItem(getWorkspaceAISettingsByAgentKey(workspaceId));
-    expect(persisted).toBeTruthy();
-    expect(JSON.parse(persisted!)).toEqual({
-      exec: { model: "openai:gpt-5.2", thinkingLevel: "low" },
     });
 
     // Switching models should not change the workspace-scoped value.

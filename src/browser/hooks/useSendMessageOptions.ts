@@ -1,11 +1,9 @@
-import { useThinkingLevel } from "./useThinkingLevel";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelsFromSettings";
-import { useWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
+import { useScopedAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
 import {
-  getModelKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
@@ -130,33 +128,18 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
 export function useSendMessageOptions(
   props: UseSendMessageOptionsProps
 ): SendMessageOptionsWithBase {
-  const [thinkingLevel] = useThinkingLevel();
   const { agentId, agents, disableWorkspaceAgents } = useAgent();
   const { options: providerOptions } = useProviderOptions();
   const defaultModel = getDefaultModel();
-  const workspaceId = props.workspaceId;
-  const workspaceEnabled = Boolean(workspaceId);
 
-  const workspaceSettings = useWorkspaceAiSettings({
-    workspaceId: workspaceId ?? "__workspace_send_options_fallback__",
+  // Read model, thinking level, and agent ID from the unified accessor
+  const settings = useScopedAiSettings({
+    scopeId: props.scopeId,
+    workspaceId: props.workspaceId,
     agentId,
     agents,
     defaultModel,
-    enabled: workspaceEnabled,
   });
-
-  // Workspace AI settings cache is the source of truth; avoid reading legacy modelKey when scoped.
-  const modelScopeId = workspaceEnabled
-    ? "__workspace_send_options_model_fallback__"
-    : props.scopeId;
-  const [preferredModel] = usePersistedState<string>(
-    getModelKey(modelScopeId),
-    defaultModel, // Default to the Settings default model
-    { listener: true } // Listen for changes from ModelSelector and other sources
-  );
-
-  const resolvedModel = workspaceEnabled ? workspaceSettings.model : preferredModel;
-  const resolvedThinkingLevel = workspaceEnabled ? workspaceSettings.thinkingLevel : thinkingLevel;
 
   // Subscribe to gateway state so we re-render when user toggles gateway
   const gateway = useGateway();
@@ -189,14 +172,12 @@ export function useSendMessageOptions(
   const system1ThinkingLevel = coerceThinkingLevel(preferredSystem1ThinkingLevel) ?? "off";
 
   // Compute base model (canonical format) for UI components
-  const rawModel =
-    typeof resolvedModel === "string" && resolvedModel ? resolvedModel : defaultModel;
-  const baseModel = migrateGatewayModel(rawModel);
+  const baseModel = settings.model;
 
   const options = constructSendMessageOptions(
-    agentId,
-    resolvedThinkingLevel,
-    resolvedModel,
+    settings.agentId,
+    settings.thinkingLevel,
+    settings.model,
     providerOptions,
     defaultModel,
     gateway,

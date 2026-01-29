@@ -1,24 +1,14 @@
 import {
-  getAgentIdKey,
-  getModelKey,
-  getThinkingLevelByModelKey,
-  getThinkingLevelKey,
   getDisableWorkspaceAgentsKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
-import {
-  readPersistedState,
-  readPersistedString,
-  updatePersistedState,
-} from "@/browser/hooks/usePersistedState";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { readWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
+import { readPersistedState, readPersistedString } from "@/browser/hooks/usePersistedState";
+import { readScopedAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import { coerceThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
@@ -55,51 +45,13 @@ export function getSendOptionsFromStorage(
 ): SendMessageOptions {
   const scopeId = props.scopeId;
   const workspaceId = props.workspaceId;
-  const defaultModel = getDefaultModel();
 
-  const workspaceSettings =
-    typeof workspaceId === "string" && workspaceId.trim().length > 0
-      ? readWorkspaceAiSettings({ workspaceId, defaultModel })
-      : null;
+  // Read model, thinking level, and agent ID from the unified accessor
+  const settings = readScopedAiSettings({ scopeId, workspaceId });
+  const { agentId, thinkingLevel } = settings;
 
-  // Workspace AI settings cache is the source of truth; fall back to scope keys for project/global.
-  const rawModel = workspaceSettings
-    ? workspaceSettings.model
-    : readPersistedState<string>(getModelKey(scopeId), defaultModel);
-  // Migrate any legacy mux-gateway:provider/model format to canonical form
-  const baseModel = workspaceSettings
-    ? workspaceSettings.model
-    : migrateGatewayModel(rawModel || defaultModel);
   // Transform to gateway format if gateway is enabled for this model
-  const model = toGatewayModel(baseModel);
-
-  let thinkingLevel: ThinkingLevel;
-  if (workspaceSettings) {
-    thinkingLevel = workspaceSettings.thinkingLevel;
-  } else {
-    // Read thinking level (project/global scoped).
-    // Migration: if the scope value is missing, fall back to legacy per-model storage
-    // once, then persist into the scope-scoped key.
-    const scopedKey = getThinkingLevelKey(scopeId);
-    const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
-    const resolvedThinking =
-      existingScoped ??
-      readPersistedState<ThinkingLevel>(
-        getThinkingLevelByModelKey(baseModel),
-        WORKSPACE_DEFAULTS.thinkingLevel
-      );
-    if (existingScoped === undefined) {
-      // Best-effort: avoid losing a user's existing per-model preference.
-      updatePersistedState<ThinkingLevel>(scopedKey, resolvedThinking);
-    }
-
-    thinkingLevel = resolvedThinking;
-  }
-
-  // Read selected agent id (scope-specific)
-  const agentId = workspaceSettings
-    ? workspaceSettings.agentId
-    : readPersistedState<string>(getAgentIdKey(scopeId), WORKSPACE_DEFAULTS.agentId);
+  const model = toGatewayModel(settings.model);
 
   // Get provider options
   const providerOptions = getProviderOptions();

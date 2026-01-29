@@ -14,6 +14,13 @@ import {
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  getAgentIdKey as getScopedAgentIdKey,
+  getModelKey,
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
+} from "@/common/constants/storage";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 type WorkspaceAiSettingsCache = Partial<
   Record<string, { model: string; thinkingLevel: ThinkingLevel }>
@@ -267,4 +274,156 @@ export function useWorkspaceAiSettings(props: UseWorkspaceAiSettingsProps): Work
   }, [enabled, nextAgentId, nextModel, nextThinkingLevel, result.shouldPersist, workspaceId]);
 
   return result.settings;
+}
+
+// =============================================================================
+// Scoped AI Settings (unified interface for workspace and project/global scopes)
+// =============================================================================
+
+export interface ScopedAiSettings {
+  agentId: string;
+  model: string;
+  thinkingLevel: ThinkingLevel;
+}
+
+export interface ReadScopedAiSettingsProps {
+  scopeId: string;
+  workspaceId?: string;
+  agentId?: string;
+  agents?: AgentDefinitionDescriptor[];
+  defaultModel?: string;
+  persist?: boolean;
+}
+
+export interface UseScopedAiSettingsProps {
+  scopeId: string;
+  workspaceId?: string;
+  agentId?: string;
+  agents?: AgentDefinitionDescriptor[];
+  defaultModel?: string;
+}
+
+/**
+ * Read AI settings for any scope (workspace, project, or global).
+ *
+ * - If `workspaceId` is provided, delegates to `readWorkspaceAiSettings`
+ * - Otherwise reads from `modelKey(scopeId)` + `thinkingKey(scopeId)` with legacy per-model migration
+ */
+export function readScopedAiSettings(props: ReadScopedAiSettingsProps): ScopedAiSettings {
+  const workspaceId = props.workspaceId;
+  const defaultModel = props.defaultModel ?? getDefaultModel();
+
+  // Workspace scope: delegate to workspace accessor
+  if (typeof workspaceId === "string" && workspaceId.trim().length > 0) {
+    return readWorkspaceAiSettings({
+      workspaceId,
+      agentId: props.agentId,
+      agents: props.agents,
+      defaultModel,
+      persist: props.persist,
+    });
+  }
+
+  // Project/global scope: read from scope-keyed storage
+  const scopeId = props.scopeId;
+
+  const rawModel = readPersistedState<string>(getModelKey(scopeId), defaultModel);
+  const model = migrateGatewayModel(rawModel || defaultModel);
+
+  // Read thinking level with legacy per-model migration
+  const thinkingKey = getThinkingLevelKey(scopeId);
+  const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
+  let thinkingLevel: ThinkingLevel;
+
+  if (existingThinking !== undefined) {
+    thinkingLevel = existingThinking;
+  } else {
+    // Migrate from legacy per-model key
+    const legacyThinking = coerceThinkingLevel(
+      readPersistedState(getThinkingLevelByModelKey(model), undefined)
+    );
+    thinkingLevel = legacyThinking ?? WORKSPACE_DEFAULTS.thinkingLevel;
+
+    // Persist migration if enabled
+    if (props.persist !== false && legacyThinking !== undefined) {
+      updatePersistedState<ThinkingLevel>(thinkingKey, thinkingLevel);
+    }
+  }
+
+  const agentId =
+    props.agentId ??
+    readPersistedState<string>(getScopedAgentIdKey(scopeId), WORKSPACE_DEFAULTS.agentId);
+
+  return { agentId, model, thinkingLevel };
+}
+
+/**
+ * React hook for AI settings for any scope (workspace, project, or global).
+ * Reactive - re-renders when settings change.
+ *
+ * - If `workspaceId` is provided, delegates to `useWorkspaceAiSettings`
+ * - Otherwise uses `usePersistedState` for project/global scope
+ */
+export function useScopedAiSettings(props: UseScopedAiSettingsProps): ScopedAiSettings {
+  const workspaceId = props.workspaceId;
+  const defaultModel = props.defaultModel ?? getDefaultModel();
+  const isWorkspaceScope = typeof workspaceId === "string" && workspaceId.trim().length > 0;
+
+  // Workspace scope: delegate to workspace hook
+  const workspaceSettings = useWorkspaceAiSettings({
+    workspaceId: workspaceId ?? "__scoped_ai_settings_fallback__",
+    agentId: props.agentId,
+    agents: props.agents,
+    defaultModel,
+    enabled: isWorkspaceScope,
+  });
+
+  // Project/global scope: use persisted state hooks
+  const scopeId = props.scopeId;
+  const thinkingKey = getThinkingLevelKey(scopeId);
+
+  const [rawModel] = usePersistedState<string>(getModelKey(scopeId), defaultModel, {
+    listener: true,
+  });
+  const model = migrateGatewayModel(rawModel || defaultModel);
+
+  const [storedThinkingLevel, setStoredThinkingLevel] = usePersistedState<ThinkingLevel>(
+    thinkingKey,
+    WORKSPACE_DEFAULTS.thinkingLevel,
+    { listener: true }
+  );
+
+  const [storedAgentId] = usePersistedState<string>(
+    getScopedAgentIdKey(scopeId),
+    WORKSPACE_DEFAULTS.agentId,
+    { listener: true }
+  );
+
+  // One-time migration: seed from legacy per-model key if scope key is missing
+  useEffect(() => {
+    if (isWorkspaceScope) {
+      return;
+    }
+
+    const existing = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
+    if (existing !== undefined) {
+      return;
+    }
+
+    const legacyKey = getThinkingLevelByModelKey(model);
+    const legacy = coerceThinkingLevel(readPersistedState(legacyKey, undefined));
+    if (legacy === undefined) {
+      return;
+    }
+
+    setStoredThinkingLevel(legacy);
+  }, [isWorkspaceScope, model, thinkingKey, setStoredThinkingLevel]);
+
+  if (isWorkspaceScope) {
+    return workspaceSettings;
+  }
+
+  const agentId = props.agentId ?? storedAgentId;
+
+  return { agentId, model, thinkingLevel: storedThinkingLevel };
 }
