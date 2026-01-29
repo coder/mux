@@ -41,6 +41,61 @@ import {
   type CoderControlsProps,
 } from "./CoderControls";
 
+/** Shared runtime config text input - used for SSH host, Docker image, etc. */
+function RuntimeConfigInput(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  disabled?: boolean;
+  hasError?: boolean;
+  id?: string;
+  ariaLabel?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <label htmlFor={props.id} className="text-muted-foreground text-xs">
+        {props.label}
+      </label>
+      <input
+        id={props.id}
+        aria-label={props.ariaLabel}
+        type="text"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        placeholder={props.placeholder}
+        disabled={props.disabled}
+        className={cn(
+          "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+          props.hasError && "border-red-500"
+        )}
+      />
+    </div>
+  );
+}
+
+/** Credential sharing checkbox - used by Docker and Devcontainer runtimes */
+function CredentialSharingCheckbox(props: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+  docsPath: string;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs">
+      <input
+        type="checkbox"
+        checked={props.checked}
+        onChange={(e) => props.onChange(e.target.checked)}
+        disabled={props.disabled}
+        className="accent-accent"
+      />
+      <span className="text-muted">Share credentials (SSH, Git)</span>
+      <DocsLink path={props.docsPath} />
+    </label>
+  );
+}
+
 interface CreationControlsProps {
   branches: string[];
   /** Whether branches have finished loading (to distinguish loading vs non-git repo) */
@@ -587,49 +642,35 @@ export function CreationControls(props: CreationControlsProps) {
 
           {/* SSH Host Input - hidden when Coder runtime is selected */}
           {selectedRuntime.mode === "ssh" && !isCoderSelected && (
-            <div className="flex items-center gap-2">
-              <label className="text-muted-foreground text-xs">host</label>
-              <input
-                type="text"
-                value={selectedRuntime.host}
-                onChange={(e) => onSelectedRuntimeChange({ mode: "ssh", host: e.target.value })}
-                placeholder="user@host"
-                disabled={props.disabled}
-                className={cn(
-                  "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
-                  props.runtimeFieldError === "ssh" && "border-red-500"
-                )}
-              />
-            </div>
+            <RuntimeConfigInput
+              label="host"
+              value={selectedRuntime.host}
+              onChange={(value) => onSelectedRuntimeChange({ mode: "ssh", host: value })}
+              placeholder="user@host"
+              disabled={props.disabled}
+              hasError={props.runtimeFieldError === "ssh"}
+            />
           )}
 
           {/* Runtime-specific config inputs */}
 
           {selectedRuntime.mode === "docker" && (
-            <div className="flex items-center gap-2">
-              <label htmlFor="docker-image" className="text-muted-foreground text-xs">
-                image
-              </label>
-              <input
-                id="docker-image"
-                aria-label="Docker image"
-                type="text"
-                value={selectedRuntime.image}
-                onChange={(e) =>
-                  onSelectedRuntimeChange({
-                    mode: "docker",
-                    image: e.target.value,
-                    shareCredentials: selectedRuntime.shareCredentials,
-                  })
-                }
-                placeholder="node:20"
-                disabled={props.disabled}
-                className={cn(
-                  "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
-                  props.runtimeFieldError === "docker" && "border-red-500"
-                )}
-              />
-            </div>
+            <RuntimeConfigInput
+              label="image"
+              value={selectedRuntime.image}
+              onChange={(value) =>
+                onSelectedRuntimeChange({
+                  mode: "docker",
+                  image: value,
+                  shareCredentials: selectedRuntime.shareCredentials,
+                })
+              }
+              placeholder="node:20"
+              disabled={props.disabled}
+              hasError={props.runtimeFieldError === "docker"}
+              id="docker-image"
+              ariaLabel="Docker image"
+            />
           )}
         </div>
 
@@ -690,45 +731,35 @@ export function CreationControls(props: CreationControlsProps) {
             {devcontainerSelection.helperText && (
               <p className="text-muted-foreground text-xs">{devcontainerSelection.helperText}</p>
             )}
-            <label className="flex items-center gap-1.5 text-xs">
-              <input
-                type="checkbox"
-                checked={selectedRuntime.shareCredentials ?? false}
-                onChange={(e) =>
-                  onSelectedRuntimeChange({
-                    mode: "devcontainer",
-                    configPath: devcontainerSelection.configPath,
-                    shareCredentials: e.target.checked,
-                  })
-                }
-                disabled={props.disabled}
-                className="accent-accent"
-              />
-              <span className="text-muted">Share credentials (SSH, Git)</span>
-              <DocsLink path="/runtime/docker#credential-sharing" />
-            </label>
+            <CredentialSharingCheckbox
+              checked={selectedRuntime.shareCredentials ?? false}
+              onChange={(checked) =>
+                onSelectedRuntimeChange({
+                  mode: "devcontainer",
+                  configPath: devcontainerSelection.configPath,
+                  shareCredentials: checked,
+                })
+              }
+              disabled={props.disabled}
+              docsPath="/runtime/docker#credential-sharing"
+            />
           </div>
         )}
 
         {/* Credential sharing - separate row for consistency with Coder controls */}
         {selectedRuntime.mode === "docker" && (
-          <label className="flex items-center gap-1.5 text-xs">
-            <input
-              type="checkbox"
-              checked={selectedRuntime.shareCredentials ?? false}
-              onChange={(e) =>
-                onSelectedRuntimeChange({
-                  mode: "docker",
-                  image: selectedRuntime.image,
-                  shareCredentials: e.target.checked,
-                })
-              }
-              disabled={props.disabled}
-              className="accent-accent"
-            />
-            <span className="text-muted">Share credentials (SSH, Git)</span>
-            <DocsLink path="/runtime/docker#credential-sharing" />
-          </label>
+          <CredentialSharingCheckbox
+            checked={selectedRuntime.shareCredentials ?? false}
+            onChange={(checked) =>
+              onSelectedRuntimeChange({
+                mode: "docker",
+                image: selectedRuntime.image,
+                shareCredentials: checked,
+              })
+            }
+            disabled={props.disabled}
+            docsPath="/runtime/docker#credential-sharing"
+          />
         )}
 
         {/* Coder Controls - shown when Coder runtime is selected */}

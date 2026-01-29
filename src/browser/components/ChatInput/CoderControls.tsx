@@ -48,6 +48,13 @@ type CoderMode = "new" | "existing";
 
 const CODER_CHECKING_LABEL = "Checking…";
 
+/** Check if a template name exists in multiple organizations (for disambiguation in UI) */
+function hasTemplateDuplicateName(template: CoderTemplate, allTemplates: CoderTemplate[]): boolean {
+  return allTemplates.some(
+    (t) => t.name === template.name && t.organizationName !== template.organizationName
+  );
+}
+
 export type CoderAvailabilityState =
   | { state: "loading"; shouldShowRuntimeButton: false }
   | { state: "outdated"; reason: string; shouldShowRuntimeButton: false }
@@ -227,12 +234,7 @@ export function CoderWorkspaceForm(props: CoderWorkspaceFormProps) {
     } else {
       // Switch to new workspace mode (workspaceName omitted; backend derives from branch)
       const firstTemplate = templates[0];
-      const firstIsDuplicate = firstTemplate
-        ? templates.some(
-            (t) =>
-              t.name === firstTemplate.name && t.organizationName !== firstTemplate.organizationName
-          )
-        : false;
+      const firstIsDuplicate = firstTemplate && hasTemplateDuplicateName(firstTemplate, templates);
       onCoderConfigChange({
         existingWorkspace: false,
         template: firstTemplate?.name,
@@ -356,16 +358,15 @@ export function CoderWorkspaceForm(props: CoderWorkspaceFormProps) {
                   }
 
                   const matchingTemplates = templates.filter((t) => t.name === templateName);
-                  const hasDuplicate = matchingTemplates.some(
-                    (t) => t.organizationName !== matchingTemplates[0]?.organizationName
-                  );
+                  const firstMatch = matchingTemplates[0];
+                  const hasDuplicate =
+                    firstMatch && hasTemplateDuplicateName(firstMatch, templates);
 
                   if (!hasDuplicate) {
                     return templateName;
                   }
 
-                  const org =
-                    coderConfig?.templateOrg ?? matchingTemplates[0]?.organizationName ?? undefined;
+                  const org = coderConfig?.templateOrg ?? firstMatch?.organizationName ?? undefined;
                   return org ? `${org}/${templateName}` : templateName;
                 })()}
                 onValueChange={handleTemplateChange}
@@ -380,10 +381,7 @@ export function CoderWorkspaceForm(props: CoderWorkspaceFormProps) {
                 <SelectContent>
                   {templates.map((t) => {
                     // Show org name only if there are duplicate template names
-                    const hasDuplicate = templates.some(
-                      (other) =>
-                        other.name === t.name && other.organizationName !== t.organizationName
-                    );
+                    const hasDuplicate = hasTemplateDuplicateName(t, templates);
                     // Use org/name as value when duplicates exist for disambiguation
                     const itemValue = hasDuplicate ? `${t.organizationName}/${t.name}` : t.name;
                     return (
