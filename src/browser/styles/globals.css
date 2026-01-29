@@ -205,7 +205,7 @@
     --color-toggle-text-hover: hsl(0 0% 66.7%);
 
     /* Status */
-    --color-interrupted: hsl(38 92% 50%);
+    --color-interrupted: hsl(0 0% 53%);
     --color-backgrounded: hsl(200 70% 55%); /* cyan-ish blue for backgrounded processes */
     --color-review-accent: hsl(48 70% 50%);
     --color-git-dirty: hsl(38 92% 50%);
@@ -469,7 +469,7 @@
   --color-toggle-text-active: hsl(210 18% 18%);
   --color-toggle-text-hover: hsl(210 20% 26%);
 
-  --color-interrupted: hsl(38 92% 50%);
+  --color-interrupted: hsl(0 0% 50%);
   --color-backgrounded: hsl(200 70% 50%);
   --color-review-accent: hsl(48 70% 52%);
   --color-git-dirty: hsl(38 92% 50%);
@@ -687,7 +687,7 @@
   --color-toggle-text-active: #100f0f;
   --color-toggle-text-hover: #100f0f;
 
-  --color-interrupted: #bc5215;
+  --color-interrupted: #6f6e69;
   --color-backgrounded: #24837b; /* Flexoki cyan-600 */
   --color-review-accent: #ad8301;
   --color-git-dirty: #bc5215;
@@ -893,7 +893,7 @@
   --color-toggle-text-active: #cecdc3;
   --color-toggle-text-hover: #fffcf0;
 
-  --color-interrupted: #da702c;
+  --color-interrupted: #878580;
   --color-backgrounded: #3aa99f; /* Flexoki cyan-400 */
   --color-review-accent: #d0a215;
   --color-git-dirty: #da702c;
