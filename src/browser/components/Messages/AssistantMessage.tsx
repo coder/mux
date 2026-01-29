@@ -147,7 +147,12 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
 
     return (
       <div className="flex items-center gap-2">
-        {modelName && <ModelDisplay modelString={modelName} />}
+        {modelName && (
+          <ModelDisplay
+            modelString={modelName}
+            routedThroughGateway={message.routedThroughGateway}
+          />
+        )}
         {isCompacted && (
           <span className="text-plan-mode bg-plan-mode/10 inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase">
             {isIdleCompacted ? (

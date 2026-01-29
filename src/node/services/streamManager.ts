@@ -294,15 +294,21 @@ export class StreamManager extends EventEmitter {
     // Start new write and track the promise
     streamInfo.partialWritePromise = (async () => {
       try {
+        const canonicalModel = normalizeGatewayModel(streamInfo.model);
+        const routedThroughGateway =
+          streamInfo.initialMetadata?.routedThroughGateway ??
+          streamInfo.model.startsWith("mux-gateway:");
+
         const partialMessage: MuxMessage = {
           id: streamInfo.messageId,
           role: "assistant",
           metadata: {
             historySequence: streamInfo.historySequence,
             timestamp: streamInfo.startTime,
-            model: streamInfo.model,
-            partial: true, // Always true - this method only writes partial messages
             ...streamInfo.initialMetadata,
+            model: canonicalModel,
+            routedThroughGateway,
+            partial: true, // Always true - this method only writes partial messages
           },
           parts: streamInfo.parts, // Parts array includes reasoning, text, and tools
         };
@@ -1177,12 +1183,18 @@ export class StreamManager extends EventEmitter {
   ): void {
     const streamStartAgentId = streamInfo.initialMetadata?.agentId;
     const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
+    const canonicalModel = normalizeGatewayModel(streamInfo.model);
+    const routedThroughGateway =
+      streamInfo.initialMetadata?.routedThroughGateway ??
+      streamInfo.model.startsWith("mux-gateway:");
+
     this.emit("stream-start", {
       type: "stream-start",
       workspaceId: workspaceId as string,
       messageId: streamInfo.messageId,
       ...(options?.replay && { replay: true }),
-      model: streamInfo.model,
+      model: canonicalModel,
+      routedThroughGateway,
       historySequence,
       startTime: streamInfo.startTime,
       ...(streamStartAgentId && { agentId: streamStartAgentId }),
@@ -1581,6 +1593,10 @@ export class StreamManager extends EventEmitter {
             const duration = streamMeta.duration;
             // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
             const providerMetadata = await this.getAggregatedProviderMetadata(streamInfo);
+            const canonicalModel = normalizeGatewayModel(streamInfo.model);
+            const routedThroughGateway =
+              streamInfo.initialMetadata?.routedThroughGateway ??
+              streamInfo.model.startsWith("mux-gateway:");
 
             // Emit stream end event with parts preserved in temporal order
             const streamEndEvent: StreamEndEvent = {
@@ -1589,7 +1605,8 @@ export class StreamManager extends EventEmitter {
               messageId: streamInfo.messageId,
               metadata: {
                 ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
-                model: streamInfo.model,
+                model: canonicalModel,
+                routedThroughGateway,
                 usage: totalUsage, // Total across all steps (for cost calculation)
                 contextUsage, // Last step only (for context window display)
                 providerMetadata, // Aggregated (for cost calculation)
@@ -1766,17 +1783,23 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     payload: StreamErrorPayload & { errorType: StreamErrorType }
   ): Promise<void> {
+    const canonicalModel = normalizeGatewayModel(streamInfo.model);
+    const routedThroughGateway =
+      streamInfo.initialMetadata?.routedThroughGateway ??
+      streamInfo.model.startsWith("mux-gateway:");
+
     const errorPartialMessage: MuxMessage = {
       id: payload.messageId,
       role: "assistant",
       metadata: {
         historySequence: streamInfo.historySequence,
         timestamp: streamInfo.startTime,
-        model: streamInfo.model,
+        ...streamInfo.initialMetadata,
+        model: canonicalModel,
+        routedThroughGateway,
         partial: true,
         error: payload.error,
         errorType: payload.errorType,
-        ...streamInfo.initialMetadata,
       },
       parts: streamInfo.parts,
     };

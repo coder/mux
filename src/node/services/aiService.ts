@@ -1283,6 +1283,8 @@ export class AIService extends EventEmitter {
         explicitlyRequestedGateway
       );
 
+      const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
+
       // Create model instance with early API key validation
       const modelResult = await this.createModel(effectiveModelString, effectiveMuxProviderOptions);
       if (!modelResult.success) {
@@ -2006,7 +2008,8 @@ export class AIService extends EventEmitter {
       const assistantMessageId = createAssistantMessageId();
       const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
         timestamp: Date.now(),
-        model: modelString,
+        model: canonicalModelString,
+        routedThroughGateway,
         systemMessageTokens,
         agentId: effectiveAgentId,
       });
@@ -2037,7 +2040,8 @@ export class AIService extends EventEmitter {
           metadata: {
             historySequence,
             timestamp: Date.now(),
-            model: modelString,
+            model: canonicalModelString,
+            routedThroughGateway,
             systemMessageTokens,
             agentId: effectiveAgentId,
             partial: true,
@@ -2053,7 +2057,8 @@ export class AIService extends EventEmitter {
           type: "stream-start",
           workspaceId,
           messageId: assistantMessageId,
-          model: modelString,
+          model: canonicalModelString,
+          routedThroughGateway,
           historySequence,
           startTime: Date.now(),
           agentId: effectiveAgentId,
@@ -2076,7 +2081,8 @@ export class AIService extends EventEmitter {
       if (simulateToolPolicyNoop) {
         const noopMessage = createMuxMessage(assistantMessageId, "assistant", "", {
           timestamp: Date.now(),
-          model: modelString,
+          model: canonicalModelString,
+          routedThroughGateway,
           systemMessageTokens,
           agentId: effectiveAgentId,
           toolPolicy: effectiveToolPolicy,
@@ -2093,7 +2099,8 @@ export class AIService extends EventEmitter {
           type: "stream-start",
           workspaceId,
           messageId: assistantMessageId,
-          model: modelString,
+          model: canonicalModelString,
+          routedThroughGateway,
           historySequence,
           startTime: Date.now(),
           agentId: effectiveAgentId,
@@ -2127,7 +2134,8 @@ export class AIService extends EventEmitter {
           workspaceId,
           messageId: assistantMessageId,
           metadata: {
-            model: modelString,
+            model: canonicalModelString,
+            routedThroughGateway,
             systemMessageTokens,
           },
           parts,
@@ -2886,6 +2894,7 @@ export class AIService extends EventEmitter {
           timestamp: Date.now(),
           agentId: effectiveAgentId,
           mode: effectiveMode,
+          routedThroughGateway,
         },
         providerOptions,
         maxOutputTokens,
