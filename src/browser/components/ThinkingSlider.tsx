@@ -151,7 +151,12 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
     <Tooltip>
       <TooltipTrigger asChild>
         <div className="flex items-center gap-2">
+          {/*
+            Remount on model changes so range clamping doesn't emit an onChange
+            that overwrites the user's preferred thinking level.
+          */}
           <input
+            key={modelString}
             type="range"
             min="0"
             max={maxSteps}
