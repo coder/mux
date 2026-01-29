@@ -24,6 +24,7 @@ ${exactPlanPathRule}
 
 Keep the plan crisp and focused on actionable recommendations:
 - Put historical context, alternatives considered, or lengthy rationale into collapsible \`<details>/<summary>\` blocks so the core plan stays scannable.
+- When listing implementation details, include **reasonably sized** code snippets (fenced code blocks) for key changes—enough to remove ambiguity, but avoid whole-file dumps. Use ellipses (...) to omit unrelated context.
 - **Aggressively prune completed or irrelevant content.** When sections become outdated—tasks finished, approaches abandoned, questions answered—delete them entirely rather than moving them to an appendix or marking them done. The plan should reflect current state, not accumulate history.
 - Each revision should leave the plan shorter or unchanged in scope, never longer unless the actual work grew.
 
