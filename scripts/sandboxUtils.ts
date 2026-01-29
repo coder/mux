@@ -58,6 +58,37 @@ export function chooseSeedMuxRoot(): string | null {
   return null;
 }
 
+export function copyConfigClearingProjectsIfExists(sourcePath: string, destPath: string): boolean {
+  if (!fileExists(sourcePath)) return false;
+
+  function sanitizeConfig(value: unknown): Record<string, unknown> {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return { projects: [] };
+    }
+
+    return { ...(value as Record<string, unknown>), projects: [] };
+  }
+
+  let parsed: unknown;
+  try {
+    const raw = fs.readFileSync(sourcePath, "utf-8");
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.warn(`Failed to read/parse config.json at ${sourcePath}:`, err);
+    parsed = null;
+  }
+
+  const sanitized = sanitizeConfig(parsed);
+
+  try {
+    fs.writeFileSync(destPath, JSON.stringify(sanitized, null, 2));
+    return true;
+  } catch (err) {
+    console.warn(`Failed to write config.json at ${destPath}:`, err);
+    return false;
+  }
+}
+
 export function copyFileIfExists(
   sourcePath: string,
   destPath: string,
