@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { getModelKey } from "@/common/constants/storage";
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import { createAppHarness } from "./harness";
@@ -63,16 +64,16 @@ async function selectModel(
   // Wait for the UI to reflect the new model. This guards against race conditions
   // where backend metadata updates can temporarily revert localStorage (and thus
   // the displayed model) when switching models rapidly.
-  // Extract a distinctive substring from the model name for matching (e.g., "codex", "opus").
+  // Use the exact display name that the UI will show.
   const modelName = model.split(":")[1] ?? model;
-  const modelKeyword = modelName.split("-").pop()?.toLowerCase() ?? modelName.toLowerCase();
+  const expectedDisplayName = formatModelDisplayName(modelName).toLowerCase();
   await waitFor(
     () => {
       const modelGroup = container.querySelector('[data-component="ModelSelectorGroup"]');
       const displayedModel = (modelGroup?.textContent ?? "").toLowerCase();
-      if (!displayedModel.includes(modelKeyword)) {
+      if (!displayedModel.includes(expectedDisplayName)) {
         throw new Error(
-          `Waiting for UI to show model containing "${modelKeyword}", currently shows "${displayedModel}"`
+          `Waiting for UI to show "${expectedDisplayName}", currently shows "${displayedModel}"`
         );
       }
     },
