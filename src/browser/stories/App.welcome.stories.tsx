@@ -586,6 +586,10 @@ export const WorkspaceNameValidationError: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
+          // Configure a provider so the send button is visible
+          providersConfig: {
+            anthropic: { apiKeySet: true, isConfigured: true },
+          },
           // Return validation error for any workspace creation attempt
           workspaceCreate: () =>
             Promise.resolve({
@@ -611,11 +615,15 @@ export const WorkspaceNameValidationError: AppStory = {
 
     await userEvent.type(textarea, "Create a hello world app");
 
-    // Find and click the send button
-    const sendButton = storyRoot.querySelector(
-      '[data-testid="send-button"], button[type="submit"]'
+    // Wait for and click the send button
+    const sendButton = await waitFor(
+      () => {
+        const btn = storyRoot.querySelector('[data-testid="send-button"], button[type="submit"]');
+        if (!btn) throw new Error("Send button not found");
+        return btn;
+      },
+      { timeout: 5000 }
     );
-    if (!sendButton) throw new Error("Send button not found");
 
     await userEvent.click(sendButton);
 
