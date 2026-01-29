@@ -13,7 +13,11 @@ import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { useGateway, isProviderSupported } from "@/browser/hooks/useGatewayModels";
+import {
+  formatMuxGatewayBalance,
+  useMuxGatewayAccountStatus,
+} from "@/browser/hooks/useMuxGatewayAccountStatus";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 
 interface ModelSelectorProps {
@@ -57,6 +61,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const policyState = usePolicy();
     const policyEnforced = policyState.status.state === "enforced";
     const gateway = useGateway();
+    const {
+      data: muxGatewayAccountStatus,
+      error: muxGatewayAccountError,
+      refresh: refreshMuxGatewayAccountStatus,
+    } = useMuxGatewayAccountStatus();
     const [isEditing, setIsEditing] = useState(false);
     const [inputValue, setInputValue] = useState(value);
     const [error, setError] = useState<string | null>(null);
@@ -257,9 +266,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       const innerProvider =
         provider === "mux-gateway" && modelName.includes("/") ? modelName.split("/")[0] : provider;
 
+      // Show gateway icon if configured and provider supports it
+      const showGatewayIcon = gateway.isConfigured && isProviderSupported(value);
+
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">
-          {gatewayActive && (
+          {showGatewayIcon && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -268,13 +280,43 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     e.stopPropagation();
                     gateway.toggleModelGateway(value);
                   }}
+                  onMouseEnter={() => {
+                    void refreshMuxGatewayAccountStatus();
+                  }}
                   className="cursor-pointer transition-opacity hover:opacity-70"
-                  aria-label="Using Mux Gateway"
+                  aria-label={gatewayActive ? "Using Mux Gateway" : "Enable Mux Gateway"}
                 >
-                  <GatewayIcon className="text-accent h-3 w-3 shrink-0" active />
+                  <GatewayIcon
+                    className={cn("h-3 w-3 shrink-0", gatewayActive ? "text-accent" : "text-muted")}
+                    active={gatewayActive}
+                  />
                 </button>
               </TooltipTrigger>
-              <TooltipContent align="center">Using Mux Gateway</TooltipContent>
+              <TooltipContent align="start" className="w-56">
+                <div className="text-foreground text-[11px] font-medium">Mux Gateway</div>
+                <div className="mt-1.5 space-y-0.5 text-[11px]">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-muted">Balance</span>
+                    <span className="text-foreground font-mono">
+                      {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-muted">Concurrent requests</span>
+                    <span className="text-foreground font-mono">
+                      {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
+                    </span>
+                  </div>
+                </div>
+                {muxGatewayAccountError && (
+                  <div className="text-destructive mt-1.5 text-[10px]">
+                    {muxGatewayAccountError}
+                  </div>
+                )}
+                <div className="text-muted border-separator-light mt-2 border-t pt-1.5 text-[10px]">
+                  Click to {gatewayActive ? "disable" : "enable"} gateway
+                </div>
+              </TooltipContent>
             </Tooltip>
           )}
           <Tooltip>
