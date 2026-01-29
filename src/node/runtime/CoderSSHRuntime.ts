@@ -578,7 +578,8 @@ export class CoderSSHRuntime extends SSHRuntime {
    */
   override async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
     const result = await super.forkWorkspace(params);
-    if (!result.success) return result;
+    // Coder tasks must share the parent's VM - don't fall back to creating a new one
+    if (!result.success) return { ...result, failureIsFatal: true };
 
     // Both workspaces now share the Coder workspace - mark as existing so
     // deleting either mux workspace won't destroy the underlying Coder workspace

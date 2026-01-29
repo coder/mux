@@ -624,6 +624,11 @@ export class TaskService {
         trunkBranch = "main";
       }
     }
+    if (!forkResult.success && forkResult.failureIsFatal) {
+      initLogger.logComplete(-1);
+      return Err(`Task fork failed: ${forkResult.error ?? "unknown error"}`);
+    }
+
     const createResult: WorkspaceCreationResult = forkResult.success
       ? { success: true as const, workspacePath: forkResult.workspacePath }
       : await runtime.createWorkspace({
@@ -1553,6 +1558,16 @@ export class TaskService {
         if (forkResult.sourceRuntimeConfig) {
           // Ensure UI gets the updated runtimeConfig for the parent workspace.
           await this.emitWorkspaceMetadata(parentId);
+        }
+
+        if (!forkResult.success && forkResult.failureIsFatal) {
+          initLogger.logComplete(-1);
+          log.error("Task fork failed", { taskId, error: forkResult.error });
+          taskQueueDebug("TaskService.maybeStartQueuedTasks fork failed", {
+            taskId,
+            error: forkResult.error,
+          });
+          continue;
         }
 
         runtimeForTaskWorkspace = createRuntime(forkedRuntimeConfig, {
