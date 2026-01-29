@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
+import { getBuiltInAgentDefinitions } from "./builtInAgentDefinitions";
 import {
   discoverAgentDefinitions,
   readAgentDefinition,
@@ -130,12 +131,13 @@ Replaced body.
     expect(replacerBody).not.toContain("Base instructions");
   });
 
-  test("Ask agent instructs to trust Explore sub-agent reports", async () => {
-    const askAgentPath = path.join(process.cwd(), ".mux", "agents", "ask.md");
-    const content = await fs.readFile(askAgentPath, "utf-8");
+  test("Ask agent instructs to trust Explore sub-agent reports", () => {
+    const ask = getBuiltInAgentDefinitions().find((a) => a.id === "ask");
+    expect(ask).toBeDefined();
+    expect(ask!.frontmatter.ui?.color).toBe("var(--color-ask-mode)");
 
-    expect(content).toContain("Trust Explore sub-agent reports as authoritative for repo facts");
-    expect(content).toContain("ambiguous or contradicts other evidence");
+    expect(ask!.body).toContain("Trust Explore sub-agent reports as authoritative for repo facts");
+    expect(ask!.body).toContain("ambiguous or contradicts other evidence");
   });
 
   test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {

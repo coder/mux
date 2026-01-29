@@ -2,7 +2,7 @@ import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 
 // Built-in agents in stable order (determines Ctrl+1, Ctrl+2, etc.)
 // Only includes agents that are uiSelectable by default.
-const BUILTIN_AGENT_ORDER: readonly string[] = ["exec", "plan"];
+const BUILTIN_AGENT_ORDER: readonly string[] = ["exec", "plan", "ask"];
 
 /**
  * Sort agents with stable ordering: built-ins first (exec, plan),
