@@ -80,7 +80,7 @@ export function getSendOptionsFromStorage(
 
   return {
     model,
-    system1Model,
+    ...(system1Model ? { system1Model } : {}),
     system1ThinkingLevel: system1ThinkingLevel !== "off" ? system1ThinkingLevel : undefined,
     agentId,
     thinkingLevel,

@@ -9,6 +9,7 @@ import type {
 import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
@@ -77,12 +78,13 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     null
   );
 
-  if (projectModel) {
+  if (projectModel || projectThinkingLevel) {
     const effectiveAgentId =
       typeof projectAgentId === "string" && projectAgentId.trim().length > 0
         ? projectAgentId.trim().toLowerCase()
         : "exec";
     const effectiveThinking: ThinkingLevel = projectThinkingLevel ?? "off";
+    const effectiveModel = projectModel ?? getDefaultModel();
 
     updatePersistedState<Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>>(
       getWorkspaceAISettingsByAgentKey(workspaceId),
@@ -90,7 +92,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
         const record = prev && typeof prev === "object" ? prev : {};
         return {
           ...(record as Partial<Record<string, { model: string; thinkingLevel: ThinkingLevel }>>),
-          [effectiveAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
+          [effectiveAgentId]: { model: effectiveModel, thinkingLevel: effectiveThinking },
         };
       },
       {}

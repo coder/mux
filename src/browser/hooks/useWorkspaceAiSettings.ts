@@ -9,17 +9,14 @@ import {
 import {
   AGENT_AI_DEFAULTS_KEY,
   getAgentIdKey,
+  getModelKey,
+  getThinkingLevelByModelKey,
+  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
-import {
-  getAgentIdKey as getScopedAgentIdKey,
-  getModelKey,
-  getThinkingLevelByModelKey,
-  getThinkingLevelKey,
-} from "@/common/constants/storage";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 type WorkspaceAiSettingsCache = Partial<
@@ -351,8 +348,7 @@ export function readScopedAiSettings(props: ReadScopedAiSettingsProps): ScopedAi
   }
 
   const agentId =
-    props.agentId ??
-    readPersistedState<string>(getScopedAgentIdKey(scopeId), WORKSPACE_DEFAULTS.agentId);
+    props.agentId ?? readPersistedState<string>(getAgentIdKey(scopeId), WORKSPACE_DEFAULTS.agentId);
 
   return { agentId, model, thinkingLevel };
 }
@@ -394,9 +390,11 @@ export function useScopedAiSettings(props: UseScopedAiSettingsProps): ScopedAiSe
   );
 
   const [storedAgentId] = usePersistedState<string>(
-    getScopedAgentIdKey(scopeId),
+    getAgentIdKey(scopeId),
     WORKSPACE_DEFAULTS.agentId,
-    { listener: true }
+    {
+      listener: true,
+    }
   );
 
   // One-time migration: seed from legacy per-model key if scope key is missing
