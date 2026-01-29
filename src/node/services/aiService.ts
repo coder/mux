@@ -2200,7 +2200,7 @@ export class AIService extends EventEmitter {
         workspaceId,
         messageId: assistantMessageId,
         model: modelString,
-        providerName,
+        providerName: canonicalProviderName,
         thinkingLevel: effectiveThinkingLevel,
         mode: effectiveMode,
         agentId: effectiveAgentId,

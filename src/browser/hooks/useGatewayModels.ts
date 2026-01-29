@@ -7,7 +7,11 @@ import {
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
 } from "@/common/constants/storage";
-import { MUX_GATEWAY_SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import {
+  MUX_GATEWAY_SUPPORTED_PROVIDERS,
+  isValidProvider,
+  type ProviderName,
+} from "@/common/constants/providers";
 
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
@@ -16,9 +20,14 @@ import { MUX_GATEWAY_SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 /**
  * Extract provider from a model ID.
  */
-function getProvider(modelId: string): string | null {
+function getProvider(modelId: string): ProviderName | null {
   const colonIndex = modelId.indexOf(":");
-  return colonIndex === -1 ? null : modelId.slice(0, colonIndex);
+  if (colonIndex === -1) {
+    return null;
+  }
+
+  const provider = modelId.slice(0, colonIndex);
+  return isValidProvider(provider) ? provider : null;
 }
 
 /**
