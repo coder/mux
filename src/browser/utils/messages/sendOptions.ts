@@ -13,7 +13,7 @@ import {
   updatePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
@@ -49,8 +49,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   const rawModel = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
   // Migrate any legacy mux-gateway:provider/model format to canonical form
   const baseModel = migrateGatewayModel(rawModel);
-  // Transform to gateway format if gateway is enabled for this model
-  const model = toGatewayModel(baseModel);
 
   // Read thinking level (workspace-scoped).
   // Migration: if the workspace-scoped value is missing, fall back to legacy per-model storage
@@ -86,8 +84,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     system1ModelTrimmed !== undefined && system1ModelTrimmed.length > 0
       ? migrateGatewayModel(system1ModelTrimmed)
       : undefined;
-  const system1Model =
-    baseSystem1Model !== undefined ? toGatewayModel(baseSystem1Model) : undefined;
   const system1ThinkingLevelRaw = readPersistedState<unknown>(
     PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
     "off"
@@ -100,8 +96,8 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   );
 
   return {
-    model,
-    system1Model,
+    model: baseModel,
+    system1Model: baseSystem1Model,
     system1ThinkingLevel: system1ThinkingLevel !== "off" ? system1ThinkingLevel : undefined,
     agentId,
     thinkingLevel,

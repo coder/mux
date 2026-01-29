@@ -608,6 +608,8 @@ export class AgentSession {
       );
     }
 
+    options = this.normalizeGatewaySendOptions(options);
+
     // Defense-in-depth: reject PDFs for models we know don't support them.
     // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
     const effectiveFileParts =
@@ -773,6 +775,8 @@ export class AgentSession {
     const { model } = options;
     assert(typeof model === "string" && model.trim().length > 0, "resumeStream requires a model");
 
+    const normalizedOptions = this.normalizeGatewaySendOptions(options);
+
     // Guard against auto-retry starting a second stream while the initial send is
     // still waiting for init hooks to complete.
     if (this.streamStarting || this.aiService.isStreaming(this.workspaceId)) {
@@ -783,11 +787,25 @@ export class AgentSession {
     try {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned.
-      const result = await this.streamWithHistory(model, options);
+      const result = await this.streamWithHistory(normalizedOptions.model, normalizedOptions);
       return result;
     } finally {
       this.streamStarting = false;
     }
+  }
+
+  private normalizeGatewaySendOptions(options: SendMessageOptions): SendMessageOptions {
+    // Keep persisted model IDs canonical; gateway routing is now backend-authoritative (issue #1769).
+    const normalizedModel = normalizeGatewayModel(options.model.trim());
+    const system1Model = options.system1Model?.trim();
+    const normalizedSystem1Model =
+      system1Model && system1Model.length > 0 ? normalizeGatewayModel(system1Model) : undefined;
+
+    return {
+      ...options,
+      model: normalizedModel,
+      system1Model: normalizedSystem1Model,
+    };
   }
 
   async interruptStream(options?: {
