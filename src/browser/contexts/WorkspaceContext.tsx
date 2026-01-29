@@ -43,6 +43,7 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
 /**
@@ -91,6 +92,16 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   for (const [agentKey, entry] of Object.entries(aiByAgent)) {
     if (!entry) continue;
     if (typeof entry.model !== "string" || entry.model.length === 0) continue;
+
+    // Protect newer local preferences from stale metadata updates (e.g., rapid thinking toggles).
+    if (
+      !shouldApplyWorkspaceAiSettingsFromBackend(workspaceId, agentKey, {
+        model: entry.model,
+        thinkingLevel: entry.thinkingLevel,
+      })
+    ) {
+      continue;
+    }
 
     nextByAgent[agentKey] = {
       model: entry.model,

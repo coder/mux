@@ -19,6 +19,10 @@ import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import { useAPI } from "@/browser/contexts/API";
+import {
+  clearPendingWorkspaceAiSettings,
+  markPendingWorkspaceAiSettings,
+} from "@/browser/utils/workspaceAiSettingsSync";
 import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ThinkingContextType {
@@ -84,6 +88,8 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         return;
       }
 
+      const workspaceId = props.workspaceId;
+
       type WorkspaceAISettingsByAgentCache = Partial<
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
@@ -92,7 +98,7 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         readPersistedState<string>(getAgentIdKey(scopeId), "exec").trim().toLowerCase() || "exec";
 
       updatePersistedState<WorkspaceAISettingsByAgentCache>(
-        getWorkspaceAISettingsByAgentKey(props.workspaceId),
+        getWorkspaceAISettingsByAgentKey(workspaceId),
         (prev) => {
           const record: WorkspaceAISettingsByAgentCache =
             prev && typeof prev === "object" ? prev : {};
@@ -108,13 +114,21 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
         return;
       }
 
+      // Avoid stale backend metadata clobbering newer local preferences when users
+      // click through levels quickly (tests reproduce this by cycling to xhigh).
+      markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
+        model,
+        thinkingLevel: level,
+      });
+
       api.workspace
         .updateAgentAISettings({
-          workspaceId: props.workspaceId,
+          workspaceId,
           agentId: normalizedAgentId,
           aiSettings: { model, thinkingLevel: level },
         })
         .catch(() => {
+          clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
           // Best-effort only. If offline or backend is old, the next sendMessage will persist.
         });
     },
