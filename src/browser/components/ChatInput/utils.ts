@@ -60,6 +60,16 @@ export function buildSkillInvocationMetadata(
 }
 
 /**
+ * Build metadata for a message with hash skill mentions.
+ */
+export function buildHashSkillMentionsMetadata(skillNames: string[]): MuxFrontendMetadata {
+  return {
+    type: "normal",
+    hashSkillMentions: skillNames,
+  };
+}
+
+/**
  * Format user message text for skill invocation.
  * Makes it explicit to the model that a skill was invoked.
  */

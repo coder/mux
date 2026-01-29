@@ -236,6 +236,8 @@ interface MuxFrontendMetadataBase {
   reviews?: ReviewNoteDataForDisplay[];
   /** Command prefix to highlight in UI (e.g., "/compact -m sonnet" or "/react-effects") */
   commandPrefix?: string;
+  /** Hash skill mentions to highlight inline (e.g., ["react-effects", "tests"]) */
+  hashSkillMentions?: string[];
 }
 
 /** Status to display in sidebar during background operations */
@@ -380,6 +382,11 @@ export type DisplayedMessage =
        * Only set when a slash command was processed.
        */
       commandPrefix?: string;
+      /**
+       * Hash skill mentions to highlight inline (e.g., ["react-effects", "tests"]).
+       * Set when the message contains #skill-name mentions.
+       */
+      hashSkillMentions?: string[];
       fileParts?: FilePart[]; // Optional attachments
       historySequence: number; // Global ordering across all messages
       isSynthetic?: boolean;

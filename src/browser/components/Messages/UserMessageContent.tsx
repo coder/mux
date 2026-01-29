@@ -1,14 +1,17 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { FileText } from "lucide-react";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import type { HighlightPattern } from "./rehypeHighlightTerms";
 
 interface UserMessageContentProps {
   content: string;
   commandPrefix?: string;
+  /** Hash skill mentions to highlight inline (e.g., ["react-effects", "tests"]) */
+  hashSkillMentions?: string[];
   reviews?: ReviewNoteDataForDisplay[];
   fileParts?: FilePart[];
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
@@ -85,6 +88,20 @@ const CommandPrefixBadge: React.FC<{ prefix: string }> = (props) => (
 );
 
 /**
+ * Build highlight patterns for hash skill mentions.
+ * Used by MarkdownRenderer to style #skill-name tokens via rehype plugin.
+ */
+function buildSkillHighlightPatterns(skillNames: string[]): HighlightPattern[] {
+  if (skillNames.length === 0) return [];
+
+  // Build a single pattern matching all skill mentions
+  const escapedNames = skillNames.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = `#(?:${escapedNames.join("|")})(?=\\s|$|[.,;:!?)])`;
+
+  return [{ match: new RegExp(pattern, "gi"), className: "skill-mention-badge" }];
+}
+
+/**
  * Shared content renderer for user messages (sent and queued).
  * Handles reviews, text content, and attachments.
  */
@@ -99,7 +116,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     ? props.content.replace(/<review>[\s\S]*?<\/review>\s*/g, "").trim()
     : props.content;
 
-  // Check if content starts with the command prefix
+  // Check if content starts with the command prefix (e.g., "/compact")
   const shouldHighlightPrefix =
     props.commandPrefix && textContent.startsWith(props.commandPrefix)
       ? props.commandPrefix
@@ -110,11 +127,17 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     ? textContent.slice(shouldHighlightPrefix.length)
     : textContent;
 
+  // Build highlight patterns for hash skill mentions (memoized for rehype plugin stability)
+  const highlightTerms = useMemo(
+    () => buildSkillHighlightPatterns(props.hashSkillMentions ?? []),
+    [props.hashSkillMentions]
+  );
+
   // Render text content with optional command prefix badge
   const renderTextContent = () => {
     if (!remainingContent && !shouldHighlightPrefix) return null;
 
-    // No prefix highlighting - render markdown directly without wrapper
+    // No prefix highlighting - render markdown directly (with optional hash skill highlighting)
     if (!shouldHighlightPrefix) {
       return (
         <MarkdownRenderer
@@ -122,6 +145,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
           className={markdownClassName}
           style={markdownStyles[props.variant]}
           preserveLineBreaks
+          highlightTerms={highlightTerms}
         />
       );
     }
@@ -130,6 +154,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const charAfterPrefix = textContent.charAt(shouldHighlightPrefix.length);
     const hasSpaceAfterPrefix = charAfterPrefix === " ";
     const hasNewlineAfterPrefix = charAfterPrefix === "\n";
+    const contentAfterPrefix = remainingContent.trim();
 
     // Newline after prefix: block layout (badge on own line)
     // Space after prefix: inline layout (badge + content on same line)
@@ -137,12 +162,13 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
       <div className={hasNewlineAfterPrefix ? "" : "flex flex-wrap items-baseline"}>
         <CommandPrefixBadge prefix={shouldHighlightPrefix} />
         {hasSpaceAfterPrefix && <span>&nbsp;</span>}
-        {remainingContent.trim() && (
+        {contentAfterPrefix && (
           <MarkdownRenderer
-            content={remainingContent.trim()}
+            content={contentAfterPrefix}
             className={markdownClassName}
             style={markdownStyles[props.variant]}
             preserveLineBreaks
+            highlightTerms={highlightTerms}
           />
         )}
       </div>
