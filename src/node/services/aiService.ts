@@ -111,6 +111,7 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   readAgentDefinition,
   resolveAgentBody,
+  resolveAgentFrontmatter,
   discoverAgentDefinitions,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
@@ -1693,9 +1694,27 @@ export class AIService extends EventEmitter {
       // 2. If running as subagent, append subagent.append_prompt
       // Note: Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId
       const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id);
+
+      let subagentAppendPrompt: string | undefined;
+      if (isSubagentWorkspace) {
+        try {
+          const resolvedFrontmatter = await resolveAgentFrontmatter(
+            runtime,
+            agentDiscoveryPath,
+            agentDefinition.id
+          );
+          subagentAppendPrompt = resolvedFrontmatter.subagent?.append_prompt;
+        } catch (error: unknown) {
+          workspaceLog.debug("Failed to resolve agent frontmatter for subagent append_prompt", {
+            agentId: agentDefinition.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       const agentSystemPrompt =
-        isSubagentWorkspace && agentDefinition.frontmatter.subagent?.append_prompt
-          ? `${resolvedBody}\n\n${agentDefinition.frontmatter.subagent.append_prompt}`
+        isSubagentWorkspace && subagentAppendPrompt
+          ? `${resolvedBody}\n\n${subagentAppendPrompt}`
           : resolvedBody;
 
       // Discover available agent definitions for sub-agent context (only for top-level workspaces)

@@ -11,6 +11,7 @@ import {
   discoverAgentDefinitions,
   readAgentDefinition,
   resolveAgentBody,
+  resolveAgentFrontmatter,
 } from "./agentDefinitionsService";
 
 async function writeAgent(root: string, id: string, name: string): Promise<void> {
@@ -238,5 +239,194 @@ Project body.
     });
     expect(skippedPkg.scope).toBe("global");
     expect(skippedPkg.frontmatter.name).toBe("Test Global");
+  });
+
+  test("resolveAgentFrontmatter inherits omitted fields from base chain (same-name override)", async () => {
+    using project = new DisposableTempDir("agent-frontmatter-project");
+    using global = new DisposableTempDir("agent-frontmatter-global");
+
+    const projectAgentsRoot = path.join(project.path, ".mux", "agents");
+    const globalAgentsRoot = global.path;
+
+    await fs.mkdir(projectAgentsRoot, { recursive: true });
+    await fs.mkdir(globalAgentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(globalAgentsRoot, "foo.md"),
+      `---
+name: Foo Base
+description: Base description
+ui:
+  hidden: true
+  color: red
+  requires:
+    - plan
+subagent:
+  runnable: true
+  append_prompt: Base subagent prompt
+  skip_init_hook: true
+ai:
+  model: base-model
+  thinkingLevel: high
+tools:
+  add:
+    - baseAdd
+  remove:
+    - baseRemove
+---
+Base body.
+`,
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(projectAgentsRoot, "foo.md"),
+      `---
+name: Foo Project
+base: foo
+ui:
+  color: blue
+---
+Project body.
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const runtime = new LocalRuntime(project.path);
+
+    const frontmatter = await resolveAgentFrontmatter(runtime, project.path, "foo", { roots });
+
+    expect(frontmatter.description).toBe("Base description");
+    expect(frontmatter.ui?.hidden).toBe(true);
+    expect(frontmatter.ui?.color).toBe("blue");
+    expect(frontmatter.ui?.requires).toEqual(["plan"]);
+    expect(frontmatter.subagent?.runnable).toBe(true);
+    expect(frontmatter.subagent?.append_prompt).toBe("Base subagent prompt");
+    expect(frontmatter.subagent?.skip_init_hook).toBe(true);
+    expect(frontmatter.ai?.model).toBe("base-model");
+    expect(frontmatter.ai?.thinkingLevel).toBe("high");
+    expect(frontmatter.tools?.add).toEqual(["baseAdd"]);
+    expect(frontmatter.tools?.remove).toEqual(["baseRemove"]);
+  });
+
+  test("resolveAgentFrontmatter preserves explicit falsy overrides", async () => {
+    using tempDir = new DisposableTempDir("agent-frontmatter-falsy");
+    const agentsRoot = path.join(tempDir.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(agentsRoot, "base.md"),
+      `---
+name: Base
+ui:
+  hidden: true
+subagent:
+  runnable: true
+  skip_init_hook: true
+---
+`,
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(agentsRoot, "child.md"),
+      `---
+name: Child
+base: base
+ui:
+  hidden: false
+subagent:
+  runnable: false
+  skip_init_hook: false
+---
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const frontmatter = await resolveAgentFrontmatter(runtime, tempDir.path, "child", { roots });
+
+    expect(frontmatter.ui?.hidden).toBe(false);
+    expect(frontmatter.subagent?.runnable).toBe(false);
+    expect(frontmatter.subagent?.skip_init_hook).toBe(false);
+  });
+
+  test("resolveAgentFrontmatter concatenates tools.add/tools.remove (base first)", async () => {
+    using tempDir = new DisposableTempDir("agent-frontmatter-tools");
+    const agentsRoot = path.join(tempDir.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(agentsRoot, "base.md"),
+      `---
+name: Base
+tools:
+  add:
+    - a
+  remove:
+    - b
+---
+`,
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(agentsRoot, "child.md"),
+      `---
+name: Child
+base: base
+tools:
+  add:
+    - c
+  remove:
+    - d
+---
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const frontmatter = await resolveAgentFrontmatter(runtime, tempDir.path, "child", { roots });
+
+    expect(frontmatter.tools?.add).toEqual(["a", "c"]);
+    expect(frontmatter.tools?.remove).toEqual(["b", "d"]);
+  });
+
+  test("resolveAgentFrontmatter detects cycles", async () => {
+    using tempDir = new DisposableTempDir("agent-frontmatter-cycle");
+    const agentsRoot = path.join(tempDir.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    await fs.writeFile(
+      path.join(agentsRoot, "a.md"),
+      `---
+name: A
+base: b
+---
+`,
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(agentsRoot, "b.md"),
+      `---
+name: B
+base: a
+---
+`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const runtime = new LocalRuntime(tempDir.path);
+
+    expect(resolveAgentFrontmatter(runtime, tempDir.path, "a", { roots })).rejects.toThrow(
+      "Circular agent inheritance detected"
+    );
   });
 });

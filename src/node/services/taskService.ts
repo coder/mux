@@ -13,8 +13,8 @@ import type { InitStateManager } from "@/node/services/initStateManager";
 import { log } from "@/node/services/log";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import {
-  readAgentDefinition,
   discoverAgentDefinitions,
+  resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
@@ -556,11 +556,30 @@ export class TaskService {
       ? parentMeta.projectPath
       : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
 
-    // Helper to build error hint with all available runnable agents
+    // Helper to build error hint with all available runnable agents.
+    // NOTE: This resolves frontmatter inheritance so same-name overrides (e.g. project exec.md
+    // with base: exec) still count as runnable.
     const getRunnableHint = async (): Promise<string> => {
       try {
         const allAgents = await discoverAgentDefinitions(runtime, parentWorkspacePath);
-        const runnableIds = allAgents.filter((a) => a.subagentRunnable).map((a) => a.id);
+
+        const runnableIds = (
+          await Promise.all(
+            allAgents.map(async (agent) => {
+              try {
+                const frontmatter = await resolveAgentFrontmatter(
+                  runtime,
+                  parentWorkspacePath,
+                  agent.id
+                );
+                return frontmatter.subagent?.runnable === true ? agent.id : null;
+              } catch {
+                return null;
+              }
+            })
+          )
+        ).filter((id): id is string => typeof id === "string");
+
         return runnableIds.length > 0
           ? `Runnable agentIds: ${runnableIds.join(", ")}`
           : "No runnable agents available";
@@ -571,12 +590,12 @@ export class TaskService {
 
     let skipInitHook = false;
     try {
-      const definition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
-      if (definition.frontmatter.subagent?.runnable !== true) {
+      const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
+      if (frontmatter.subagent?.runnable !== true) {
         const hint = await getRunnableHint();
         return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId}). ${hint}`);
       }
-      skipInitHook = definition.frontmatter.subagent?.skip_init_hook === true;
+      skipInitHook = frontmatter.subagent?.skip_init_hook === true;
     } catch {
       const hint = await getRunnableHint();
       return Err(`Task.create: unknown agentId (${agentId}). ${hint}`);
@@ -1750,12 +1769,12 @@ export class TaskService {
                 : runtime.getWorkspacePath(taskEntry.projectPath, parentWorkspaceName));
 
             try {
-              const definition = await readAgentDefinition(
+              const frontmatter = await resolveAgentFrontmatter(
                 runtime,
                 parentWorkspacePath,
                 parsedAgentId.data
               );
-              skipInitHook = definition.frontmatter.subagent?.skip_init_hook === true;
+              skipInitHook = frontmatter.subagent?.skip_init_hook === true;
             } catch (error: unknown) {
               log.debug("Queued task: failed to read agent definition for skip_init_hook", {
                 taskId,

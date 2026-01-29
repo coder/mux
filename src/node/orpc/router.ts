@@ -40,8 +40,8 @@ import {
 import {
   discoverAgentDefinitions,
   readAgentDefinition,
+  resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
 /**
@@ -488,35 +488,51 @@ export const router = (authToken?: string) => {
 
           const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
 
-          // Compute derived UI fields that depend on inheritance resolution.
-          // This keeps frontend logic simple and ensures scope rules (same-name overrides)
-          // are applied consistently.
-          return Promise.all(
+          const resolved = await Promise.all(
             descriptors.map(async (descriptor) => {
               try {
-                const pkg = await readAgentDefinition(runtime, discoveryPath, descriptor.id);
-                const chain = await resolveAgentInheritanceChain({
+                const resolvedFrontmatter = await resolveAgentFrontmatter(
                   runtime,
-                  workspacePath: discoveryPath,
-                  agentId: descriptor.id,
-                  agentDefinition: pkg,
-                  workspaceId: input.workspaceId ?? "", // for logging only
-                });
+                  discoveryPath,
+                  descriptor.id
+                );
 
-                const resolvedUiColor = chain.find((entry) => entry.uiColor)?.uiColor;
+                // If an agent is disabled anywhere in its base chain, omit it.
+                // (Overrides can re-enable by explicitly setting ui.disabled: false.)
+                if (resolvedFrontmatter.ui?.disabled === true) {
+                  return null;
+                }
 
-                const requiresPlan = pkg.frontmatter.ui?.requires?.includes("plan") ?? false;
-                const uiSelectable = requiresPlan && !planReady ? false : descriptor.uiSelectable;
+                // NOTE: hidden is opt-out. selectable is legacy opt-in.
+                const uiSelectableBase =
+                  typeof resolvedFrontmatter.ui?.hidden === "boolean"
+                    ? !resolvedFrontmatter.ui.hidden
+                    : typeof resolvedFrontmatter.ui?.selectable === "boolean"
+                      ? resolvedFrontmatter.ui.selectable
+                      : true;
+
+                const requiresPlan = resolvedFrontmatter.ui?.requires?.includes("plan") ?? false;
+                const uiSelectable = requiresPlan && !planReady ? false : uiSelectableBase;
 
                 return {
                   ...descriptor,
+                  name: resolvedFrontmatter.name,
+                  description: resolvedFrontmatter.description,
                   uiSelectable,
-                  uiColor: descriptor.uiColor ?? resolvedUiColor,
+                  uiColor: resolvedFrontmatter.ui?.color,
+                  subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
+                  base: resolvedFrontmatter.base,
+                  aiDefaults: resolvedFrontmatter.ai,
+                  tools: resolvedFrontmatter.tools,
                 };
               } catch {
                 return descriptor;
               }
             })
+          );
+
+          return resolved.filter((descriptor): descriptor is NonNullable<typeof descriptor> =>
+            Boolean(descriptor)
           );
         }),
       get: t

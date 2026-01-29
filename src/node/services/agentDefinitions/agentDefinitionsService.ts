@@ -8,6 +8,7 @@ import { shellQuote } from "@/node/runtime/backgroundCommands";
 
 import {
   AgentDefinitionDescriptorSchema,
+  AgentDefinitionFrontmatterSchema,
   AgentDefinitionPackageSchema,
   AgentIdSchema,
 } from "@/common/orpc/schemas";
@@ -490,6 +491,150 @@ export async function resolveAgentBody(
     );
     const separator = baseBody.trim() && pkg.body.trim() ? "\n\n" : "";
     return `${baseBody}${separator}${pkg.body}`;
+  }
+
+  return resolve(agentId, 0, options?.skipScopesAbove);
+}
+
+function formatZodIssues(
+  issues: ReadonlyArray<{ path: readonly PropertyKey[]; message: string }>
+): string {
+  return issues
+    .map((issue) => {
+      const issuePath =
+        issue.path.length > 0 ? issue.path.map((part) => String(part)).join(".") : "<root>";
+      return `${issuePath}: ${issue.message}`;
+    })
+    .join("; ");
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function deepMergeAgentFrontmatter(
+  base: unknown,
+  overlay: unknown,
+  path: readonly string[]
+): unknown {
+  // Inherit base when the overlay isn't specified.
+  if (overlay === undefined) {
+    return base;
+  }
+
+  const pathKey = path.join(".");
+  if (
+    Array.isArray(base) &&
+    Array.isArray(overlay) &&
+    (pathKey === "tools.add" || pathKey === "tools.remove")
+  ) {
+    // Tool layers are processed in order (base first, then child).
+    return [...(base as unknown[]), ...(overlay as unknown[])];
+  }
+
+  if (isPlainObject(base) && isPlainObject(overlay)) {
+    const merged: Record<string, unknown> = { ...base };
+
+    for (const [key, overlayValue] of Object.entries(overlay)) {
+      merged[key] = deepMergeAgentFrontmatter(merged[key], overlayValue, [...path, key]);
+    }
+
+    return merged;
+  }
+
+  // Primitive, array (non-tools), or mismatched types: overlay wins.
+  return overlay;
+}
+
+/**
+ * Resolve an agent's effective frontmatter by overlaying its base chain (base first, then child).
+ *
+ * Unlike prompt body inheritance, frontmatter inheritance is always applied when `base` is set.
+ * This prevents same-name overrides (e.g. project exec.md with base: exec) from accidentally
+ * dropping important base config like subagent.runnable or subagent.append_prompt.
+ */
+export async function resolveAgentFrontmatter(
+  runtime: Runtime,
+  workspacePath: string,
+  agentId: AgentId,
+  options?: { roots?: AgentDefinitionsRoots; skipScopesAbove?: AgentDefinitionScope }
+): Promise<AgentDefinitionPackage["frontmatter"]> {
+  if (!workspacePath) {
+    throw new Error("resolveAgentFrontmatter: workspacePath is required");
+  }
+
+  const visited = new Set<string>();
+
+  function mergeSkipScopesAbove(
+    a: AgentDefinitionScope | undefined,
+    b: AgentDefinitionScope | undefined
+  ): AgentDefinitionScope | undefined {
+    if (!a) {
+      return b;
+    }
+    if (!b) {
+      return a;
+    }
+
+    const aIndex = SCOPE_PRIORITY.indexOf(a);
+    const bIndex = SCOPE_PRIORITY.indexOf(b);
+
+    // Defensive fallback. (In practice, both should always be in SCOPE_PRIORITY.)
+    if (aIndex === -1 || bIndex === -1) {
+      return a;
+    }
+
+    // Prefer the scope that skips *more* (e.g. global skips project+global).
+    return aIndex > bIndex ? a : b;
+  }
+
+  async function resolve(
+    id: AgentId,
+    depth: number,
+    skipScopesAbove?: AgentDefinitionScope
+  ): Promise<AgentDefinitionPackage["frontmatter"]> {
+    if (depth > MAX_INHERITANCE_DEPTH) {
+      throw new Error(
+        `Agent inheritance depth exceeded for '${id}' (max: ${MAX_INHERITANCE_DEPTH})`
+      );
+    }
+
+    const pkg = await readAgentDefinition(runtime, workspacePath, id, {
+      roots: options?.roots,
+      skipScopesAbove,
+    });
+
+    const visitKey = agentVisitKey(pkg.id, pkg.scope);
+    if (visited.has(visitKey)) {
+      throw new Error(`Circular agent inheritance detected: ${pkg.id} (${pkg.scope})`);
+    }
+    visited.add(visitKey);
+
+    const baseId = pkg.frontmatter.base;
+    if (!baseId) {
+      return pkg.frontmatter;
+    }
+
+    const baseFrontmatter = await resolve(
+      baseId,
+      depth + 1,
+      mergeSkipScopesAbove(skipScopesAbove, computeBaseSkipScope(baseId, id, pkg.scope))
+    );
+
+    const mergedRaw = deepMergeAgentFrontmatter(baseFrontmatter, pkg.frontmatter, []);
+    const merged = AgentDefinitionFrontmatterSchema.safeParse(mergedRaw);
+    if (!merged.success) {
+      throw new Error(
+        `Invalid merged frontmatter for '${id}': ${formatZodIssues(merged.error.issues)}`
+      );
+    }
+
+    return merged.data;
   }
 
   return resolve(agentId, 0, options?.skipScopesAbove);
