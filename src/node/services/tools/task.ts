@@ -7,9 +7,30 @@ import { log } from "@/node/services/log";
 
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
 
+/**
+ * Build dynamic task tool description with available sub-agents.
+ * Injects the list of available sub-agents directly into the tool description
+ * so the model sees them adjacent to the tool call schema.
+ */
+function buildTaskDescription(config: ToolConfiguration): string {
+  const baseDescription = TOOL_DEFINITIONS.task.description;
+  const subagents = config.availableSubagents?.filter((a) => a.subagentRunnable) ?? [];
+
+  if (subagents.length === 0) {
+    return baseDescription;
+  }
+
+  const subagentLines = subagents.map((agent) => {
+    const desc = agent.description ? `: ${agent.description}` : "";
+    return `- ${agent.id}${desc}`;
+  });
+
+  return `${baseDescription}\n\nAvailable sub-agents (use \`agentId\` parameter):\n${subagentLines.join("\n")}`;
+}
+
 export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
-    description: TOOL_DEFINITIONS.task.description,
+    description: buildTaskDescription(config),
     inputSchema: TOOL_DEFINITIONS.task.schema,
     execute: async (args, { abortSignal }): Promise<unknown> => {
       // Defensive: tool() should have already validated args via inputSchema,

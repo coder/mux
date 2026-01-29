@@ -14,8 +14,6 @@ import {
 import type { Runtime } from "@/node/runtime/Runtime";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getMuxHome } from "@/common/constants/paths";
-import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
-import { log } from "@/node/services/log";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { assertNever } from "@/common/utils/assertNever";
 
@@ -152,41 +150,6 @@ ${lines.join("\n")}
  * Only included when at least one MCP server is configured.
  * Note: We only expose server names, not commands, to avoid leaking secrets.
  */
-
-async function buildAgentSkillsContext(runtime: Runtime, workspacePath: string): Promise<string> {
-  try {
-    const skills = await discoverAgentSkills(runtime, workspacePath);
-    if (skills.length === 0) return "";
-
-    const MAX_SKILLS = 50;
-    const shown = skills.slice(0, MAX_SKILLS);
-    const omitted = skills.length - shown.length;
-
-    const lines: string[] = [];
-    lines.push("Available agent skills (call tools to load):");
-    for (const skill of shown) {
-      lines.push(`- ${skill.name}: ${skill.description} (scope: ${skill.scope})`);
-    }
-    if (omitted > 0) {
-      lines.push(`(+${omitted} more not shown)`);
-    }
-
-    lines.push("");
-    lines.push("To load a skill:");
-    lines.push('- agent_skill_read({ name: "<skill-name>" })');
-
-    lines.push("");
-    lines.push("To read referenced files inside a skill directory:");
-    lines.push(
-      '- agent_skill_read_file({ name: "<skill-name>", filePath: "references/whatever.txt" })'
-    );
-
-    return `\n\n<agent-skills>\n${lines.join("\n")}\n</agent-skills>`;
-  } catch (error) {
-    log.warn("Failed to build agent skills context", { workspacePath, error });
-    return "";
-  }
-}
 function buildMCPContext(mcpServers: MCPServerMap): string {
   const names = Object.keys(mcpServers);
   if (names.length === 0) return "";
@@ -368,8 +331,9 @@ export async function buildSystemMessage(
     systemMessage += buildMCPContext(mcpServers);
   }
 
-  // Add agent skills context (if any)
-  systemMessage += await buildAgentSkillsContext(runtime, workspacePath);
+  // NOTE: Agent skills and available sub-agents are now injected into their respective
+  // tool descriptions (agent_skill_read, task) for better model attention per Anthropic
+  // best practices. See tools.ts ToolConfiguration.availableSkills/availableSubagents.
 
   // Read instruction sets
   const [globalInstructions, contextInstructions] = await readInstructionSources(
