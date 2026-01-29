@@ -155,7 +155,10 @@ ${lines.join("\n")}
 
 async function buildAgentSkillsContext(runtime: Runtime, workspacePath: string): Promise<string> {
   try {
-    const skills = await discoverAgentSkills(runtime, workspacePath);
+    const allSkills = await discoverAgentSkills(runtime, workspacePath);
+    // Unadvertised skills are not listed in the index (but can still be invoked via /skill-name or agent_skill_read).
+    // We treat `advertise: false` as opt-out; absent/true means "list it".
+    const skills = allSkills.filter((s) => s.advertise !== false);
     if (skills.length === 0) return "";
 
     const MAX_SKILLS = 50;
