@@ -16,6 +16,7 @@ import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/sugges
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getDisableWorkspaceAgentsKey, GLOBAL_SCOPE_ID } from "@/common/constants/storage";
 import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering";
+import { matchesAllTerms } from "@/browser/utils/fuzzySearch";
 
 interface CommandPaletteProps {
   getSlashContext?: () => { providerNames: string[]; workspaceId?: string };
@@ -439,20 +440,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
         onMouseDown={(e: React.MouseEvent) => e.stopPropagation()}
         shouldFilter={shouldUseCmdkFilter}
         filter={(value, search, keywords) => {
-          // Build searchable text from value + keywords
-          const searchableText = keywords
-            ? `${value} ${keywords.join(" ")}`.toLowerCase()
-            : value.toLowerCase();
-          // When using ">" prefix, filter using the text after ">"
+          // We intentionally *don't* use cmdk's scoring/ranking so we can keep our
+          // stable ordering (recent-first, then alphabetical). We just decide
+          // whether an item matches and return 1|0.
+          //
+          // This is expected to feel more like fzf:
+          // - space-separated terms are ANDed
+          // - formatting punctuation doesn't block matches (e.g. `Ask: check` vs `ask check`)
+          const searchableText = keywords ? `${value} ${keywords.join(" ")}` : value;
+
+          // When using ">" prefix, filter using the text after ">".
           if (isCommandQuery && search.startsWith(">")) {
-            const actualSearch = search.slice(1).trim().toLowerCase();
-            if (!actualSearch) return 1;
-            if (searchableText.includes(actualSearch)) return 1;
-            return 0;
+            return matchesAllTerms(searchableText, search.slice(1).trim()) ? 1 : 0;
           }
-          // Default filtering: match against value + keywords
-          if (searchableText.includes(search.toLowerCase())) return 1;
-          return 0;
+
+          return matchesAllTerms(searchableText, search) ? 1 : 0;
         }}
       >
         <Command.Input
@@ -497,13 +499,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
               className="px-1.5 py-2"
             >
               {group.items.map((item) => {
-                // Include subtitle in keywords for filtering if not already provided
-                const itemKeywords =
-                  "keywords" in item && item.keywords
-                    ? item.keywords
-                    : "subtitle" in item && item.subtitle
-                      ? [item.subtitle]
-                      : undefined;
+                // Always include subtitle in keywords so searches can match secondary
+                // info (e.g. workspace "streaming" status).
+                const itemKeywords = (() => {
+                  const keywords = [
+                    ...(item.keywords ?? []),
+                    ...(item.subtitle ? [item.subtitle] : []),
+                  ]
+                    .map((k) => k.trim())
+                    .filter((k) => k.length > 0);
+
+                  if (keywords.length === 0) {
+                    return undefined;
+                  }
+
+                  return Array.from(new Set(keywords));
+                })();
                 return (
                   <Command.Item
                     key={item.id}
