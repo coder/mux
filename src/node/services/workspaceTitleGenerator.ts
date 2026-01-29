@@ -73,6 +73,9 @@ export async function generateWorkspaceIdentity(
   // Try up to 3 candidates
   const maxAttempts = Math.min(candidates.length, 3);
 
+  // Track the last API error to return if all candidates fail
+  let lastApiError: string | undefined;
+
   for (let i = 0; i < maxAttempts; i++) {
     const modelString = candidates[i];
 
@@ -108,15 +111,19 @@ Requirements:
       });
     } catch (error) {
       // API error (invalid key, quota, network, etc.) - try next candidate
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      lastApiError = error instanceof Error ? error.message : String(error);
       log.warn(`Name generation failed with ${modelString}, trying next candidate`, {
-        error: errorMsg,
+        error: lastApiError,
       });
       continue;
     }
   }
 
-  return Err({ type: "unknown", raw: "Name generation failed - no working model found" });
+  // Return the last API error if available (more actionable than generic message)
+  const errorMessage = lastApiError
+    ? `Name generation failed: ${lastApiError}`
+    : "Name generation failed - no working model found";
+  return Err({ type: "unknown", raw: errorMessage });
 }
 
 /**
