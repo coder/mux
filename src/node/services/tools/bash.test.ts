@@ -174,6 +174,115 @@ describe("bash tool", () => {
     }
   });
 
+  it("should warn when using grep to dump a file", async () => {
+    using tempDir = new TestTempDir("test-bash-grep-read");
+
+    const filePath = path.join(tempDir.path, "input.txt");
+    fs.writeFileSync(filePath, "hello\nworld", "utf-8");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: `grep '' ${filePath}`,
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (isForegroundSuccess(result)) {
+      expect(result.output).toBe("hello\nworld");
+      expect(result.note).toContain("file_read");
+      expect(result.note).toContain("`grep`");
+    }
+  });
+
+  it("should not warn on grep search", async () => {
+    using tempDir = new TestTempDir("test-bash-grep-search");
+
+    const filePath = path.join(tempDir.path, "input.txt");
+    fs.writeFileSync(filePath, "hello\nworld", "utf-8");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    const args: BashToolArgs = {
+      script: `grep 'hello' ${filePath}`,
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (isForegroundSuccess(result)) {
+      expect(result.output).toBe("hello");
+      expect(result.note).toBeUndefined();
+    }
+  });
+
+  it("should warn when using rg to dump a file", async () => {
+    using tempDir = new TestTempDir("test-bash-rg-read");
+
+    const filePath = path.join(tempDir.path, "input.txt");
+    fs.writeFileSync(filePath, "hello\nworld", "utf-8");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    // CI images don’t guarantee ripgrep is installed; shim `rg` so we can exercise the
+    // bash-tool warning heuristics without depending on the real binary.
+    const args: BashToolArgs = {
+      script: `rg() { grep -E "$1" "$2"; }\nrg '' "${filePath}"`,
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (isForegroundSuccess(result)) {
+      expect(result.output).toBe("hello\nworld");
+      expect(result.note).toContain("file_read");
+      expect(result.note).toContain("`rg`");
+    }
+  });
+
+  it("should not warn on rg search", async () => {
+    using tempDir = new TestTempDir("test-bash-rg-search");
+
+    const filePath = path.join(tempDir.path, "input.txt");
+    fs.writeFileSync(filePath, "hello\nworld", "utf-8");
+
+    const config = createTestToolConfig(tempDir.path);
+    config.runtimeTempDir = tempDir.path;
+    const tool = createBashTool(config);
+
+    // CI images don’t guarantee ripgrep is installed; shim `rg` so we can exercise the
+    // bash-tool warning heuristics without depending on the real binary.
+    const args: BashToolArgs = {
+      script: `rg() { grep -E "$1" "$2"; }\nrg 'hello' "${filePath}"`,
+      timeout_secs: 5,
+      run_in_background: false,
+      display_name: "test",
+    };
+
+    const result = (await tool.execute!(args, mockToolCallOptions)) as BashToolResult;
+
+    expect(result.success).toBe(true);
+    if (isForegroundSuccess(result)) {
+      expect(result.output).toBe("hello");
+      expect(result.note).toBeUndefined();
+    }
+  });
   it("should warn on cat file reads even when output overflows", async () => {
     using tempDir = new TestTempDir("test-bash-cat-overflow");
 

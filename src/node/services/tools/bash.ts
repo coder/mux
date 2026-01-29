@@ -24,7 +24,7 @@ import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
 import { getToolEnvPath } from "@/node/services/hooks";
 
 const CAT_FILE_READ_NOTICE =
-  "[IMPORTANT]\n\nDO NOT use `cat` to read files. Use the `file_read` tool instead (supports offset/limit paging). Bash output may be truncated or auto-filtered, which can hide parts of the file.";
+  "[IMPORTANT]\n\nDO NOT use `cat`, `rg`, or `grep` to read files. Use the `file_read` tool instead (supports offset/limit paging). Bash output may be truncated or auto-filtered, which can hide parts of the file.";
 
 function prependToolNote(existing: string | undefined, extra: string): string {
   if (!existing) {
@@ -145,6 +145,319 @@ function detectCatFileRead(script: string): boolean {
       }
 
       // Remaining non-flag tokens look like file operands (e.g. "cat file").
+      return true;
+    }
+  }
+
+  return false;
+}
+
+type SearchCommand = "rg" | "grep";
+
+function stripOuterQuotes(token: string): string {
+  const trimmed = token.trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  if ((first === "'" && last === "'") || (first === '"' && last === '"')) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function isMatchAllSearchPattern(pattern: string): boolean {
+  // Intentionally narrow: we only want to warn on obvious whole-file dump patterns
+  // (avoid warning on normal search).
+  const normalized = pattern.trim();
+  return normalized === "" || normalized === "^" || normalized === ".*";
+}
+
+function isRipgrepToken(token: string): boolean {
+  const trimmed = token.trim();
+  const normalized = trimmed.startsWith("\\") ? trimmed.slice(1) : trimmed;
+  return normalized === "rg";
+}
+
+function isGrepToken(token: string): boolean {
+  const trimmed = token.trim();
+  const normalized = trimmed.startsWith("\\") ? trimmed.slice(1) : trimmed;
+  return normalized === "grep";
+}
+
+function getRipgrepCommandTokenIndex(tokens: string[]): number | null {
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  if (isRipgrepToken(tokens[0])) {
+    return 0;
+  }
+
+  if (tokens[0] === "command" && tokens[1] && isRipgrepToken(tokens[1])) {
+    return 1;
+  }
+
+  // Handle common patterns like: sudo rg file, sudo -n rg file, sudo -u user rg file
+  if (tokens[0] === "sudo") {
+    for (let i = 1; i < tokens.length && i < 8; i++) {
+      if (isRipgrepToken(tokens[i])) {
+        return i;
+      }
+    }
+  }
+
+  return null;
+}
+
+function getGrepCommandTokenIndex(tokens: string[]): number | null {
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  if (isGrepToken(tokens[0])) {
+    return 0;
+  }
+
+  if (tokens[0] === "command" && tokens[1] && isGrepToken(tokens[1])) {
+    return 1;
+  }
+
+  // Handle common patterns like: sudo grep file, sudo -n grep file, sudo -u user grep file
+  if (tokens[0] === "sudo") {
+    for (let i = 1; i < tokens.length && i < 8; i++) {
+      if (isGrepToken(tokens[i])) {
+        return i;
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseSearchCommandArgs(
+  command: SearchCommand,
+  args: string[]
+): { pattern: string | null; tokensAfterPattern: string[] } {
+  let pattern: string | null = null;
+  const tokensAfterPattern: string[] = [];
+  let afterDoubleDash = false;
+
+  const rgConsumesNextArg = new Set([
+    "-g",
+    "--glob",
+    "--iglob",
+    "-t",
+    "--type",
+    "--type-add",
+    "--type-clear",
+  ]);
+  const grepConsumesNextArg = new Set([
+    "-f",
+    "--file",
+    "--include",
+    "--exclude",
+    "--exclude-dir",
+    "-m",
+    "--max-count",
+    "-A",
+    "-B",
+    "-C",
+  ]);
+
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+
+    if (token === "--") {
+      afterDoubleDash = true;
+      continue;
+    }
+
+    if (pattern === null) {
+      const isFlag = !afterDoubleDash && token.startsWith("-");
+      if (isFlag) {
+        const patternFlagInline =
+          command === "rg" && token.startsWith("--regexp=")
+            ? token.slice("--regexp=".length)
+            : command === "grep" && token.startsWith("--regexp=")
+              ? token.slice("--regexp=".length)
+              : null;
+
+        if (patternFlagInline !== null) {
+          pattern = patternFlagInline;
+          continue;
+        }
+
+        const isExplicitPatternFlag =
+          (command === "rg" && (token === "-e" || token === "--regexp")) ||
+          (command === "grep" && token === "-e");
+
+        if (isExplicitPatternFlag) {
+          const nextToken = args[i + 1];
+          if (nextToken !== undefined) {
+            pattern = nextToken;
+            i++;
+          }
+          continue;
+        }
+
+        // Support the compact form: -ePATTERN
+        if (token.startsWith("-e") && token.length > 2) {
+          pattern = token.slice(2);
+          continue;
+        }
+
+        const consumesNextArg =
+          (command === "rg" && rgConsumesNextArg.has(token)) ||
+          (command === "grep" && grepConsumesNextArg.has(token));
+        if (consumesNextArg) {
+          i++; // skip the flag value
+          continue;
+        }
+
+        continue; // other flags
+      }
+
+      pattern = token;
+      continue;
+    }
+
+    tokensAfterPattern.push(token);
+  }
+
+  return { pattern, tokensAfterPattern };
+}
+
+function hasFileReadTargetToken(tokensAfterPattern: string[]): boolean {
+  let expectInputFile = false;
+  let skipNextOutputTarget = false;
+
+  for (const token of tokensAfterPattern) {
+    if (expectInputFile) {
+      expectInputFile = false;
+      if (token !== "-" && token.length > 0) {
+        return true;
+      }
+      continue;
+    }
+
+    if (skipNextOutputTarget) {
+      skipNextOutputTarget = false;
+      continue;
+    }
+
+    // Input redirection: ... < file OR ... <file
+    if (token === "<" || token === "0<") {
+      expectInputFile = true;
+      continue;
+    }
+    const inputMatch = /^(?:0)?<(.+)$/.exec(token);
+    if (inputMatch && !token.startsWith("<<") && !token.startsWith("<<<")) {
+      const inputFile = inputMatch[1];
+      if (inputFile !== "-" && inputFile.length > 0) {
+        return true;
+      }
+      continue;
+    }
+
+    // Output redirection: ignore output targets.
+    if (
+      token === ">" ||
+      token === ">>" ||
+      token === "1>" ||
+      token === "1>>" ||
+      token === "2>" ||
+      token === "2>>" ||
+      token === "&>" ||
+      token === "&>>"
+    ) {
+      skipNextOutputTarget = true;
+      continue;
+    }
+
+    // Output redirection with attached target (e.g. ">out", "2>/dev/null", "2>&1")
+    if (/^(?:\d+|&)?>>?/.test(token)) {
+      continue;
+    }
+
+    // Flags and stdin
+    if (token === "-" || token === "--" || token.startsWith("-")) {
+      continue;
+    }
+
+    // Remaining non-flag tokens look like file/path operands.
+    return true;
+  }
+
+  return false;
+}
+
+function detectRipgrepFileDump(script: string): boolean {
+  // Fast-path: avoid doing any work if "rg" doesn't appear at all.
+  if (!script.includes("rg")) {
+    return false;
+  }
+
+  const segments = script.split(/\n|&&|\|\||;|\|/);
+  for (const segment of segments) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    const rgIndex = getRipgrepCommandTokenIndex(tokens);
+    if (rgIndex === null) continue;
+
+    const args = tokens.slice(rgIndex + 1);
+    if (args.length === 0) continue;
+
+    // Ignore heredocs / here-strings (not a file read).
+    if (args.some((t) => t.startsWith("<<") || t.startsWith("<<<"))) {
+      continue;
+    }
+
+    const { pattern, tokensAfterPattern } = parseSearchCommandArgs("rg", args);
+    if (!pattern) continue;
+
+    if (!isMatchAllSearchPattern(stripOuterQuotes(pattern))) {
+      continue;
+    }
+
+    if (hasFileReadTargetToken(tokensAfterPattern)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function detectGrepFileDump(script: string): boolean {
+  // Fast-path: avoid doing any work if "grep" doesn't appear at all.
+  if (!script.includes("grep")) {
+    return false;
+  }
+
+  const segments = script.split(/\n|&&|\|\||;|\|/);
+  for (const segment of segments) {
+    const tokens = segment.trim().split(/\s+/).filter(Boolean);
+    const grepIndex = getGrepCommandTokenIndex(tokens);
+    if (grepIndex === null) continue;
+
+    const args = tokens.slice(grepIndex + 1);
+    if (args.length === 0) continue;
+
+    // Ignore heredocs / here-strings (not a file read).
+    if (args.some((t) => t.startsWith("<<") || t.startsWith("<<<"))) {
+      continue;
+    }
+
+    const { pattern, tokensAfterPattern } = parseSearchCommandArgs("grep", args);
+    if (!pattern) continue;
+
+    if (!isMatchAllSearchPattern(stripOuterQuotes(pattern))) {
+      continue;
+    }
+
+    if (hasFileReadTargetToken(tokensAfterPattern)) {
       return true;
     }
   }
@@ -547,10 +860,13 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
       const validationError = validateScript(script, config);
       if (validationError) return validationError;
 
-      // Warn on "cat <path>" file reads.
+      // Warn when the model appears to be reading files via bash output (cat/rg/grep).
       // Reading files via bash output is fragile (may be truncated or auto-filtered);
       // file_read supports paging and avoids silent context loss.
-      const catNotice = detectCatFileRead(script) ? CAT_FILE_READ_NOTICE : undefined;
+      const fileReadNotice =
+        detectCatFileRead(script) || detectRipgrepFileDump(script) || detectGrepFileDump(script)
+          ? CAT_FILE_READ_NOTICE
+          : undefined;
 
       // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
       const toolEnvPath = config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;
@@ -572,7 +888,10 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 
       // Handle explicit background execution (run_in_background=true)
       const withNotice = (result: BashToolResult): BashToolResult =>
-        addNoticeToBashToolResult(addNoticeToBashToolResult(result, nulRedirectNote), catNotice);
+        addNoticeToBashToolResult(
+          addNoticeToBashToolResult(result, nulRedirectNote),
+          fileReadNotice
+        );
 
       if (run_in_background) {
         if (!config.workspaceId || !config.backgroundProcessManager || !config.runtime) {
