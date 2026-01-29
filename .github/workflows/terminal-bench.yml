@@ -237,8 +237,8 @@ jobs:
           echo "name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
           echo "Artifact name: $ARTIFACT_NAME"
 
-      - name: Upload results to BigQuery
-        if: always() && github.repository == 'coder/mux'
+      - name: Upload Terminal-Bench results to BigQuery
+        if: always() && github.repository == 'coder/mux' && startsWith(inputs.dataset, 'terminal-bench@')
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
           GCP_PROJECT_ID: mux-benchmarks
@@ -252,14 +252,25 @@ jobs:
           echo "$GCP_SA_KEY" > /tmp/gcp-sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
           pip install --quiet google-cloud-bigquery
+          python scripts/upload-tbench-results.py
+          rm -f /tmp/gcp-sa.json
 
-          dataset="${{ inputs.dataset }}"
-          if [[ "$dataset" == terminal-bench@* ]]; then
-            python scripts/upload-tbench-results.py
-          else
-            python scripts/upload-harbor-results.py
+      - name: Upload Harbor results to BigQuery
+        if: always() && github.repository == 'coder/mux' && !startsWith(inputs.dataset, 'terminal-bench@')
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_PROJECT_ID: mux-benchmarks
+          BQ_DATASET: benchmarks
+          MUX_EXPERIMENTS: ${{ inputs.experiments }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "GCP_SA_KEY not set, skipping BigQuery upload"
+            exit 0
           fi
-
+          echo "$GCP_SA_KEY" > /tmp/gcp-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
+          pip install --quiet google-cloud-bigquery
+          python scripts/upload-harbor-results.py
           rm -f /tmp/gcp-sa.json
 
       - name: Upload benchmark results
