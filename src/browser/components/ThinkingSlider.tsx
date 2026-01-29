@@ -122,6 +122,15 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
 
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const index = parseInt(e.target.value, 10);
+
+    // Guard against programmatic value updates (e.g., when a model change clamps
+    // the effective thinking level). In those cases the slider's controlled value
+    // already matches the event value, and we should not overwrite the user's
+    // preferred level.
+    if (index === sliderValue) {
+      return;
+    }
+
     const newLevel = allowed[index];
     if (newLevel) {
       handleThinkingLevelChange(newLevel);

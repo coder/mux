@@ -96,19 +96,19 @@ if ! printf '%s' "${instruction}" | "${cmd[@]}" | tee "${MUX_OUTPUT_FILE}"; then
   fatal "mux agent session failed"
 fi
 
-# Extract tokens from stream-end events (best-effort, sums all events)
+# Extract usage and cost from run-complete event (emitted at end of --json run)
 python3 -c '
 import json, sys
-total_input = total_output = 0
+result = {"input": 0, "output": 0, "cost_usd": None}
 for line in open(sys.argv[1]):
     try:
         obj = json.loads(line)
-        if obj.get("type") == "event":
-            p = obj.get("payload", {})
-            if p.get("type") == "stream-end":
-                u = p.get("metadata", {}).get("usage", {})
-                total_input += u.get("inputTokens", 0) or 0
-                total_output += u.get("outputTokens", 0) or 0
+        if obj.get("type") == "run-complete":
+            usage = obj.get("usage") or {}
+            result["input"] = usage.get("inputTokens", 0) or 0
+            result["output"] = usage.get("outputTokens", 0) or 0
+            result["cost_usd"] = obj.get("cost_usd")
+            break
     except: pass
-print(json.dumps({"input": total_input, "output": total_output}))
+print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true

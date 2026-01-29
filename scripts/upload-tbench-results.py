@@ -88,18 +88,24 @@ def extract_trial_passed(trial_result: dict, score: float | None) -> bool | None
     return None
 
 
-def extract_token_counts(trial_result: dict) -> tuple[int | None, int | None]:
-    """Extract token usage from trial result, supporting Harbor agent_result."""
+def extract_token_counts_and_cost(
+    trial_result: dict,
+) -> tuple[int | None, int | None, float | None]:
+    """Extract token usage and cost from trial result, supporting Harbor agent_result."""
     n_input_tokens = trial_result.get("n_input_tokens")
     n_output_tokens = trial_result.get("n_output_tokens")
+    cost_usd = trial_result.get("cost_usd")
 
     agent_result = trial_result.get("agent_result") or {}
     if n_input_tokens is None:
         n_input_tokens = agent_result.get("n_input_tokens")
     if n_output_tokens is None:
         n_output_tokens = agent_result.get("n_output_tokens")
+    # cost_usd is set by mux agent from CLI's run-complete event
+    if cost_usd is None:
+        cost_usd = agent_result.get("cost_usd")
 
-    return n_input_tokens, n_output_tokens
+    return n_input_tokens, n_output_tokens, cost_usd
 
 
 def build_rows(job_folder: Path) -> list[dict]:
@@ -190,8 +196,10 @@ def build_rows(job_folder: Path) -> list[dict]:
         elif passed is False:
             n_unresolved += 1
 
-        # Token usage from context (if available in result)
-        n_input_tokens, n_output_tokens = extract_token_counts(trial_result)
+        # Token usage and cost from agent result (cost computed by mux CLI)
+        n_input_tokens, n_output_tokens, cost_usd = extract_token_counts_and_cost(
+            trial_result
+        )
 
         row = {
             "run_id": run_id,
@@ -211,6 +219,7 @@ def build_rows(job_folder: Path) -> list[dict]:
             "score": score,
             "n_input_tokens": n_input_tokens,
             "n_output_tokens": n_output_tokens,
+            "cost_usd": cost_usd,
             "run_result_json": run_result_json,
             "run_metadata_json": run_metadata_json,
             "task_result_json": json.dumps(trial_result),

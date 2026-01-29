@@ -110,10 +110,12 @@ import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   readAgentDefinition,
   resolveAgentBody,
+  discoverAgentDefinitions,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
+import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
 
 // Export a standalone version of getToolsForModel for use in backend
 
@@ -1656,6 +1658,19 @@ export class AIService extends EventEmitter {
           ? `${resolvedBody}\n\n${agentDefinition.frontmatter.subagent.append_prompt}`
           : resolvedBody;
 
+      // Discover available agent definitions for sub-agent context (only for top-level workspaces)
+      const agentDefinitions = isSubagentWorkspace
+        ? undefined
+        : await discoverAgentDefinitions(runtime, agentDiscoveryPath);
+
+      // Discover available skills for tool description context
+      let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
+      try {
+        availableSkills = await discoverAgentSkills(runtime, workspacePath);
+      } catch (error) {
+        workspaceLog.warn("Failed to discover agent skills for tool description", { error });
+      }
+
       // Build system message from workspace metadata
       const systemMessage = await buildSystemMessage(
         metadata,
@@ -1766,6 +1781,9 @@ export class AIService extends EventEmitter {
           taskService: this.taskService,
           // PTC experiments for inheritance to subagents
           experiments,
+          // Dynamic context for tool descriptions (moved from system prompt for better model attention)
+          availableSubagents: agentDefinitions,
+          availableSkills,
         },
         workspaceId,
         this.initStateManager,

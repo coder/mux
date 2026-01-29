@@ -973,10 +973,29 @@ async function main(): Promise<number> {
       }
     }
 
+    // Compute final usage/cost summary
+    const totalUsage = sumUsageHistory(usageHistory);
+    const totalCost = getTotalCost(totalUsage);
+
+    // Emit run-complete event in JSON mode with usage and cost
+    if (emitJson) {
+      emitJsonLine({
+        type: "run-complete",
+        usage: totalUsage
+          ? {
+              inputTokens: totalUsage.input.tokens,
+              outputTokens: totalUsage.output.tokens,
+              cachedTokens: totalUsage.cached.tokens,
+              cacheCreateTokens: totalUsage.cacheCreate.tokens,
+              reasoningTokens: totalUsage.reasoning.tokens,
+            }
+          : null,
+        cost_usd: totalCost ?? null,
+      });
+    }
+
     // Print cost summary at end of run (unless --hide-costs or --json)
     if (!hideCosts && !emitJson) {
-      const totalUsage = sumUsageHistory(usageHistory);
-      const totalCost = getTotalCost(totalUsage);
       // Skip if no cost data or if model pricing is unknown (would show misleading $0.00)
       if (totalCost !== undefined && !totalUsage?.hasUnknownCosts) {
         const costLine = `Cost: ${formatCostWithDollar(totalCost)}`;

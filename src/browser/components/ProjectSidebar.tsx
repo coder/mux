@@ -6,6 +6,7 @@ import MuxLogoLight from "@/browser/assets/logos/mux-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
@@ -200,6 +201,10 @@ interface DraftWorkspaceListItemWrapperProps {
   onDelete: () => void;
 }
 
+// Debounce delay for sidebar preview updates during typing.
+// Prevents constant re-renders while still providing timely feedback.
+const DRAFT_PREVIEW_DEBOUNCE_MS = 1000;
+
 function DraftWorkspaceListItemWrapper(props: DraftWorkspaceListItemWrapperProps) {
   const scopeId = getDraftScopeId(props.projectPath, props.draftId);
 
@@ -211,11 +216,15 @@ function DraftWorkspaceListItemWrapper(props: DraftWorkspaceListItemWrapperProps
     listener: true,
   });
 
-  const workspaceTitle = getDisplayTitleFromPersistedState(workspaceNameState);
+  // Debounce the preview values to avoid constant sidebar updates while typing.
+  const debouncedPrompt = useDebouncedValue(draftPrompt, DRAFT_PREVIEW_DEBOUNCE_MS);
+  const debouncedNameState = useDebouncedValue(workspaceNameState, DRAFT_PREVIEW_DEBOUNCE_MS);
+
+  const workspaceTitle = getDisplayTitleFromPersistedState(debouncedNameState);
 
   // Collapse whitespace so multi-line prompts show up nicely as a single-line preview.
   const promptPreview =
-    typeof draftPrompt === "string" ? draftPrompt.trim().replace(/\s+/g, " ") : "";
+    typeof debouncedPrompt === "string" ? debouncedPrompt.trim().replace(/\s+/g, " ") : "";
 
   const titleText = workspaceTitle.trim().length > 0 ? workspaceTitle.trim() : "Draft";
 

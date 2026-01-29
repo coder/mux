@@ -14,12 +14,41 @@ function formatError(error: unknown): string {
 }
 
 /**
+ * Build dynamic agent_skill_read tool description with available skills.
+ * Injects the list of available skills directly into the tool description
+ * so the model sees them adjacent to the tool call schema.
+ */
+function buildSkillReadDescription(config: ToolConfiguration): string {
+  const baseDescription = TOOL_DEFINITIONS.agent_skill_read.description;
+  const skills = config.availableSkills ?? [];
+
+  if (skills.length === 0) {
+    return baseDescription;
+  }
+
+  const MAX_SKILLS = 50;
+  const shown = skills.slice(0, MAX_SKILLS);
+  const omitted = skills.length - shown.length;
+
+  const skillLines = shown.map(
+    (skill) => `- ${skill.name}: ${skill.description} (scope: ${skill.scope})`
+  );
+  if (omitted > 0) {
+    skillLines.push(`(+${omitted} more not shown)`);
+  }
+
+  const usageHint = `\nTo read referenced files inside a skill directory:\n- agent_skill_read_file({ name: "<skill-name>", filePath: "references/whatever.txt" })`;
+
+  return `${baseDescription}\n\nAvailable skills:\n${skillLines.join("\n")}${usageHint}`;
+}
+
+/**
  * Agent Skill read tool factory.
  * Reads and validates a skill's SKILL.md from project-local or global skills roots.
  */
 export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
-    description: TOOL_DEFINITIONS.agent_skill_read.description,
+    description: buildSkillReadDescription(config),
     inputSchema: TOOL_DEFINITIONS.agent_skill_read.schema,
     execute: async ({ name }): Promise<AgentSkillReadToolResult> => {
       const workspacePath = config.cwd;
