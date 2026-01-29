@@ -53,9 +53,9 @@ describeIntegration("Workspace fork", () => {
         // Test various invalid names
         const invalidNames = [
           { name: "", expectedError: "empty" },
-          { name: "Invalid-Name", expectedError: "a-z" },
-          { name: "name with spaces", expectedError: "a-z" },
-          { name: "name@special", expectedError: "a-z" },
+          { name: "Invalid-Name", expectedError: "lowercase" },
+          { name: "name with spaces", expectedError: "lowercase" },
+          { name: "name@special", expectedError: "lowercase" },
           { name: "a".repeat(65), expectedError: "64 characters" },
         ];
 

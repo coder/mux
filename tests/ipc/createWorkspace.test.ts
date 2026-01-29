@@ -811,9 +811,9 @@ exit 1
             try {
               const invalidCases = [
                 { name: "", expectedErrorFragment: "empty" },
-                { name: "My-Branch", expectedErrorFragment: "a-z" },
-                { name: "branch name", expectedErrorFragment: "a-z" },
-                { name: "branch@123", expectedErrorFragment: "a-z" },
+                { name: "My-Branch", expectedErrorFragment: "lowercase" },
+                { name: "branch name", expectedErrorFragment: "lowercase" },
+                { name: "branch@123", expectedErrorFragment: "lowercase" },
                 { name: "a".repeat(65), expectedErrorFragment: "64 characters" },
               ];
 

@@ -178,13 +178,6 @@ export interface MockORPCClientOptions {
   coderWorkspaces?: CoderWorkspace[];
   /** Available agent skills (descriptors) */
   agentSkills?: AgentSkillDescriptor[];
-  /** Custom workspace.create implementation (for testing validation errors) */
-  workspaceCreate?: (input: {
-    projectPath: string;
-    branchName: string;
-  }) => Promise<
-    { success: true; metadata: FrontendWorkspaceMetadata } | { success: false; error: string }
-  >;
 }
 
 interface MockBackgroundProcess {
@@ -259,7 +252,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     coderWorkspaces = [],
     layoutPresets: initialLayoutPresets,
     agentSkills = [],
-    workspaceCreate: customWorkspaceCreate,
   } = options;
 
   // Feature flags
@@ -627,10 +619,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       archive: () => Promise.resolve({ success: true }),
       unarchive: () => Promise.resolve({ success: true }),
       create: (input: { projectPath: string; branchName: string }) => {
-        if (customWorkspaceCreate) {
-          return customWorkspaceCreate(input);
-        }
-
         createdWorkspaceCounter += 1;
 
         return Promise.resolve({
