@@ -12,6 +12,7 @@ export const SendMessageErrorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("incompatible_workspace"), message: z.string() }),
   z.object({ type: z.literal("runtime_not_ready"), message: z.string() }),
   z.object({ type: z.literal("runtime_start_failed"), message: z.string() }), // Transient - retryable
+  z.object({ type: z.literal("policy_denied"), message: z.string() }),
   z.object({ type: z.literal("unknown"), raw: z.string() }),
 ]);
 

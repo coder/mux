@@ -83,6 +83,8 @@ export interface SlashSuggestion {
 export interface SlashSuggestionContext {
   agentSkills?: AgentSkillDescriptor[];
   providerNames?: string[];
+  /** Policy: allow/disallow user-defined MCP servers */
+  mcpAllowUserDefined?: { stdio: boolean; remote: boolean };
   /** Variant determines which commands are available */
   variant?: "workspace" | "creation";
 }

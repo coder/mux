@@ -31,7 +31,6 @@ import {
   getPendingScopeId,
   getProjectScopeId,
 } from "@/common/constants/storage";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 import { Button } from "@/browser/components/ui/button";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
@@ -64,7 +63,7 @@ function archivedListsEqual(
 /** Check if any provider is configured (uses backend-computed isConfigured) */
 function hasConfiguredProvider(config: ProvidersConfigMap | null): boolean {
   if (!config) return false;
-  return SUPPORTED_PROVIDERS.some((p) => config[p]?.isConfigured);
+  return Object.values(config).some((provider) => provider?.isConfigured);
 }
 
 /**

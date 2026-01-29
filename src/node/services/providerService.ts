@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import type { Config } from "@/node/config";
-import { SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { SUPPORTED_PROVIDERS, type ProviderName } from "@/common/constants/providers";
 import type { Result } from "@/common/types/result";
 import type {
   AWSCredentialStatus,
@@ -9,13 +9,18 @@ import type {
 } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
 import { checkProviderConfigured } from "@/node/utils/providerRequirements";
+import type { PolicyService } from "@/node/services/policyService";
 
 // Re-export types for backward compatibility
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
 
 export class ProviderService {
+  private policyService: PolicyService | null = null;
   private readonly emitter = new EventEmitter();
 
+  setPolicyService(service: PolicyService): void {
+    this.policyService = service;
+  }
   constructor(private readonly config: Config) {
     // The provider config subscription may have many concurrent listeners (e.g. multiple windows).
     // Avoid noisy MaxListenersExceededWarning for normal usage.
@@ -35,9 +40,15 @@ export class ProviderService {
     this.emitter.emit("configChanged");
   }
 
-  public list(): string[] {
+  public list(): ProviderName[] {
     try {
-      return [...SUPPORTED_PROVIDERS];
+      const providers = [...SUPPORTED_PROVIDERS];
+
+      if (this.policyService?.isEnforced()) {
+        return providers.filter((p) => this.policyService!.isProviderAllowed(p));
+      }
+
+      return providers;
     } catch (error) {
       log.error("Failed to list providers:", error);
       return [];
@@ -51,7 +62,7 @@ export class ProviderService {
     const providersConfig = this.config.loadProvidersConfig() ?? {};
     const result: ProvidersConfigMap = {};
 
-    for (const provider of SUPPORTED_PROVIDERS) {
+    for (const provider of this.list()) {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
         baseUrl?: string;
@@ -63,11 +74,25 @@ export class ProviderService {
         secretAccessKey?: string;
       };
 
+      const forcedBaseUrl = this.policyService?.isEnforced()
+        ? this.policyService.getForcedBaseUrl(provider)
+        : undefined;
+
+      const allowedModels = this.policyService?.isEnforced()
+        ? (this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === provider)
+            ?.allowedModels ?? null)
+        : null;
+
+      const filteredModels =
+        Array.isArray(allowedModels) && config.models
+          ? config.models.filter((m) => allowedModels.includes(m))
+          : config.models;
+
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
         isConfigured: false, // computed below
-        baseUrl: config.baseUrl,
-        models: config.models,
+        baseUrl: forcedBaseUrl ?? config.baseUrl,
+        models: filteredModels,
       };
 
       // OpenAI-specific fields
@@ -112,6 +137,28 @@ export class ProviderService {
    */
   public setModels(provider: string, models: string[]): Result<void, string> {
     try {
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isProviderAllowed(provider as ProviderName)) {
+          return { success: false, error: `Provider ${provider} is not allowed by policy` };
+        }
+
+        const allowedModels =
+          this.policyService
+            .getEffectivePolicy()
+            ?.providerAccess?.find((p) => p.id === (provider as ProviderName))?.allowedModels ??
+          null;
+
+        if (Array.isArray(allowedModels)) {
+          const disallowed = models.filter((m) => !allowedModels.includes(m));
+          if (disallowed.length > 0) {
+            return {
+              success: false,
+              error: `One or more models are not allowed by policy: ${disallowed.join(", ")}`,
+            };
+          }
+        }
+      }
+
       const providersConfig = this.config.loadProvidersConfig() ?? {};
 
       if (!providersConfig[provider]) {
@@ -133,6 +180,18 @@ export class ProviderService {
     try {
       // Load current providers config or create empty
       const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isProviderAllowed(provider as ProviderName)) {
+          return { success: false, error: `Provider ${provider} is not allowed by policy` };
+        }
+
+        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider as ProviderName);
+        const isBaseUrlEdit = keyPath.length === 1 && keyPath[0] === "baseUrl";
+        if (isBaseUrlEdit && forcedBaseUrl) {
+          return { success: false, error: `Provider ${provider} base URL is locked by policy` };
+        }
+      }
 
       // Track if this is first time setting couponCode for mux-gateway
       const isFirstMuxGatewayCoupon =

@@ -93,6 +93,7 @@
             "group": "Configuration",
             "pages": [
               "config/mcp-servers",
+              "config/policy-file",
               "config/project-secrets",
               "config/agentic-git-identity",
               "config/keybinds",

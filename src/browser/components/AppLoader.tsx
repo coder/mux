@@ -8,6 +8,8 @@ import { useGitStatusStoreRaw } from "../stores/GitStatusStore";
 import { useBackgroundBashStoreRaw } from "../stores/BackgroundBashStore";
 import { getPRStatusStoreInstance } from "../stores/PRStatusStore";
 import { ProjectProvider, useProjectContext } from "../contexts/ProjectContext";
+import { PolicyProvider, usePolicy } from "@/browser/contexts/PolicyContext";
+import { PolicyBlockedScreen } from "@/browser/components/PolicyBlockedScreen";
 import { APIProvider, useAPI, type APIClient } from "@/browser/contexts/API";
 import { WorkspaceProvider, useWorkspaceContext } from "../contexts/WorkspaceContext";
 import { RouterProvider } from "../contexts/RouterContext";
@@ -35,13 +37,15 @@ export function AppLoader(props: AppLoaderProps) {
   return (
     <ThemeProvider>
       <APIProvider client={props.client}>
-        <RouterProvider>
-          <ProjectProvider>
-            <WorkspaceProvider>
-              <AppLoaderInner />
-            </WorkspaceProvider>
-          </ProjectProvider>
-        </RouterProvider>
+        <PolicyProvider>
+          <RouterProvider>
+            <ProjectProvider>
+              <WorkspaceProvider>
+                <AppLoaderInner />
+              </WorkspaceProvider>
+            </ProjectProvider>
+          </RouterProvider>
+        </PolicyProvider>
       </APIProvider>
     </ThemeProvider>
   );
@@ -52,6 +56,7 @@ export function AppLoader(props: AppLoaderProps) {
  * Syncs stores and shows loading screen until ready.
  */
 function AppLoaderInner() {
+  const policyState = usePolicy();
   const workspaceContext = useWorkspaceContext();
   const projectContext = useProjectContext();
   const apiState = useAPI();
@@ -95,6 +100,10 @@ function AppLoaderInner() {
     backgroundBashStore,
     api,
   ]);
+
+  if (policyState.status.state === "blocked") {
+    return <PolicyBlockedScreen reason={policyState.status.reason} />;
+  }
 
   // If we're in browser mode and auth is required, show the token prompt before any data loads.
   if (apiState.status === "auth_required") {

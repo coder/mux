@@ -60,6 +60,8 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
     case "runtime_start_failed": // Runtime is starting - transient, worth retrying
     case "unknown":
       return false; // Transient errors might resolve on their own
+    case "policy_denied": // Policy blocks won't resolve automatically
+      return true;
   }
 }
 

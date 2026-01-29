@@ -11,6 +11,7 @@ import type {
   WorkspaceMCPOverrides,
 } from "@/common/types/mcp";
 import type { Runtime } from "@/node/runtime/Runtime";
+import type { PolicyService } from "@/node/services/policyService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
@@ -297,8 +298,12 @@ export class MCPServerManager {
   private readonly workspaceLeases = new Map<string, number>();
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
   private inlineServers: Record<string, string> = {};
+  private policyService: PolicyService | null = null;
   private ignoreConfigFile = false;
 
+  setPolicyService(service: PolicyService): void {
+    this.policyService = service;
+  }
   constructor(
     private readonly configService: MCPConfigService,
     options?: MCPServerManagerOptions
@@ -414,7 +419,26 @@ export class MCPServerManager {
    */
   async listServers(projectPath: string, overrides?: WorkspaceMCPOverrides): Promise<MCPServerMap> {
     const allServers = await this.getAllServers(projectPath);
-    return this.applyServerOverrides(allServers, overrides);
+    const enabled = this.applyServerOverrides(allServers, overrides);
+    return this.filterServersByPolicy(enabled);
+  }
+
+  /**
+   * Filter servers based on the effective policy (e.g. disallow stdio/remote).
+   */
+  private filterServersByPolicy(servers: MCPServerMap): MCPServerMap {
+    if (!this.policyService?.isEnforced()) {
+      return servers;
+    }
+
+    const filtered: MCPServerMap = {};
+    for (const [name, info] of Object.entries(servers)) {
+      if (this.policyService.isMcpTransportAllowed(info.transport)) {
+        filtered[name] = info;
+      }
+    }
+
+    return filtered;
   }
 
   /**
@@ -532,7 +556,9 @@ export class MCPServerManager {
     const fullServerInfo = await this.getAllServers(projectPath);
 
     // Apply server-level overrides (enabled/disabled) before caching
-    const enabledServers = this.applyServerOverrides(fullServerInfo, overrides);
+    const enabledServers = this.filterServersByPolicy(
+      this.applyServerOverrides(fullServerInfo, overrides)
+    );
     const enabledEntries = Object.entries(enabledServers).sort(([a], [b]) => a.localeCompare(b));
 
     // Signature is based on *start config* only (not tool allowlists), so changing allowlists
@@ -749,6 +775,9 @@ export class MCPServerManager {
     headers?: Record<string, MCPHeaderValue>;
     projectSecrets?: Record<string, string>;
   }): Promise<MCPTestResult> {
+    const isTransportAllowed = (t: MCPServerTransport): boolean => {
+      return !this.policyService?.isEnforced() || this.policyService.isMcpTransportAllowed(t);
+    };
     const { projectPath, name, command, transport, url, headers, projectSecrets } = options;
 
     if (name?.trim()) {
@@ -756,6 +785,10 @@ export class MCPServerManager {
       const server = servers[name];
       if (!server) {
         return { success: false, error: `Server "${name}" not found in configuration` };
+      }
+
+      if (!isTransportAllowed(server.transport)) {
+        return { success: false, error: "MCP transport is disabled by policy" };
       }
 
       if (server.transport === "stdio") {
@@ -780,12 +813,19 @@ export class MCPServerManager {
     }
 
     if (command?.trim()) {
+      if (!isTransportAllowed("stdio")) {
+        return { success: false, error: "MCP transport is disabled by policy" };
+      }
       return runServerTest({ transport: "stdio", command }, projectPath, "command");
     }
 
     if (url?.trim()) {
       if (transport !== "http" && transport !== "sse" && transport !== "auto") {
         return { success: false, error: "transport must be http|sse|auto when testing by url" };
+      }
+
+      if (!isTransportAllowed(transport)) {
+        return { success: false, error: "MCP transport is disabled by policy" };
       }
 
       try {

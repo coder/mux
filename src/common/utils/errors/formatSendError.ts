@@ -47,9 +47,16 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
         message: error.message,
       };
 
-    case "unknown":
+    case "policy_denied":
       return {
-        message: error.raw || "An unexpected error occurred",
+        message: error.message,
       };
+
+    case "unknown": {
+      const raw = typeof error.raw === "string" ? error.raw.trim() : "";
+      return {
+        message: raw || "An unexpected error occurred",
+      };
+    }
   }
 }

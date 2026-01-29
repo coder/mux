@@ -1,5 +1,5 @@
-import React, { useCallback, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import React, { useCallback, useMemo, useState } from "react";
+import { Loader2, Plus, ShieldCheck } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import {
   Select,
@@ -14,13 +14,43 @@ import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
+import type { EffectivePolicy } from "@/common/orpc/types";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { PROVIDER_DISPLAY_NAMES, SUPPORTED_PROVIDERS } from "@/common/constants/providers";
+import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
 } from "@/common/constants/storage";
 import { ModelRow } from "./ModelRow";
+
+function isModelAllowedByPolicy(policy: EffectivePolicy | null, modelString: string): boolean {
+  const providerAccess = policy?.providerAccess;
+  if (providerAccess == null) {
+    return true;
+  }
+
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex <= 0 || colonIndex === modelString.length - 1) {
+    return true;
+  }
+
+  const provider = modelString.slice(0, colonIndex);
+  const modelId = modelString.slice(colonIndex + 1);
+
+  const providerPolicy = providerAccess.find((p) => p.id === provider);
+  if (!providerPolicy) {
+    return false;
+  }
+
+  const allowedModels = providerPolicy.allowedModels ?? null;
+  if (allowedModels === null) {
+    return true;
+  }
+
+  return allowedModels.includes(modelId);
+}
 
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);
@@ -49,6 +79,14 @@ interface EditingState {
 }
 
 export function ModelsSection() {
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
+  const visibleProviders = useMemo(
+    () => getAllowedProvidersForUi(effectivePolicy),
+    [effectivePolicy]
+  );
+
   const { api } = useAPI();
   const { config, loading, updateModelsOptimistically } = useProvidersConfig();
   const [lastProvider, setLastProvider] = usePersistedState(LAST_CUSTOM_MODEL_PROVIDER_KEY, "");
@@ -56,7 +94,7 @@ export function ModelsSection() {
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const selectableProviders = SUPPORTED_PROVIDERS.filter(
+  const selectableProviders = visibleProviders.filter(
     (provider) => !HIDDEN_PROVIDERS.has(provider)
   );
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
@@ -70,8 +108,13 @@ export function ModelsSection() {
     { listener: true }
   );
 
-  // All models (including hidden) for the settings dropdowns
+  // All models (including hidden) for the settings dropdowns.
+  // PolicyService enforces model access on the backend, but we also filter here so users can't
+  // select models that will be denied at send time.
   const allModels = getSuggestedModels(config);
+  const selectableModels = effectivePolicy
+    ? allModels.filter((model) => isModelAllowedByPolicy(effectivePolicy, model))
+    : allModels;
 
   // Check if a model already exists (for duplicate prevention)
   const modelExists = useCallback(
@@ -192,18 +235,28 @@ export function ModelsSection() {
     return models;
   };
 
-  // Get built-in models from KNOWN_MODELS
-  const builtInModels = Object.values(KNOWN_MODELS).map((model) => ({
-    provider: model.provider,
-    modelId: model.providerModelId,
-    fullId: model.id,
-    aliases: model.aliases,
-  }));
+  // Get built-in models from KNOWN_MODELS.
+  // Filter by policy so the settings table doesn't list models users can't ever select.
+  const builtInModels = Object.values(KNOWN_MODELS)
+    .map((model) => ({
+      provider: model.provider,
+      modelId: model.providerModelId,
+      fullId: model.id,
+      aliases: model.aliases,
+    }))
+    .filter((model) => isModelAllowedByPolicy(effectivePolicy, model.fullId));
 
   const customModels = getCustomModels();
 
   return (
     <div className="space-y-4">
+      {policyState.status.state === "enforced" && (
+        <div className="border-border-medium bg-background-secondary/50 text-muted flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
+          <ShieldCheck className="h-4 w-4" aria-hidden />
+          <span>Your settings are controlled by a policy.</span>
+        </div>
+      )}
+
       {/* Model Defaults - styled to match table aesthetic */}
       <div className="border-border-medium overflow-hidden rounded-md border">
         {/* Header row - matches table header */}
@@ -222,7 +275,7 @@ export function ModelsSection() {
               <SearchableModelSelect
                 value={defaultModel}
                 onChange={setDefaultModel}
-                models={allModels}
+                models={selectableModels}
                 placeholder="Select model"
               />
             </div>
@@ -237,7 +290,7 @@ export function ModelsSection() {
               <SearchableModelSelect
                 value={compactionModel}
                 onChange={setCompactionModel}
-                models={allModels}
+                models={selectableModels}
                 emptyOption={{ value: "", label: "Use workspace model" }}
               />
             </div>

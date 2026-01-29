@@ -72,6 +72,14 @@ export { BashToolResultSchema, FileTreeNodeSchema } from "./schemas/tools";
 // Secrets schemas
 export { SecretSchema } from "./schemas/secrets";
 
+// Policy schemas
+export {
+  PolicyFileSchema,
+  PolicyStatusSchema,
+  EffectivePolicySchema,
+  PolicyGetResponseSchema,
+  PolicyRuntimeIdSchema,
+} from "./schemas/policy";
 // Provider options schemas
 export { MuxProviderOptionsSchema } from "./schemas/providerOptions";
 
@@ -171,6 +179,7 @@ export {
   projects,
   ProviderConfigInfoSchema,
   muxGatewayOauth,
+  policy,
   providers,
   ProvidersConfigMapSchema,
   server,

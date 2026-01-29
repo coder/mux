@@ -18,6 +18,7 @@ import type { ExtensionMetadataService } from "@/node/services/ExtensionMetadata
 import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
+import type { PolicyService } from "@/node/services/policyService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import {
   createRuntime,
@@ -170,11 +171,16 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private telemetryService?: TelemetryService;
+  private policyService?: PolicyService;
   private experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
   private sessionTimingService?: SessionTimingService;
+
+  setPolicyService(service: PolicyService): void {
+    this.policyService = service;
+  }
 
   /**
    * Set the MCP server manager for tool access.
@@ -639,6 +645,12 @@ export class WorkspaceService extends EventEmitter {
       type: "worktree",
       srcBaseDir: this.config.srcDir,
     };
+
+    if (this.policyService?.isEnforced()) {
+      if (!this.policyService.isRuntimeAllowed(finalRuntimeConfig)) {
+        return Err("Selected runtime is not allowed by policy");
+      }
+    }
 
     // Local runtime doesn't need a trunk branch; worktree/SSH runtimes require it
     const isLocalRuntime = finalRuntimeConfig.type === "local";
@@ -1563,8 +1575,14 @@ export class WorkspaceService extends EventEmitter {
       const sourceMetadata = sourceMetadataResult.data;
       const foundProjectPath = sourceMetadata.projectPath;
       const projectName = sourceMetadata.projectName;
-
       const sourceRuntimeConfig = sourceMetadata.runtimeConfig;
+
+      // Policy: do not allow creating new workspaces (including via fork) with a disallowed runtime.
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isRuntimeAllowed(sourceRuntimeConfig)) {
+          return Err("Forking this workspace is not allowed by policy (runtime disabled)");
+        }
+      }
 
       // Block fork for remote runtimes - creates broken workspaces
       // Sub-agent task spawning uses a different code path (TaskService.create)

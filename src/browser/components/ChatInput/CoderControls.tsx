@@ -40,6 +40,8 @@ export interface CoderControlsProps {
   /** Disabled state (e.g., during creation) */
   disabled: boolean;
 
+  /** Policy: plain host SSH may be disallowed, requiring Coder workspaces. */
+  requiredByPolicy?: boolean;
   /** Error state for visual feedback */
   hasError?: boolean;
 }
@@ -149,8 +151,22 @@ export function CoderControls(props: CoderControlsProps) {
     );
   }
 
-  // CLI unavailable (missing/broken): hide checkbox entirely
+  // CLI unavailable (missing/broken): hide checkbox entirely unless policy requires Coder.
   if (coderInfo.state === "unavailable") {
+    if (props.requiredByPolicy) {
+      const reason = "Coder CLI is unavailable, but Coder workspaces are required by policy.";
+      return (
+        <div className="flex flex-col gap-1.5" data-testid="coder-controls">
+          <CoderCheckbox
+            enabled={false}
+            onEnabledChange={onEnabledChange}
+            disabled={true}
+            disabledReason={reason}
+          />
+        </div>
+      );
+    }
+
     return null;
   }
 
@@ -225,6 +241,7 @@ export function CoderControls(props: CoderControlsProps) {
 
   return (
     <div className="flex flex-col gap-1.5" data-testid="coder-controls">
+      {props.requiredByPolicy && <p className="text-muted text-xs">Required by policy.</p>}
       <CoderCheckbox enabled={enabled} onEnabledChange={onEnabledChange} disabled={disabled} />
 
       {/* Coder controls - only shown when enabled */}
