@@ -297,7 +297,10 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           aria-label={ariaLabel}
           aria-expanded={isOpen}
           aria-haspopup="dialog"
-          className="hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1"
+          className={cn(
+            "hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1",
+            "[@container(max-width:480px)]:h-8 [@container(max-width:480px)]:gap-2 [@container(max-width:480px)]:px-2"
+          )}
           type="button"
           onClick={handleTriggerClick}
           onPointerEnter={handleTriggerPointerEnter}
@@ -306,16 +309,16 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           {/* Idle compaction badge - shows hourglass with hours when enabled */}
           {isIdleCompactionEnabled && (
             <div
-              className="text-muted flex items-center gap-0.5 text-[10px]"
+              className="text-muted flex items-center gap-0.5 text-[10px] [@container(max-width:480px)]:text-xs"
               title={`Auto-compact after ${idleHours}h idle`}
             >
-              <Hourglass className="h-3 w-3" />
+              <Hourglass className="h-3 w-3 [@container(max-width:480px)]:h-3.5 [@container(max-width:480px)]:w-3.5" />
               <span>{idleHours}h</span>
             </div>
           )}
           {/* Show meter when there's usage, or show empty placeholder for settings access */}
           {data.totalTokens > 0 ? (
-            <div className="relative h-2 w-20">
+            <div className="relative h-2 w-20 [@container(max-width:480px)]:w-28">
               <TokenMeter
                 segments={data.segments}
                 orientation="horizontal"
@@ -328,7 +331,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
             </div>
           ) : (
             /* Empty meter placeholder - allows access to settings with no usage */
-            <div className="bg-dark relative h-2 w-20 rounded-full" />
+            <div className="bg-dark relative h-2 w-20 rounded-full [@container(max-width:480px)]:w-28" />
           )}
         </button>
       </PopoverAnchor>
