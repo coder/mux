@@ -179,7 +179,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
           <button
             type="button"
             onClick={cycleThinkingLevel}
-            className="cursor-pointer border-none bg-transparent p-0"
+            className="flex cursor-pointer items-center border-none bg-transparent p-0"
             aria-label={`Thinking level: ${effectiveThinkingLevel}. Click to cycle.`}
           >
             <span
