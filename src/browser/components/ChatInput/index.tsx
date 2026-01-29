@@ -2176,11 +2176,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
                 <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
-                <ModelSettings model={baseModel || ""} />
+                  <ModelSettings model={baseModel || ""} />
+                </div>
               </div>
-              </div>
-
-
 
               {/* Row 2 on mobile: Context Usage + Agent Mode + Send Button */}
               <div
