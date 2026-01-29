@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, ShieldCheck } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import {
   Select,
@@ -250,6 +250,13 @@ export function ModelsSection() {
 
   return (
     <div className="space-y-4">
+      {policyState.status.state === "enforced" && (
+        <div className="border-border-medium bg-background-secondary/50 text-muted flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
+          <ShieldCheck className="h-4 w-4" aria-hidden />
+          <span>Your settings are controlled by a policy.</span>
+        </div>
+      )}
+
       {/* Model Defaults - styled to match table aesthetic */}
       <div className="border-border-medium overflow-hidden rounded-md border">
         {/* Header row - matches table header */}

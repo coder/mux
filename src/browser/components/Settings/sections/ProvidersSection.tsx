@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Check, X, Eye, EyeOff, ExternalLink } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Check,
+  Eye,
+  EyeOff,
+  ExternalLink,
+  ShieldCheck,
+  X,
+} from "lucide-react";
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
@@ -581,6 +590,13 @@ export function ProvidersSection() {
         Configure API keys and endpoints for AI providers. Keys are stored in{" "}
         <code className="text-accent">~/.mux/providers.jsonc</code>
       </p>
+
+      {policyState.status.state === "enforced" && (
+        <div className="border-border-medium bg-background-secondary/50 text-muted flex items-center gap-2 rounded-md border px-3 py-2 text-xs">
+          <ShieldCheck className="h-4 w-4" aria-hidden />
+          <span>Your settings are controlled by a policy.</span>
+        </div>
+      )}
 
       {visibleProviders.map((provider) => {
         const isExpanded = expandedProvider === provider;

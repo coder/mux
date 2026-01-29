@@ -4,9 +4,10 @@ import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { Download, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { useAPI } from "@/browser/contexts/API";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
 import {
   isDesktopMode,
   getTitlebarLeftInset,
@@ -63,6 +64,8 @@ function parseBuildInfo(version: unknown) {
 
 export function TitleBar() {
   const { api } = useAPI();
+  const policyState = usePolicy();
+  const policyEnforced = policyState.status.state === "enforced";
   const { extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [isCheckingOnHover, setIsCheckingOnHover] = useState(false);
@@ -271,13 +274,23 @@ export function TitleBar() {
           </TooltipContent>
         </Tooltip>
       </div>
-      {isDesktop ? (
-        <div className="titlebar-no-drag">
-          <SettingsButton />
-        </div>
-      ) : (
+      <div className={cn("flex items-center gap-1.5", isDesktop && "titlebar-no-drag")}>
+        {policyEnforced && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div
+                role="img"
+                aria-label="Settings controlled by policy"
+                className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 flex h-5 w-5 items-center justify-center rounded border"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" aria-hidden />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent align="end">Your settings are controlled by a policy.</TooltipContent>
+          </Tooltip>
+        )}
         <SettingsButton />
-      )}
+      </div>
     </div>
   );
 }
