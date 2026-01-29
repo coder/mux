@@ -377,19 +377,6 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return grouped;
   }, [reviews]);
 
-  // Memoized review action callbacks for inline review notes
-  const reviewActions: ReviewActionCallbacks = useMemo(
-    () => ({
-      onEditComment: updateReviewNote,
-      onComplete: checkReview,
-      onUncheck: uncheckReview,
-      onAttach: attachReview,
-      onDetach: detachReview,
-      onDelete: removeReview,
-    }),
-    [updateReviewNote, checkReview, uncheckReview, attachReview, detachReview, removeReview]
-  );
-
   // Derive hunks from diffState for use in filters and rendering
   const hunks = useMemo(
     () =>
@@ -429,22 +416,17 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   // Keep showReadHunksRef in sync for stable callbacks
   showReadHunksRef.current = filters.showReadHunks;
 
-  // Track if user is composing a review note. We only pause scheduled refreshes while
-  // composing so tool-driven refresh stays unified (and keeps the untracked banner in sync)
-  // when the panel is focused.
-  // Uses a Set to track which hunks have active selections (multiple hunks possible)
+  // Track if user is drafting a review note (selection or editing an existing note).
+  // We only pause scheduled refreshes while drafting so tool-driven refresh stays unified
+  // (and keeps the untracked banner in sync) when the panel is focused.
+  // Uses Sets to track which hunks have active selections / inline notes in edit mode.
   const isComposingReviewNoteRef = useRef(false);
   const composingHunksRef = useRef(new Set<string>());
+  const editingReviewIdsRef = useRef(new Set<string>());
 
-  // Handler for when a hunk's composing state changes
-  const handleHunkComposingChange = useCallback((hunkId: string, isComposing: boolean) => {
-    if (isComposing) {
-      composingHunksRef.current.add(hunkId);
-    } else {
-      composingHunksRef.current.delete(hunkId);
-    }
+  const updateRefreshBlockState = useCallback(() => {
     const wasComposing = isComposingReviewNoteRef.current;
-    const nowComposing = composingHunksRef.current.size > 0;
+    const nowComposing = composingHunksRef.current.size > 0 || editingReviewIdsRef.current.size > 0;
     isComposingReviewNoteRef.current = nowComposing;
 
     // Update UI state for button disabled state
@@ -456,12 +438,59 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     }
   }, []);
 
+  // Handler for when a hunk's composing state changes
+  const handleHunkComposingChange = useCallback(
+    (hunkId: string, isComposing: boolean) => {
+      if (isComposing) {
+        composingHunksRef.current.add(hunkId);
+      } else {
+        composingHunksRef.current.delete(hunkId);
+      }
+      updateRefreshBlockState();
+    },
+    [updateRefreshBlockState]
+  );
+
+  const handleInlineReviewEditingChange = useCallback(
+    (reviewId: string, isEditing: boolean) => {
+      if (isEditing) {
+        editingReviewIdsRef.current.add(reviewId);
+      } else {
+        editingReviewIdsRef.current.delete(reviewId);
+      }
+      updateRefreshBlockState();
+    },
+    [updateRefreshBlockState]
+  );
+
+  // Memoized review action callbacks for inline review notes
+  const reviewActions: ReviewActionCallbacks = useMemo(
+    () => ({
+      onEditComment: updateReviewNote,
+      onEditingChange: handleInlineReviewEditingChange,
+      onComplete: checkReview,
+      onUncheck: uncheckReview,
+      onAttach: attachReview,
+      onDetach: detachReview,
+      onDelete: removeReview,
+    }),
+    [
+      updateReviewNote,
+      handleInlineReviewEditingChange,
+      checkReview,
+      uncheckReview,
+      attachReview,
+      detachReview,
+      removeReview,
+    ]
+  );
+
   // Track last fetch time for detecting tool completions while unmounted
   const lastFetchTimeRef = useRef(0);
 
   // Last refresh info for UI display (tooltip showing trigger reason + time)
   const [lastRefreshInfo, setLastRefreshInfo] = useState<LastRefreshInfo | null>(null);
-  // Track if refresh button should be disabled (user composing review note)
+  // Track if refresh button should be disabled (drafting or editing a review note)
   const [isRefreshBlocked, setIsRefreshBlocked] = useState(false);
 
   // RefreshController - handles debouncing, in-flight guards, etc.
@@ -472,9 +501,9 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
   useEffect(() => {
     const controller = new RefreshController({
       debounceMs: 3000,
-      // Pause scheduled refreshes while composing to avoid wiping draft notes.
+      // Pause scheduled refreshes while drafting to avoid wiping draft notes.
       isPaused: () => isComposingReviewNoteRef.current,
-      // Block manual refresh while composing (e.g., user clicks refresh or presses Ctrl+R).
+      // Block manual refresh while drafting (e.g., user clicks refresh or presses Ctrl+R).
       isManualBlocked: () => isComposingReviewNoteRef.current,
       onRefresh: () => {
         lastFetchTimeRef.current = Date.now();
