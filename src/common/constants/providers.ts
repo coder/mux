@@ -93,6 +93,17 @@ export type ProviderName = keyof typeof PROVIDER_DEFINITIONS;
 export const SUPPORTED_PROVIDERS = Object.keys(PROVIDER_DEFINITIONS) as ProviderName[];
 
 /**
+ * Providers that Mux Gateway can route to.
+ * Matches the supported providers in the gateway UI.
+ */
+export const MUX_GATEWAY_SUPPORTED_PROVIDERS = new Set<ProviderName>([
+  "anthropic",
+  "openai",
+  "google",
+  "xai",
+]);
+
+/**
  * Display names for providers (proper casing for UI)
  * Derived from PROVIDER_DEFINITIONS - do not edit directly
  */

@@ -7,18 +7,7 @@ import {
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
 } from "@/common/constants/storage";
-
-/**
- * Providers that Mux Gateway supports routing to.
- * Based on Vercel AI Gateway supported providers.
- *
- * Excluded:
- * - ollama: Local-only provider, not routable through cloud gateway
- * - openrouter: Already a gateway/aggregator, routing through another gateway is redundant
- * - bedrock: Complex auth (AWS credentials), not simple API key routing
- * - mux-gateway: Already gateway format
- */
-const GATEWAY_SUPPORTED_PROVIDERS = new Set(["anthropic", "openai", "google", "xai"]);
+import { MUX_GATEWAY_SUPPORTED_PROVIDERS } from "@/common/constants/providers";
 
 // ============================================================================
 // Pure utility functions (no side effects, used for message sending)
@@ -37,7 +26,7 @@ function getProvider(modelId: string): string | null {
  */
 export function isProviderSupported(modelId: string): boolean {
   const provider = getProvider(modelId);
-  return provider !== null && GATEWAY_SUPPORTED_PROVIDERS.has(provider);
+  return provider !== null && MUX_GATEWAY_SUPPORTED_PROVIDERS.has(provider);
 }
 
 /**
