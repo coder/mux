@@ -7,6 +7,7 @@
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type {
   WorkspaceChatMessage,
   ChatMuxMessage,
@@ -19,8 +20,8 @@ import {
   EXPANDED_PROJECTS_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   getInputKey,
-  getModelKey,
   getReviewsKey,
+  getWorkspaceAISettingsByAgentKey,
   getHunkFirstSeenKey,
   REVIEW_SORT_ORDER_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
@@ -71,7 +72,22 @@ export function setWorkspaceInput(workspaceId: string, text: string): void {
 
 /** Set model for a workspace */
 export function setWorkspaceModel(workspaceId: string, model: string): void {
-  localStorage.setItem(getModelKey(workspaceId), model);
+  type WorkspaceAISettingsByAgentCache = Partial<
+    Record<string, { model: string; thinkingLevel: ThinkingLevel }>
+  >;
+
+  updatePersistedState<WorkspaceAISettingsByAgentCache>(
+    getWorkspaceAISettingsByAgentKey(workspaceId),
+    (prev) => {
+      const record: WorkspaceAISettingsByAgentCache = prev && typeof prev === "object" ? prev : {};
+      const existingThinking = record.exec?.thinkingLevel ?? "off";
+      return {
+        ...record,
+        exec: { model, thinkingLevel: existingThinking },
+      };
+    },
+    {}
+  );
 }
 
 /** Expand projects in the sidebar */

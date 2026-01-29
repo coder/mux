@@ -23,9 +23,13 @@ import {
 
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getModelKey } from "@/common/constants/storage";
 import { waitForChatMessagesLoaded } from "./storyPlayHelpers.js";
-import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
+import {
+  setupSimpleChatStory,
+  setupStreamingChatStory,
+  setWorkspaceInput,
+  setWorkspaceModel,
+} from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
 import { warmHashCache, setShareData } from "@/browser/utils/sharedUrlCache";
 
@@ -888,7 +892,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
         const baseModel = "openai:gpt-4o";
 
         // Ensure the gateway transform actually kicks in (so the regression would reproduce).
-        updatePersistedState(getModelKey(workspaceId), baseModel);
+        setWorkspaceModel(workspaceId, baseModel);
         updatePersistedState("gateway-enabled", true);
         updatePersistedState("gateway-available", true);
         updatePersistedState("gateway-models", [baseModel]);

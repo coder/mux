@@ -2,6 +2,7 @@ import { useThinkingLevel } from "./useThinkingLevel";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
 import { getDefaultModel } from "./useModelsFromSettings";
+import { useWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 import { migrateGatewayModel, useGateway, isProviderSupported } from "./useGatewayModels";
 import {
   getModelKey,
@@ -39,6 +40,11 @@ interface ExperimentValues {
   programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
   system1: boolean | undefined;
+}
+
+interface UseSendMessageOptionsProps {
+  scopeId: string;
+  workspaceId?: string;
 }
 
 /**
@@ -121,16 +127,36 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
  * Returns both `model` (possibly gateway-transformed for API calls) and
  * `baseModel` (canonical format for UI display and policy checks).
  */
-export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
+export function useSendMessageOptions(
+  props: UseSendMessageOptionsProps
+): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();
-  const { agentId, disableWorkspaceAgents } = useAgent();
+  const { agentId, agents, disableWorkspaceAgents } = useAgent();
   const { options: providerOptions } = useProviderOptions();
   const defaultModel = getDefaultModel();
+  const workspaceId = props.workspaceId;
+  const workspaceEnabled = Boolean(workspaceId);
+
+  const workspaceSettings = useWorkspaceAiSettings({
+    workspaceId: workspaceId ?? "__workspace_send_options_fallback__",
+    agentId,
+    agents,
+    defaultModel,
+    enabled: workspaceEnabled,
+  });
+
+  // Workspace AI settings cache is the source of truth; avoid reading legacy modelKey when scoped.
+  const modelScopeId = workspaceEnabled
+    ? "__workspace_send_options_model_fallback__"
+    : props.scopeId;
   const [preferredModel] = usePersistedState<string>(
-    getModelKey(workspaceId),
+    getModelKey(modelScopeId),
     defaultModel, // Default to the Settings default model
     { listener: true } // Listen for changes from ModelSelector and other sources
   );
+
+  const resolvedModel = workspaceEnabled ? workspaceSettings.model : preferredModel;
+  const resolvedThinkingLevel = workspaceEnabled ? workspaceSettings.thinkingLevel : thinkingLevel;
 
   // Subscribe to gateway state so we re-render when user toggles gateway
   const gateway = useGateway();
@@ -164,13 +190,13 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
 
   // Compute base model (canonical format) for UI components
   const rawModel =
-    typeof preferredModel === "string" && preferredModel ? preferredModel : defaultModel;
+    typeof resolvedModel === "string" && resolvedModel ? resolvedModel : defaultModel;
   const baseModel = migrateGatewayModel(rawModel);
 
   const options = constructSendMessageOptions(
     agentId,
-    thinkingLevel,
-    preferredModel,
+    resolvedThinkingLevel,
+    resolvedModel,
     providerOptions,
     defaultModel,
     gateway,
@@ -191,5 +217,5 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
  * Single source of truth with getSendOptionsFromStorage to avoid JSON parsing bugs.
  */
 export function buildSendMessageOptions(workspaceId: string): SendMessageOptions {
-  return getSendOptionsFromStorage(workspaceId);
+  return getSendOptionsFromStorage({ scopeId: workspaceId, workspaceId });
 }

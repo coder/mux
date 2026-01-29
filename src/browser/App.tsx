@@ -34,17 +34,13 @@ import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
-  getAgentIdKey,
   getAgentsInitNudgeKey,
-  getModelKey,
   getNotifyOnResponseKey,
-  getThinkingLevelByModelKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   EXPANDED_PROJECTS_KEY,
 } from "@/common/constants/storage";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { readWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 import type { BranchListResult } from "@/common/orpc/types";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
@@ -282,14 +278,7 @@ function AppInner() {
     close: closeCommandPalette,
   } = useCommandRegistry();
 
-  /**
-   * Get model for a workspace, returning canonical format.
-   */
-  const getModelForWorkspace = useCallback((workspaceId: string): string => {
-    const defaultModel = getDefaultModel();
-    const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
-    return migrateGatewayModel(rawModel || defaultModel);
-  }, []);
+  const defaultModel = getDefaultModel();
 
   const getThinkingLevelForWorkspace = useCallback(
     (workspaceId: string): ThinkingLevel => {
@@ -297,26 +286,9 @@ function AppInner() {
         return "off";
       }
 
-      const scopedKey = getThinkingLevelKey(workspaceId);
-      const scoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
-      if (scoped !== undefined) {
-        return THINKING_LEVELS.includes(scoped) ? scoped : "off";
-      }
-
-      // Migration: fall back to legacy per-model thinking and seed the workspace-scoped key.
-      const model = getModelForWorkspace(workspaceId);
-      const legacy = readPersistedState<ThinkingLevel | undefined>(
-        getThinkingLevelByModelKey(model),
-        undefined
-      );
-      if (legacy !== undefined && THINKING_LEVELS.includes(legacy)) {
-        updatePersistedState(scopedKey, legacy);
-        return legacy;
-      }
-
-      return "off";
+      return readWorkspaceAiSettings({ workspaceId, defaultModel }).thinkingLevel;
     },
-    [getModelForWorkspace]
+    [defaultModel]
   );
 
   const setThinkingLevelFromPalette = useCallback(
@@ -326,21 +298,16 @@ function AppInner() {
       }
 
       const normalized = THINKING_LEVELS.includes(level) ? level : "off";
-      const model = getModelForWorkspace(workspaceId);
-      const key = getThinkingLevelKey(workspaceId);
-
-      // Use the utility function which handles localStorage and event dispatch
-      // ThinkingProvider will pick this up via its listener
-      updatePersistedState(key, normalized);
+      const { agentId: normalizedAgentId, model } = readWorkspaceAiSettings({
+        workspaceId,
+        defaultModel,
+      });
 
       type WorkspaceAISettingsByAgentCache = Partial<
         Record<string, { model: string; thinkingLevel: ThinkingLevel }>
       >;
 
-      const normalizedAgentId =
-        readPersistedState<string>(getAgentIdKey(workspaceId), "exec").trim().toLowerCase() ||
-        "exec";
-
+      // Workspace AI settings cache is the source of truth; update it and backend only.
       updatePersistedState<WorkspaceAISettingsByAgentCache>(
         getWorkspaceAISettingsByAgentKey(workspaceId),
         (prev) => {
@@ -376,7 +343,7 @@ function AppInner() {
         );
       }
     },
-    [api, getModelForWorkspace]
+    [api, defaultModel]
   );
 
   const registerParamsRef = useRef<BuildSourcesParams | null>(null);

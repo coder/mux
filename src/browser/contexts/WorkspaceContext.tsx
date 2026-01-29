@@ -100,7 +100,7 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     updatePersistedState(byAgentKey, nextByAgent);
   }
 
-  // WorkspaceModeAISync owns syncing model/thinking from this cache to avoid double-writes.
+  // Workspace AI settings cache is the source of truth; legacy keys are migration-only.
 }
 
 export function toWorkspaceSelection(metadata: FrontendWorkspaceMetadata): WorkspaceSelection {

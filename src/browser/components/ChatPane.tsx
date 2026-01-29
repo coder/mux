@@ -119,7 +119,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
   // Get pending model for auto-compaction settings (threshold is per-model)
-  const pendingSendOptions = useSendMessageOptions(workspaceId);
+  const pendingSendOptions = useSendMessageOptions({ scopeId: workspaceId, workspaceId });
   const pendingModel = pendingSendOptions.model;
 
   const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(

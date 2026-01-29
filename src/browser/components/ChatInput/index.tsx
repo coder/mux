@@ -175,7 +175,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return {
       inputKey: getInputKey(props.workspaceId),
       attachmentsKey: getInputAttachmentsKey(props.workspaceId),
-      modelKey: getModelKey(props.workspaceId),
+      modelKey: null,
     };
   })();
 
@@ -395,9 +395,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Get current send message options from shared hook (must be at component top level)
   // For creation variant, use project-scoped key; for workspace, use workspace ID
-  const sendMessageOptions = useSendMessageOptions(
-    variant === "workspace" ? props.workspaceId : getProjectScopeId(props.projectPath)
-  );
+  const sendMessageOptions = useSendMessageOptions({
+    scopeId: variant === "workspace" ? props.workspaceId : getProjectScopeId(props.projectPath),
+    workspaceId: variant === "workspace" ? props.workspaceId : undefined,
+  });
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
   // - preferredModel: gateway-transformed model for API calls
   // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
@@ -443,12 +444,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       const canonicalModel = migrateGatewayModel(model);
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
-      updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
+
+      if (storageKeys.modelKey) {
+        updatePersistedState(storageKeys.modelKey, canonicalModel);
+      }
 
       if (variant !== "workspace" || !workspaceId) {
         return;
       }
 
+      // Workspace AI settings cache is the source of truth for model/thinking.
       const normalizedAgentId =
         typeof agentId === "string" && agentId.trim().length > 0
           ? agentId.trim().toLowerCase()

@@ -13,6 +13,7 @@ import {
   updatePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { readWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 import { toGatewayModel, migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
@@ -44,42 +45,68 @@ function getProviderOptions(): MuxProviderOptions {
  * Used by useResumeManager for auto-retry without hook dependencies.
  * This ensures DRY - single source of truth for option extraction.
  */
-export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptions {
-  // Read model preference (workspace-specific), fallback to the Settings default
-  const rawModel = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
+interface GetSendOptionsFromStorageProps {
+  scopeId: string;
+  workspaceId?: string;
+}
+
+export function getSendOptionsFromStorage(
+  props: GetSendOptionsFromStorageProps
+): SendMessageOptions {
+  const scopeId = props.scopeId;
+  const workspaceId = props.workspaceId;
+  const defaultModel = getDefaultModel();
+
+  const workspaceSettings =
+    typeof workspaceId === "string" && workspaceId.trim().length > 0
+      ? readWorkspaceAiSettings({ workspaceId, defaultModel })
+      : null;
+
+  // Workspace AI settings cache is the source of truth; fall back to scope keys for project/global.
+  const rawModel = workspaceSettings
+    ? workspaceSettings.model
+    : readPersistedState<string>(getModelKey(scopeId), defaultModel);
   // Migrate any legacy mux-gateway:provider/model format to canonical form
-  const baseModel = migrateGatewayModel(rawModel);
+  const baseModel = workspaceSettings
+    ? workspaceSettings.model
+    : migrateGatewayModel(rawModel || defaultModel);
   // Transform to gateway format if gateway is enabled for this model
   const model = toGatewayModel(baseModel);
 
-  // Read thinking level (workspace-scoped).
-  // Migration: if the workspace-scoped value is missing, fall back to legacy per-model storage
-  // once, then persist into the workspace-scoped key.
-  const scopedKey = getThinkingLevelKey(workspaceId);
-  const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
-  const thinkingLevel =
-    existingScoped ??
-    readPersistedState<ThinkingLevel>(
-      getThinkingLevelByModelKey(baseModel),
-      WORKSPACE_DEFAULTS.thinkingLevel
-    );
-  if (existingScoped === undefined) {
-    // Best-effort: avoid losing a user's existing per-model preference.
-    updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
+  let thinkingLevel: ThinkingLevel;
+  if (workspaceSettings) {
+    thinkingLevel = workspaceSettings.thinkingLevel;
+  } else {
+    // Read thinking level (project/global scoped).
+    // Migration: if the scope value is missing, fall back to legacy per-model storage
+    // once, then persist into the scope-scoped key.
+    const scopedKey = getThinkingLevelKey(scopeId);
+    const existingScoped = readPersistedState<ThinkingLevel | undefined>(scopedKey, undefined);
+    const resolvedThinking =
+      existingScoped ??
+      readPersistedState<ThinkingLevel>(
+        getThinkingLevelByModelKey(baseModel),
+        WORKSPACE_DEFAULTS.thinkingLevel
+      );
+    if (existingScoped === undefined) {
+      // Best-effort: avoid losing a user's existing per-model preference.
+      updatePersistedState<ThinkingLevel>(scopedKey, resolvedThinking);
+    }
+
+    thinkingLevel = resolvedThinking;
   }
 
-  // Read selected agent id (workspace-specific)
-  const agentId = readPersistedState<string>(
-    getAgentIdKey(workspaceId),
-    WORKSPACE_DEFAULTS.agentId
-  );
+  // Read selected agent id (scope-specific)
+  const agentId = workspaceSettings
+    ? workspaceSettings.agentId
+    : readPersistedState<string>(getAgentIdKey(scopeId), WORKSPACE_DEFAULTS.agentId);
 
   // Get provider options
   const providerOptions = getProviderOptions();
 
   // Plan mode instructions are now handled by the backend (has access to plan file path)
 
-  // Read disableWorkspaceAgents toggle (workspace-scoped)
+  // Read disableWorkspaceAgents toggle (scope-scoped)
 
   const system1ModelTrimmed = readPersistedString(PREFERRED_SYSTEM_1_MODEL_KEY)?.trim();
   const baseSystem1Model =
@@ -95,7 +122,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
   const system1ThinkingLevel = coerceThinkingLevel(system1ThinkingLevelRaw) ?? "off";
 
   const disableWorkspaceAgents = readPersistedState<boolean>(
-    getDisableWorkspaceAgentsKey(workspaceId),
+    getDisableWorkspaceAgentsKey(scopeId),
     false
   );
 

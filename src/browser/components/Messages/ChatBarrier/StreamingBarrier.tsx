@@ -2,14 +2,11 @@ import React from "react";
 import { StreamingBarrierView } from "./StreamingBarrierView";
 import { getModelName } from "@/common/utils/ai/models";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import {
-  VIM_ENABLED_KEY,
-  getModelKey,
-  PREFERRED_COMPACTION_MODEL_KEY,
-} from "@/common/constants/storage";
+import { VIM_ENABLED_KEY, PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import { readPersistedState, readPersistedString } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceState, useWorkspaceAggregator } from "@/browser/stores/WorkspaceStore";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { readWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 
 type StreamingPhase =
@@ -69,13 +66,13 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
 
   // Model to display:
   // - "starting" phase with pending compaction: use the compaction model from the request
-  // - "starting" phase without compaction: read chat model from localStorage
+  // - "starting" phase without compaction: read chat model from workspace AI settings cache
   // - Otherwise: use currentModel from active stream
+  const workspaceModel =
+    phase === "starting" ? readWorkspaceAiSettings({ workspaceId, persist: false }).model : null;
   const model =
     phase === "starting"
-      ? (pendingCompactionModel ??
-        readPersistedState<string | null>(getModelKey(workspaceId), null) ??
-        getDefaultModel())
+      ? (pendingCompactionModel ?? workspaceModel ?? getDefaultModel())
       : currentModel;
   const modelName = model ? getModelName(model) : null;
 

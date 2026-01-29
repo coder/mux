@@ -3,7 +3,6 @@ import { AlertTriangle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
-import { WorkspaceModeAISync } from "@/browser/components/WorkspaceModeAISync";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { ProviderOptionsProvider } from "@/browser/contexts/ProviderOptionsContext";
 import { BackgroundBashProvider } from "@/browser/contexts/BackgroundBashContext";
@@ -60,7 +59,6 @@ export const AIView: React.FC<AIViewProps> = (props) => {
 
   return (
     <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
-      <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ProviderOptionsProvider>
         <ThinkingProvider workspaceId={props.workspaceId}>
           <BackgroundBashProvider workspaceId={props.workspaceId}>

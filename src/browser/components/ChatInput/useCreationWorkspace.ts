@@ -64,12 +64,8 @@ interface UseCreationWorkspaceOptions {
 function syncCreationPreferences(projectPath: string, workspaceId: string): void {
   const projectScopeId = getProjectScopeId(projectPath);
 
-  // Sync model from project scope to workspace scope
-  // This ensures the model used for creation is persisted for future resumes
+  // Seed workspace AI settings cache from project scope defaults.
   const projectModel = readPersistedState<string | null>(getModelKey(projectScopeId), null);
-  if (projectModel) {
-    updatePersistedState(getModelKey(workspaceId), projectModel);
-  }
 
   const projectAgentId = readPersistedState<string | null>(getAgentIdKey(projectScopeId), null);
   if (projectAgentId) {
@@ -80,9 +76,6 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
     getThinkingLevelKey(projectScopeId),
     null
   );
-  if (projectThinkingLevel !== null) {
-    updatePersistedState(getThinkingLevelKey(workspaceId), projectThinkingLevel);
-  }
 
   if (projectModel) {
     const effectiveAgentId =
@@ -359,7 +352,7 @@ export function useCreationWorkspace({
         // Read send options fresh from localStorage at send time to avoid
         // race conditions with React state updates (requestAnimationFrame batching
         // in usePersistedState can delay state updates after model selection)
-        const sendMessageOptions = getSendOptionsFromStorage(projectScopeId);
+        const sendMessageOptions = getSendOptionsFromStorage({ scopeId: projectScopeId });
         const effectiveModel = optionsOverride?.model ?? sendMessageOptions.model;
         const baseModel = normalizeGatewayModel(effectiveModel);
 

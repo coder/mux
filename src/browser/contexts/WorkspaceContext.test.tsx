@@ -9,8 +9,6 @@ import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { useWorkspaceStoreRaw as getWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   SELECTED_WORKSPACE_KEY,
-  getModelKey,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
 import type { RecursivePartial } from "@/browser/testUtils";
@@ -417,9 +415,10 @@ describe("WorkspaceContext", () => {
         list: () => Promise.resolve(initialWorkspaces),
       },
       localStorage: {
-        // Pre-seed local values; metadata should populate the cache without overwriting these keys.
-        [getModelKey("ws-ai")]: JSON.stringify("anthropic:claude-3.5"),
-        [getThinkingLevelKey("ws-ai")]: JSON.stringify("low"),
+        // Pre-seed local values; metadata should merge into the cache without dropping entries.
+        [getWorkspaceAISettingsByAgentKey("ws-ai")]: JSON.stringify({
+          custom: { model: "anthropic:claude-3.5", thinkingLevel: "low" },
+        }),
       },
     });
 
@@ -427,14 +426,10 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().workspaceMetadata.size).toBe(1));
 
-    expect(JSON.parse(globalThis.localStorage.getItem(getModelKey("ws-ai"))!)).toBe(
-      "anthropic:claude-3.5"
-    );
-    expect(JSON.parse(globalThis.localStorage.getItem(getThinkingLevelKey("ws-ai"))!)).toBe("low");
-
     expect(
       JSON.parse(globalThis.localStorage.getItem(getWorkspaceAISettingsByAgentKey("ws-ai"))!)
     ).toEqual({
+      custom: { model: "anthropic:claude-3.5", thinkingLevel: "low" },
       exec: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
       plan: { model: "openai:gpt-5.2", thinkingLevel: "xhigh" },
     });

@@ -15,8 +15,8 @@ import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext
 import { getDefaultModel, getSuggestedModels } from "@/browser/hooks/useModelsFromSettings";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useWorkspaceAiSettings } from "@/browser/hooks/useWorkspaceAiSettings";
 import {
-  getModelKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
 } from "@/common/constants/storage";
@@ -71,17 +71,17 @@ export function System1Section() {
   const selectedWorkspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
   const defaultModel = getDefaultModel();
 
-  const workspaceModelStorageKey = selectedWorkspaceId
-    ? getModelKey(selectedWorkspaceId)
-    : "__system1_workspace_model_fallback__";
-
-  const [workspaceModelRaw] = usePersistedState<unknown>(workspaceModelStorageKey, defaultModel, {
-    listener: true,
+  // Use the workspace AI settings cache for the current workspace model (single source of truth).
+  const workspaceSettings = useWorkspaceAiSettings({
+    workspaceId: selectedWorkspaceId ?? "__system1_workspace_model_fallback__",
+    defaultModel,
+    enabled: Boolean(selectedWorkspaceId),
   });
 
   const system1ModelTrimmed = system1Model.trim();
-  const workspaceModelTrimmed =
-    typeof workspaceModelRaw === "string" ? workspaceModelRaw.trim() : "";
+  const workspaceModelTrimmed = (
+    selectedWorkspaceId ? workspaceSettings.model : defaultModel
+  ).trim();
 
   const effectiveSystem1ModelStringForThinking =
     system1ModelTrimmed || workspaceModelTrimmed || defaultModel;

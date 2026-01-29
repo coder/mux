@@ -176,7 +176,7 @@ export function useResumeManager() {
 
     try {
       // Start with workspace defaults
-      let options = getSendOptionsFromStorage(workspaceId);
+      let options = getSendOptionsFromStorage({ scopeId: workspaceId, workspaceId });
 
       // Check if last user message was a compaction request
       const state = workspaceStatesRef.current.get(workspaceId);
