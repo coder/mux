@@ -31,6 +31,60 @@ jobs:
       experiments: ${{ inputs.experiments }}
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
+  # Smoke tests for Harbor SWE-style datasets (single task each).
+  # These validate that mux can run inside the dataset's repo checkout (MUX_RUNTIME=local)
+  # and that we target the verifier's expected working directory (MUX_PROJECT_PATH).
+  swebench-verified-smoke-test:
+    name: Smoke test (swebench-verified: django__django-10097)
+    needs: smoke-test
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic/claude-sonnet-4-5"
+      thinking_level: "high"
+      dataset: "swebench-verified@1.0"
+      concurrency: "1"
+      env: "local"
+      task_names: "django__django-10097"
+      mux_project_path: "/testbed"
+      mux_runtime: "local"
+      timeout: "3000"
+      experiments: ${{ inputs.experiments }}
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+
+  swe-gen-js-smoke-test:
+    name: Smoke test (swe-gen-js: biomejs__biome-7314)
+    needs: smoke-test
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic/claude-sonnet-4-5"
+      thinking_level: "high"
+      dataset: "swe-gen-js@1.0"
+      concurrency: "1"
+      env: "local"
+      task_names: "biomejs__biome-7314"
+      mux_project_path: "/app/src"
+      mux_runtime: "local"
+      timeout: "600"
+      experiments: ${{ inputs.experiments }}
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+
+  aider-polyglot-smoke-test:
+    name: Smoke test (aider-polyglot: polyglot_cpp_all-your-base)
+    needs: smoke-test
+    uses: ./.github/workflows/terminal-bench.yml
+    with:
+      model_name: "anthropic/claude-sonnet-4-5"
+      thinking_level: "high"
+      dataset: "aider-polyglot@1.0"
+      concurrency: "1"
+      env: "local"
+      task_names: "polyglot_cpp_all-your-base"
+      mux_project_path: "/app"
+      mux_runtime: "local"
+      timeout: "1800"
+      experiments: ${{ inputs.experiments }}
+    secrets: inherit # zizmor: ignore[secrets-inherit]
+
   determine-models:
     name: Determine models to test
     needs: smoke-test

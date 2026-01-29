@@ -48,6 +48,16 @@ on:
         required: false
         type: string
         default: ""
+      mux_project_path:
+        description: "Project path inside the task container (e.g., /testbed, /app/src)"
+        required: false
+        type: string
+        default: ""
+      mux_runtime:
+        description: "Mux runtime override passed to mux-run.sh (e.g., local)"
+        required: false
+        type: string
+        default: ""
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -104,6 +114,14 @@ on:
         description: "Maximum number of tasks to run (for faster iteration)"
         required: false
         type: string
+      mux_project_path:
+        description: "Project path inside the task container (e.g., /testbed, /app/src)"
+        required: false
+        type: string
+      mux_runtime:
+        description: "Mux runtime override passed to mux-run.sh (e.g., local)"
+        required: false
+        type: string
 
 jobs:
   benchmark:
@@ -144,6 +162,8 @@ jobs:
           TB_MODEL: ${{ inputs.model_name }}
           MUX_MODEL: ${{ inputs.model_name }}
           TB_TIMEOUT: ${{ inputs.timeout }}
+          MUX_PROJECT_PATH: ${{ inputs.mux_project_path }}
+          MUX_RUNTIME: ${{ inputs.mux_runtime }}
           TB_ARGS: >-
             ${{ inputs.thinking_level && format('--agent-kwarg thinking_level={0}', inputs.thinking_level) || '' }}
             ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
@@ -240,7 +260,14 @@ jobs:
           echo "$GCP_SA_KEY" > /tmp/gcp-sa.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp-sa.json
           pip install --quiet google-cloud-bigquery
-          python scripts/upload-tbench-results.py
+
+          dataset="${{ inputs.dataset }}"
+          if [[ "$dataset" == terminal-bench@* ]]; then
+            python scripts/upload-tbench-results.py
+          else
+            python scripts/upload-harbor-results.py
+          fi
+
           rm -f /tmp/gcp-sa.json
 
       - name: Upload benchmark results
