@@ -1543,9 +1543,10 @@ export class AgentSession {
       options.muxMetadata = metadata;
     }
 
-    // Fire-and-forget: sendMessage will persist the user message, which serves
-    // as proof that the follow-up was dispatched.
-    void this.sendMessage(finalText, options);
+    // Await sendMessage to ensure the follow-up is persisted before returning.
+    // This guarantees ordering: the follow-up message is written to history
+    // before sendQueuedMessages() runs, preventing race conditions.
+    await this.sendMessage(finalText, options);
   }
 
   /**
