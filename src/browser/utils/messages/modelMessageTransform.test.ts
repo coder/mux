@@ -1140,6 +1140,51 @@ describe("injectAgentTransition", () => {
     }
   });
 
+  it("should NOT include plan content when transitioning from plan to orchestrator", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Let's plan a feature" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Here's the plan..." }],
+        metadata: { timestamp: 2000, agentId: "plan" },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Start orchestrating" }],
+        metadata: { timestamp: 3000 },
+      },
+    ];
+
+    const planContent = "# My Plan\n\n## Step 1\nDo something\n\n## Step 2\nDo more";
+    const planFilePath = "~/.mux/plans/demo/ws-123.md";
+    const result = injectAgentTransition(
+      messages,
+      "orchestrator",
+      undefined,
+      planContent,
+      planFilePath
+    );
+
+    expect(result.length).toBe(4);
+    const transitionMessage = result[2];
+    const textPart = transitionMessage.parts[0];
+    if (textPart.type === "text") {
+      expect(textPart.text).toBe(
+        "[Agent switched from plan to orchestrator. Follow orchestrator agent instructions.]"
+      );
+      expect(textPart.text).not.toContain("<plan>");
+      expect(textPart.text).not.toContain(planContent);
+      expect(textPart.text).not.toContain(planFilePath);
+    }
+  });
+
   it("should NOT include plan content when transitioning from exec to plan", () => {
     const messages: MuxMessage[] = [
       {

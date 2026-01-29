@@ -57,7 +57,7 @@ const EXEC_PRESET: AgentPreset = {
       "- Make minimal, correct changes that match existing codebase patterns.",
     ],
     rules: [
-      "- You MUST NOT spawn additional sub-agent tasks.",
+      "- You may spawn additional sub-agent tasks when the task tools are available (nesting is limited by maxTaskNestingDepth).",
       "- Do not call propose_plan.",
       "- Prefer small, reviewable diffs and run targeted checks when feasible.",
     ],

@@ -12,12 +12,13 @@ import type {
   WorkspaceStatsSnapshot,
   FrontendWorkspaceMetadataSchemaType,
 } from "@/common/orpc/types";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
-import { readPlanFile } from "@/node/utils/runtime/helpers";
+import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
@@ -52,7 +53,11 @@ import { isWorkspaceArchived } from "@/common/utils/archive";
 async function resolveAgentDiscoveryContext(
   context: ORPCContext,
   input: { projectPath?: string; workspaceId?: string; disableWorkspaceAgents?: boolean }
-): Promise<{ runtime: ReturnType<typeof createRuntime>; discoveryPath: string }> {
+): Promise<{
+  runtime: ReturnType<typeof createRuntime>;
+  discoveryPath: string;
+  metadata?: WorkspaceMetadata;
+}> {
   if (!input.projectPath && !input.workspaceId) {
     throw new Error("Either projectPath or workspaceId must be provided");
   }
@@ -69,7 +74,7 @@ async function resolveAgentDiscoveryContext(
     const discoveryPath = input.disableWorkspaceAgents
       ? metadata.projectPath
       : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
-    return { runtime, discoveryPath };
+    return { runtime, discoveryPath, metadata };
   }
 
   // No workspace - use local runtime with project path
@@ -459,7 +464,28 @@ export const router = (authToken?: string) => {
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
-          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+
+          const { runtime, discoveryPath, metadata } = await resolveAgentDiscoveryContext(
+            context,
+            input
+          );
+
+          // Agents can require a plan file before they're selectable (e.g., orchestrator).
+          // Fail closed: if plan state cannot be determined, treat it as missing.
+          let planReady = false;
+          if (input.workspaceId && metadata) {
+            try {
+              planReady = await hasNonEmptyPlanFile(
+                runtime,
+                metadata.name,
+                metadata.projectName,
+                input.workspaceId
+              );
+            } catch {
+              planReady = false;
+            }
+          }
+
           const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
 
           // Compute derived UI fields that depend on inheritance resolution.
@@ -479,8 +505,12 @@ export const router = (authToken?: string) => {
 
                 const resolvedUiColor = chain.find((entry) => entry.uiColor)?.uiColor;
 
+                const requiresPlan = pkg.frontmatter.ui?.requires?.includes("plan") ?? false;
+                const uiSelectable = requiresPlan && !planReady ? false : descriptor.uiSelectable;
+
                 return {
                   ...descriptor,
+                  uiSelectable,
                   uiColor: descriptor.uiColor ?? resolvedUiColor,
                 };
               } catch {

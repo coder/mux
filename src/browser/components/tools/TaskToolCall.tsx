@@ -376,6 +376,33 @@ const TaskAwaitResult: React.FC<{
   const output = "output" in result ? result.output : undefined;
   const note = "note" in result ? result.note : undefined;
   const exitCode = "exitCode" in result ? result.exitCode : undefined;
+
+  const gitPatchArtifact =
+    result.status === "completed" ? result.artifacts?.gitFormatPatch : undefined;
+
+  const patchSummary = (() => {
+    if (!gitPatchArtifact) return null;
+
+    switch (gitPatchArtifact.status) {
+      case "pending":
+        return "Patch: pending";
+      case "skipped":
+        return "Patch: skipped (no commits)";
+      case "ready": {
+        const count = gitPatchArtifact.commitCount ?? 0;
+        const label = count === 1 ? "commit" : "commits";
+        return `Patch: ready (${count} ${label})`;
+      }
+      case "failed": {
+        const error = gitPatchArtifact.error?.trim();
+        const shortError =
+          error && error.length > 80 ? `${error.slice(0, 77)}…` : (error ?? undefined);
+        return shortError ? `Patch: failed (${shortError})` : "Patch: failed";
+      }
+      default:
+        return `Patch: ${String(gitPatchArtifact.status)}`;
+    }
+  })();
   const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
 
   return (
@@ -403,6 +430,8 @@ const TaskAwaitResult: React.FC<{
           </Tooltip>
         )}
       </div>
+
+      {patchSummary && <div className="text-muted text-[10px]">{patchSummary}</div>}
 
       {!isCompleted && output && output.length > 0 && (
         <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">

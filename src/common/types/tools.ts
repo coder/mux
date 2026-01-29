@@ -22,6 +22,7 @@ import type {
   FileReadToolResultSchema,
   TaskToolResultSchema,
   TaskAwaitToolResultSchema,
+  TaskApplyGitPatchToolResultSchema,
   TaskListToolResultSchema,
   TaskTerminateToolResultSchema,
   TOOL_DEFINITIONS,
@@ -218,6 +219,15 @@ export type TaskToolResult = TaskToolSuccessResult | ToolErrorResult;
 export type TaskAwaitToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_await.schema>;
 
 export type TaskAwaitToolSuccessResult = z.infer<typeof TaskAwaitToolResultSchema>;
+
+// Task Apply Git Patch Tool Types
+export type TaskApplyGitPatchToolArgs = z.infer<
+  typeof TOOL_DEFINITIONS.task_apply_git_patch.schema
+>;
+
+export type TaskApplyGitPatchToolSuccessResult = z.infer<typeof TaskApplyGitPatchToolResultSchema>;
+
+export type TaskApplyGitPatchToolResult = TaskApplyGitPatchToolSuccessResult | ToolErrorResult;
 
 export type TaskAwaitToolResult = TaskAwaitToolSuccessResult | ToolErrorResult;
 

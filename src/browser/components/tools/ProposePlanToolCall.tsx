@@ -38,6 +38,7 @@ import {
   ListStart,
   Pencil,
   Play,
+  Workflow,
   X,
 } from "lucide-react";
 import { ShareMessagePopover } from "../ShareMessagePopover";
@@ -131,8 +132,10 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   } = props;
   const { expanded, toggleExpanded } = useToolExpansion(true); // Expand by default
   const [showRaw, setShowRaw] = useState(false);
+  const [isStartingOrchestrator, setIsStartingOrchestrator] = useState(false);
   const [isImplementing, setIsImplementing] = useState(false);
   const [implementReplacesChatHistory, setImplementReplacesChatHistory] = useState(false);
+  const isStartingOrchestratorRef = useRef(false);
   const isImplementingRef = useRef(false);
   const isMountedRef = useRef(true);
   const { api } = useAPI();
@@ -304,6 +307,84 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     sourceAgentId: "plan",
   });
 
+  const replaceChatHistoryWithPlan = async (args: { idPrefix: string; errorContext: string }) => {
+    if (!workspaceId || !api) return;
+
+    try {
+      const summaryMessage = createMuxMessage(
+        `${args.idPrefix}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        "assistant",
+        startHereContent,
+        {
+          timestamp: Date.now(),
+          compacted: "user",
+          // Preserve the source agent so plan-origin compactions can be detected.
+          agentId: "plan",
+        }
+      );
+
+      const result = await api.workspace.replaceChatHistory({
+        workspaceId,
+        summaryMessage,
+        deletePlanFile: false,
+      });
+
+      if (!result.success) {
+        console.error(args.errorContext, result.error);
+      }
+    } catch (err) {
+      console.error(args.errorContext, err);
+    }
+  };
+
+  const handleStartOrchestrator = async () => {
+    if (!workspaceId || !api) return;
+    if (isStartingOrchestratorRef.current) return;
+
+    isStartingOrchestratorRef.current = true;
+    if (isMountedRef.current) {
+      setIsStartingOrchestrator(true);
+    }
+
+    try {
+      let shouldReplaceChatHistory = false;
+
+      try {
+        const cfg = await api.config.getConfig();
+        shouldReplaceChatHistory =
+          cfg.taskSettings.proposePlanImplementReplacesChatHistory ?? false;
+      } catch {
+        // Ignore config read errors (we'll default to old behavior).
+      }
+
+      if (shouldReplaceChatHistory) {
+        await replaceChatHistoryWithPlan({
+          idPrefix: "start-orchestrator",
+          errorContext: "Failed to replace chat history before starting orchestrator:",
+        });
+      }
+
+      // Switch to orchestrator before sending so send options (agentId/mode) match.
+      updatePersistedState(getAgentIdKey(workspaceId), "orchestrator");
+
+      const sendMessageOptions = buildSendMessageOptions(workspaceId);
+
+      await api.workspace.sendMessage({
+        workspaceId,
+        message:
+          "Start orchestrating the implementation. Delegate investigation to `explore` and coding to `exec` sub-agents; avoid doing repo work directly here except applying patches.",
+        options: { ...sendMessageOptions, agentId: "orchestrator" },
+      });
+    } catch (err) {
+      console.error("Failed to start orchestrator:", err);
+    } finally {
+      isStartingOrchestratorRef.current = false;
+      if (isMountedRef.current) {
+        setIsStartingOrchestrator(false);
+      }
+    }
+  };
+
   const handleImplement = async () => {
     if (!workspaceId || !api) return;
     if (isImplementingRef.current) return;
@@ -442,11 +523,21 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       actionButtons.push({
         label: "Implement",
         onClick: () => void handleImplement(),
-        disabled: !api || isImplementing,
+        disabled: !api || isImplementing || isStartingOrchestrator,
         icon: <Play />,
         tooltip: implementReplacesChatHistory
           ? "Replace chat history with this plan, switch to Exec, and start implementing"
           : "Switch to Exec and start implementing",
+      });
+
+      actionButtons.push({
+        label: "Start Orchestrator",
+        onClick: () => void handleStartOrchestrator(),
+        disabled: !api || isStartingOrchestrator || isImplementing,
+        icon: <Workflow />,
+        tooltip: implementReplacesChatHistory
+          ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
+          : "Switch to Orchestrator and start delegating",
       });
     }
   }
