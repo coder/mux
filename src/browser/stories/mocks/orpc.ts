@@ -513,6 +513,16 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
       setModels: () => Promise.resolve({ success: true, data: undefined }),
     },
+    muxGateway: {
+      getAccountStatus: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            remaining_microdollars: 134_598_127,
+            ai_gateway_concurrent_requests_per_user: 20,
+          },
+        }),
+    },
     general: {
       listDirectory: () => Promise.resolve({ entries: [], hasMore: false }),
       ping: (input: string) => Promise.resolve(`Pong: ${input}`),

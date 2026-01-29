@@ -31,6 +31,10 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getEligibleGatewayModels } from "@/browser/utils/gatewayModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
+import {
+  formatMuxGatewayBalance,
+  useMuxGatewayAccountStatus,
+} from "@/browser/hooks/useMuxGatewayAccountStatus";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { getAgentsInitNudgeKey } from "@/common/constants/storage";
 import { PROVIDER_DISPLAY_NAMES, SUPPORTED_PROVIDERS } from "@/common/constants/providers";
@@ -192,6 +196,12 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
   const [direction, setDirection] = useState<Direction>("forward");
 
   const { api } = useAPI();
+  const {
+    data: muxGatewayAccountStatus,
+    error: muxGatewayAccountError,
+    isLoading: muxGatewayAccountLoading,
+    refresh: refreshMuxGatewayAccountStatus,
+  } = useMuxGatewayAccountStatus();
 
   const backendBaseUrl = getBackendBaseUrl();
   const backendOrigin = useMemo(() => {
@@ -296,6 +306,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           }
 
           setMuxGatewayLoginStatus("success");
+          void refreshMuxGatewayAccountStatus();
           return;
         }
 
@@ -366,7 +377,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
       setMuxGatewayLoginStatus("error");
       setMuxGatewayLoginError(message);
     }
-  }, [api, backendBaseUrl, isDesktop, providersConfig]);
+  }, [api, backendBaseUrl, isDesktop, providersConfig, refreshMuxGatewayAccountStatus]);
 
   useEffect(() => {
     const attempt = muxGatewayLoginAttemptRef.current;
@@ -404,6 +415,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         }
 
         setMuxGatewayLoginStatus("success");
+        void refreshMuxGatewayAccountStatus();
         return;
       }
 
@@ -421,6 +433,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     muxGatewayLoginStatus,
     muxGatewayServerState,
     providersConfig,
+    refreshMuxGatewayAccountStatus,
   ]);
 
   const muxGatewayCouponCodeSet = providersConfig?.["mux-gateway"]?.couponCodeSet ?? false;
@@ -514,33 +527,74 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               use this to get free evaluation credits.
             </p>
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Button
-                onClick={() => {
-                  void startMuxGatewayLogin();
-                }}
-                disabled={muxGatewayLoginInProgress}
-              >
-                {muxGatewayLoginButtonLabel}
-              </Button>
+            {muxGatewayIsLoggedIn ? (
+              <div className="mt-3 space-y-2">
+                <div className="border-border-medium bg-background-secondary rounded-md border p-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-foreground font-medium">Mux Gateway account</div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        void refreshMuxGatewayAccountStatus();
+                      }}
+                      disabled={muxGatewayAccountLoading}
+                    >
+                      {muxGatewayAccountLoading ? "Refreshing..." : "Refresh"}
+                    </Button>
+                  </div>
 
-              {muxGatewayLoginInProgress && (
-                <Button variant="secondary" onClick={cancelMuxGatewayLogin}>
-                  Cancel
-                </Button>
-              )}
-            </div>
+                  <div className="mt-2 space-y-1">
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-muted">Balance</span>
+                      <span className="text-foreground font-mono">
+                        {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                      </span>
+                    </div>
 
-            {muxGatewayLoginStatus === "success" && <p className="mt-3">Login successful.</p>}
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-muted">Concurrent requests per user</span>
+                      <span className="text-foreground font-mono">
+                        {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
+                      </span>
+                    </div>
+                  </div>
 
-            {muxGatewayLoginStatus === "waiting" && (
-              <p className="mt-3">Finish the login flow in your browser, then return here.</p>
-            )}
+                  {muxGatewayAccountError && (
+                    <div className="text-destructive mt-2">{muxGatewayAccountError}</div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => {
+                      void startMuxGatewayLogin();
+                    }}
+                    disabled={muxGatewayLoginInProgress}
+                  >
+                    {muxGatewayLoginButtonLabel}
+                  </Button>
 
-            {muxGatewayLoginStatus === "error" && muxGatewayLoginError && (
-              <p className="mt-3">
-                <strong className="text-destructive">Login failed:</strong> {muxGatewayLoginError}
-              </p>
+                  {muxGatewayLoginInProgress && (
+                    <Button variant="secondary" onClick={cancelMuxGatewayLogin}>
+                      Cancel
+                    </Button>
+                  )}
+                </div>
+
+                {muxGatewayLoginStatus === "waiting" && (
+                  <p className="mt-3">Finish the login flow in your browser, then return here.</p>
+                )}
+
+                {muxGatewayLoginStatus === "error" && muxGatewayLoginError && (
+                  <p className="mt-3">
+                    <strong className="text-destructive">Login failed:</strong>{" "}
+                    {muxGatewayLoginError}
+                  </p>
+                )}
+              </>
             )}
 
             <p className="mt-3">You can also receive those credits through:</p>
@@ -837,6 +891,10 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     configuredProvidersSummary,
     cycleAgentShortcut,
     hasConfiguredProvidersAtStart,
+    muxGatewayAccountError,
+    muxGatewayAccountLoading,
+    muxGatewayAccountStatus,
+    muxGatewayIsLoggedIn,
     muxGatewayLoginButtonLabel,
     muxGatewayLoginError,
     muxGatewayLoginInProgress,
@@ -844,6 +902,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
     openSettings,
     projects.size,
     providersConfig,
+    refreshMuxGatewayAccountStatus,
     startMuxGatewayLogin,
   ]);
 
