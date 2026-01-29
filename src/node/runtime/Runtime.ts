@@ -258,6 +258,11 @@ export interface WorkspaceForkResult {
   forkedRuntimeConfig?: RuntimeConfig;
   /** Updated runtime config for source workspace (e.g., mark as shared) */
   sourceRuntimeConfig?: RuntimeConfig;
+  /**
+   * When true and success=false, don't fall back to createWorkspace.
+   * Use when the runtime provisions shared infrastructure that subagents must share.
+   */
+  failureIsFatal?: boolean;
 }
 
 /**
