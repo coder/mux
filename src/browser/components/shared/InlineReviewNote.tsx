@@ -21,6 +21,8 @@ import type { Review } from "@/common/types/review";
 export interface ReviewActionCallbacks {
   /** Edit the review comment */
   onEditComment?: (reviewId: string, newComment: string) => void;
+  /** Notify parent when inline note enters/leaves edit mode */
+  onEditingChange?: (reviewId: string, isEditing: boolean) => void;
   /** Mark review as complete (checked) */
   onComplete?: (reviewId: string) => void;
   /** Detach review from message (back to pending) */
@@ -64,20 +66,23 @@ export const InlineReviewNote: React.FC<InlineReviewNoteProps> = ({
   const handleStartEdit = useCallback(() => {
     setEditValue(review.data.userNote);
     setIsEditing(true);
+    actions?.onEditingChange?.(review.id, true);
     setTimeout(() => textareaRef.current?.focus(), 0);
-  }, [review.data.userNote]);
+  }, [review.data.userNote, review.id, actions]);
 
   const handleSaveEdit = useCallback(() => {
     if (actions?.onEditComment && editValue.trim() !== review.data.userNote) {
       actions.onEditComment(review.id, editValue.trim());
     }
     setIsEditing(false);
+    actions?.onEditingChange?.(review.id, false);
   }, [editValue, review.data.userNote, review.id, actions]);
 
   const handleCancelEdit = useCallback(() => {
     setEditValue(review.data.userNote);
     setIsEditing(false);
-  }, [review.data.userNote]);
+    actions?.onEditingChange?.(review.id, false);
+  }, [review.data.userNote, review.id, actions]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
