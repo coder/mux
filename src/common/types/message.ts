@@ -3,6 +3,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { StreamErrorType } from "./errors";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { FilePart, MuxToolPartSchema } from "@/common/orpc/schemas";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
@@ -36,17 +37,47 @@ export interface CompactionFollowUpInput extends UserMessageContent {
 }
 
 /**
+ * SendMessageOptions fields that should be preserved across compaction.
+ * These affect how the follow-up message is processed (thinking level, system instructions, etc.)
+ * and should use the user's original settings, not compaction defaults.
+ */
+type PreservedSendOptions = Pick<
+  SendMessageOptions,
+  | "thinkingLevel"
+  | "additionalSystemInstructions"
+  | "providerOptions"
+  | "experiments"
+  | "disableWorkspaceAgents"
+>;
+
+/**
+ * Extract the send options that should be preserved across compaction.
+ * Use this helper to avoid duplicating the field list when building CompactionFollowUpRequest.
+ */
+export function pickPreservedSendOptions(options: SendMessageOptions): PreservedSendOptions {
+  return {
+    thinkingLevel: options.thinkingLevel,
+    additionalSystemInstructions: options.additionalSystemInstructions,
+    providerOptions: options.providerOptions,
+    experiments: options.experiments,
+    disableWorkspaceAgents: options.disableWorkspaceAgents,
+  };
+}
+
+/**
  * Content to send after compaction completes.
- * Extends CompactionFollowUpInput with model/agentId for the follow-up message.
+ * Extends CompactionFollowUpInput with model/agentId for the follow-up message,
+ * plus preserved send options so the follow-up uses the same settings as the
+ * original user message.
  *
  * These fields are required because compaction uses its own agentId ("compact")
  * and potentially a different model for summarization. The follow-up message
- * should use the user's original model and agentId, not the compaction settings.
+ * should use the user's original model, agentId, and send options.
  *
  * Call sites provide CompactionFollowUpInput; prepareCompactionMessage converts
- * it to CompactionFollowUpRequest by adding model/agentId from sendMessageOptions.
+ * it to CompactionFollowUpRequest by adding model/agentId/options from sendMessageOptions.
  */
-export interface CompactionFollowUpRequest extends CompactionFollowUpInput {
+export interface CompactionFollowUpRequest extends CompactionFollowUpInput, PreservedSendOptions {
   /** Model to use for the follow-up message (user's original model, not compaction model) */
   model: string;
   /** Agent ID for the follow-up message (user's original agentId, not "compact") */
@@ -256,6 +287,15 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         displayStatus?: DisplayStatus;
       }
     | {
+        type: "compaction-summary";
+        /**
+         * Follow-up content to dispatch after compaction completes.
+         * Stored on the summary so it survives crashes - the user message
+         * persisted by dispatch serves as proof of completion.
+         */
+        pendingFollowUp?: CompactionFollowUpRequest;
+      }
+    | {
         type: "agent-skill";
         /** The original /{skillName} invocation as typed by user (for display) */
         rawCommand: string;
@@ -270,6 +310,34 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         type: "normal"; // Regular messages
       }
   );
+
+export function getCompactionFollowUpContent(
+  metadata?: MuxFrontendMetadata
+): CompactionRequestData["followUpContent"] | undefined {
+  // Keep follow-up extraction centralized so callers don't duplicate legacy handling.
+  if (!metadata || metadata.type !== "compaction-request") {
+    return undefined;
+  }
+
+  // Legacy compaction requests stored follow-up content in `continueMessage`.
+  const parsed = metadata.parsed as CompactionRequestData & {
+    continueMessage?: CompactionRequestData["followUpContent"];
+  };
+  return parsed.followUpContent ?? parsed.continueMessage;
+}
+
+/** Type for compaction-summary metadata variant */
+export type CompactionSummaryMetadata = Extract<
+  MuxFrontendMetadata,
+  { type: "compaction-summary" }
+>;
+
+/** Type guard for compaction-summary metadata */
+export function isCompactionSummaryMetadata(
+  metadata: MuxFrontendMetadata | undefined
+): metadata is CompactionSummaryMetadata {
+  return metadata?.type === "compaction-summary";
+}
 
 // Our custom metadata type
 export interface MuxMetadata {

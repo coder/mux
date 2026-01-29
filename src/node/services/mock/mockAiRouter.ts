@@ -1,3 +1,4 @@
+import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { CompactionFollowUpRequest, MuxMessage } from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -92,7 +93,7 @@ function readCompactionRequest(
   if (!muxMeta || muxMeta.type !== "compaction-request") {
     return undefined;
   }
-  return { followUpContent: muxMeta.parsed.followUpContent };
+  return { followUpContent: getCompactionFollowUpContent(muxMeta) };
 }
 
 function buildUsage(inputTokens: number, outputTokens: number): LanguageModelV2Usage {
