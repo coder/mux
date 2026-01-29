@@ -1124,7 +1124,11 @@ export class AIService extends EventEmitter {
     }
   }
 
-  private resolveGatewayModelString(modelString: string, modelKey?: string): string {
+  private resolveGatewayModelString(
+    modelString: string,
+    modelKey?: string,
+    explicitlyRequestedGateway = false
+  ): string {
     // Backend-authoritative routing avoids frontend localStorage races (issue #1769).
     const canonicalModelString = normalizeGatewayModel(modelString);
     const normalizedModelKey = modelKey ? normalizeGatewayModel(modelKey) : canonicalModelString;
@@ -1146,8 +1150,13 @@ export class AIService extends EventEmitter {
     const config = this.config.loadConfigOrDefault();
     const gatewayEnabled = config.muxGatewayEnabled !== false;
     const gatewayModels = config.muxGatewayModels ?? [];
+    // Legacy clients may still send mux-gateway model IDs before the backend config
+    // has synchronized their allowlist, so honor an explicit mux-gateway prefix as
+    // an implicit opt-in to avoid first-message API key failures.
     const isGatewayModelEnabled =
-      gatewayModels.includes(canonicalModelString) || gatewayModels.includes(normalizedModelKey);
+      explicitlyRequestedGateway ||
+      gatewayModels.includes(canonicalModelString) ||
+      gatewayModels.includes(normalizedModelKey);
 
     if (!gatewayEnabled || !isGatewayModelEnabled) {
       return canonicalModelString;
@@ -1249,6 +1258,7 @@ export class AIService extends EventEmitter {
 
       // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
       // Similar to how OpenAI handles reasoning vs non-reasoning models
+      const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
       const canonicalModelString = normalizeGatewayModel(modelString);
       let effectiveModelString = canonicalModelString;
       const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
@@ -1269,7 +1279,8 @@ export class AIService extends EventEmitter {
 
       effectiveModelString = this.resolveGatewayModelString(
         effectiveModelString,
-        canonicalModelString
+        canonicalModelString,
+        explicitlyRequestedGateway
       );
 
       // Create model instance with early API key validation
@@ -2267,8 +2278,11 @@ export class AIService extends EventEmitter {
               const bashOutputExecuteFn = getExecuteFnForTool(baseBashOutputTool);
               const taskAwaitExecuteFn = getExecuteFnForTool(baseTaskAwaitTool);
 
-              const system1ModelString =
-                typeof system1Model === "string" ? normalizeGatewayModel(system1Model.trim()) : "";
+              const rawSystem1Model = typeof system1Model === "string" ? system1Model.trim() : "";
+              const system1ModelString = rawSystem1Model
+                ? normalizeGatewayModel(rawSystem1Model)
+                : "";
+              const system1ExplicitGateway = rawSystem1Model.startsWith("mux-gateway:");
               const effectiveSystem1ModelStringForThinking = system1ModelString || modelString;
               const effectiveSystem1ThinkingLevel = enforceThinkingPolicy(
                 effectiveSystem1ModelStringForThinking,
@@ -2292,8 +2306,11 @@ export class AIService extends EventEmitter {
                   return undefined;
                 }
 
-                const resolvedSystem1ModelString =
-                  this.resolveGatewayModelString(system1ModelString);
+                const resolvedSystem1ModelString = this.resolveGatewayModelString(
+                  system1ModelString,
+                  undefined,
+                  system1ExplicitGateway
+                );
                 const created = await this.createModel(
                   resolvedSystem1ModelString,
                   effectiveMuxProviderOptions
