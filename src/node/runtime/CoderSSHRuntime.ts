@@ -91,7 +91,15 @@ export class CoderSSHRuntime extends SSHRuntime {
     configLevelCollisionDetection: true,
   };
 
-  constructor(config: CoderSSHRuntimeConfig, transport: SSHTransport, coderService: CoderService) {
+  constructor(
+    config: CoderSSHRuntimeConfig,
+    transport: SSHTransport,
+    coderService: CoderService,
+    options?: {
+      projectPath?: string;
+      workspaceName?: string;
+    }
+  ) {
     if (!config || !coderService || !transport) {
       throw new Error("CoderSSHRuntime requires config, transport, and coderService");
     }
@@ -104,7 +112,7 @@ export class CoderSSHRuntime extends SSHRuntime {
       port: config.port,
     };
 
-    super(baseConfig, transport);
+    super(baseConfig, transport, options);
     this.coderConfig = config.coder;
     this.coderService = coderService;
   }
@@ -198,6 +206,12 @@ export class CoderSSHRuntime extends SSHRuntime {
 
     // Short-circuit: already running
     if (statusResult.kind === "ok" && statusResult.status === "running") {
+      const repoCheck = await this.checkWorkspaceRepo(options);
+      if (repoCheck && !repoCheck.ready) {
+        emitStatus("error", repoCheck.error);
+        return repoCheck;
+      }
+
       this.lastActivityAtMs = Date.now();
       emitStatus("ready");
       return { ready: true };
@@ -251,6 +265,13 @@ export class CoderSSHRuntime extends SSHRuntime {
 
         // Check for state changes during polling
         if (statusResult.kind === "ok" && statusResult.status === "running") {
+          // Ensure setup failures (missing repo) surface before marking ready.
+          const repoCheck = await this.checkWorkspaceRepo(options);
+          if (repoCheck && !repoCheck.ready) {
+            emitStatus("error", repoCheck.error);
+            return repoCheck;
+          }
+
           this.lastActivityAtMs = Date.now();
           emitStatus("ready");
           return { ready: true };
@@ -301,6 +322,13 @@ export class CoderSSHRuntime extends SSHRuntime {
       )) {
         // Consume output for timeout/abort handling
       }
+
+      const repoCheck = await this.checkWorkspaceRepo(options);
+      if (repoCheck && !repoCheck.ready) {
+        emitStatus("error", repoCheck.error);
+        return repoCheck;
+      }
+
       this.lastActivityAtMs = Date.now();
       emitStatus("ready");
       return { ready: true };
