@@ -4,8 +4,8 @@
 }
 
 /* Target logo images specifically */
-img[src*="/img/light.svg"],
-img[src*="/img/dark.svg"] {
+img[src*="/img/logo-black.svg"],
+img[src*="/img/logo-white.svg"] {
   height: 2.4rem !important;
 }
 

@@ -5,7 +5,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VSCODE_DIR="$(dirname "$SCRIPT_DIR")"
-LOGO_PATH="$VSCODE_DIR/../docs/img/logo.webp"
+LOGO_PATH="$VSCODE_DIR/../docs/img/logo-black.svg"
 ICON_PATH="$VSCODE_DIR/icon.png"
 
 if [ ! -f "$LOGO_PATH" ]; then
@@ -27,7 +27,7 @@ fi
 
 # Convert logo to PNG at 128x128 (VS Code recommended size)
 echo "Converting logo to icon.png (128x128)..."
-$CONVERT_CMD "$LOGO_PATH" -resize 128x128 "$ICON_PATH"
+$CONVERT_CMD "$LOGO_PATH" -background none -resize 128x128 "$ICON_PATH"
 
 echo "✓ Created $ICON_PATH"
 echo ""

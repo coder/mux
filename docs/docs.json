@@ -3,8 +3,8 @@
   "theme": "maple",
   "name": "Mux",
   "logo": {
-    "light": "/img/light.svg",
-    "dark": "/img/dark.svg"
+    "light": "/img/logo-black.svg",
+    "dark": "/img/logo-white.svg"
   },
   "favicon": "/favicon.svg",
   "colors": {

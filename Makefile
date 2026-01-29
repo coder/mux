@@ -264,14 +264,14 @@ src/version.ts: version
 ifeq ($(shell uname), Darwin)
 build-icons: build/icon.icns build/icon.png ## Generate Electron app icons from logo (macOS builds both)
 
-build/icon.icns: docs/img/logo.webp scripts/generate-icons.ts
+build/icon.icns: docs/img/logo-white.svg scripts/generate-icons.ts
 	@echo "Generating macOS ICNS icon..."
 	@bun scripts/generate-icons.ts icns
 else
 build-icons: build/icon.png ## Generate Electron app icons from logo (Linux builds PNG only)
 endif
 
-build/icon.png: docs/img/logo.webp scripts/generate-icons.ts
+build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@echo "Generating PNG icon..."
 	@bun scripts/generate-icons.ts png
 
