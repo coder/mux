@@ -1,8 +1,11 @@
+import * as fs from "fs";
+
 import { describe, it, expect, mock } from "bun:test";
 import type { ToolCallOptions } from "ai";
 
 import { createTaskAwaitTool } from "./task_await";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
+import { getSubagentGitPatchArtifactsFilePath } from "@/node/services/subagentGitPatchArtifacts";
 import type { TaskService } from "@/node/services/taskService";
 
 const mockToolCallOptions: ToolCallOptions = {
@@ -11,6 +14,62 @@ const mockToolCallOptions: ToolCallOptions = {
 };
 
 describe("task_await tool", () => {
+  it("includes gitFormatPatch artifacts written during waitForAgentReport", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-artifacts");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const workspaceSessionDir = baseConfig.workspaceSessionDir;
+    if (!workspaceSessionDir) {
+      throw new Error("Expected workspaceSessionDir to be set in test tool config");
+    }
+    const artifactsPath = getSubagentGitPatchArtifactsFilePath(workspaceSessionDir);
+
+    const gitFormatPatch = {
+      childTaskId: "t1",
+      parentWorkspaceId: "parent-workspace",
+      createdAtMs: 123,
+      status: "pending",
+    } as const;
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => true),
+      waitForAgentReport: mock(async (taskId: string) => {
+        await fs.promises.writeFile(
+          artifactsPath,
+          JSON.stringify(
+            {
+              version: 1,
+              artifactsByChildTaskId: { [taskId]: gitFormatPatch },
+            },
+            null,
+            2
+          ),
+          "utf-8"
+        );
+
+        return { reportMarkdown: "ok" };
+      }),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["t1"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "t1",
+          reportMarkdown: "ok",
+          title: undefined,
+          artifacts: { gitFormatPatch },
+        },
+      ],
+    });
+  });
   it("returns completed results for all awaited tasks", async () => {
     using tempDir = new TestTempDir("test-task-await-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

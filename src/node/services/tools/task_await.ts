@@ -1,7 +1,7 @@
 import { tool } from "ai";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import { readSubagentGitPatchArtifactsFile } from "@/node/services/subagentGitPatchArtifacts";
+import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
 import { TaskAwaitToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { fromBashTaskId, toBashTaskId } from "./taskId";
@@ -64,10 +64,13 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         }
       ).filterDescendantAgentTaskIds;
 
-      const patchArtifactsByChildTaskId = config.workspaceSessionDir
-        ? (await readSubagentGitPatchArtifactsFile(config.workspaceSessionDir))
-            .artifactsByChildTaskId
-        : null;
+      // Read patch artifacts lazily (after waiting) to avoid stale results. Patch generation is
+      // started after `resolveWaiters` in `handleAgentReport`, so reading once up-front can miss
+      // artifacts that appear while we're awaiting reports.
+      const readGitFormatPatchArtifact = async (childTaskId: string) => {
+        if (!config.workspaceSessionDir) return null;
+        return await readSubagentGitPatchArtifact(config.workspaceSessionDir, childTaskId);
+      };
       const descendantAgentTaskIdSet = new Set(
         typeof bulkFilter === "function"
           ? bulkFilter.call(taskService, workspaceId, agentTaskIds)
@@ -164,7 +167,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 requestingWorkspaceId: workspaceId,
               });
 
-              const gitFormatPatch = patchArtifactsByChildTaskId?.[taskId];
+              const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
               return {
                 status: "completed" as const,
                 taskId,
@@ -188,7 +191,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               requestingWorkspaceId: workspaceId,
             });
 
-            const gitFormatPatch = patchArtifactsByChildTaskId?.[taskId];
+            const gitFormatPatch = await readGitFormatPatchArtifact(taskId);
             return {
               status: "completed" as const,
               taskId,
