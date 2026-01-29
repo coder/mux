@@ -15,7 +15,7 @@ const workspaceIdentitySchema = z.object({
     .min(2)
     .max(20)
     .describe(
-      "Codebase area (1-2 words): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config'"
+      "Codebase area (1-2 words, max 15 chars): lowercase, hyphens only, e.g. 'sidebar', 'auth', 'config'"
     ),
   title: z
     .string()
@@ -96,7 +96,7 @@ export async function generateWorkspaceIdentity(
 "${message}"
 
 Requirements:
-- name: The area of the codebase being worked on (1-2 words, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"
+- name: The area of the codebase being worked on (1-2 words, max 15 chars, git-safe: lowercase, hyphens only). Random bytes will be appended for uniqueness, so focus on the area not the specific task. Examples: "sidebar", "auth", "config", "api"
 - title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
       });
 
