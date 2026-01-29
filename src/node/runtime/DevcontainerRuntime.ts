@@ -15,7 +15,7 @@ import type {
   EnsureReadyOptions,
   FileStat,
 } from "./Runtime";
-import { RuntimeError } from "./Runtime";
+import { RuntimeError, WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import { WorktreeManager } from "@/node/worktree/WorktreeManager";
 import { expandTildeForSSH } from "./tildeExpansion";
@@ -33,7 +33,7 @@ import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCod
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
-import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { isGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
 
 export interface DevcontainerRuntimeOptions {
   srcBaseDir: string;
@@ -694,7 +694,25 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     }
 
     const statusSink = options?.statusSink;
-    statusSink?.({ phase: "checking", runtimeType: "devcontainer" });
+    statusSink?.({
+      phase: "checking",
+      runtimeType: "devcontainer",
+      detail: "Checking repository...",
+    });
+
+    const hasRepo = await isGitRepository(this.currentWorkspacePath);
+    if (!hasRepo) {
+      statusSink?.({
+        phase: "error",
+        runtimeType: "devcontainer",
+        detail: WORKSPACE_REPO_MISSING_ERROR,
+      });
+      return {
+        ready: false,
+        error: WORKSPACE_REPO_MISSING_ERROR,
+        errorType: "runtime_not_ready",
+      };
+    }
 
     try {
       statusSink?.({

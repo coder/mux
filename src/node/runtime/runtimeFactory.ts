@@ -138,7 +138,10 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       // or new "local" without srcBaseDir (= project-dir semantics)
       if (hasSrcBaseDir(config)) {
         // Legacy: "local" with srcBaseDir is treated as worktree
-        return new WorktreeRuntime(config.srcBaseDir);
+        return new WorktreeRuntime(config.srcBaseDir, {
+          projectPath: options?.projectPath,
+          workspaceName: options?.workspaceName,
+        });
       }
       // Project-dir: uses project path directly, no isolation
       if (!options?.projectPath) {
@@ -149,7 +152,10 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
       return new LocalRuntime(options.projectPath);
 
     case "worktree":
-      return new WorktreeRuntime(config.srcBaseDir);
+      return new WorktreeRuntime(config.srcBaseDir, {
+        projectPath: options?.projectPath,
+        workspaceName: options?.workspaceName,
+      });
 
     case "ssh": {
       const sshConfig = {
@@ -170,10 +176,16 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
         if (!coderService) {
           throw new Error("Coder runtime requested but CoderService is not initialized");
         }
-        return new CoderSSHRuntime({ ...sshConfig, coder: config.coder }, transport, coderService);
+        return new CoderSSHRuntime({ ...sshConfig, coder: config.coder }, transport, coderService, {
+          projectPath: options?.projectPath,
+          workspaceName: options?.workspaceName,
+        });
       }
 
-      return new SSHRuntime(sshConfig, transport);
+      return new SSHRuntime(sshConfig, transport, {
+        projectPath: options?.projectPath,
+        workspaceName: options?.workspaceName,
+      });
     }
 
     case "docker": {

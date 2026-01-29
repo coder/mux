@@ -18,6 +18,8 @@
 import { spawn, type ChildProcess } from "child_process";
 import * as path from "path";
 import type {
+  EnsureReadyOptions,
+  EnsureReadyResult,
   ExecOptions,
   WorkspaceCreationParams,
   WorkspaceCreationResult,
@@ -27,6 +29,7 @@ import type {
   WorkspaceForkResult,
   InitLogger,
 } from "./Runtime";
+import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
 import { checkInitHookExists, getMuxEnv, runInitHookOnRuntime } from "./initHook";
@@ -142,15 +145,26 @@ export type { SSHRuntimeConfig } from "./sshConnectionPool";
 export class SSHRuntime extends RemoteRuntime {
   private readonly config: SSHRuntimeConfig;
   private readonly transport: SSHTransport;
+  private readonly ensureReadyProjectPath?: string;
+  private readonly ensureReadyWorkspaceName?: string;
   /** Cached resolved bgOutputDir (tilde expanded to absolute path) */
   private resolvedBgOutputDir: string | null = null;
 
-  constructor(config: SSHRuntimeConfig, transport: SSHTransport) {
+  constructor(
+    config: SSHRuntimeConfig,
+    transport: SSHTransport,
+    options?: {
+      projectPath?: string;
+      workspaceName?: string;
+    }
+  ) {
     super();
     // Note: srcBaseDir may contain tildes - they will be resolved via resolvePath() before use
     // The WORKSPACE_CREATE IPC handler resolves paths before storing in config
     this.config = config;
     this.transport = transport;
+    this.ensureReadyProjectPath = options?.projectPath;
+    this.ensureReadyWorkspaceName = options?.workspaceName;
   }
 
   /**
@@ -290,6 +304,126 @@ export class SSHRuntime extends RemoteRuntime {
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     const projectName = getProjectName(projectPath);
     return path.posix.join(this.config.srcBaseDir, projectName, workspaceName);
+  }
+
+  override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
+    const repoCheck = await this.checkWorkspaceRepo(options);
+    if (repoCheck) {
+      if (!repoCheck.ready) {
+        options?.statusSink?.({
+          phase: "error",
+          runtimeType: "ssh",
+          detail: repoCheck.error,
+        });
+        return repoCheck;
+      }
+
+      options?.statusSink?.({ phase: "ready", runtimeType: "ssh" });
+      return { ready: true };
+    }
+
+    return { ready: true };
+  }
+
+  protected async checkWorkspaceRepo(
+    options?: EnsureReadyOptions
+  ): Promise<EnsureReadyResult | null> {
+    if (!this.ensureReadyProjectPath || !this.ensureReadyWorkspaceName) {
+      return null;
+    }
+
+    const statusSink = options?.statusSink;
+    statusSink?.({
+      phase: "checking",
+      runtimeType: "ssh",
+      detail: "Checking repository...",
+    });
+
+    if (options?.signal?.aborted) {
+      return { ready: false, error: "Aborted", errorType: "runtime_start_failed" };
+    }
+
+    const workspacePath = this.getWorkspacePath(
+      this.ensureReadyProjectPath,
+      this.ensureReadyWorkspaceName
+    );
+    const gitDir = path.posix.join(workspacePath, ".git");
+
+    let testResult: { exitCode: number; stderr: string };
+    try {
+      testResult = await execBuffered(this, `test -d ${this.quoteForRemote(gitDir)}`, {
+        cwd: "~",
+        timeout: 10,
+        abortSignal: options?.signal,
+      });
+    } catch (error) {
+      return {
+        ready: false,
+        error: `Failed to reach SSH host: ${getErrorMessage(error)}`,
+        errorType: "runtime_start_failed",
+      };
+    }
+
+    if (testResult.exitCode !== 0) {
+      if (this.transport.isConnectionFailure(testResult.exitCode, testResult.stderr)) {
+        return {
+          ready: false,
+          error: `Failed to reach SSH host: ${testResult.stderr || "connection failure"}`,
+          errorType: "runtime_start_failed",
+        };
+      }
+
+      return {
+        ready: false,
+        error: WORKSPACE_REPO_MISSING_ERROR,
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    let revResult: { exitCode: number; stderr: string; stdout: string };
+    try {
+      revResult = await execBuffered(
+        this,
+        `git -C ${this.quoteForRemote(workspacePath)} rev-parse --git-dir`,
+        {
+          cwd: "~",
+          timeout: 10,
+          abortSignal: options?.signal,
+        }
+      );
+    } catch (error) {
+      return {
+        ready: false,
+        error: `Failed to verify repository: ${getErrorMessage(error)}`,
+        errorType: "runtime_start_failed",
+      };
+    }
+
+    if (revResult.exitCode !== 0) {
+      const stderr = revResult.stderr.trim();
+      const stdout = revResult.stdout.trim();
+      const errorDetail = stderr || stdout || "git unavailable";
+      const isCommandMissing =
+        revResult.exitCode === 127 || /command not found/i.test(stderr || stdout);
+      if (
+        isCommandMissing ||
+        this.transport.isConnectionFailure(revResult.exitCode, revResult.stderr)
+      ) {
+        return {
+          ready: false,
+          error: `Failed to verify repository: ${errorDetail}`,
+          errorType: "runtime_start_failed",
+        };
+      }
+
+      return {
+        ready: false,
+        error: WORKSPACE_REPO_MISSING_ERROR,
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    return { ready: true };
   }
 
   /**

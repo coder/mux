@@ -1,4 +1,6 @@
 import type {
+  EnsureReadyOptions,
+  EnsureReadyResult,
   WorkspaceCreationParams,
   WorkspaceCreationResult,
   WorkspaceInitParams,
@@ -6,8 +8,10 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
 } from "./Runtime";
+import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isGitRepository } from "@/node/utils/pathUtils";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 
 /**
@@ -36,6 +40,32 @@ export class LocalRuntime extends LocalBaseRuntime {
    */
   getWorkspacePath(_projectPath: string, _workspaceName: string): string {
     return this.projectPath;
+  }
+
+  override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
+    const statusSink = options?.statusSink;
+    statusSink?.({
+      phase: "checking",
+      runtimeType: "local",
+      detail: "Checking repository...",
+    });
+
+    const hasRepo = await isGitRepository(this.projectPath);
+    if (!hasRepo) {
+      statusSink?.({
+        phase: "error",
+        runtimeType: "local",
+        detail: WORKSPACE_REPO_MISSING_ERROR,
+      });
+      return {
+        ready: false,
+        error: WORKSPACE_REPO_MISSING_ERROR,
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    statusSink?.({ phase: "ready", runtimeType: "local" });
+    return { ready: true };
   }
 
   /**

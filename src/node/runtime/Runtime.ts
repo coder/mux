@@ -327,6 +327,11 @@ export type EnsureReadyResult =
     };
 
 /**
+ * Shared error message for missing repositories during runtime readiness checks.
+ */
+export const WORKSPACE_REPO_MISSING_ERROR = "Workspace setup incomplete: repository not found.";
+
+/**
  * Runtime interface - minimal, low-level abstraction for tool execution environments.
  *
  * All methods return streaming primitives for memory efficiency.

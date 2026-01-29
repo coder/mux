@@ -1,4 +1,6 @@
 import type {
+  EnsureReadyOptions,
+  EnsureReadyResult,
   WorkspaceCreationParams,
   WorkspaceCreationResult,
   WorkspaceInitParams,
@@ -6,9 +8,11 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
 } from "./Runtime";
+import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isGitRepository } from "@/node/utils/pathUtils";
 import { WorktreeManager } from "@/node/worktree/WorktreeManager";
 
 /**
@@ -21,14 +25,55 @@ import { WorktreeManager } from "@/node/worktree/WorktreeManager";
  */
 export class WorktreeRuntime extends LocalBaseRuntime {
   private readonly worktreeManager: WorktreeManager;
+  private readonly currentProjectPath?: string;
+  private readonly currentWorkspaceName?: string;
 
-  constructor(srcBaseDir: string) {
+  constructor(
+    srcBaseDir: string,
+    options?: {
+      projectPath?: string;
+      workspaceName?: string;
+    }
+  ) {
     super();
     this.worktreeManager = new WorktreeManager(srcBaseDir);
+    this.currentProjectPath = options?.projectPath;
+    this.currentWorkspaceName = options?.workspaceName;
   }
 
   getWorkspacePath(projectPath: string, workspaceName: string): string {
     return this.worktreeManager.getWorkspacePath(projectPath, workspaceName);
+  }
+
+  override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
+    if (!this.currentProjectPath || !this.currentWorkspaceName) {
+      return { ready: true };
+    }
+
+    const statusSink = options?.statusSink;
+    statusSink?.({
+      phase: "checking",
+      runtimeType: "worktree",
+      detail: "Checking repository...",
+    });
+
+    const workspacePath = this.getWorkspacePath(this.currentProjectPath, this.currentWorkspaceName);
+    const hasRepo = await isGitRepository(workspacePath);
+    if (!hasRepo) {
+      statusSink?.({
+        phase: "error",
+        runtimeType: "worktree",
+        detail: WORKSPACE_REPO_MISSING_ERROR,
+      });
+      return {
+        ready: false,
+        error: WORKSPACE_REPO_MISSING_ERROR,
+        errorType: "runtime_not_ready",
+      };
+    }
+
+    statusSink?.({ phase: "ready", runtimeType: "worktree" });
+    return { ready: true };
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
