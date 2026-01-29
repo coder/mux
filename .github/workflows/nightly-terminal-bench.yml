@@ -35,7 +35,7 @@ jobs:
   # These validate that mux can run inside the dataset's repo checkout (MUX_RUNTIME=local)
   # and that we target the verifier's expected working directory (MUX_PROJECT_PATH).
   swebench-verified-smoke-test:
-    name: Smoke test (swebench-verified: django__django-10097)
+    name: "Smoke test (swebench-verified: django__django-10097)"
     needs: smoke-test
     uses: ./.github/workflows/terminal-bench.yml
     with:
@@ -52,7 +52,7 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
   swe-gen-js-smoke-test:
-    name: Smoke test (swe-gen-js: biomejs__biome-7314)
+    name: "Smoke test (swe-gen-js: biomejs__biome-7314)"
     needs: smoke-test
     uses: ./.github/workflows/terminal-bench.yml
     with:
@@ -69,7 +69,7 @@ jobs:
     secrets: inherit # zizmor: ignore[secrets-inherit]
 
   aider-polyglot-smoke-test:
-    name: Smoke test (aider-polyglot: polyglot_cpp_all-your-base)
+    name: "Smoke test (aider-polyglot: polyglot_cpp_all-your-base)"
     needs: smoke-test
     uses: ./.github/workflows/terminal-bench.yml
     with:

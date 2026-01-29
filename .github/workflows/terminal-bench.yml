@@ -114,14 +114,6 @@ on:
         description: "Maximum number of tasks to run (for faster iteration)"
         required: false
         type: string
-      mux_project_path:
-        description: "Project path inside the task container (e.g., /testbed, /app/src)"
-        required: false
-        type: string
-      mux_runtime:
-        description: "Mux runtime override passed to mux-run.sh (e.g., local)"
-        required: false
-        type: string
 
 jobs:
   benchmark:
