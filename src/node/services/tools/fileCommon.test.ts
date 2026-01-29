@@ -147,6 +147,25 @@ describe("fileCommon", () => {
       const result = validatePathInCwd("../outside.ts", cwdWithSlash, runtime);
       expect(result).not.toBeNull();
     });
+
+    it("should reject tilde paths outside cwd", () => {
+      // Tilde paths expand to home directory, which is outside /workspace/project
+      const result = validatePathInCwd("~/other-project/file.ts", cwd, runtime);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("restricted to the workspace directory");
+    });
+
+    it("should reject tilde paths to sensitive files", () => {
+      const result = validatePathInCwd("~/.ssh/id_rsa", cwd, runtime);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("restricted to the workspace directory");
+    });
+
+    it("should reject bare tilde path", () => {
+      const result = validatePathInCwd("~", cwd, runtime);
+      expect(result).not.toBeNull();
+      expect(result?.error).toContain("restricted to the workspace directory");
+    });
   });
 
   describe("validateNoRedundantPrefix", () => {

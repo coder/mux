@@ -3,6 +3,7 @@ import assert from "@/common/utils/assert";
 import { createPatch } from "diff";
 import type { FileStat, Runtime } from "@/node/runtime/Runtime";
 import { SSHRuntime } from "@/node/runtime/SSHRuntime";
+import { expandTilde } from "@/node/runtime/tildeExpansion";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 
 /**
@@ -216,13 +217,19 @@ export function validatePathInCwd(
     assert(path.isAbsolute(dir), `extraAllowedDir must be an absolute path: '${dir}'`);
   }
 
-  const filePathIsAbsolute = path.isAbsolute(filePath);
+  // Expand tildes FIRST so we validate the actual destination path.
+  // Without this, ~/outside/file.ts would be treated as a relative path
+  // (path.isAbsolute('~/...') returns false) and incorrectly pass validation.
+  const expandedPath = expandTilde(filePath);
+  const filePathIsAbsolute = path.isAbsolute(expandedPath);
 
   // Only allow extraAllowedDirs when the caller provides an absolute path.
   // This prevents relative-path escapes (e.g., ../...) from bypassing cwd restrictions.
 
   // Resolve the path (handles relative paths and normalizes)
-  const resolvedPath = filePathIsAbsolute ? path.resolve(filePath) : path.resolve(cwd, filePath);
+  const resolvedPath = filePathIsAbsolute
+    ? path.resolve(expandedPath)
+    : path.resolve(cwd, expandedPath);
 
   const allowedRoots = [cwd, ...(filePathIsAbsolute ? trimmedExtraAllowedDirs : [])].map((dir) =>
     path.resolve(dir)
