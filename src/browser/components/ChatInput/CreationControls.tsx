@@ -393,7 +393,7 @@ export function CreationControls(props: CreationControlsProps) {
             <TooltipContent align="start">{props.projectPath}</TooltipContent>
           </Tooltip>
         )}
-        <span className="text-muted-foreground mx-2 text-lg">/</span>
+        <span className="text-muted-foreground mr-0.5 ml-2 text-lg">/</span>
 
         {/* Name input with magic wand */}
         <div className="flex items-center gap-1">
@@ -408,7 +408,7 @@ export function CreationControls(props: CreationControlsProps) {
                 placeholder={nameState.isGenerating ? "Generating..." : "workspace-name"}
                 disabled={props.disabled}
                 className={cn(
-                  `border-border-medium focus:border-accent h-7 rounded-md
+                  `border-border-medium focus:border-accent h-7 rounded-md px-1.5
                    border border-transparent bg-transparent text-lg font-semibold 
                    field-sizing-content focus:border focus:bg-bg-dark focus:outline-none 
                    disabled:opacity-50 max-w-[50vw] sm:max-w-[40vw] lg:max-w-[30vw]`,
@@ -451,9 +451,6 @@ export function CreationControls(props: CreationControlsProps) {
           )}
         </div>
 
-        {/* Error display */}
-        {nameState.error && <span className="text-xs text-red-500">{nameState.error}</span>}
-
         {/* Section selector - right-aligned, same row as workspace name */}
         {props.sections && props.sections.length > 0 && props.onSectionChange && (
           <>
@@ -467,6 +464,9 @@ export function CreationControls(props: CreationControlsProps) {
           </>
         )}
       </div>
+
+      {/* Validation error - own line below name row */}
+      {nameState.error && <div className="-mt-2 text-xs text-red-500">{nameState.error}</div>}
 
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">

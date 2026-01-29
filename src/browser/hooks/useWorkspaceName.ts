@@ -5,6 +5,7 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getWorkspaceNameStateKey } from "@/common/constants/storage";
 import { useGateway, formatAsGatewayModel } from "./useGatewayModels";
 import { getKnownModel } from "@/common/constants/knownModels";
+import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
 /** Small/fast models preferred for name generation */
 const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
@@ -354,8 +355,13 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
   const setNameManual = useCallback(
     (newName: string) => {
       setStored((prev) => ({ ...prev, manualName: newName }));
-      // Clear error when user starts typing
-      setError(null);
+      // Validate in real-time as user types (skip empty - will show on submit)
+      if (newName.trim()) {
+        const validation = validateWorkspaceName(newName);
+        setError(validation.error ?? null);
+      } else {
+        setError(null);
+      }
     },
     [setStored]
   );
