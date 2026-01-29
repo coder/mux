@@ -116,31 +116,34 @@ export const ChatInputToast: React.FC<ChatInputToastProps> = ({
       role={toast.type === "error" ? "alert" : "status"}
       aria-live={toast.type === "error" ? "assertive" : "polite"}
       className={cn(
-        "px-3 py-1.5 rounded text-xs flex items-center gap-1.5 shadow-[0_4px_12px_rgba(0,0,0,0.3)]",
+        "px-3 py-2 rounded text-xs shadow-[0_4px_12px_rgba(0,0,0,0.3)]",
         isLeaving
           ? "animate-[toastFadeOut_0.2s_ease-out_forwards]"
           : "animate-[toastSlideIn_0.2s_ease-out]",
         toastTypeStyles[toast.type]
       )}
     >
-      {toast.type === "success" ? (
-        <Check aria-hidden="true" className="h-4 w-4 shrink-0" />
-      ) : (
-        <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0" />
-      )}
-      <div className="flex-1">
-        {toast.title && <div className="mb-px text-[11px] font-semibold">{toast.title}</div>}
-        <div className="opacity-90">{toast.message}</div>
+      {/* Header row: icon + optional title + dismiss */}
+      <div className="flex items-center gap-2">
+        {toast.type === "success" ? (
+          <Check aria-hidden="true" className="h-4 w-4 shrink-0" />
+        ) : (
+          <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0" />
+        )}
+        {toast.title && <span className="flex-1 text-[11px] font-semibold">{toast.title}</span>}
+        {!toast.title && <span className="flex-1" />}
+        {toast.type === "error" && (
+          <button
+            onClick={handleDismiss}
+            aria-label="Dismiss"
+            className="flex h-4 w-4 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-base leading-none text-inherit opacity-60 transition-opacity hover:opacity-100"
+          >
+            ×
+          </button>
+        )}
       </div>
-      {toast.type === "error" && (
-        <button
-          onClick={handleDismiss}
-          aria-label="Dismiss"
-          className="flex h-4 w-4 cursor-pointer items-center justify-center border-0 bg-transparent p-0 text-base leading-none text-inherit opacity-60 transition-opacity hover:opacity-100"
-        >
-          ×
-        </button>
-      )}
+      {/* Message on its own line */}
+      <div className="mt-1.5 opacity-90">{toast.message}</div>
     </div>
   );
 
