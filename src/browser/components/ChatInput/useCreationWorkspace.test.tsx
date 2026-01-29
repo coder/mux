@@ -12,6 +12,7 @@ import {
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { RuntimeMode, ParsedRuntime } from "@/common/types/runtime";
+import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
@@ -710,7 +711,7 @@ function createDraftSettingsHarness(
     selectedRuntime: ParsedRuntime;
     trunkBranch: string;
     runtimeString?: string | undefined;
-    defaultRuntimeMode?: RuntimeMode;
+    defaultRuntimeMode?: RuntimeChoice;
   }>
 ) {
   const state = {
@@ -720,7 +721,7 @@ function createDraftSettingsHarness(
     runtimeString: initial?.runtimeString,
   } satisfies {
     selectedRuntime: ParsedRuntime;
-    defaultRuntimeMode: RuntimeMode;
+    defaultRuntimeMode: RuntimeChoice;
     trunkBranch: string;
     runtimeString: string | undefined;
   };

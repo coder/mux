@@ -5,7 +5,7 @@ import {
   type ParsedRuntime,
   CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
-import { type RuntimeAvailabilityState } from "./useCreationWorkspace";
+import type { RuntimeAvailabilityMap, RuntimeAvailabilityState } from "./useCreationWorkspace";
 import {
   resolveDevcontainerSelection,
   DEFAULT_DEVCONTAINER_CONFIG_PATH,
@@ -49,7 +49,7 @@ interface CreationControlsProps {
   onTrunkBranchChange: (branch: string) => void;
   /** Currently selected runtime (discriminated union: SSH has host, Docker has image) */
   selectedRuntime: ParsedRuntime;
-  defaultRuntimeMode: RuntimeMode;
+  defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
   onSetDefaultRuntime: (mode: RuntimeMode) => void;
@@ -78,7 +78,7 @@ interface CreationControlsProps {
 interface RuntimeButtonGroupProps {
   value: RuntimeChoice;
   onChange: (mode: RuntimeChoice) => void;
-  defaultMode: RuntimeMode;
+  defaultMode: RuntimeChoice;
   onSetDefault: (mode: RuntimeMode) => void;
   disabled?: boolean;
   runtimeAvailabilityState?: RuntimeAvailabilityState;
@@ -115,6 +115,33 @@ const RUNTIME_CHOICE_OPTIONS: Array<{
     idleClass: ui.button.idleClass,
   };
 });
+
+interface RuntimeButtonState {
+  isModeDisabled: boolean;
+  disabledReason?: string;
+  isDefault: boolean;
+}
+
+const resolveRuntimeButtonState = (
+  value: RuntimeChoice,
+  availabilityMap: RuntimeAvailabilityMap | null,
+  defaultMode: RuntimeChoice
+): RuntimeButtonState => {
+  // Coder is SSH under the hood; all other RuntimeChoice values are RuntimeMode identity.
+  const availabilityKey = value === "coder" ? RUNTIME_MODE.SSH : value;
+  const availability = availabilityMap?.[availabilityKey];
+  // Disable only if availability is explicitly known and unavailable.
+  // When availability is undefined (loading or fetch failed), allow selection
+  // as fallback - the config picker will validate before creation.
+  const isModeDisabled = availability !== undefined && !availability.available;
+  const disabledReason = availability && !availability.available ? availability.reason : undefined;
+
+  return {
+    isModeDisabled,
+    disabledReason,
+    isDefault: defaultMode === value,
+  };
+};
 
 /** Aesthetic section picker with color accent */
 interface SectionPickerProps {
@@ -194,43 +221,24 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   // Match devcontainer UX: only surface Coder once availability is confirmed (no flash).
   const hideCoder = !coderAvailability.shouldShowRuntimeButton;
 
-  const runtimeOptions = RUNTIME_CHOICE_OPTIONS.filter((option) => {
-    if (option.value === RUNTIME_MODE.DEVCONTAINER) {
-      return !hideDevcontainer;
-    }
-    if (option.value === "coder") {
-      return !hideCoder;
-    }
-    return true;
-  });
+  const runtimeVisibilityOverrides: Partial<Record<RuntimeChoice, boolean>> = {
+    [RUNTIME_MODE.DEVCONTAINER]: !hideDevcontainer,
+    coder: !hideCoder,
+  };
+
+  const runtimeOptions = RUNTIME_CHOICE_OPTIONS.filter(
+    (option) => runtimeVisibilityOverrides[option.value] ?? true
+  );
 
   return (
     <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
-        let isDefault = false;
-        let isModeDisabled = false;
-        let disabledReason: string | undefined;
-
-        if (option.value !== "coder") {
-          const availability = availabilityMap?.[option.value];
-          // Disable only if availability is explicitly known and unavailable.
-          // When availability is undefined (loading or fetch failed), allow selection
-          // as fallback - the config picker will validate before creation.
-          isModeDisabled = availability !== undefined && !availability.available;
-          disabledReason =
-            availability && !availability.available ? availability.reason : undefined;
-          isDefault = props.defaultMode === option.value;
-        } else {
-          // Coder requires git (like worktree/SSH/Docker/devcontainer)
-          const worktreeAvail = availabilityMap?.worktree;
-          if (worktreeAvail && !worktreeAvail.available) {
-            isModeDisabled = true;
-            disabledReason = worktreeAvail.reason;
-          }
-          // Coder default = SSH default + Coder currently selected
-          isDefault = props.defaultMode === RUNTIME_MODE.SSH && props.value === "coder";
-        }
+        const { isModeDisabled, disabledReason, isDefault } = resolveRuntimeButtonState(
+          option.value,
+          availabilityMap,
+          props.defaultMode
+        );
 
         const Icon = option.Icon;
 
@@ -305,10 +313,6 @@ export function CreationControls(props: CreationControlsProps) {
   const isCoderSelected =
     selectedRuntime.mode === RUNTIME_MODE.SSH && selectedRuntime.coder != null;
   const runtimeChoice: RuntimeChoice = isCoderSelected ? "coder" : runtimeMode;
-
-  // Coder is "default" when default mode is SSH and Coder is currently selected
-  // (the Coder config is separately persisted, so SSH default + Coder config = Coder default)
-  const isCoderDefault = props.defaultRuntimeMode === RUNTIME_MODE.SSH && isCoderSelected;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const availabilityMap =
