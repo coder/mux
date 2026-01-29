@@ -8,7 +8,6 @@ import {
   getPendingScopeId,
   getPendingWorkspaceSendErrorKey,
   getProjectScopeId,
-  getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { RuntimeMode, ParsedRuntime } from "@/common/types/runtime";
@@ -697,9 +696,8 @@ describe("useCreationWorkspace", () => {
     await waitFor(() => expect(getHook().toast?.message).toBe("backend exploded"));
     await waitFor(() => expect(getHook().isSending).toBe(false));
 
-    // Side effect: send-options reader may migrate thinking level into the project scope.
-    const thinkingKey = getThinkingLevelKey(getProjectScopeId(TEST_PROJECT_PATH));
-    expect(updatePersistedStateCalls).toEqual([[thinkingKey, "off"]]);
+    // No side effects expected - migration only happens when legacy per-model key exists.
+    expect(updatePersistedStateCalls).toEqual([]);
   });
 });
 
