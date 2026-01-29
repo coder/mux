@@ -203,7 +203,7 @@ interface DraftWorkspaceListItemWrapperProps {
 
 // Debounce delay for sidebar preview updates during typing.
 // Prevents constant re-renders while still providing timely feedback.
-const DRAFT_PREVIEW_DEBOUNCE_MS = 300;
+const DRAFT_PREVIEW_DEBOUNCE_MS = 1000;
 
 function DraftWorkspaceListItemWrapper(props: DraftWorkspaceListItemWrapperProps) {
   const scopeId = getDraftScopeId(props.projectPath, props.draftId);
