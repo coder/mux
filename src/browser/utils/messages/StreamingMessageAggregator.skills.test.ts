@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
+import { createMuxMessage } from "@/common/types/message";
 
 const TEST_CREATED_AT = "2024-01-01T00:00:00.000Z";
 const WORKSPACE_ID = "test-workspace";
@@ -70,6 +71,65 @@ describe("Loaded skills tracking", () => {
       description: "Testing doctrine and conventions",
       scope: "project",
     });
+  });
+
+  it("tracks skills from agentSkillSnapshot messages via handleMessage", () => {
+    const agg = createAggregator();
+
+    const snapshot = createMuxMessage(
+      "snapshot-1",
+      "user",
+      '<agent-skill name="pull-requests" scope="project">\n# Content\n</agent-skill>',
+      {
+        timestamp: Date.now(),
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: "pull-requests",
+          scope: "project",
+          sha256: "deadbeef",
+        },
+      }
+    );
+
+    agg.handleMessage({ ...snapshot, type: "message" });
+
+    expect(agg.getLoadedSkills()).toEqual([
+      {
+        name: "pull-requests",
+        description: "(loaded via /pull-requests)",
+        scope: "project",
+      },
+    ]);
+  });
+
+  it("tracks skills from agentSkillSnapshot during loadHistoricalMessages replay", () => {
+    const agg = createAggregator();
+
+    const snapshot = createMuxMessage(
+      "snapshot-1",
+      "user",
+      '<agent-skill name="pull-requests" scope="project">\n# Content\n</agent-skill>',
+      {
+        historySequence: 1,
+        timestamp: Date.now(),
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: "pull-requests",
+          scope: "project",
+          sha256: "deadbeef",
+        },
+      }
+    );
+
+    agg.loadHistoricalMessages([snapshot]);
+
+    expect(agg.getLoadedSkills()).toEqual([
+      {
+        name: "pull-requests",
+        description: "(loaded via /pull-requests)",
+        scope: "project",
+      },
+    ]);
   });
 
   it("deduplicates skills by name", () => {

@@ -52,6 +52,14 @@ const AgentStatusSchema = z.object({
   url: z.string().optional(),
 });
 
+// Synthetic agent-skill snapshot messages include metadata.agentSkillSnapshot.
+// We use this to keep the SkillIndicator in sync for /{skillName} invocations.
+const AgentSkillSnapshotMetadataSchema = z.object({
+  skillName: z.string().min(1),
+  scope: z.enum(["project", "global", "built-in"]),
+  sha256: z.string().optional(),
+});
+
 /** Re-export for consumers that need the loaded skill type */
 export type LoadedSkill = AgentSkillDescriptor;
 
@@ -757,6 +765,8 @@ export class StreamingMessageAggregator {
 
     // Replay historical messages in order to reconstruct derived state
     for (const message of chronologicalMessages) {
+      this.maybeTrackLoadedSkillFromAgentSkillSnapshot(message.metadata?.agentSkillSnapshot);
+
       if (message.role === "user") {
         // Mirror live behavior: clear stream-scoped state on new user turn
         // but keep persisted status for fallback on reload.
@@ -1480,6 +1490,42 @@ export class StreamingMessageAggregator {
     // Tool deltas are for display - args are in dynamic-tool part
   }
 
+  private trackLoadedSkill(skill: LoadedSkill): void {
+    const existing = this.loadedSkills.get(skill.name);
+    if (
+      existing &&
+      existing.name === skill.name &&
+      existing.description === skill.description &&
+      existing.scope === skill.scope
+    ) {
+      return;
+    }
+
+    this.loadedSkills.set(skill.name, skill);
+    // Preserve a stable array reference for getLoadedSkills(): only replace when it changes.
+    this.loadedSkillsCache = Array.from(this.loadedSkills.values());
+  }
+
+  private maybeTrackLoadedSkillFromAgentSkillSnapshot(snapshot: unknown): void {
+    const parsed = AgentSkillSnapshotMetadataSchema.safeParse(snapshot);
+    if (!parsed.success) {
+      return;
+    }
+
+    const { skillName, scope } = parsed.data;
+
+    // Don't override an existing entry (e.g. from agent_skill_read) with a placeholder description.
+    if (this.loadedSkills.has(skillName)) {
+      return;
+    }
+
+    this.trackLoadedSkill({
+      name: skillName,
+      description: `(loaded via /${skillName})`,
+      scope,
+    });
+  }
+
   /**
    * Process a completed tool call's result to update derived state.
    * Called for both live tool-call-end events and historical tool parts.
@@ -1553,16 +1599,11 @@ export class StreamingMessageAggregator {
         };
       };
       const skill = result.skill;
-      const prevSize = this.loadedSkills.size;
-      this.loadedSkills.set(skill.directoryName, {
+      this.trackLoadedSkill({
         name: skill.frontmatter.name,
         description: skill.frontmatter.description,
         scope: skill.scope,
       });
-      // Update cache only when a new skill is added (not on duplicate)
-      if (this.loadedSkills.size !== prevSize) {
-        this.loadedSkillsCache = Array.from(this.loadedSkills.values());
-      }
     }
 
     // Link extraction is derived from message history (see computeLinksFromMessages()).
@@ -1798,6 +1839,10 @@ export class StreamingMessageAggregator {
 
       // Now add the new message
       this.addMessage(incomingMessage);
+
+      this.maybeTrackLoadedSkillFromAgentSkillSnapshot(
+        incomingMessage.metadata?.agentSkillSnapshot
+      );
 
       // If this is a user message, clear derived state and record timestamp
       if (incomingMessage.role === "user") {
