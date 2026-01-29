@@ -12,7 +12,7 @@
  *
  * If no command is given, defaults to: png icns
  */
-import { mkdir, rm, copyFile, writeFile } from "node:fs/promises";
+import { mkdir, rm, copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
@@ -33,6 +33,20 @@ const BUILD_DIR = path.join(ROOT, "build");
 const ICONSET_DIR = path.join(BUILD_DIR, "icon.iconset");
 const PNG_OUTPUT = path.join(BUILD_DIR, "icon.png");
 const ICNS_OUTPUT = path.join(BUILD_DIR, "icon.icns");
+const FAVICON_OUTPUT = path.join(ROOT, "public", "favicon.ico");
+const FAVICON_DARK_OUTPUT = path.join(ROOT, "public", "favicon-dark.ico");
+
+const THEME_FAVICON_STYLE = `<style>
+  :root {
+    color: #000;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color: #fff;
+    }
+  }
+</style>`;
 
 type RasterTargetConfig = {
   size: number;
@@ -61,7 +75,6 @@ const LOGO_TARGETS = {
   "src/browser/assets/icons/mux.svg": { svg: true, source: SOURCE_BLACK },
 
   // Docs (docs.json points at logo-black/logo-white directly to avoid duplicates)
-  "docs/favicon.svg": { svg: true, source: SOURCE_BLACK },
   "docs/img/logo.webp": { size: 512, ...MONO_ICON, format: "webp" },
 
   // PWA / Public Icons (White on Black Background for visibility)
@@ -130,6 +143,16 @@ async function generateFavicon(source: string, output: string) {
   console.warn("  ⚠ ImageMagick not found, favicon.ico is single-resolution");
 }
 
+async function generateThemeFaviconSvg(output: string) {
+  const svg = await readFile(SOURCE_BLACK, "utf8");
+  const withCurrentColor = svg.replace(/fill="(black|white)"/g, 'fill="currentColor"');
+  const themedSvg = withCurrentColor.replace(
+    /<svg[^>]*>/,
+    (match) => `${match}\n${THEME_FAVICON_STYLE}`
+  );
+  await writeFile(output, themedSvg);
+}
+
 async function updateAllLogos() {
   console.log(`Updating all logos...\n`);
 
@@ -146,10 +169,15 @@ async function updateAllLogos() {
     console.log(`✓ ${relativePath}`);
   }
 
-  // Generate favicon.ico (Black on Transparent)
-  const faviconPath = path.join(ROOT, "public", "favicon.ico");
-  await generateFavicon(MONO_ICON.source, faviconPath);
+  const docsFaviconPath = path.join(ROOT, "docs", "favicon.svg");
+  await generateThemeFaviconSvg(docsFaviconPath);
+  console.log("✓ docs/favicon.svg");
+
+  // Generate favicons (light/dark)
+  await generateFavicon(MONO_ICON.source, FAVICON_OUTPUT);
   console.log(`✓ public/favicon.ico`);
+  await generateFavicon(SOURCE_WHITE, FAVICON_DARK_OUTPUT);
+  console.log(`✓ public/favicon-dark.ico`);
 
   console.log("\n✅ All logos updated successfully!");
 }

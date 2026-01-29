@@ -58,9 +58,31 @@ const THEME_COLORS: Record<ThemeMode, string> = {
   "flexoki-dark": "#100f0f",
 };
 
+const FAVICON_BY_SCHEME: Record<"light" | "dark", string> = {
+  light: "/favicon.ico",
+  dark: "/favicon-dark.ico",
+};
+
 /** Map theme mode to CSS color-scheme value */
 function getColorScheme(theme: ThemeMode): "light" | "dark" {
   return theme === "light" || theme === "flexoki-light" ? "light" : "dark";
+}
+
+function applyThemeFavicon(theme: ThemeMode) {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"][data-theme-icon]');
+  if (!favicon) {
+    return;
+  }
+
+  const scheme = getColorScheme(theme);
+  const nextHref = FAVICON_BY_SCHEME[scheme];
+  if (favicon.getAttribute("href") !== nextHref) {
+    favicon.setAttribute("href", nextHref);
+  }
 }
 
 function resolveSystemTheme(): ThemeMode {
@@ -90,6 +112,8 @@ function applyThemeToDocument(theme: ThemeMode) {
   if (body) {
     body.style.backgroundColor = "var(--color-background)";
   }
+
+  applyThemeFavicon(theme);
 }
 
 export function ThemeProvider({
