@@ -273,12 +273,15 @@ class MuxAgent(BaseInstalledAgent):
         self.populate_context_post_run(context)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
-        """Extract token usage from the token file written by mux-run.sh."""
+        """Extract token usage and cost from the token file written by mux-run.sh."""
         token_file = self.logs_dir / "mux-tokens.json"
         if token_file.exists():
             try:
                 data = json.loads(token_file.read_text())
                 context.n_input_tokens = data.get("input", 0)
                 context.n_output_tokens = data.get("output", 0)
+                # cost_usd is computed by mux CLI from model pricing
+                if data.get("cost_usd") is not None:
+                    context.cost_usd = data["cost_usd"]
             except Exception:
-                pass  # Token extraction is best-effort
+                pass  # Token/cost extraction is best-effort

@@ -9,6 +9,8 @@ This directory contains the mux agent adapter for [Terminal-Bench 2.0](https://t
 
 ## Quick Start
 
+When user asks to run a tbench, generally assume they mean in CI via workflow_dispatch.
+
 ```bash
 # Run full benchmark suite
 make benchmark-terminal
