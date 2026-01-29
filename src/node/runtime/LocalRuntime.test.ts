@@ -3,7 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import { LocalRuntime } from "./LocalRuntime";
-import type { InitLogger } from "./Runtime";
+import type { InitLogger, RuntimeStatusEvent } from "./Runtime";
 
 // Minimal mock logger - matches pattern in initHook.test.ts
 function createMockLogger(): InitLogger & { steps: string[] } {
@@ -48,6 +48,21 @@ describe("LocalRuntime", () => {
       // LocalRuntime stores the path as-is; callers must pass expanded paths
       const runtime = new LocalRuntime("~/my-project");
       expect(runtime.getWorkspacePath("", "")).toBe("~/my-project");
+    });
+  });
+
+  describe("ensureReady", () => {
+    it("allows non-git project directories to be ready", async () => {
+      const runtime = new LocalRuntime(testDir);
+      const events: RuntimeStatusEvent[] = [];
+
+      const result = await runtime.ensureReady({
+        statusSink: (event) => events.push(event),
+      });
+
+      expect(result).toEqual({ ready: true });
+      expect(events[0]).toMatchObject({ phase: "checking", runtimeType: "local" });
+      expect(events[events.length - 1]).toMatchObject({ phase: "ready", runtimeType: "local" });
     });
   });
 

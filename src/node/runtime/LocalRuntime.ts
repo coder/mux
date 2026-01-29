@@ -8,10 +8,8 @@ import type {
   WorkspaceForkParams,
   WorkspaceForkResult,
 } from "./Runtime";
-import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { checkInitHookExists, getMuxEnv } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
-import { isGitRepository } from "@/node/utils/pathUtils";
 import { LocalBaseRuntime } from "./LocalBaseRuntime";
 
 /**
@@ -42,7 +40,7 @@ export class LocalRuntime extends LocalBaseRuntime {
     return this.projectPath;
   }
 
-  override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
+  override ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
     const statusSink = options?.statusSink;
     statusSink?.({
       phase: "checking",
@@ -50,22 +48,10 @@ export class LocalRuntime extends LocalBaseRuntime {
       detail: "Checking repository...",
     });
 
-    const hasRepo = await isGitRepository(this.projectPath);
-    if (!hasRepo) {
-      statusSink?.({
-        phase: "error",
-        runtimeType: "local",
-        detail: WORKSPACE_REPO_MISSING_ERROR,
-      });
-      return {
-        ready: false,
-        error: WORKSPACE_REPO_MISSING_ERROR,
-        errorType: "runtime_not_ready",
-      };
-    }
-
+    // Non-git projects are explicitly supported for LocalRuntime; avoid blocking readiness
+    // on missing .git so local-only workflows continue to work.
     statusSink?.({ phase: "ready", runtimeType: "local" });
-    return { ready: true };
+    return Promise.resolve({ ready: true });
   }
 
   /**
