@@ -950,6 +950,58 @@ export function createFailedTaskTool(
   };
 }
 
+/** Create a task_apply_git_patch tool call */
+export function createTaskApplyGitPatchTool(
+  toolCallId: string,
+  opts: {
+    task_id: string;
+    dry_run?: boolean;
+    three_way?: boolean;
+    force?: boolean;
+    output:
+      | {
+          success: true;
+          appliedCommitCount: number;
+          headCommitSha?: string;
+          dryRun?: boolean;
+          note?: string;
+        }
+      | {
+          success: false;
+          error: string;
+          note?: string;
+        };
+  }
+): MuxPart {
+  return {
+    type: "dynamic-tool",
+    toolCallId,
+    toolName: "task_apply_git_patch",
+    state: "output-available",
+    input: {
+      task_id: opts.task_id,
+      dry_run: opts.dry_run,
+      three_way: opts.three_way,
+      force: opts.force,
+    },
+    output: opts.output.success
+      ? {
+          success: true,
+          taskId: opts.task_id,
+          appliedCommitCount: opts.output.appliedCommitCount,
+          headCommitSha: opts.output.headCommitSha,
+          dryRun: opts.output.dryRun,
+          note: opts.output.note,
+        }
+      : {
+          success: false,
+          taskId: opts.task_id,
+          error: opts.output.error,
+          note: opts.output.note,
+        },
+  };
+}
+
 /** Create a task_await tool call */
 export function createTaskAwaitTool(
   toolCallId: string,

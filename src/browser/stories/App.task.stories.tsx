@@ -1,5 +1,5 @@
 /**
- * Storybook stories for task tool components (task, task_await, task_list, task_terminate).
+ * Storybook stories for task tool components (task, task_apply_git_patch, task_await, task_list, task_terminate).
  * Consolidated to capture all visual states in minimal stories.
  */
 
@@ -9,9 +9,11 @@ import { waitForScrollStabilization } from "./storyPlayHelpers";
 import {
   createUserMessage,
   createAssistantMessage,
+  createPendingTool,
   createTaskTool,
   createCompletedTaskTool,
   createFailedTaskTool,
+  createTaskApplyGitPatchTool,
   createTaskAwaitTool,
   createTaskListTool,
   createTaskTerminateTool,
@@ -203,6 +205,62 @@ Found **47 test files** across the project:
       });
     }
   },
+};
+
+/**
+ * task_apply_git_patch states: executing, dry-run success, success, failure.
+ */
+export const TaskApplyGitPatchStates: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("u1", "Apply the patch from task-fe-001", { historySequence: 1 }),
+            createAssistantMessage("a1", "Applying the patch artifact in a few different modes:", {
+              historySequence: 2,
+              toolCalls: [
+                createPendingTool("tc1", "task_apply_git_patch", {
+                  task_id: "task-fe-001",
+                  dry_run: true,
+                  three_way: true,
+                }),
+                createTaskApplyGitPatchTool("tc2", {
+                  task_id: "task-fe-001",
+                  dry_run: true,
+                  three_way: true,
+                  output: {
+                    success: true,
+                    appliedCommitCount: 2,
+                    dryRun: true,
+                    note: "Dry run succeeded; no commits were applied.",
+                  },
+                }),
+                createTaskApplyGitPatchTool("tc3", {
+                  task_id: "task-fe-001",
+                  three_way: true,
+                  output: {
+                    success: true,
+                    appliedCommitCount: 2,
+                    headCommitSha: "d7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9",
+                  },
+                }),
+                createTaskApplyGitPatchTool("tc4", {
+                  task_id: "task-fe-001",
+                  three_way: true,
+                  output: {
+                    success: false,
+                    error: "Working tree is not clean.",
+                    note: "Commit/stash your changes (or pass force=true) before applying patches.",
+                  },
+                }),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
 };
 
 /**

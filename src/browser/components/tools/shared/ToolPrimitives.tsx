@@ -5,6 +5,7 @@ import {
   Bell,
   BookOpen,
   FileText,
+  GitCommit,
   Globe,
   GraduationCap,
   Info,
@@ -216,6 +217,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   web_fetch: Globe,
   web_search: Globe,
   notify: Bell,
+  task_apply_git_patch: GitCommit,
 };
 
 export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, emojiSpin, className }) => {

@@ -32,6 +32,7 @@ import {
   TaskListToolCall,
   TaskTerminateToolCall,
 } from "../TaskToolCall";
+import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
 
 /**
  * Component type that accepts any props. We use this because:
@@ -110,6 +111,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   task_terminate: {
     component: TaskTerminateToolCall,
     schema: TOOL_DEFINITIONS.task_terminate.schema,
+  },
+  task_apply_git_patch: {
+    component: TaskApplyGitPatchToolCall,
+    schema: TOOL_DEFINITIONS.task_apply_git_patch.schema,
   },
   agent_report: {
     component: AgentReportToolCall,
