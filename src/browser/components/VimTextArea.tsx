@@ -8,7 +8,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
-import { CommandHighlightOverlay } from "./CommandHighlightOverlay";
+import { CommandHighlightOverlay, extractCommandPrefix } from "./CommandHighlightOverlay";
 
 /**
  * VimTextArea – minimal Vim-like editing for a textarea.
@@ -183,6 +183,9 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     const pendingCommand = showVimMode ? vim.formatPendingCommand(pendingOp) : "";
     const showFocusHint = !isFocused && !isVscodeWebview();
 
+    // Check if there's a command prefix to highlight
+    const hasCommandPrefix = extractCommandPrefix(value) !== null;
+
     return (
       <div style={{ width: "100%" }} data-component="VimTextAreaContainer">
         <div
@@ -228,7 +231,30 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             </div>
           )}
         </div>
-        <div style={{ position: "relative" }} data-component="VimTextAreaWrapper">
+        {/* 
+          Wrapper owns ALL shared typography (font, size, line-height).
+          Both textarea and highlight overlay inherit from here.
+          This ensures pixel-perfect alignment without duplicating styles.
+          Background is on wrapper so overlay (behind textarea) shows correctly.
+        */}
+        <div
+          className={cn(
+            "relative rounded text-[13px]",
+            vimEnabled ? "font-monospace" : "font-sans",
+            isEditing ? "bg-editing-mode-alpha" : "bg-dark"
+          )}
+          data-component="VimTextAreaWrapper"
+        >
+          {/* 
+            Command highlight overlay - positioned BEHIND textarea.
+            Uses transparent textarea text pattern: overlay shows through
+            the transparent textarea, caret remains visible via caret-color.
+          */}
+          <CommandHighlightOverlay
+            value={value}
+            hasCommand={hasCommandPrefix}
+            className="absolute inset-0 overflow-hidden rounded border border-transparent px-2 py-1.5"
+          />
           <textarea
             ref={textareaRef}
             value={value}
@@ -249,30 +275,40 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
                 ...(trailingAction ? { scrollbarGutter: "stable both-edges" } : {}),
                 // Focus border color from agent definition
                 "--focus-border-color": !isEditing ? focusBorderColor : undefined,
+                // Transparent text pattern: when command is present, make textarea
+                // text invisible so the highlight overlay shows through.
+                // The caret remains visible via caret-color below.
+                WebkitTextFillColor: hasCommandPrefix ? "transparent" : undefined,
               } as React.CSSProperties
             }
             className={cn(
-              "w-full border text-light py-1.5 px-2 rounded text-[13px] resize-none min-h-8 max-h-[50vh] overflow-y-auto",
-              vimEnabled ? "font-monospace" : "font-sans",
+              // Layout & sizing
+              "relative w-full py-1.5 px-2 rounded resize-none min-h-8 max-h-[50vh] overflow-y-auto",
+              // Typography inherited from wrapper, but explicitly set color for non-command state
+              "text-light",
+              // Font inherited from wrapper via `font: inherit` - but we need to repeat for
+              // the CSS cascade since className comes after style inheritance
+              "font-[inherit]",
+              // Border
+              "border",
+              // Background - always transparent so overlay can show through
+              "bg-transparent",
+              // Placeholder
               "placeholder:text-placeholder",
+              // Focus
               "focus:outline-none",
+              // Trailing action padding
               trailingAction && "pr-10",
+              // Border colors based on state
               isEditing
-                ? "bg-editing-mode-alpha border-editing-mode focus:border-editing-mode"
-                : "bg-dark border-border-light focus:border-[var(--focus-border-color)]",
+                ? "border-editing-mode focus:border-editing-mode"
+                : "border-border-light focus:border-[var(--focus-border-color)]",
+              // Caret: always visible (the highlight overlay handles text color)
+              // In vim normal mode, hide caret and show block selection
               vimMode === "normal"
                 ? "caret-transparent selection:bg-white/50"
-                : "caret-current selection:bg-selection",
+                : "caret-light selection:bg-selection",
               rest.className
-            )}
-          />
-          {/* Command highlight overlay - positioned on top of textarea, pointer-events: none allows clicks through */}
-          <CommandHighlightOverlay
-            value={value}
-            vimEnabled={vimEnabled}
-            className={cn(
-              "absolute inset-0 overflow-hidden rounded border border-transparent",
-              vimEnabled ? "font-monospace" : "font-sans"
             )}
           />
           {trailingAction && (
