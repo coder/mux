@@ -117,7 +117,14 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
 
   const thinkingKey = getThinkingLevelKey(workspaceId);
   const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
-  if (existingThinking !== active.thinkingLevel) {
+  const selectedWorkspace = readPersistedState<WorkspaceSelection | null>(
+    SELECTED_WORKSPACE_KEY,
+    null
+  );
+  const isActiveWorkspace = selectedWorkspace?.workspaceId === workspaceId;
+  const shouldSeed = !isActiveWorkspace || existingThinking === undefined;
+  if (shouldSeed && existingThinking !== active.thinkingLevel) {
+    // Preserve local updates for the active workspace; metadata broadcasts can arrive out of order.
     updatePersistedState(thinkingKey, active.thinkingLevel);
   }
 }
