@@ -86,6 +86,7 @@ import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { type MuxFrontendMetadata, prepareUserMessageForSend } from "@/common/types/message";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
+import { CODER_RUNTIME_PLACEHOLDER } from "@/common/types/runtime";
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
@@ -598,12 +599,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const coderState = useCoderWorkspace({
     coderConfig: currentRuntime.mode === "ssh" ? (currentRuntime.coder ?? null) : null,
     onCoderConfigChange: (config) => {
-      if (currentRuntime.mode !== "ssh") return;
+      if (currentRuntime.mode !== "ssh" && config === null) {
+        return;
+      }
+      const baseHost = currentRuntime.mode === "ssh" ? currentRuntime.host : "";
+      const normalizedBaseHost =
+        config === null && baseHost === CODER_RUNTIME_PLACEHOLDER ? "" : baseHost;
       // Compute host from workspace name for "existing" mode.
       // For "new" mode, workspaceName is omitted/undefined and backend derives it later.
       const computedHost = config?.workspaceName
         ? `${config.workspaceName}.coder`
-        : currentRuntime.host;
+        : config
+          ? baseHost.trim()
+            ? baseHost
+            : CODER_RUNTIME_PLACEHOLDER
+          : normalizedBaseHost;
       creationState.setSelectedRuntime({
         mode: "ssh",
         host: computedHost,

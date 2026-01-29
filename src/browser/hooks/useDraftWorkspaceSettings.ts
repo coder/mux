@@ -245,20 +245,20 @@ export function useDraftWorkspaceSettings(
     }
   };
 
+  const defaultRuntime = buildRuntimeForMode(
+    defaultRuntimeMode,
+    defaultSshHost,
+    defaultDockerImage,
+    lastShareCredentials,
+    lastCoderEnabled,
+    lastCoderConfig,
+    defaultDevcontainerConfigPath,
+    lastDevcontainerShareCredentials
+  );
+
   // Currently selected runtime for this session (initialized from default)
   // Uses discriminated union: SSH has host, Docker has image
-  const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() =>
-    buildRuntimeForMode(
-      defaultRuntimeMode,
-      defaultSshHost,
-      defaultDockerImage,
-      lastShareCredentials,
-      lastCoderEnabled,
-      lastCoderConfig,
-      defaultDevcontainerConfigPath,
-      lastDevcontainerShareCredentials
-    )
-  );
+  const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() => defaultRuntime);
 
   const prevProjectPathRef = useRef<string | null>(null);
   const prevDefaultRuntimeModeRef = useRef<RuntimeMode | null>(null);
@@ -373,8 +373,9 @@ export function useDraftWorkspaceSettings(
 
     // Persist host/image/coder so they're remembered when switching modes.
     // Avoid wiping the remembered value when the UI switches modes with an empty field.
+    // Avoid persisting the Coder placeholder as the remembered SSH host.
     if (runtime.mode === RUNTIME_MODE.SSH) {
-      if (runtime.host.trim()) {
+      if (runtime.host.trim() && runtime.host !== CODER_RUNTIME_PLACEHOLDER) {
         setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", runtime.host);
       }
       // Persist Coder enabled state and config
