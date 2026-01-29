@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useAgent } from "@/browser/contexts/AgentContext";
+import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import {
   readPersistedState,
   updatePersistedState,
@@ -10,6 +11,7 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   AGENT_AI_DEFAULTS_KEY,
+  SELECTED_WORKSPACE_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
@@ -64,7 +66,14 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const agentThinkingDefault =
       configuredDefaults?.thinkingLevel ?? descriptorDefaults?.thinkingLevel ?? undefined;
 
-    const existingModel = readPersistedState<string>(modelKey, fallbackModel);
+    const selectedWorkspace = readPersistedState<WorkspaceSelection | null>(
+      SELECTED_WORKSPACE_KEY,
+      null
+    );
+    const isActiveWorkspace = selectedWorkspace?.workspaceId === workspaceId;
+
+    const storedModel = readPersistedState<string | undefined>(modelKey, undefined);
+    const existingModel = storedModel ?? fallbackModel;
     const candidateModel =
       fallbackIds.map((id) => workspaceByAgent[id]?.model).find((entry) => entry !== undefined) ??
       agentModelDefault ??
@@ -74,7 +83,8 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
         ? candidateModel
         : fallbackModel;
 
-    const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
+    const storedThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
+    const existingThinking = storedThinking ?? "off";
     const candidateThinking =
       fallbackIds
         .map((id) => workspaceByAgent[id]?.thinkingLevel)
@@ -84,11 +94,15 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
-    if (existingModel !== resolvedModel) {
+    // Keep active-workspace edits authoritative; only sync from cache when unset or inactive.
+    const shouldSyncModel = !isActiveWorkspace || storedModel === undefined;
+    const shouldSyncThinking = !isActiveWorkspace || storedThinking === undefined;
+
+    if (shouldSyncModel && existingModel !== resolvedModel) {
       updatePersistedState(modelKey, resolvedModel);
     }
 
-    if (existingThinking !== resolvedThinking) {
+    if (shouldSyncThinking && existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
   }, [agentAiDefaults, agentId, agents, workspaceByAgent, workspaceId]);

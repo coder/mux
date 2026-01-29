@@ -20,9 +20,7 @@ import {
   getDraftScopeId,
   getInputAttachmentsKey,
   getInputKey,
-  getModelKey,
   getPendingScopeId,
-  getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getWorkspaceNameStateKey,
   migrateWorkspaceStorage,
@@ -102,31 +100,7 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     updatePersistedState(byAgentKey, nextByAgent);
   }
 
-  // Seed the active agent into the existing keys to avoid UI flash.
-  const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
-  const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
-  if (!active) {
-    return;
-  }
-
-  const modelKey = getModelKey(workspaceId);
-  const existingModel = readPersistedState<string | undefined>(modelKey, undefined);
-  if (existingModel !== active.model) {
-    updatePersistedState(modelKey, active.model);
-  }
-
-  const thinkingKey = getThinkingLevelKey(workspaceId);
-  const existingThinking = readPersistedState<ThinkingLevel | undefined>(thinkingKey, undefined);
-  const selectedWorkspace = readPersistedState<WorkspaceSelection | null>(
-    SELECTED_WORKSPACE_KEY,
-    null
-  );
-  const isActiveWorkspace = selectedWorkspace?.workspaceId === workspaceId;
-  const shouldSeed = !isActiveWorkspace || existingThinking === undefined;
-  if (shouldSeed && existingThinking !== active.thinkingLevel) {
-    // Preserve local updates for the active workspace; metadata broadcasts can arrive out of order.
-    updatePersistedState(thinkingKey, active.thinkingLevel);
-  }
+  // WorkspaceModeAISync owns syncing model/thinking from this cache to avoid double-writes.
 }
 
 export function toWorkspaceSelection(metadata: FrontendWorkspaceMetadata): WorkspaceSelection {
