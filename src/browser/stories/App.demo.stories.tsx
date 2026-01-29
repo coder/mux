@@ -123,7 +123,7 @@ export const Comprehensive: AppStory = {
                 [
                   "--- src/api/users.ts",
                   "+++ src/api/users.ts",
-                  "@@ -1,5 +1,15 @@",
+                  "@@ -1,4 +1,13 @@",
                   "+import { verifyToken } from '../auth/jwt';",
                   " export function getUser(req, res) {",
                   "+  try {",
