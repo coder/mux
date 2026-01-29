@@ -164,10 +164,13 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const state = props.runtimeAvailabilityState;
   const availabilityMap = state?.status === "loaded" ? state.data : null;
 
-  // Hide devcontainer only when confirmed missing (not during loading - would cause layout flash)
+  // Hide devcontainer while loading OR when confirmed missing.
+  // Only show when availability is loaded and devcontainer is available.
+  // This prevents layout flash for projects without devcontainer.json (the common case).
   const hideDevcontainer =
-    availabilityMap?.devcontainer?.available === false &&
-    availabilityMap.devcontainer.reason === "No devcontainer.json found";
+    state?.status === "loading" ||
+    (availabilityMap?.devcontainer?.available === false &&
+      availabilityMap.devcontainer.reason === "No devcontainer.json found");
 
   const runtimeOptions = hideDevcontainer
     ? RUNTIME_OPTIONS.filter((option) => option.value !== RUNTIME_MODE.DEVCONTAINER)
