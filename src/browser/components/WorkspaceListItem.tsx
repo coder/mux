@@ -11,6 +11,7 @@ import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
 import { RuntimeBadge } from "./RuntimeBadge";
+import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Trash2 } from "lucide-react";
@@ -442,25 +443,23 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   </span>
                 </HoverCardTrigger>
                 <HoverCardContent
-                  // Keep the workspace title hover card on the right to avoid covering the list.
-                  side="right"
                   align="start"
-                  sideOffset={0}
+                  sideOffset={8}
                   className="border-separator-light bg-modal-bg w-auto max-w-[420px] px-[10px] py-[6px] text-[11px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
                   onPointerDownOutside={preventHoverCardDismissForRadixPortals}
                   onFocusOutside={preventHoverCardDismissForRadixPortals}
                 >
                   <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <RuntimeBadge
-                        runtimeConfig={metadata.runtimeConfig}
-                        workspaceName={metadata.name}
-                        workspacePath={namedWorkspacePath}
-                      />
-                      <span className="text-foreground font-medium break-words whitespace-normal">
-                        {displayTitle}
-                      </span>
-                    </div>
+                    <WorkspaceHoverPreview
+                      workspaceId={workspaceId}
+                      projectName={projectName}
+                      projectPath={projectPath}
+                      workspaceName={metadata.name}
+                      namedWorkspacePath={namedWorkspacePath}
+                      runtimeConfig={metadata.runtimeConfig}
+                      gitStatus={gitStatus}
+                      isWorking={isWorking}
+                    />
                     {!isDisabled && (
                       <div className="text-muted text-xs">Double-click to edit title</div>
                     )}
