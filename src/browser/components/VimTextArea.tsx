@@ -8,6 +8,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
+import { CommandHighlightOverlay } from "./CommandHighlightOverlay";
 
 /**
  * VimTextArea – minimal Vim-like editing for a textarea.
@@ -263,6 +264,15 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
                 ? "caret-transparent selection:bg-white/50"
                 : "caret-current selection:bg-selection",
               rest.className
+            )}
+          />
+          {/* Command highlight overlay - positioned on top of textarea, pointer-events: none allows clicks through */}
+          <CommandHighlightOverlay
+            value={value}
+            vimEnabled={vimEnabled}
+            className={cn(
+              "absolute inset-0 overflow-hidden rounded border border-transparent",
+              vimEnabled ? "font-monospace" : "font-sans"
             )}
           />
           {trailingAction && (
