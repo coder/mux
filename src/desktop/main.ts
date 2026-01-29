@@ -48,6 +48,7 @@ import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
 
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
+import { isBashAvailable } from "@/node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "@/desktop/titleBarOptions";
 
@@ -411,29 +412,40 @@ async function loadServices(): Promise<void> {
       );
     };
 
+    // Check if the default shell appears to be WSL.
+    let looksLikeWsl = false;
+
     const envShell = process.env.SHELL?.trim();
     if (envShell && isWslLauncher(normalize(envShell))) {
-      return true;
+      looksLikeWsl = true;
+    } else {
+      try {
+        // Intentionally lazy import to keep startup fast and avoid bundling concerns.
+        // eslint-disable-next-line no-restricted-syntax -- main-process-only builtin
+        const { execSync } = await import("node:child_process");
+        const result = execSync("where bash", {
+          encoding: "utf8",
+          stdio: ["pipe", "pipe", "ignore"],
+          windowsHide: true,
+        });
+        const firstPath = result
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find((line) => line.length > 0);
+
+        looksLikeWsl = firstPath ? isWslLauncher(normalize(firstPath)) : false;
+      } catch {
+        // Ignore
+      }
     }
 
-    try {
-      // Intentionally lazy import to keep startup fast and avoid bundling concerns.
-      // eslint-disable-next-line no-restricted-syntax -- main-process-only builtin
-      const { execSync } = await import("node:child_process");
-      const result = execSync("where bash", {
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-      });
-      const firstPath = result
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find((line) => line.length > 0);
-
-      return firstPath ? isWslLauncher(normalize(firstPath)) : false;
-    } catch {
+    // Even if WSL is the default, don't warn if Git for Windows bash is available
+    // (Mux will use that instead).
+    if (looksLikeWsl && isBashAvailable()) {
       return false;
     }
+
+    return looksLikeWsl;
   });
 
   electronIpcMain.on("start-orpc-server", (event) => {
