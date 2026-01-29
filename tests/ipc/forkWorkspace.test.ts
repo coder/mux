@@ -12,7 +12,7 @@ import {
   createStreamCollector,
   assertStreamSuccess,
   configureTestRetries,
-  extractTextFromEvents,
+  waitFor,
   modelString,
   resolveOrpcClient,
   createWorkspaceWithInit,
@@ -26,6 +26,7 @@ import {
 } from "../runtime/test-fixtures/ssh-fixture";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { HistoryService } from "../../src/node/services/historyService";
+import { PartialService } from "../../src/node/services/partialService";
 import { createMuxMessage } from "../../src/common/types/message";
 
 // Skip all tests if TEST_INTEGRATION is not set
@@ -366,7 +367,21 @@ describeIntegration("Workspace fork", () => {
             );
             expect(deltaEvent).not.toBeNull();
 
-            const partialText = extractTextFromEvents(sourceCollector.getDeltas()).trim();
+            // Wait for partial.json to be written so the fork can commit in-flight output.
+            const historyService = new HistoryService(env.config);
+            const partialService = new PartialService(env.config, historyService);
+            let partialText = "";
+            const partialReady = await waitFor(async () => {
+              const partial = await partialService.readPartial(sourceWorkspaceId);
+              if (!partial) return false;
+              partialText = (partial.parts ?? [])
+                .filter((part) => part.type === "text")
+                .map((part) => (part as { text: string }).text)
+                .join(" ")
+                .trim();
+              return partialText.length > 0;
+            }, getTimeout(15000));
+            expect(partialReady).toBe(true);
             expect(partialText.length).toBeGreaterThan(0);
             const partialSnippet = partialText.length > 24 ? partialText.slice(0, 24) : partialText;
 
@@ -380,7 +395,6 @@ describeIntegration("Workspace fork", () => {
             if (!forkResult.success) return;
             const forkedWorkspaceId = forkResult.metadata.id;
 
-            const historyService = new HistoryService(env.config);
             const forkedHistoryResult = await historyService.getHistory(forkedWorkspaceId);
             expect(forkedHistoryResult.success).toBe(true);
             if (!forkedHistoryResult.success) return;
