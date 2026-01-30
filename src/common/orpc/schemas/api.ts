@@ -1161,6 +1161,10 @@ export const menu = {
     input: z.void(),
     output: eventIterator(z.void()),
   },
+  onStartNewAgent: {
+    input: z.void(),
+    output: eventIterator(z.void()),
+  },
 };
 
 // Voice input (transcription via OpenAI Whisper)

@@ -87,6 +87,7 @@ function AppInner() {
     pendingNewWorkspaceSectionId,
     pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
+    createWorkspaceDraft,
   } = useWorkspaceContext();
   const { currentWorkspaceId } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
@@ -102,6 +103,7 @@ function AppInner() {
 
   const {
     projects,
+    loading: projectsLoading,
     removeProject,
     openProjectCreateModal,
     isProjectCreateModalOpen,
@@ -130,8 +132,24 @@ function AppInner() {
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
-    beginWorkspaceCreation,
+    createWorkspaceDraft,
   });
+  // Refs for async subscription callbacks (avoid stale closures)
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+
+  const projectsLoadingRef = useRef(projectsLoading);
+  projectsLoadingRef.current = projectsLoading;
+
+  // When "Start New Agent" is triggered during cold start, projects may still be loading.
+  // Buffer the action count and flush it once projects are available.
+  const pendingStartNewAgentCountRef = useRef(0);
+
+  const pendingNewWorkspaceProjectRef = useRef(pendingNewWorkspaceProject);
+  pendingNewWorkspaceProjectRef.current = pendingNewWorkspaceProject;
+
+  const startWorkspaceCreationRef = useRef(startWorkspaceCreation);
+  startWorkspaceCreationRef.current = startWorkspaceCreation;
 
   // ProjectPage handles its own focus when mounted
 
@@ -639,6 +657,67 @@ function AppInner() {
     return () => abortController.abort();
   }, [api, openSettings]);
 
+  // Subscribe to menu-triggered "Start New Agent" (Dock/JumpList/Desktop Actions)
+  useEffect(() => {
+    if (!api) return;
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    (async () => {
+      try {
+        const iterator = await api.menu.onStartNewAgent(undefined, { signal });
+        for await (const _ of iterator) {
+          if (signal.aborted) break;
+
+          if (projectsLoadingRef.current) {
+            pendingStartNewAgentCountRef.current += 1;
+            continue;
+          }
+
+          const projectPath =
+            selectedWorkspaceRef.current?.projectPath ??
+            pendingNewWorkspaceProjectRef.current ??
+            getFirstProjectPath(projectsRef.current);
+
+          if (!projectPath) {
+            console.warn("No projects available for workspace creation");
+            continue;
+          }
+
+          startWorkspaceCreationRef.current(projectPath);
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api]);
+
+  // Flush any pending menu-triggered "Start New Agent" once projects finish loading.
+  useEffect(() => {
+    if (projectsLoading) return;
+
+    const pendingCount = pendingStartNewAgentCountRef.current;
+    if (pendingCount <= 0) return;
+
+    pendingStartNewAgentCountRef.current = 0;
+
+    const projectPath =
+      selectedWorkspaceRef.current?.projectPath ??
+      pendingNewWorkspaceProjectRef.current ??
+      getFirstProjectPath(projects);
+
+    if (!projectPath) {
+      console.warn("No projects available for workspace creation");
+      return;
+    }
+
+    for (let i = 0; i < pendingCount; i += 1) {
+      startWorkspaceCreationRef.current(projectPath);
+    }
+  }, [projectsLoading, projects]);
   // Handle workspace fork switch event
   useEffect(() => {
     const handleForkSwitch = (e: Event) => {

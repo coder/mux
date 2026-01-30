@@ -337,7 +337,7 @@ export interface WorkspaceContext {
 
   // UI-only workspace creation drafts (placeholders)
   workspaceDraftsByProject: WorkspaceDraftsByProject;
-  createWorkspaceDraft: (projectPath: string, sectionId?: string) => void;
+  createWorkspaceDraft: (projectPath: string, sectionId?: string) => string;
   updateWorkspaceDraftSection: (
     projectPath: string,
     draftId: string,
@@ -1106,7 +1106,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const existingEmptyDraftId = findExistingEmptyDraft(existingDrafts, projectPath, sectionId);
       if (existingEmptyDraftId) {
         navigateToProject(projectPath, sectionId, existingEmptyDraftId);
-        return;
+        return existingEmptyDraftId;
       }
 
       const draftId = createWorkspaceDraftId();
@@ -1144,6 +1144,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       });
 
       navigateToProject(projectPath, sectionId, draftId);
+      return draftId;
     },
     [navigateToProject, setWorkspaceDraftsByProjectState]
   );
