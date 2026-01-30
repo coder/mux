@@ -266,8 +266,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       const innerProvider =
         provider === "mux-gateway" && modelName.includes("/") ? modelName.split("/")[0] : provider;
 
-      // Show gateway icon if configured and provider supports it
-      const showGatewayIcon = gateway.isConfigured && isProviderSupported(value);
+      // Show gateway icon if gateway is active (configured AND enabled) and provider supports it
+      const showGatewayIcon = gateway.isActive && isProviderSupported(value);
 
       return (
         <div ref={containerRef} className="relative flex items-center gap-1">

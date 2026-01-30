@@ -25,6 +25,20 @@ void mock.module("@/browser/hooks/useProvidersConfig", () => ({
   useProvidersConfig: useProvidersConfigMock,
 }));
 
+// Mock useAPI - the hook uses api.config.updateMuxGatewayPrefs for persistence
+// but has a defensive guard so it's safe to pass null/undefined.
+void mock.module("@/browser/contexts/API", () => ({
+  useAPI: () => ({
+    api: {
+      config: {
+        updateMuxGatewayPrefs: () => Promise.resolve({ success: true }),
+      },
+    },
+    status: "connected" as const,
+    error: null,
+  }),
+}));
+
 describe("useGateway", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
