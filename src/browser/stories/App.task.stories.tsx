@@ -16,6 +16,7 @@ import {
   STABLE_TIMESTAMP,
   createUserMessage,
   createAssistantMessage,
+  createBashTool,
   createPendingTool,
   createStaticChatHandler,
   createTaskTool,
@@ -28,6 +29,7 @@ import {
   createWorkspace,
   groupWorkspacesByProject,
 } from "./mockFactory";
+import type { MuxMessage } from "@/common/types/message";
 import { userEvent, waitFor, within } from "@storybook/test";
 
 export default {
@@ -315,6 +317,84 @@ Found **47 test files** across the project:
         }
       });
     }
+  },
+};
+
+/**
+ * Completed task with an archived transcript.
+ *
+ * Verifies the transcript viewer dialog renders messages loaded via workspace.getSubagentTranscript.
+ */
+export const TaskTranscriptViewer: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const taskId = "task-transcript-001";
+
+        const transcriptMessages: MuxMessage[] = [
+          createUserMessage("tu1", "Summarize the workspace cleanup flow.", {
+            historySequence: 1,
+          }),
+          createAssistantMessage("ta1", "Here's what happens during cleanup:", {
+            historySequence: 2,
+            toolCalls: [
+              createBashTool(
+                "tcb1",
+                "ls -la",
+                "total 0\n-rw-r--r-- 1 user group 0 Jan 1 00:00 chat.jsonl",
+                0
+              ),
+            ],
+          }),
+        ];
+
+        return setupSimpleChatStory({
+          messages: [
+            createUserMessage("u1", "Show me the completed task transcript", {
+              historySequence: 1,
+            }),
+            createAssistantMessage("a1", "Here's the task result:", {
+              historySequence: 2,
+              toolCalls: [
+                createCompletedTaskTool("tc1", {
+                  subagent_type: "explore",
+                  prompt: "Investigate the workspace cleanup flow",
+                  title: "Cleanup investigation",
+                  taskId,
+                  reportMarkdown:
+                    "Report is trimmed for brevity. Click **View transcript** to inspect the full chat.",
+                  reportTitle: "Cleanup investigation",
+                }),
+              ],
+            }),
+          ],
+          subagentTranscripts: new Map([[taskId, transcriptMessages]]),
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+
+    const canvas = within(canvasElement);
+    const viewTranscriptButton = await canvas.findByRole("button", {
+      name: /view transcript/i,
+    });
+    await userEvent.click(viewTranscriptButton);
+
+    // Dialog content is portaled outside the canvasElement, but inside the iframe body.
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByText(/here's what happens during cleanup/i);
+
+    // Wait for the loading indicator to disappear (ensures the transcript was loaded).
+    await waitFor(() => {
+      if (dialogCanvas.queryByText(/loading transcript/i)) {
+        throw new Error("Transcript still loading");
+      }
+    });
   },
 };
 
