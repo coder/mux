@@ -24,7 +24,9 @@ const pendingDeepLinks: MuxDeepLinkPayload[] = [];
 const deepLinkSubscribers = new Set<(payload: MuxDeepLinkPayload) => void>();
 
 ipcRenderer.on("mux:deep-link", (_event: unknown, payload: MuxDeepLinkPayload) => {
-  pendingDeepLinks.push(payload);
+  if (deepLinkSubscribers.size === 0) {
+    pendingDeepLinks.push(payload);
+  }
 
   for (const subscriber of deepLinkSubscribers) {
     try {
