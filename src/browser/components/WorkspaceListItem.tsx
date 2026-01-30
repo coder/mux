@@ -293,7 +293,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const hasStatusText = Boolean(agentStatus ?? awaitingUserQuestion ?? isWorking);
-  const hasSecondaryRow = !isCreating && (isArchiving === true || hasStatusText);
+  // Note: we intentionally render the secondary row even while the workspace is still
+  // "creating" so users can see early streaming/status information immediately.
+  const hasSecondaryRow = isArchiving === true || hasStatusText;
 
   const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
