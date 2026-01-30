@@ -569,14 +569,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   deepLinkHandlerRef.current = handleDeepLink;
 
   useEffect(() => {
+    const unsubscribe = window.api?.onDeepLink?.((payload) => {
+      deepLinkHandlerRef.current(payload);
+    });
+
     const pending = window.api?.consumePendingDeepLinks?.() ?? [];
     for (const payload of pending) {
       deepLinkHandlerRef.current(payload);
     }
-
-    const unsubscribe = window.api?.onDeepLink?.((payload) => {
-      deepLinkHandlerRef.current(payload);
-    });
 
     return () => {
       unsubscribe?.();
