@@ -17,8 +17,8 @@ export interface SubagentTranscriptArtifactIndexEntry {
   parentWorkspaceId: string;
   createdAtMs: number;
   updatedAtMs: number;
-  /** Absolute path to the archived chat.jsonl file on disk. */
-  chatPath: string;
+  /** Absolute path to the archived chat.jsonl file on disk (if present). */
+  chatPath?: string;
   /** Absolute path to the archived partial.json file on disk (if present). */
   partialPath?: string;
 }
