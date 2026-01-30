@@ -354,15 +354,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Use current agent's uiColor, or neutral border until agents load
   const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
-  const {
-    models,
-    hiddenModels,
-    hideModel,
-    unhideModel,
-    ensureModelInSettings,
-    defaultModel,
-    setDefaultModel,
-  } = useModelsFromSettings();
+  const { models, hiddenModels, ensureModelInSettings, defaultModel, setDefaultModel } =
+    useModelsFromSettings();
 
   const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
     AGENT_AI_DEFAULTS_KEY,
@@ -2217,9 +2210,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     onComplete={() => inputRef.current?.focus()}
                     defaultModel={defaultModel}
                     onSetDefaultModel={setDefaultModel}
-                    onHideModel={hideModel}
                     hiddenModels={hiddenModels}
-                    onUnhideModel={unhideModel}
                     onOpenSettings={() => open("models")}
                   />
                   <div className="hidden [@media(hover:hover)_and_(pointer:fine)]:block">
