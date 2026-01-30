@@ -518,7 +518,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         label: "Implement",
         onClick: () => void handleImplement(),
         disabled: !api || isImplementing || isStartingOrchestrator,
-        icon: <Play />,
+        icon: <Play className="size-4" />,
         tooltip: implementReplacesChatHistory
           ? "Replace chat history with this plan, switch to Exec, and start implementing"
           : "Switch to Exec and start implementing",
@@ -530,7 +530,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         label: "Start Orchestrator",
         onClick: () => void handleStartOrchestrator(),
         disabled: !api || isStartingOrchestrator || isImplementing,
-        icon: <Workflow />,
+        icon: <Workflow className="size-4" />,
         tooltip: implementReplacesChatHistory
           ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
           : "Switch to Orchestrator and start delegating",
@@ -629,52 +629,49 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         </div>
 
         {(implementButton ?? orchestratorButton) && (
-          <>
-            <div className="flex items-center justify-center gap-1">
-              {implementButton && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-placeholder h-6 gap-1 px-2 text-[11px] [&_svg]:size-3.5"
-                      onClick={implementButton.onClick}
-                      disabled={implementButton.disabled}
-                    >
-                      {implementButton.icon}
-                      {implementButton.label}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent align="center">
-                    {implementButton.tooltip ?? implementButton.label}
-                  </TooltipContent>
-                </Tooltip>
-              )}
+          <div className="ml-auto flex items-center gap-1">
+            {implementButton && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1"
+                    onClick={implementButton.onClick}
+                    disabled={implementButton.disabled}
+                  >
+                    {implementButton.icon}
+                    <span className="leading-none">{implementButton.label}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
+                  {implementButton.tooltip ?? implementButton.label}
+                </TooltipContent>
+              </Tooltip>
+            )}
 
-              {orchestratorButton && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-placeholder h-6 gap-1 px-2 text-[11px] [&_svg]:size-3.5"
-                      onClick={orchestratorButton.onClick}
-                      disabled={orchestratorButton.disabled}
-                    >
-                      {orchestratorButton.icon}
-                      {orchestratorButton.label}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent align="center">
-                    {orchestratorButton.tooltip ?? orchestratorButton.label}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-            <div className="flex-1" />
-          </>
+            {orchestratorButton && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1"
+                    onClick={orchestratorButton.onClick}
+                    disabled={orchestratorButton.disabled}
+                  >
+                    {orchestratorButton.icon}
+                    <span className="leading-none">{orchestratorButton.label}</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
+                  {orchestratorButton.tooltip ?? orchestratorButton.label}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         )}
       </div>
     </div>
