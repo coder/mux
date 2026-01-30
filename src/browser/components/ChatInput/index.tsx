@@ -663,7 +663,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           selectedRuntime: creationState.selectedRuntime,
           defaultRuntimeMode: creationState.defaultRuntimeMode,
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
-          onSetDefaultRuntime: creationState.setDefaultRuntimeMode,
+          onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
           disabled: isSendInFlight,
           projectPath: props.projectPath,
           projectName: props.projectName,

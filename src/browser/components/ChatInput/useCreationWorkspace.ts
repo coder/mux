@@ -146,8 +146,8 @@ interface UseCreationWorkspaceReturn {
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
-  /** Set the default runtime mode for this project (persists via checkbox) */
-  setDefaultRuntimeMode: (mode: RuntimeMode) => void;
+  /** Set the default runtime choice for this project (persists via checkbox) */
+  setDefaultRuntimeChoice: (choice: RuntimeChoice) => void;
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
@@ -218,7 +218,7 @@ export function useCreationWorkspace({
     useState<RuntimeAvailabilityState>({ status: "loading" });
 
   // Centralized draft workspace settings with automatic persistence
-  const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch } =
+  const { settings, setSelectedRuntime, setDefaultRuntimeChoice, setTrunkBranch } =
     useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
   // Persist draft workspace name generation state per draft (so multiple drafts don't share a
@@ -569,7 +569,7 @@ export function useCreationWorkspace({
     selectedRuntime: settings.selectedRuntime,
     defaultRuntimeMode: settings.defaultRuntimeMode,
     setSelectedRuntime,
-    setDefaultRuntimeMode,
+    setDefaultRuntimeChoice,
     toast,
     setToast,
     isSending,

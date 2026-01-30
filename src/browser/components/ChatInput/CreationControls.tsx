@@ -109,7 +109,7 @@ interface CreationControlsProps {
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
-  onSetDefaultRuntime: (mode: RuntimeMode) => void;
+  onSetDefaultRuntime: (mode: RuntimeChoice) => void;
   disabled: boolean;
   /** Project path to display (and used for project selector) */
   projectPath: string;
@@ -147,7 +147,7 @@ interface RuntimeButtonGroupProps {
   value: RuntimeChoice;
   onChange: (mode: RuntimeChoice) => void;
   defaultMode: RuntimeChoice;
-  onSetDefault: (mode: RuntimeMode) => void;
+  onSetDefault: (mode: RuntimeChoice) => void;
   disabled?: boolean;
   runtimeAvailabilityState?: RuntimeAvailabilityState;
   coderInfo?: CoderInfo | null;
@@ -394,9 +394,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
         const Icon = option.Icon;
 
         const handleSetDefault = () => {
-          // Coder maps to SSH mode (Coder config persisted separately)
-          const mode = option.value === "coder" ? RUNTIME_MODE.SSH : option.value;
-          props.onSetDefault(mode);
+          props.onSetDefault(option.value);
         };
 
         return (
