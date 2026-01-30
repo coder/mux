@@ -2,6 +2,7 @@ import React from "react";
 import type { FilePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
+import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import type { ReviewNoteData } from "@/common/types/review";
 import { UserMessage, type UserMessageNavigation } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
@@ -26,6 +27,8 @@ interface MessageRendererProps {
   isLatestProposePlan?: boolean;
   /** Optional bash_output grouping info (computed at render-time) */
   bashOutputGroup?: BashOutputGroupInfo;
+  /** Optional task report linking context (computed at render-time) */
+  taskReportLinking?: TaskReportLinking;
   /** Navigation info for user messages (backward/forward between user messages) */
   userMessageNavigation?: UserMessageNavigation;
 }
@@ -41,6 +44,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     onReviewNote,
     isLatestProposePlan,
     bashOutputGroup,
+    taskReportLinking,
     userMessageNavigation,
   }) => {
     // Route based on message type
@@ -73,6 +77,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             onReviewNote={onReviewNote}
             isLatestProposePlan={isLatestProposePlan}
             bashOutputGroup={bashOutputGroup}
+            taskReportLinking={taskReportLinking}
           />
         );
       case "reasoning":

@@ -27,7 +27,7 @@ export default {
 
 /**
  * Full task workflow: spawn parallel tasks, list them, await results.
- * Shows task, task_list, and task_await in a realistic sequence.
+ * Demonstrates retroactive report placement (reports render under the original `task` cards).
  */
 export const TaskWorkflow: AppStory = {
   render: () => (

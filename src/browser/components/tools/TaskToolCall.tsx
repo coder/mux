@@ -34,6 +34,7 @@ import type {
   TaskTerminateToolArgs,
   TaskTerminateToolSuccessResult,
 } from "@/common/types/tools";
+import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 
 /**
  * Clean SVG icon for task tools - represents spawning/branching work
@@ -179,24 +180,54 @@ interface TaskToolCallProps {
   args: TaskToolArgs;
   result?: TaskToolResult;
   status?: ToolStatus;
+  taskReportLinking?: TaskReportLinking;
 }
 
-export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status = "pending" }) => {
+export const TaskToolCall: React.FC<TaskToolCallProps> = ({
+  args,
+  result,
+  status = "pending",
+  taskReportLinking,
+}) => {
   // Narrow result to error or success shape
   const errorResult = isToolErrorResult(result) ? result : null;
   const successResult = result && typeof result === "object" && "status" in result ? result : null;
 
+  // Derive task state from the spawn response
+  const taskId = successResult?.taskId;
+  const taskStatus = successResult?.status;
+
+  // Render-time linking: if a later task_await produced the final report, display it here.
+  // This keeps the report under the original spawn card without mutating history.
+  const linkedReport =
+    typeof taskId === "string" ? taskReportLinking?.reportByTaskId.get(taskId) : undefined;
+  const hasLinkedCompletion = Boolean(linkedReport);
+
+  const ownReportMarkdown =
+    successResult?.status === "completed" ? successResult.reportMarkdown : undefined;
+  const ownReportTitle = successResult?.status === "completed" ? successResult.title : undefined;
+
+  const reportMarkdown =
+    typeof ownReportMarkdown === "string" && ownReportMarkdown.trim().length > 0
+      ? ownReportMarkdown
+      : linkedReport?.reportMarkdown;
+  const reportTitle = ownReportTitle ?? linkedReport?.title;
+
+  const displayTaskStatus = hasLinkedCompletion ? "completed" : taskStatus;
+
   // Override status for background tasks: the aggregator sees success=true and marks "completed",
-  // but if the task is still queued/running, we should show "backgrounded" instead
-  const effectiveStatus: ToolStatus =
-    status === "completed" &&
-    successResult &&
-    (successResult.status === "queued" || successResult.status === "running")
+  // but if the task is still queued/running, we should show "backgrounded" instead.
+  // If we have a linked completion report, show the task as completed.
+  const effectiveStatus: ToolStatus = hasLinkedCompletion
+    ? "completed"
+    : status === "completed" &&
+        successResult &&
+        (successResult.status === "queued" || successResult.status === "running")
       ? "backgrounded"
       : status;
 
   // Derive expansion: auto-expand for reports or errors, but respect user's explicit toggle
-  const hasReport = successResult?.status === "completed" && !!successResult.reportMarkdown;
+  const hasReport = typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0;
   const shouldAutoExpand = hasReport || !!errorResult;
   const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
   const expanded = userExpandedChoice ?? shouldAutoExpand;
@@ -208,13 +239,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
   const prompt = args.prompt ?? "";
   const agentType = args.agentId ?? args.subagent_type ?? "unknown";
   const kindBadge = <AgentTypeBadge type={agentType} />;
-
-  // Derive task state from success result
-  const taskId = successResult?.taskId;
-  const taskStatus = successResult?.status;
-  const reportMarkdown =
-    successResult?.status === "completed" ? successResult.reportMarkdown : undefined;
-  const reportTitle = successResult?.status === "completed" ? successResult.title : undefined;
 
   // Show preview (first line or truncated)
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
@@ -243,7 +267,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
                 {reportTitle ?? title}
               </span>
               {taskId && <TaskId id={taskId} />}
-              {taskStatus && <TaskStatusBadge status={taskStatus} />}
+              {displayTaskStatus && <TaskStatusBadge status={displayTaskStatus} />}
             </div>
 
             {/* Prompt / script */}
@@ -258,7 +282,9 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({ args, result, status
             {reportMarkdown && (
               <div className="task-divider border-t pt-2">
                 <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
-                <div className="text-[11px]">
+                <div
+                  className={cn("text-[11px]", hasLinkedCompletion && "bg-code-bg rounded-sm p-2")}
+                >
                   <MarkdownRenderer content={reportMarkdown} />
                 </div>
               </div>
@@ -292,12 +318,14 @@ interface TaskAwaitToolCallProps {
   args: TaskAwaitToolArgs;
   result?: TaskAwaitToolSuccessResult;
   status?: ToolStatus;
+  taskReportLinking?: TaskReportLinking;
 }
 
 export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   args,
   result,
   status = "pending",
+  taskReportLinking,
 }) => {
   const hasResults = result?.results && result.results.length > 0;
   const { expanded, toggleExpanded } = useToolExpansion(hasResults);
@@ -305,6 +333,8 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   const taskIds = args.task_ids;
   const timeoutSecs = args.timeout_secs;
   const results = result?.results ?? [];
+
+  const suppressReportInAwaitTaskIds = taskReportLinking?.suppressReportInAwaitTaskIds;
 
   const showConfigInfo =
     taskIds !== undefined ||
@@ -347,7 +377,13 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             {results.length > 0 ? (
               <div className="space-y-3">
                 {results.map((r, idx) => (
-                  <TaskAwaitResult key={r.taskId ?? idx} result={r} />
+                  <TaskAwaitResult
+                    key={r.taskId ?? idx}
+                    result={r}
+                    suppressReport={
+                      typeof r.taskId === "string" && suppressReportInAwaitTaskIds?.has(r.taskId)
+                    }
+                  />
                 ))}
               </div>
             ) : status === "executing" ? (
@@ -368,7 +404,8 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
 // Individual task_await result display
 const TaskAwaitResult: React.FC<{
   result: TaskAwaitToolSuccessResult["results"][number];
-}> = ({ result }) => {
+  suppressReport?: boolean;
+}> = ({ result, suppressReport }) => {
   const isCompleted = result.status === "completed";
   const reportMarkdown = isCompleted ? result.reportMarkdown : undefined;
   const title = isCompleted ? result.title : undefined;
@@ -405,9 +442,11 @@ const TaskAwaitResult: React.FC<{
   })();
   const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
 
+  const showDetails = suppressReport !== true;
+
   return (
     <div className="bg-code-bg rounded-sm p-2">
-      <div className="mb-1 flex flex-wrap items-center gap-2">
+      <div className={cn("flex flex-wrap items-center gap-2", showDetails && "mb-1")}>
         <TaskId id={result.taskId} />
         <TaskStatusBadge status={result.status} />
         {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
@@ -431,15 +470,15 @@ const TaskAwaitResult: React.FC<{
         )}
       </div>
 
-      {patchSummary && <div className="text-muted text-[10px]">{patchSummary}</div>}
+      {showDetails && patchSummary && <div className="text-muted text-[10px]">{patchSummary}</div>}
 
-      {!isCompleted && output && output.length > 0 && (
+      {showDetails && !isCompleted && output && output.length > 0 && (
         <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
           {output}
         </div>
       )}
 
-      {reportMarkdown && (
+      {showDetails && reportMarkdown && (
         <div className="mt-2 text-[11px]">
           <MarkdownRenderer content={reportMarkdown} />
         </div>
