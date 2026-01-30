@@ -13,6 +13,7 @@ import type {
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { PolicyService } from "@/node/services/policyService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
+import type { McpOauthService } from "@/node/services/mcpOauthService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
 import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
@@ -299,10 +300,14 @@ export class MCPServerManager {
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
   private inlineServers: Record<string, string> = {};
   private policyService: PolicyService | null = null;
+  private mcpOauthService: McpOauthService | null = null;
   private ignoreConfigFile = false;
 
   setPolicyService(service: PolicyService): void {
     this.policyService = service;
+  }
+  setMcpOauthService(service: McpOauthService): void {
+    this.mcpOauthService = service;
   }
   constructor(
     private readonly configService: MCPConfigService,
@@ -570,12 +575,38 @@ export class MCPServerManager {
         continue;
       }
 
+      // OAuth status affects whether we can attach authProvider during server start.
+      // Include this (redacted) information in the signature so we retry starting
+      // remote servers after a user logs in/out.
+      let hasOauthTokens = false;
+      if (this.mcpOauthService) {
+        try {
+          hasOauthTokens = await this.mcpOauthService.hasAuthTokens({
+            projectPath,
+            serverName: name,
+            serverUrl: info.url,
+          });
+        } catch (error) {
+          log.debug("[MCP] Failed to resolve MCP OAuth status", { name, error });
+        }
+      }
+
       try {
         const { headers } = resolveHeaders(info.headers, projectSecrets);
-        signatureEntries[name] = { transport: info.transport, url: info.url, headers };
+        signatureEntries[name] = {
+          transport: info.transport,
+          url: info.url,
+          headers,
+          hasOauthTokens,
+        };
       } catch {
         // Missing secrets or invalid header config. Keep signature stable but avoid leaking details.
-        signatureEntries[name] = { transport: info.transport, url: info.url, headers: null };
+        signatureEntries[name] = {
+          transport: info.transport,
+          url: info.url,
+          headers: null,
+          hasOauthTokens,
+        };
       }
     }
 
@@ -648,6 +679,7 @@ export class MCPServerManager {
         const restartedInstances = await this.startServers(
           serversToRestart,
           runtime,
+          projectPath,
           workspacePath,
           projectSecrets,
           () => this.markActivity(workspaceId)
@@ -692,6 +724,7 @@ export class MCPServerManager {
     const instances = await this.startServers(
       enabledServers,
       runtime,
+      projectPath,
       workspacePath,
       projectSecrets,
       () => this.markActivity(workspaceId)
@@ -921,6 +954,7 @@ export class MCPServerManager {
   private async startServers(
     servers: MCPServerMap,
     runtime: Runtime,
+    projectPath: string,
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void
@@ -934,6 +968,7 @@ export class MCPServerManager {
           name,
           info,
           runtime,
+          projectPath,
           workspacePath,
           projectSecrets,
           onActivity
@@ -954,6 +989,7 @@ export class MCPServerManager {
     name: string,
     info: MCPServerInfo,
     runtime: Runtime,
+    projectPath: string,
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void
@@ -1026,12 +1062,26 @@ export class MCPServerManager {
 
     const { headers } = resolveHeaders(info.headers, projectSecrets);
 
+    // Only attach authProvider when we have stored OAuth tokens for this server.
+    // Passing an authProvider with no tokens can trigger user-interactive auth flows
+    // on background MCP calls (undesirable).
+    const authProvider = await this.mcpOauthService?.getAuthProviderForServer({
+      projectPath,
+      serverName: name,
+      serverUrl: info.url,
+    });
+
+    const transportBase = {
+      url: info.url,
+      headers,
+      ...(authProvider ? { authProvider } : {}),
+    };
+
     const tryHttp = async () =>
       experimental_createMCPClient({
         transport: {
           type: "http",
-          url: info.url,
-          headers,
+          ...transportBase,
         },
       });
 
@@ -1039,8 +1089,7 @@ export class MCPServerManager {
       experimental_createMCPClient({
         transport: {
           type: "sse",
-          url: info.url,
-          headers,
+          ...transportBase,
         },
       });
 

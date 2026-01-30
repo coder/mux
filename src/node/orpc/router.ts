@@ -1360,6 +1360,40 @@ export const router = (authToken?: string) => {
             return result;
           }),
       },
+      mcpOauth: {
+        startDesktopFlow: t
+          .input(schemas.projects.mcpOauth.startDesktopFlow.input)
+          .output(schemas.projects.mcpOauth.startDesktopFlow.output)
+          .handler(async ({ context, input }) => {
+            return context.mcpOauthService.startDesktopFlow(input);
+          }),
+        waitForDesktopFlow: t
+          .input(schemas.projects.mcpOauth.waitForDesktopFlow.input)
+          .output(schemas.projects.mcpOauth.waitForDesktopFlow.output)
+          .handler(async ({ context, input }) => {
+            return context.mcpOauthService.waitForDesktopFlow(input.flowId, {
+              timeoutMs: input.timeoutMs,
+            });
+          }),
+        cancelDesktopFlow: t
+          .input(schemas.projects.mcpOauth.cancelDesktopFlow.input)
+          .output(schemas.projects.mcpOauth.cancelDesktopFlow.output)
+          .handler(async ({ context, input }) => {
+            await context.mcpOauthService.cancelDesktopFlow(input.flowId);
+          }),
+        getAuthStatus: t
+          .input(schemas.projects.mcpOauth.getAuthStatus.input)
+          .output(schemas.projects.mcpOauth.getAuthStatus.output)
+          .handler(async ({ context, input }) => {
+            return context.mcpOauthService.getAuthStatus(input.projectPath, input.serverName);
+          }),
+        logout: t
+          .input(schemas.projects.mcpOauth.logout.input)
+          .output(schemas.projects.mcpOauth.logout.output)
+          .handler(async ({ context, input }) => {
+            return context.mcpOauthService.logout(input.projectPath, input.serverName);
+          }),
+      },
       idleCompaction: {
         get: t
           .input(schemas.projects.idleCompaction.get.input)
