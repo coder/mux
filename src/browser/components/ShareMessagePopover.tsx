@@ -429,7 +429,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         id: result.id,
         mutateKey: result.mutateKey,
         expiresAt: result.expiresAt,
-        cachedAt: Date.now(),
         signed: Boolean(signature),
       };
 
@@ -554,7 +553,6 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           id: result.id,
           mutateKey: result.mutateKey,
           expiresAt: result.expiresAt,
-          cachedAt: Date.now(),
           signed: Boolean(signature),
         };
 

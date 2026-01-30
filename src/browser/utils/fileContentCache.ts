@@ -3,13 +3,8 @@
  * Stores all content as base64 with per-entry storage keys and LRU eviction.
  */
 
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { FileContentsResult } from "./fileExplorer";
-
-/** Prefix for individual file entries */
-const ENTRY_PREFIX = "explorer:file:";
-/** Key for LRU index (array of cache keys, most recent last) */
-const INDEX_KEY = "explorer:fileIndex";
+import { createLRUCache } from "./lruCache";
 
 /** @internal Exported for testing */
 export const CACHE_CONFIG = {
@@ -40,15 +35,37 @@ export interface CachedFileContent {
   mimeType?: string;
   /** File size in bytes */
   size: number;
-  /** When this entry was cached */
-  cachedAt: number;
   /** Optional diff content */
   diff?: string | null;
 }
 
-/** Get storage key for a workspace/path */
-function entryKey(workspaceId: string, relativePath: string): string {
-  return `${ENTRY_PREFIX}${workspaceId}:${relativePath}`;
+/** Composite key for workspace + path */
+function cacheKey(workspaceId: string, relativePath: string): string {
+  return `${workspaceId}:${relativePath}`;
+}
+
+// LRU cache instance getter - recreated when config changes (for testing)
+let _fileCache: ReturnType<typeof createLRUCache<CachedFileContent>> | null = null;
+let _lastMaxEntries = 0;
+let _lastTtlMs = 0;
+
+function getFileCache() {
+  // Recreate cache if config changed (supports test modifications)
+  if (
+    !_fileCache ||
+    _lastMaxEntries !== CACHE_CONFIG.MAX_ENTRIES ||
+    _lastTtlMs !== CACHE_CONFIG.TTL_MS
+  ) {
+    _lastMaxEntries = CACHE_CONFIG.MAX_ENTRIES;
+    _lastTtlMs = CACHE_CONFIG.TTL_MS;
+    _fileCache = createLRUCache<CachedFileContent>({
+      entryPrefix: "explorer:file:",
+      indexKey: "explorer:fileIndex",
+      maxEntries: CACHE_CONFIG.MAX_ENTRIES,
+      ttlMs: CACHE_CONFIG.TTL_MS,
+    });
+  }
+  return _fileCache;
 }
 
 /**
@@ -58,19 +75,11 @@ function entryKey(workspaceId: string, relativePath: string): string {
 export function getCachedFileContent(
   workspaceId: string,
   relativePath: string
-): CachedFileContent | null {
-  const key = entryKey(workspaceId, relativePath);
-  const entry = readPersistedState<CachedFileContent | null>(key, null);
-
+): (CachedFileContent & { cachedAt: number }) | null {
+  const entry = getFileCache().getEntry(cacheKey(workspaceId, relativePath));
   if (!entry) return null;
-
-  // Check if expired
-  if (Date.now() - entry.cachedAt > CACHE_CONFIG.TTL_MS) {
-    removeCachedFileContent(workspaceId, relativePath);
-    return null;
-  }
-
-  return entry;
+  // Include cachedAt for API compatibility
+  return { ...entry.data, cachedAt: entry.cachedAt };
 }
 
 /**
@@ -86,54 +95,22 @@ export function setCachedFileContent(
   // Don't cache error results
   if (data.type === "error") return;
 
-  const key = entryKey(workspaceId, relativePath);
-
   const entry: CachedFileContent = {
     type: data.type,
     base64: data.type === "image" ? data.base64 : utf8ToBase64(data.content),
     mimeType: data.type === "image" ? data.mimeType : undefined,
     size: data.size,
-    cachedAt: Date.now(),
     diff,
   };
 
-  // Write the individual entry
-  updatePersistedState(key, () => entry, null);
-
-  // Update LRU index
-  updatePersistedState<string[]>(
-    INDEX_KEY,
-    (prev) => {
-      // Remove existing occurrence and add to end (most recent)
-      const filtered = prev.filter((k) => k !== key);
-      filtered.push(key);
-
-      // Evict oldest entries if over limit
-      if (filtered.length > CACHE_CONFIG.MAX_ENTRIES) {
-        const toRemove = filtered.splice(0, filtered.length - CACHE_CONFIG.MAX_ENTRIES);
-        // Clean up evicted entries
-        for (const oldKey of toRemove) {
-          updatePersistedState(oldKey, () => null, null);
-        }
-      }
-
-      return filtered;
-    },
-    []
-  );
+  getFileCache().set(cacheKey(workspaceId, relativePath), entry);
 }
 
 /**
  * Remove file content from cache (e.g., file deleted).
  */
 export function removeCachedFileContent(workspaceId: string, relativePath: string): void {
-  const key = entryKey(workspaceId, relativePath);
-
-  // Remove the entry
-  updatePersistedState(key, () => null, null);
-
-  // Remove from index
-  updatePersistedState<string[]>(INDEX_KEY, (prev) => prev.filter((k) => k !== key), []);
+  getFileCache().remove(cacheKey(workspaceId, relativePath));
 }
 
 /**

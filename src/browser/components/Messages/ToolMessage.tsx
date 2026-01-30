@@ -2,6 +2,7 @@ import React from "react";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
+import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { getToolComponent } from "../tools/shared/getToolComponent";
 import {
   HookOutputDisplay,
@@ -19,6 +20,8 @@ interface ToolMessageProps {
   isLatestProposePlan?: boolean;
   /** Optional bash_output grouping info */
   bashOutputGroup?: BashOutputGroupInfo;
+  /** Optional task report linking context (computed at render-time) */
+  taskReportLinking?: TaskReportLinking;
 }
 
 export const ToolMessage: React.FC<ToolMessageProps> = ({
@@ -28,6 +31,7 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
   onReviewNote,
   isLatestProposePlan,
   bashOutputGroup,
+  taskReportLinking,
 }) => {
   const { toolName, args, result, status, toolCallId } = message;
 
@@ -63,6 +67,8 @@ export const ToolMessage: React.FC<ToolMessageProps> = ({
         isLatest={isLatestProposePlan}
         // BashOutput-specific
         groupPosition={groupPosition}
+        // Task-specific
+        taskReportLinking={taskReportLinking}
         // CodeExecution-specific
         nestedCalls={message.nestedCalls}
       />
