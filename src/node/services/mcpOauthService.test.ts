@@ -124,12 +124,13 @@ describe("McpOauthService store", () => {
     ).toBe(true);
 
     const status = await service.getAuthStatus(projectPath, serverName);
+    expect(typeof status.updatedAtMs).toBe("number");
     expect(status).toEqual({
       serverUrl: "https://example.com/",
       isLoggedIn: true,
       hasRefreshToken: true,
       scope: "mcp.read",
-      updatedAtMs: expect.any(Number),
+      updatedAtMs: status.updatedAtMs,
     });
 
     const logoutResult = await service.logout(projectPath, serverName);
