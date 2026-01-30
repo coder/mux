@@ -44,6 +44,17 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import assert from "node:assert/strict";
+import * as fsPromises from "fs/promises";
+import * as path from "node:path";
+
+import type { MuxMessage } from "@/common/types/message";
+import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { log } from "@/node/services/log";
+import {
+  readSubagentTranscriptArtifactsFile,
+  type SubagentTranscriptArtifactIndexEntry,
+} from "@/node/services/subagentTranscriptArtifacts";
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -84,6 +95,171 @@ async function resolveAgentDiscoveryContext(
     { projectPath: input.projectPath! }
   );
   return { runtime, discoveryPath: input.projectPath! };
+}
+
+function isErrnoWithCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
+function isPathInsideDir(dirPath: string, filePath: string): boolean {
+  const resolvedDir = path.resolve(dirPath);
+  const resolvedFile = path.resolve(filePath);
+  const relative = path.relative(resolvedDir, resolvedFile);
+
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  // Older history may have createdAt serialized as a string; coerce back to Date for ORPC.
+  const obj = value as { createdAt?: unknown };
+  if (typeof obj.createdAt === "string") {
+    const parsed = new Date(obj.createdAt);
+    if (Number.isFinite(parsed.getTime())) {
+      obj.createdAt = parsed;
+    } else {
+      delete obj.createdAt;
+    }
+  }
+
+  return normalizeLegacyMuxMetadata(value as MuxMessage);
+}
+
+async function readChatJsonlBestEffort(params: {
+  chatPath: string;
+  logLabel: string;
+}): Promise<MuxMessage[]> {
+  try {
+    const data = await fsPromises.readFile(params.chatPath, "utf-8");
+    const lines = data.split("\n").filter((line) => line.trim());
+    const messages: MuxMessage[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        const parsed = JSON.parse(lines[i]) as unknown;
+        const message = normalizeMuxMessageFromDisk(parsed);
+        if (message) {
+          messages.push(message);
+        }
+      } catch (parseError) {
+        log.warn(
+          `Skipping malformed JSON at line ${i + 1} in ${params.logLabel}:`,
+          parseError instanceof Error ? parseError.message : String(parseError),
+          "\nLine content:",
+          lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
+        );
+      }
+    }
+
+    return messages;
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      throw new Error(`Archived transcript not found (missing ${params.logLabel})`);
+    }
+
+    throw error;
+  }
+}
+
+async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessage | null> {
+  try {
+    const raw = await fsPromises.readFile(partialPath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    return normalizeMuxMessageFromDisk(parsed);
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return null;
+    }
+
+    // Never fail transcript viewing because partial.json is corrupted.
+    log.warn("Failed to read partial.json for transcript", {
+      partialPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function mergePartialIntoHistory(messages: MuxMessage[], partial: MuxMessage | null): MuxMessage[] {
+  if (!partial) {
+    return messages;
+  }
+
+  const partialSeq = partial.metadata?.historySequence;
+  if (partialSeq === undefined) {
+    return [...messages, partial];
+  }
+
+  const existingIndex = messages.findIndex((m) => m.metadata?.historySequence === partialSeq);
+  if (existingIndex >= 0) {
+    const existing = messages[existingIndex];
+    const shouldReplace = (partial.parts?.length ?? 0) > (existing.parts?.length ?? 0);
+    if (!shouldReplace) {
+      return messages;
+    }
+
+    const next = [...messages];
+    next[existingIndex] = partial;
+    return next;
+  }
+
+  // Insert by historySequence to keep ordering stable.
+  const insertIndex = messages.findIndex((m) => {
+    const seq = m.metadata?.historySequence;
+    return typeof seq === "number" && seq > partialSeq;
+  });
+
+  if (insertIndex < 0) {
+    return [...messages, partial];
+  }
+
+  const next = [...messages];
+  next.splice(insertIndex, 0, partial);
+  return next;
+}
+
+async function findSubagentTranscriptEntryByScanningSessions(params: {
+  sessionsDir: string;
+  taskId: string;
+}): Promise<{ workspaceId: string; entry: SubagentTranscriptArtifactIndexEntry } | null> {
+  let best: { workspaceId: string; entry: SubagentTranscriptArtifactIndexEntry } | null = null;
+
+  let dirents: Array<{ name: string; isDirectory: () => boolean }> = [];
+  try {
+    dirents = await fsPromises.readdir(params.sessionsDir, { withFileTypes: true });
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return null;
+    }
+    throw error;
+  }
+
+  for (const dirent of dirents) {
+    if (!dirent.isDirectory()) {
+      continue;
+    }
+
+    const workspaceId = dirent.name;
+    if (!workspaceId) {
+      continue;
+    }
+
+    const sessionDir = path.join(params.sessionsDir, workspaceId);
+    const artifacts = await readSubagentTranscriptArtifactsFile(sessionDir);
+    const entry = artifacts.artifactsByChildTaskId[params.taskId];
+    if (!entry) {
+      continue;
+    }
+
+    if (!best || entry.updatedAtMs > best.entry.updatedAtMs) {
+      best = { workspaceId, entry };
+    }
+  }
+
+  return best;
 }
 
 export const router = (authToken?: string) => {
@@ -1523,6 +1699,92 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.getFullReplay.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.getFullReplay(input.workspaceId);
+        }),
+      getSubagentTranscript: t
+        .input(schemas.workspace.getSubagentTranscript.input)
+        .output(schemas.workspace.getSubagentTranscript.output)
+        .handler(async ({ context, input }) => {
+          const taskId = input.taskId.trim();
+          assert(taskId.length > 0, "workspace.getSubagentTranscript: taskId must be non-empty");
+
+          const requestingWorkspaceId = input.workspaceId?.trim() || null;
+
+          const tryLoadFromWorkspace = async (
+            workspaceId: string
+          ): Promise<{
+            workspaceId: string;
+            entry: SubagentTranscriptArtifactIndexEntry;
+          } | null> => {
+            const sessionDir = context.config.getSessionDir(workspaceId);
+            const artifacts = await readSubagentTranscriptArtifactsFile(sessionDir);
+            const entry = artifacts.artifactsByChildTaskId[taskId] ?? null;
+            return entry ? { workspaceId, entry } : null;
+          };
+
+          const resolved =
+            requestingWorkspaceId !== null
+              ? await tryLoadFromWorkspace(requestingWorkspaceId)
+              : await findSubagentTranscriptEntryByScanningSessions({
+                  sessionsDir: context.config.sessionsDir,
+                  taskId,
+                });
+
+          if (!resolved) {
+            // Helpful error message for UI.
+            throw new Error(
+              requestingWorkspaceId
+                ? `No archived transcript found for task ${taskId} in workspace ${requestingWorkspaceId}`
+                : `No archived transcript found for task ${taskId}`
+            );
+          }
+
+          // Auth: allow if the task is a descendant OR if we have an on-disk transcript artifact entry.
+          // The descendant check is best-effort: if it throws (corrupt config), we fall back to the
+          // artifact existence check to keep the UI usable.
+          if (requestingWorkspaceId) {
+            let isDescendant = false;
+            try {
+              isDescendant = await context.taskService.isDescendantAgentTask(
+                requestingWorkspaceId,
+                taskId
+              );
+            } catch (error: unknown) {
+              log.warn("workspace.getSubagentTranscript: descendant check failed", {
+                requestingWorkspaceId,
+                taskId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+
+            const hasArtifactInRequestingWorkspace = resolved.workspaceId === requestingWorkspaceId;
+            if (!isDescendant && !hasArtifactInRequestingWorkspace) {
+              throw new Error("Task is not a descendant of this workspace");
+            }
+          }
+
+          const workspaceSessionDir = context.config.getSessionDir(resolved.workspaceId);
+
+          // Defense-in-depth: refuse path traversal from a corrupted index file.
+          if (!isPathInsideDir(workspaceSessionDir, resolved.entry.chatPath)) {
+            throw new Error("Refusing to read transcript outside workspace session dir");
+          }
+          if (
+            resolved.entry.partialPath &&
+            !isPathInsideDir(workspaceSessionDir, resolved.entry.partialPath)
+          ) {
+            throw new Error("Refusing to read partial outside workspace session dir");
+          }
+
+          const messages = await readChatJsonlBestEffort({
+            chatPath: resolved.entry.chatPath,
+            logLabel: `${resolved.workspaceId}/subagent-transcripts/${taskId}/chat.jsonl`,
+          });
+
+          const partial = resolved.entry.partialPath
+            ? await readPartialJsonBestEffort(resolved.entry.partialPath)
+            : null;
+
+          return mergePartialIntoHistory(messages, partial);
         }),
       executeBash: t
         .input(schemas.workspace.executeBash.input)
