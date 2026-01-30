@@ -10,12 +10,20 @@ export function getStatusTooltip(options: {
   isStreaming: boolean;
   isAwaitingInput?: boolean;
   streamingModel: string | null;
+  streamingMode?: string | null;
   agentStatus?: { emoji: string; message: string; url?: string };
   isUnread?: boolean;
   recencyTimestamp?: number | null;
 }): React.ReactNode {
-  const { isStreaming, isAwaitingInput, streamingModel, agentStatus, isUnread, recencyTimestamp } =
-    options;
+  const {
+    isStreaming,
+    isAwaitingInput,
+    streamingModel,
+    streamingMode,
+    agentStatus,
+    isUnread,
+    recencyTimestamp,
+  } = options;
 
   // If agent status is set, show message and URL (if available)
   if (agentStatus) {
@@ -40,13 +48,14 @@ export function getStatusTooltip(options: {
   if (isStreaming && streamingModel) {
     return (
       <span>
-        <ModelDisplay modelString={streamingModel} showTooltip={false} /> is responding
+        <ModelDisplay modelString={streamingModel} showTooltip={false} />
+        {streamingMode ? ` (${streamingMode})` : ""} is responding
       </span>
     );
   }
 
   if (isStreaming) {
-    return "Assistant is responding";
+    return streamingMode ? `Assistant is responding (${streamingMode})` : "Assistant is responding";
   }
 
   // Only show unread if explicitly provided (sidebar only)

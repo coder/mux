@@ -16,6 +16,7 @@ export const WorkspaceStatusDot = memo<{
       isStarting,
       awaitingUserQuestion,
       currentModel,
+      currentMode,
       agentStatus,
       recencyTimestamp,
     } = useWorkspaceSidebarState(workspaceId);
@@ -35,11 +36,20 @@ export const WorkspaceStatusDot = memo<{
           isStreaming: isWorking,
           isAwaitingInput: awaitingUserQuestion,
           streamingModel: currentModel,
+          streamingMode: currentMode,
           agentStatus,
           isUnread: unread,
           recencyTimestamp,
         }),
-      [isWorking, awaitingUserQuestion, currentModel, agentStatus, unread, recencyTimestamp]
+      [
+        isWorking,
+        awaitingUserQuestion,
+        currentModel,
+        currentMode,
+        agentStatus,
+        unread,
+        recencyTimestamp,
+      ]
     );
 
     const bgColor = isWorking ? "bg-blue-400" : unread ? "bg-gray-300" : "bg-muted-dark";
