@@ -14,7 +14,6 @@ import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
-import type { EffectivePolicy } from "@/common/orpc/types";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";

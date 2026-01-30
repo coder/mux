@@ -229,8 +229,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     [workspaceUsage, pendingModel, use1M, autoCompactionThreshold]
   );
 
-  // Show warning when: shouldShowWarning flag is true AND not currently compacting
-  const shouldShowCompactionWarning = !isCompacting && autoCompactionResult.shouldShowWarning;
+  // Show warning when: shouldShowWarning flag is true AND not currently compacting.
+  // Context-switch warning takes priority so we don't show competing banners.
+  const shouldShowCompactionWarning =
+    !isCompacting && autoCompactionResult.shouldShowWarning && !contextSwitchWarning;
 
   // Handle force compaction callback - memoized to avoid effect re-runs.
   // We pass a default continueMessage of "Continue" as a resume sentinel so the backend can

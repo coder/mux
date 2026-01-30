@@ -135,9 +135,12 @@ export function useContextSwitchWarning(
     const prevModel = prevPendingModelRef.current;
     if (prevModel !== pendingModel) {
       prevPendingModelRef.current = pendingModel;
+      // On first render (prevModel is null), fall back to the most recent assistant model
+      // so the warning can offer a compaction suggestion after reloads.
+      const previousModel = prevModel ?? findPreviousModel(messages);
       const result =
         tokens > 0
-          ? checkContextSwitch(tokens, pendingModel, prevModel, use1M, checkOptions)
+          ? checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions)
           : null;
       setWarning(enhanceWarning(result));
     } else if (prevTokens === 0 && tokens > 0 && !warning) {
