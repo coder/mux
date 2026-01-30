@@ -7,7 +7,7 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
-import { Eye, Settings, ShieldCheck, Star } from "lucide-react";
+import { Eye, Settings, ShieldCheck, Star, ChevronDown } from "lucide-react";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -33,6 +33,8 @@ interface ModelSelectorProps {
   onHideModel?: (model: string) => void;
   onUnhideModel?: (model: string) => void;
   onOpenSettings?: () => void;
+  variant?: "default" | "box";
+  className?: string;
 }
 
 export interface ModelSelectorRef {
@@ -54,6 +56,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       onHideModel,
       onUnhideModel,
       onOpenSettings,
+      variant = "default",
+      className,
     },
     ref
   ) => {
@@ -244,15 +248,28 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       }
     }, [highlightedIndex]);
 
+    const isBoxVariant = variant === "box";
+    const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
+    const triggerClassName = isBoxVariant
+      ? cn(
+          "border-border-medium bg-separator text-foreground flex h-9 flex-1 min-w-0 cursor-pointer items-center justify-between rounded border px-2 text-xs transition-colors duration-200",
+          className
+        )
+      : "text-muted-light hover:bg-hover flex cursor-pointer items-center gap-1 rounded-sm px-1 py-0.5 text-[11px] transition-colors duration-200";
+    const inputClassName = cn(
+      "text-light bg-dark border-border-light font-monospace focus:border-exec-mode rounded-sm border outline-none",
+      isBoxVariant
+        ? cn("h-9 w-full px-2 text-xs", className)
+        : "w-48 px-1 py-0.5 text-[10px] leading-[11px]"
+    );
+
     if (!isEditing) {
       if (value.trim().length === 0) {
         return (
-          <div ref={containerRef} className="relative flex items-center gap-1">
-            <div
-              className="text-muted-light hover:bg-hover flex cursor-pointer items-center gap-1 rounded-sm px-1 py-0.5 text-[11px] transition-colors duration-200"
-              onClick={handleClick}
-            >
+          <div ref={containerRef} className={containerClassName}>
+            <div className={triggerClassName} onClick={handleClick}>
               <span>{emptyLabel ?? ""}</span>
+              {isBoxVariant && <ChevronDown className="ml-1 h-3 w-3 opacity-50" />}
             </div>
           </div>
         );
@@ -270,7 +287,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       const showGatewayIcon = gateway.isActive && isProviderSupported(value);
 
       return (
-        <div ref={containerRef} className="relative flex items-center gap-1">
+        <div ref={containerRef} className={containerClassName}>
           {showGatewayIcon && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -321,12 +338,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           )}
           <Tooltip>
             <TooltipTrigger asChild>
-              <div
-                className="text-muted-light hover:bg-hover flex cursor-pointer items-center gap-1 rounded-sm px-1 py-0.5 text-[11px] transition-colors duration-200"
-                onClick={handleClick}
-              >
-                <ProviderIcon provider={innerProvider} className="h-3 w-3 shrink-0 opacity-70" />
-                <span>{formatModelDisplayName(modelName)}</span>
+              <div className={triggerClassName} onClick={handleClick}>
+                <div className="flex items-center gap-1">
+                  <ProviderIcon provider={innerProvider} className="h-3 w-3 shrink-0 opacity-70" />
+                  <span>{formatModelDisplayName(modelName)}</span>
+                </div>
+                {isBoxVariant && <ChevronDown className="ml-1 h-3 w-3 opacity-50" />}
               </div>
             </TooltipTrigger>
             <TooltipContent align="center">{value}</TooltipContent>
@@ -336,15 +353,15 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     }
 
     return (
-      <div ref={containerRef} className="relative flex items-center gap-1">
-        <div>
+      <div ref={containerRef} className={containerClassName}>
+        <div className={cn(isBoxVariant && "w-full")}>
           <input
             ref={inputRef}
             value={inputValue}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={inputPlaceholder ?? "provider:model-name"}
-            className="text-light bg-dark border-border-light font-monospace focus:border-exec-mode w-48 rounded-sm border px-1 py-0.5 text-[10px] leading-[11px] outline-none"
+            className={inputClassName}
           />
           {error && (
             <div className="text-danger-soft font-monospace mt-0.5 text-[9px]">{error}</div>

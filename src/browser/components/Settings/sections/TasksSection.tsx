@@ -574,12 +574,15 @@ export function TasksSection() {
           <div className="space-y-1">
             <div className="text-muted text-xs">Model</div>
             <div className="flex items-center gap-2">
+              {/* Match the Reasoning dropdown styling for inherit defaults. */}
               <ModelSelector
                 value={modelValue === INHERIT ? "" : modelValue}
                 emptyLabel="Inherit"
                 onChange={(value) => setAgentModel(agent.id, value)}
                 models={models}
                 hiddenModels={hiddenModels}
+                variant="box"
+                className="bg-modal-bg"
               />
               {modelValue !== INHERIT ? (
                 <button
@@ -636,12 +639,15 @@ export function TasksSection() {
           <div className="space-y-1">
             <div className="text-muted text-xs">Model</div>
             <div className="flex items-center gap-2">
+              {/* Match the Reasoning dropdown styling for inherit defaults. */}
               <ModelSelector
                 value={modelValue === INHERIT ? "" : modelValue}
                 emptyLabel="Inherit"
                 onChange={(value) => setAgentModel(agentId, value)}
                 models={models}
                 hiddenModels={hiddenModels}
+                variant="box"
+                className="bg-modal-bg"
               />
               {modelValue !== INHERIT ? (
                 <button
