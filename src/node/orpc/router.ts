@@ -128,10 +128,10 @@ function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
   return normalizeLegacyMuxMetadata(value as MuxMessage);
 }
 
-async function readChatJsonlBestEffort(params: {
+async function readChatJsonlAllowMissing(params: {
   chatPath: string;
   logLabel: string;
-}): Promise<MuxMessage[]> {
+}): Promise<MuxMessage[] | null> {
   try {
     const data = await fsPromises.readFile(params.chatPath, "utf-8");
     const lines = data.split("\n").filter((line) => line.trim());
@@ -157,7 +157,7 @@ async function readChatJsonlBestEffort(params: {
     return messages;
   } catch (error: unknown) {
     if (isErrnoWithCode(error, "ENOENT")) {
-      throw new Error(`Archived transcript not found (missing ${params.logLabel})`);
+      return null;
     }
 
     throw error;
@@ -1725,28 +1725,11 @@ export const router = (authToken?: string) => {
             return entry ? { workspaceId, entry } : null;
           };
 
-          const resolved =
-            requestingWorkspaceId !== null
-              ? await tryLoadFromWorkspace(requestingWorkspaceId)
-              : await findSubagentTranscriptEntryByScanningSessions({
-                  sessionsDir: context.config.sessionsDir,
-                  taskId,
-                });
-
-          if (!resolved) {
-            // Helpful error message for UI.
-            throw new Error(
-              requestingWorkspaceId
-                ? `No archived transcript found for task ${taskId} in workspace ${requestingWorkspaceId}`
-                : `No archived transcript found for task ${taskId}`
-            );
-          }
-
           // Auth: allow if the task is a descendant OR if we have an on-disk transcript artifact entry.
           // The descendant check is best-effort: if it throws (corrupt config), we fall back to the
           // artifact existence check to keep the UI usable.
+          let isDescendant = false;
           if (requestingWorkspaceId) {
-            let isDescendant = false;
             try {
               isDescendant = await context.taskService.isDescendantAgentTask(
                 requestingWorkspaceId,
@@ -1759,36 +1742,84 @@ export const router = (authToken?: string) => {
                 error: error instanceof Error ? error.message : String(error),
               });
             }
+          }
 
+          const readTranscriptFromPaths = async (params: {
+            workspaceId: string;
+            chatPath?: string;
+            partialPath?: string;
+            logLabel: string;
+          }): Promise<MuxMessage[]> => {
+            const workspaceSessionDir = context.config.getSessionDir(params.workspaceId);
+
+            // Defense-in-depth: refuse path traversal from a corrupted index file.
+            if (params.chatPath && !isPathInsideDir(workspaceSessionDir, params.chatPath)) {
+              throw new Error("Refusing to read transcript outside workspace session dir");
+            }
+            if (params.partialPath && !isPathInsideDir(workspaceSessionDir, params.partialPath)) {
+              throw new Error("Refusing to read partial outside workspace session dir");
+            }
+
+            const partial = params.partialPath
+              ? await readPartialJsonBestEffort(params.partialPath)
+              : null;
+            const messages = params.chatPath
+              ? await readChatJsonlAllowMissing({
+                  chatPath: params.chatPath,
+                  logLabel: params.logLabel,
+                })
+              : null;
+
+            // If we only archived partial.json (e.g. interrupted stream), still allow viewing.
+            if (!messages && !partial) {
+              throw new Error(`Transcript not found (missing ${params.logLabel})`);
+            }
+
+            return mergePartialIntoHistory(messages ?? [], partial);
+          };
+
+          const resolved =
+            requestingWorkspaceId !== null
+              ? await tryLoadFromWorkspace(requestingWorkspaceId)
+              : await findSubagentTranscriptEntryByScanningSessions({
+                  sessionsDir: context.config.sessionsDir,
+                  taskId,
+                });
+
+          // If the transcript hasn't been archived yet (common while patch artifacts are pending),
+          // fall back to reading from the task's live session dir while it still exists.
+          if (!resolved) {
+            if (requestingWorkspaceId && isDescendant) {
+              const taskSessionDir = context.config.getSessionDir(taskId);
+              return readTranscriptFromPaths({
+                workspaceId: taskId,
+                chatPath: path.join(taskSessionDir, "chat.jsonl"),
+                partialPath: path.join(taskSessionDir, "partial.json"),
+                logLabel: `${taskId}/chat.jsonl`,
+              });
+            }
+
+            // Helpful error message for UI.
+            throw new Error(
+              requestingWorkspaceId
+                ? `No transcript found for task ${taskId} in workspace ${requestingWorkspaceId}`
+                : `No transcript found for task ${taskId}`
+            );
+          }
+
+          if (requestingWorkspaceId) {
             const hasArtifactInRequestingWorkspace = resolved.workspaceId === requestingWorkspaceId;
             if (!isDescendant && !hasArtifactInRequestingWorkspace) {
               throw new Error("Task is not a descendant of this workspace");
             }
           }
 
-          const workspaceSessionDir = context.config.getSessionDir(resolved.workspaceId);
-
-          // Defense-in-depth: refuse path traversal from a corrupted index file.
-          if (!isPathInsideDir(workspaceSessionDir, resolved.entry.chatPath)) {
-            throw new Error("Refusing to read transcript outside workspace session dir");
-          }
-          if (
-            resolved.entry.partialPath &&
-            !isPathInsideDir(workspaceSessionDir, resolved.entry.partialPath)
-          ) {
-            throw new Error("Refusing to read partial outside workspace session dir");
-          }
-
-          const messages = await readChatJsonlBestEffort({
+          return readTranscriptFromPaths({
+            workspaceId: resolved.workspaceId,
             chatPath: resolved.entry.chatPath,
+            partialPath: resolved.entry.partialPath,
             logLabel: `${resolved.workspaceId}/subagent-transcripts/${taskId}/chat.jsonl`,
           });
-
-          const partial = resolved.entry.partialPath
-            ? await readPartialJsonBestEffort(resolved.entry.partialPath)
-            : null;
-
-          return mergePartialIntoHistory(messages, partial);
         }),
       executeBash: t
         .input(schemas.workspace.executeBash.input)

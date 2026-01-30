@@ -309,7 +309,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
             parentWorkspaceId: params.parentWorkspaceId,
             createdAtMs: existing?.createdAtMs ?? nowMs,
             updatedAtMs: nowMs,
-            chatPath: archivedChatPath,
+            chatPath: didCopyChat ? archivedChatPath : existing?.chatPath,
             partialPath: didCopyPartial ? archivedPartialPath : existing?.partialPath,
           }),
         });
@@ -546,7 +546,9 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
                 ...childEntry,
                 childTaskId: taskId,
                 parentWorkspaceId: params.parentWorkspaceId,
-                chatPath: getSubagentTranscriptChatPath(params.parentSessionDir, taskId),
+                chatPath: childEntry.chatPath
+                  ? getSubagentTranscriptChatPath(params.parentSessionDir, taskId)
+                  : undefined,
                 partialPath: childEntry.partialPath
                   ? getSubagentTranscriptPartialPath(params.parentSessionDir, taskId)
                   : undefined,
