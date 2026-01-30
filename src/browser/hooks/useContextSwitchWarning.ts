@@ -46,6 +46,8 @@ export function useContextSwitchWarning(
 
   const [warning, setWarning] = useState<ContextSwitchWarning | null>(null);
   const prevUse1MRef = useRef(use1M);
+  // Track token availability so dismissals don't immediately retrigger the warning.
+  const prevTokensRef = useRef(0);
   // Track previous model so we can use it as compaction fallback on switch.
   // Initialize to null so first render triggers check (handles page reload after model switch).
   const prevPendingModelRef = useRef<string | null>(null);
@@ -113,13 +115,16 @@ export function useContextSwitchWarning(
   // Also re-check when workspaceUsage changes (tokens may not be available on first render).
   const tokens = getCurrentTokens();
   useEffect(() => {
+    const prevTokens = prevTokensRef.current;
+    prevTokensRef.current = tokens;
     const prevModel = prevPendingModelRef.current;
     if (prevModel !== pendingModel) {
       prevPendingModelRef.current = pendingModel;
       const result = tokens > 0 ? checkContextSwitch(tokens, pendingModel, prevModel, use1M) : null;
       setWarning(enhanceWarning(result));
-    } else if (tokens > 0 && !warning) {
+    } else if (prevTokens === 0 && tokens > 0 && !warning) {
       // Re-check if tokens became available after initial render (usage data loaded)
+      // Gate on 0 -> >0 so a dismissal doesn't immediately recreate the warning.
       // Use findPreviousModel since we don't have a "previous" model in this case
       const previousModel = findPreviousModel(messages);
       if (previousModel && previousModel !== pendingModel) {
