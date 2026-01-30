@@ -581,11 +581,13 @@ export function CreationControls(props: CreationControlsProps) {
                 if (!props.coderProps) {
                   return;
                 }
-                if (props.coderProps.coderConfig) {
-                  props.coderProps.onCoderConfigChange(props.coderProps.coderConfig);
-                } else {
-                  props.coderProps.onEnabledChange(true);
-                }
+                // Switch to SSH mode with a minimal config; the Coder hook will
+                // auto-select the first template once templates load.
+                onSelectedRuntimeChange({
+                  mode: "ssh",
+                  host: CODER_RUNTIME_PLACEHOLDER,
+                  coder: props.coderProps.coderConfig ?? { existingWorkspace: false },
+                });
                 return;
               }
               // Convert mode to ParsedRuntime with appropriate defaults
