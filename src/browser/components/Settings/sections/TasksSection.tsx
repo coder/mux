@@ -662,16 +662,20 @@ export function TasksSection() {
 
           <div className="flex shrink-0 items-center gap-3">
             {enablementHint ? <div className="text-muted text-xs">{enablementHint}</div> : null}
-            <div className="flex items-center gap-2">
-              <div className="text-muted text-xs">Enabled</div>
-              <Switch
-                checked={enabledValue}
-                disabled={enablementLocked}
-                title={enablementTitle}
-                onCheckedChange={(checked) => setAgentEnabled(agent.id, checked)}
-                aria-label={`Toggle ${agent.id} enabled`}
-              />
-            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex items-center gap-2">
+                  <div className="text-muted text-xs">Enabled</div>
+                  <Switch
+                    checked={enabledValue}
+                    disabled={enablementLocked}
+                    onCheckedChange={(checked) => setAgentEnabled(agent.id, checked)}
+                    aria-label={`Toggle ${agent.id} enabled`}
+                  />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>{enablementTitle}</TooltipContent>
+            </Tooltip>
             {enabledOverride !== undefined ? (
               <Button
                 type="button"
