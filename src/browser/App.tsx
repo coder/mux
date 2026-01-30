@@ -90,6 +90,7 @@ function AppInner() {
     pendingNewWorkspaceSectionId,
     pendingNewWorkspaceDraftId,
     beginWorkspaceCreation,
+    createWorkspaceDraft,
   } = useWorkspaceContext();
   const { currentWorkspaceId } = useRouter();
   const { theme, setTheme, toggleTheme } = useTheme();
@@ -166,7 +167,7 @@ function AppInner() {
 
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
-    beginWorkspaceCreation,
+    createWorkspaceDraft,
   });
   // Refs for async subscription callbacks (avoid stale closures)
   const projectsRef = useRef(projects);
@@ -176,8 +177,8 @@ function AppInner() {
   projectsLoadingRef.current = projectsLoading;
 
   // When "Start New Agent" is triggered during cold start, projects may still be loading.
-  // Buffer the action and flush it once projects are available.
-  const pendingStartNewAgentRef = useRef(false);
+  // Buffer the action count and flush it once projects are available.
+  const pendingStartNewAgentCountRef = useRef(0);
 
   const pendingNewWorkspaceProjectRef = useRef(pendingNewWorkspaceProject);
   pendingNewWorkspaceProjectRef.current = pendingNewWorkspaceProject;
@@ -705,7 +706,7 @@ function AppInner() {
           if (signal.aborted) break;
 
           if (projectsLoadingRef.current) {
-            pendingStartNewAgentRef.current = true;
+            pendingStartNewAgentCountRef.current += 1;
             continue;
           }
 
@@ -732,21 +733,25 @@ function AppInner() {
   // Flush any pending menu-triggered "Start New Agent" once projects finish loading.
   useEffect(() => {
     if (projectsLoading) return;
-    if (!pendingStartNewAgentRef.current) return;
+
+    const pendingCount = pendingStartNewAgentCountRef.current;
+    if (pendingCount <= 0) return;
+
+    pendingStartNewAgentCountRef.current = 0;
 
     const projectPath =
       selectedWorkspaceRef.current?.projectPath ??
       pendingNewWorkspaceProjectRef.current ??
       getFirstProjectPath(projects);
 
-    pendingStartNewAgentRef.current = false;
-
     if (!projectPath) {
       console.warn("No projects available for workspace creation");
       return;
     }
 
-    startWorkspaceCreationRef.current(projectPath);
+    for (let i = 0; i < pendingCount; i += 1) {
+      startWorkspaceCreationRef.current(projectPath);
+    }
   }, [projectsLoading, projects]);
   // Handle workspace fork switch event
   useEffect(() => {
