@@ -43,7 +43,10 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
-import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
+import {
+  applyWorkspaceAiSettingsFromBackend,
+  setWorkspaceAiSettingsBackendApi,
+} from "@/browser/utils/workspaceAiSettingsBackend";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
 /**
@@ -93,29 +96,18 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
     if (!entry) continue;
     if (typeof entry.model !== "string" || entry.model.length === 0) continue;
 
-    // Protect newer local preferences from stale metadata updates (e.g., rapid thinking toggles).
-    if (
-      !shouldApplyWorkspaceAiSettingsFromBackend(workspaceId, agentKey, {
-        model: entry.model,
-        thinkingLevel: entry.thinkingLevel,
-      })
-    ) {
-      continue;
-    }
-
     nextByAgent[agentKey] = {
       model: entry.model,
       thinkingLevel: entry.thinkingLevel,
     };
   }
 
-  if (JSON.stringify(existingByAgent) !== JSON.stringify(nextByAgent)) {
-    updatePersistedState(byAgentKey, nextByAgent);
-  }
+  const applied = applyWorkspaceAiSettingsFromBackend(workspaceId, nextByAgent, existingByAgent);
+  const resolvedByAgent = applied ? nextByAgent : existingByAgent;
 
   // Seed the active agent into the existing keys to avoid UI flash.
   const activeAgentId = readPersistedState<string>(getAgentIdKey(workspaceId), "exec");
-  const active = nextByAgent[activeAgentId] ?? nextByAgent.exec ?? nextByAgent.plan;
+  const active = resolvedByAgent[activeAgentId] ?? resolvedByAgent.exec ?? resolvedByAgent.plan;
   if (!active) {
     return;
   }
@@ -358,6 +350,9 @@ interface WorkspaceProviderProps {
 
 export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const { api } = useAPI();
+  useEffect(() => {
+    setWorkspaceAiSettingsBackendApi(api ?? null);
+  }, [api]);
 
   // Cache global agent defaults (plus legacy mode defaults) so non-react code paths can read them.
   useEffect(() => {

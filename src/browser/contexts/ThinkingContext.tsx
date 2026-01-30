@@ -18,11 +18,7 @@ import {
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
-import { useAPI } from "@/browser/contexts/API";
-import {
-  clearPendingWorkspaceAiSettings,
-  markPendingWorkspaceAiSettings,
-} from "@/browser/utils/workspaceAiSettingsSync";
+import { workspaceAiSettingsBackend } from "@/browser/utils/workspaceAiSettingsBackend";
 import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ThinkingContextType {
@@ -48,7 +44,6 @@ function getCanonicalModelForScope(scopeId: string, fallbackModel: string): stri
 }
 
 export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
-  const { api } = useAPI();
   const defaultModel = getDefaultModel();
   const scopeId = getScopeId(props.workspaceId, props.projectPath);
   const thinkingKey = getThinkingLevelKey(scopeId);
@@ -107,37 +102,11 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
             [normalizedAgentId]: { model, thinkingLevel: level },
           };
         },
-        {}
+        {},
+        { backend: workspaceAiSettingsBackend }
       );
-
-      if (!api) {
-        return;
-      }
-
-      // Avoid stale backend metadata clobbering newer local preferences when users
-      // click through levels quickly (tests reproduce this by cycling to xhigh).
-      markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
-        model,
-        thinkingLevel: level,
-      });
-
-      api.workspace
-        .updateAgentAISettings({
-          workspaceId,
-          agentId: normalizedAgentId,
-          aiSettings: { model, thinkingLevel: level },
-        })
-        .then((result) => {
-          if (!result.success) {
-            clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-          }
-        })
-        .catch(() => {
-          clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-          // Best-effort only. If offline or backend is old, the next sendMessage will persist.
-        });
     },
-    [api, defaultModel, props.workspaceId, scopeId, setThinkingLevelInternal]
+    [defaultModel, props.workspaceId, scopeId, setThinkingLevelInternal]
   );
 
   // Global keybind: cycle thinking level (Ctrl/Cmd+Shift+T).

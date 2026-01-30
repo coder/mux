@@ -32,10 +32,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
-import {
-  clearPendingWorkspaceAiSettings,
-  markPendingWorkspaceAiSettings,
-} from "@/browser/utils/workspaceAiSettingsSync";
+import { workspaceAiSettingsBackend } from "@/browser/utils/workspaceAiSettingsBackend";
 import {
   getModelKey,
   getThinkingLevelKey,
@@ -481,36 +478,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             [normalizedAgentId]: { model: canonicalModel, thinkingLevel },
           };
         },
-        {}
+        {},
+        { backend: workspaceAiSettingsBackend }
       );
-
-      // Workspace variant: persist to backend for cross-device consistency.
-      if (!api) {
-        return;
-      }
-
-      markPendingWorkspaceAiSettings(workspaceId, normalizedAgentId, {
-        model: canonicalModel,
-        thinkingLevel,
-      });
-
-      api.workspace
-        .updateAgentAISettings({
-          workspaceId,
-          agentId: normalizedAgentId,
-          aiSettings: { model: canonicalModel, thinkingLevel },
-        })
-        .then((result) => {
-          if (!result.success) {
-            clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-          }
-        })
-        .catch(() => {
-          clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
-          // Best-effort only. If offline or backend is old, sendMessage will persist.
-        });
     },
-    [api, agentId, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
+    [agentId, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
   );
 
   // Model cycling candidates: all visible models (custom + built-in, minus hidden).
