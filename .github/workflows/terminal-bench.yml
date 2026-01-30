@@ -226,14 +226,25 @@ jobs:
         id: artifact-name
         env:
           MODEL_NAME: ${{ inputs.model_name }}
+          DATASET: ${{ inputs.dataset }}
+          TASK_NAMES: ${{ inputs.task_names }}
           RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          if [ -n "$MODEL_NAME" ]; then
-            # Replace colons and slashes with hyphens for filesystem compatibility
-            ARTIFACT_NAME="terminal-bench-results-$(echo "$MODEL_NAME-$RUN_ID" | tr ':/' '--')"
+          # actions/upload-artifact@v4 requires artifact names to be unique per workflow run.
+          # Nightly workflows can run multiple jobs with the same model (e.g. Harbor smoke tests),
+          # so include dataset + task selection in the artifact name.
+          sanitize() { printf "%s" "$1" | tr ' :/@' '-' | tr -cd 'A-Za-z0-9._-'; }
+
+          SAFE_MODEL=$(sanitize "${MODEL_NAME:-no-model}")
+          SAFE_DATASET=$(sanitize "${DATASET:-unknown-dataset}")
+          if [ -n "${TASK_NAMES:-}" ]; then
+            SAFE_TASKS=$(sanitize "$TASK_NAMES")
           else
-            ARTIFACT_NAME="terminal-bench-results-$RUN_ID"
+            SAFE_TASKS="all-tasks"
           fi
+
+          ARTIFACT_NAME="terminal-bench-results-${SAFE_MODEL}-${SAFE_DATASET}-${SAFE_TASKS}-${RUN_ID}-a${RUN_ATTEMPT}"
           echo "name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
           echo "Artifact name: $ARTIFACT_NAME"
 
