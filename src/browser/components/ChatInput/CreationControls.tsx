@@ -211,7 +211,8 @@ const resolveRuntimeButtonState = (
     }
 
     if (value === RUNTIME_MODE.SSH) {
-      return allowSshHost || allowSshCoder;
+      // Host SSH is separate from Coder; block it when policy forbids host SSH.
+      return allowSshHost;
     }
 
     return allowedModeSet.has(value);
@@ -775,6 +776,11 @@ export function CreationControls(props: CreationControlsProps) {
             />
           )}
         </div>
+
+        {props.runtimePolicyError && (
+          // Explain why send is blocked when policy forbids the selected runtime.
+          <p className="text-xs text-red-500">{props.runtimePolicyError}</p>
+        )}
 
         {/* Dev container controls - config dropdown/input + credential sharing */}
         {selectedRuntime.mode === "devcontainer" && devcontainerSelection.uiMode !== "hidden" && (
