@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Plus } from "lucide-react";
-import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+// import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 
 interface AddSectionButtonProps {
   onCreateSection: (name: string) => void;
@@ -54,18 +54,13 @@ export const AddSectionButton: React.FC<AddSectionButtonProps> = ({ onCreateSect
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          onClick={() => setIsCreating(true)}
-          data-testid="add-section-button"
-          className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-2 py-0.5 text-[11px] transition-colors"
-        >
-          <Plus size={12} />
-          <span>Add section</span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent>Create a new section to organize workspaces</TooltipContent>
-    </Tooltip>
+    <button
+      onClick={() => setIsCreating(true)}
+      data-testid="add-section-button"
+      className="text-muted/60 hover:text-muted flex w-full cursor-pointer items-center justify-center gap-1 border-none bg-transparent px-2 py-0.5 text-[11px] transition-colors"
+    >
+      <Plus size={12} />
+      <span>Add section</span>
+    </button>
   );
 };
