@@ -33,7 +33,9 @@ function createEmptyStore(): McpOauthStoreFileV1 {
   return { version: 1, entries: {} };
 }
 
-interface BearerChallenge {
+// Exported for focused unit tests (WWW-Authenticate parsing) without requiring
+// a real OAuth server.
+export interface BearerChallenge {
   /** The full raw WWW-Authenticate header value (best-effort). */
   raw: string;
   scope?: string;
@@ -114,7 +116,7 @@ function normalizeServerUrlForComparison(serverUrl: string): string | null {
   }
 }
 
-function parseBearerWwwAuthenticate(header: string): BearerChallenge | null {
+export function parseBearerWwwAuthenticate(header: string): BearerChallenge | null {
   const raw = header;
 
   // Minimal, spec-friendly extraction. We intentionally avoid implementing a full
