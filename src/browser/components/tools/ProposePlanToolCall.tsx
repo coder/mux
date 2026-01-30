@@ -616,60 +616,65 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
       {/* Actions row at the bottom (matching MessageWindow style) */}
       <div className="mt-3 flex items-center gap-0.5">
-        {actionButtons.map((button, index) => (
-          <IconActionButton key={index} button={button} />
-        ))}
-        {/* Edit button rendered with ref for error popover positioning */}
-        {editButton && (
-          <div ref={editButtonRef}>
-            <IconActionButton button={editButton} />
-          </div>
-        )}
+        <div className="flex flex-1 min-w-0 items-center gap-0.5">
+          {actionButtons.map((button, index) => (
+            <IconActionButton key={index} button={button} />
+          ))}
+          {/* Edit button rendered with ref for error popover positioning */}
+          {editButton && (
+            <div ref={editButtonRef}>
+              <IconActionButton button={editButton} />
+            </div>
+          )}
+        </div>
 
         {(implementButton ?? orchestratorButton) && (
-          <div className="ml-auto flex items-center gap-1">
-            {implementButton && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
-                    onClick={implementButton.onClick}
-                    disabled={implementButton.disabled}
-                  >
-                    {implementButton.icon}
-                    {implementButton.label}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {implementButton.tooltip ?? implementButton.label}
-                </TooltipContent>
-              </Tooltip>
-            )}
+          <>
+            <div className="flex items-center justify-center gap-1">
+              {implementButton && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-placeholder h-6 px-2 text-[11px] gap-1 [&_svg]:size-3.5"
+                      onClick={implementButton.onClick}
+                      disabled={implementButton.disabled}
+                    >
+                      {implementButton.icon}
+                      {implementButton.label}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent align="center">
+                    {implementButton.tooltip ?? implementButton.label}
+                  </TooltipContent>
+                </Tooltip>
+              )}
 
-            {orchestratorButton && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
-                    onClick={orchestratorButton.onClick}
-                    disabled={orchestratorButton.disabled}
-                  >
-                    {orchestratorButton.icon}
-                    {orchestratorButton.label}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent align="center">
-                  {orchestratorButton.tooltip ?? orchestratorButton.label}
-                </TooltipContent>
-              </Tooltip>
-            )}
-          </div>
+              {orchestratorButton && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-placeholder h-6 px-2 text-[11px] gap-1 [&_svg]:size-3.5"
+                      onClick={orchestratorButton.onClick}
+                      disabled={orchestratorButton.disabled}
+                    >
+                      {orchestratorButton.icon}
+                      {orchestratorButton.label}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent align="center">
+                    {orchestratorButton.tooltip ?? orchestratorButton.label}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+            <div className="flex-1" />
+          </>
         )}
       </div>
     </div>
