@@ -2,12 +2,7 @@ import { tool } from "ai";
 import type { FileReadToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import {
-  validatePathInCwd,
-  validateFileSize,
-  validateAndCorrectPath,
-  isPlanFilePath,
-} from "./fileCommon";
+import { validateFileSize, validateAndCorrectPath } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
 
@@ -38,26 +33,6 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
 
         // Use runtime's normalizePath method to resolve paths correctly for both local and SSH runtimes
         const resolvedPath = config.runtime.normalizePath(filePath, config.cwd);
-
-        // Validate that the path is within the working directory
-        // Exception: allow reading the plan file in plan mode (it may be outside workspace cwd)
-        // Allow reading stream-scoped runtimeTempDir (e.g., full bash output saved during compaction).
-        if (!(await isPlanFilePath(filePath, config))) {
-          const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime, [
-            config.runtimeTempDir,
-          ]);
-          if (pathValidation) {
-            // In plan mode, hint about the plan file path to help model recover
-            const hint =
-              config.planFileOnly && config.planFilePath
-                ? ` In the plan agent, use the exact plan file path string as provided: ${config.planFilePath}`
-                : "";
-            return {
-              success: false,
-              error: pathValidation.error + hint,
-            };
-          }
-        }
 
         // Check if file exists using runtime
         let fileStat;

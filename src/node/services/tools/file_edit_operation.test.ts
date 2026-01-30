@@ -5,32 +5,9 @@ import { executeFileEditOperation } from "./file_edit_operation";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
-import { createTestToolConfig, getTestDeps, TestTempDir } from "./testHelpers";
-
-const TEST_CWD = "/tmp";
-
-function createConfig(runtime?: Runtime) {
-  const config = createTestToolConfig(TEST_CWD);
-  if (runtime) {
-    config.runtime = runtime;
-  }
-  return config;
-}
+import { getTestDeps, TestTempDir } from "./testHelpers";
 
 describe("executeFileEditOperation", () => {
-  test("should return error when path validation fails", async () => {
-    const result = await executeFileEditOperation({
-      config: createConfig(),
-      filePath: "../../etc/passwd",
-      operation: () => ({ success: true, newContent: "", metadata: {} }),
-    });
-
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("File operations are restricted to the workspace directory");
-    }
-  });
-
   test("should use runtime.normalizePath for path resolution, not Node's path.resolve", async () => {
     // This test verifies that executeFileEditOperation uses runtime.normalizePath()
     // instead of path.resolve() for resolving file paths.

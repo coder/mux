@@ -54,15 +54,6 @@ export async function validatePlanModeAccess(
       };
     }
     // Skip cwd validation for plan file - it may be outside workspace
-  } else {
-    // Standard cwd validation for non-plan-mode edits
-    const pathValidation = validatePathInCwd(filePath, config.cwd, config.runtime);
-    if (pathValidation) {
-      return {
-        success: false,
-        error: pathValidation.error,
-      };
-    }
   }
 
   return null;
