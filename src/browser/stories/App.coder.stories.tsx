@@ -10,10 +10,17 @@ import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
 import type { ProjectConfig } from "@/node/config";
 import type { CoderTemplate, CoderPreset, CoderWorkspace } from "@/common/orpc/schemas/coder";
+import { getLastRuntimeConfigKey, getRuntimeKey } from "@/common/constants/storage";
 
 async function openProjectCreationView(storyRoot: HTMLElement): Promise<void> {
   // App now boots into the built-in mux-chat workspace.
   // Navigate to the project creation page so runtime controls are visible.
+  if (typeof localStorage !== "undefined") {
+    // Ensure runtime selection state doesn't leak between stories.
+    localStorage.removeItem(getLastRuntimeConfigKey("/Users/dev/my-project"));
+    localStorage.removeItem(getRuntimeKey("/Users/dev/my-project"));
+  }
+
   const projectRow = await waitFor(
     () => {
       const el = storyRoot.querySelector(

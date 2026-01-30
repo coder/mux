@@ -219,4 +219,28 @@ describe("useDraftWorkspaceSettings", () => {
       expect(result.current.coderConfigFallback).toEqual(savedCoderConfig);
     });
   });
+
+  test("exposes persisted SSH host as fallback when leaving Coder", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(getLastRuntimeConfigKey(projectPath), {
+      ssh: {
+        host: "dev@host",
+      },
+    });
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.sshHostFallback).toBe("dev@host");
+    });
+  });
 });

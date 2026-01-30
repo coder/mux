@@ -646,7 +646,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         !creationState.selectedRuntime.coder &&
         runtimePolicy.allowSshHost === false &&
         runtimePolicy.allowSshCoder
-        ? "Host SSH runtimes are disabled by policy. Enable “Use Coder Workspace”."
+        ? "Host SSH runtimes are disabled by policy. Select the Coder runtime instead."
         : "Selected runtime is disabled by policy."
       : null;
 
@@ -662,6 +662,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           onTrunkBranchChange: creationState.setTrunkBranch,
           selectedRuntime: creationState.selectedRuntime,
           coderConfigFallback: creationState.coderConfigFallback,
+          sshHostFallback: creationState.sshHostFallback,
           defaultRuntimeMode: creationState.defaultRuntimeMode,
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
           onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
