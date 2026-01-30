@@ -4,12 +4,8 @@
  * Maintains a separate index for LRU eviction tracking.
  */
 
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { createLRUCache } from "./lruCache";
 
-/** Prefix for individual share entries */
-const ENTRY_PREFIX = "share:";
-/** Key for LRU index (array of hashes, most recent last) */
-const INDEX_KEY = "shareIndex";
 const MAX_ENTRIES = 1024;
 
 export interface ShareData {
@@ -21,8 +17,6 @@ export interface ShareData {
   mutateKey: string;
   /** Expiration timestamp (ms), if set */
   expiresAt?: number;
-  /** When this entry was cached (for LRU eviction) */
-  cachedAt: number;
   /** Whether the share was signed with user's key */
   signed?: boolean;
 }
@@ -77,10 +71,13 @@ function hashContent(content: string): string {
   return fallbackHash;
 }
 
-/** Get storage key for a hash */
-function entryKey(hash: string): string {
-  return `${ENTRY_PREFIX}${hash}`;
-}
+// LRU cache instance for share data
+const shareCache = createLRUCache<ShareData>({
+  entryPrefix: "share:",
+  indexKey: "shareIndex",
+  maxEntries: MAX_ENTRIES,
+  // No TTL - expiration is handled per-entry via expiresAt field
+});
 
 /**
  * Pre-warm the hash cache for content.
@@ -97,20 +94,20 @@ export async function warmHashCache(content: string): Promise<void> {
 /**
  * Get the cached share data for content, if it exists and hasn't expired.
  */
-export function getShareData(content: string): ShareData | undefined {
+export function getShareData(content: string): (ShareData & { cachedAt: number }) | undefined {
   const hash = hashContent(content);
-  const entry = readPersistedState<ShareData | null>(entryKey(hash), null);
+  const entry = shareCache.getEntry(hash);
 
   if (!entry) return undefined;
 
-  // Check if expired
-  if (entry.expiresAt && entry.expiresAt < Date.now()) {
-    // Entry has expired - remove it from cache
+  // Check if expired (custom per-entry expiration)
+  if (entry.data.expiresAt && entry.data.expiresAt < Date.now()) {
     removeShareData(content);
     return undefined;
   }
 
-  return entry;
+  // Include cachedAt for API compatibility
+  return { ...entry.data, cachedAt: entry.cachedAt };
 }
 
 /**
@@ -124,34 +121,9 @@ export function getSharedUrl(content: string): string | undefined {
  * Store share data for message content.
  * Uses LRU eviction when cache exceeds MAX_ENTRIES.
  */
-export function setShareData(content: string, data: Omit<ShareData, "cachedAt">): void {
+export function setShareData(content: string, data: ShareData): void {
   const hash = hashContent(content);
-  const fullData: ShareData = { ...data, cachedAt: Date.now() };
-
-  // Write the individual entry
-  updatePersistedState(entryKey(hash), () => fullData, null);
-
-  // Update LRU index
-  updatePersistedState<string[]>(
-    INDEX_KEY,
-    (prev) => {
-      // Remove existing occurrence and add to end (most recent)
-      const filtered = prev.filter((h) => h !== hash);
-      filtered.push(hash);
-
-      // Evict oldest entries if over limit
-      if (filtered.length > MAX_ENTRIES) {
-        const toRemove = filtered.splice(0, filtered.length - MAX_ENTRIES);
-        // Clean up evicted entries (fire and forget)
-        for (const oldHash of toRemove) {
-          updatePersistedState(entryKey(oldHash), () => null, null);
-        }
-      }
-
-      return filtered;
-    },
-    []
-  );
+  shareCache.set(hash, data);
 }
 
 /**
@@ -159,15 +131,7 @@ export function setShareData(content: string, data: Omit<ShareData, "cachedAt">)
  */
 export function updateShareExpiration(content: string, expiresAt: number | undefined): void {
   const hash = hashContent(content);
-
-  updatePersistedState<ShareData | null>(
-    entryKey(hash),
-    (prev) => {
-      if (!prev) return prev;
-      return { ...prev, expiresAt };
-    },
-    null
-  );
+  shareCache.update(hash, (data) => ({ ...data, expiresAt }));
 }
 
 /**
@@ -175,10 +139,5 @@ export function updateShareExpiration(content: string, expiresAt: number | undef
  */
 export function removeShareData(content: string): void {
   const hash = hashContent(content);
-
-  // Remove the entry
-  updatePersistedState(entryKey(hash), () => null, null);
-
-  // Remove from index
-  updatePersistedState<string[]>(INDEX_KEY, (prev) => prev.filter((h) => h !== hash), []);
+  shareCache.remove(hash);
 }

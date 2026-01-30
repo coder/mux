@@ -6,6 +6,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { invalidateGitStatus } from "@/browser/stores/GitStatusStore";
+import { createLRUCache } from "@/browser/utils/lruCache";
+
+// LRU cache for persisting branch names across app restarts
+const branchCache = createLRUCache<string>({
+  entryPrefix: "branch:",
+  indexKey: "branchIndex",
+  maxEntries: 100,
+  // No TTL - branch info is fetched on mount anyway
+});
 
 interface BranchSelectorProps {
   workspaceId: string;
@@ -33,7 +42,10 @@ interface RemoteState {
 export function BranchSelector({ workspaceId, workspaceName, className }: BranchSelectorProps) {
   const { api } = useAPI();
   // null = not yet determined, false = not a git repo, string = current branch
-  const [currentBranch, setCurrentBranch] = useState<string | null | false>(null);
+  // Initialize from localStorage cache for instant display on app restart
+  const [currentBranch, setCurrentBranch] = useState<string | null | false>(() =>
+    branchCache.get(workspaceId)
+  );
   const [localBranches, setLocalBranches] = useState<string[]>([]);
   const [localBranchesTruncated, setLocalBranchesTruncated] = useState(false);
   const [remotes, setRemotes] = useState<string[]>([]);
@@ -45,6 +57,9 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
   const [isSwitching, setIsSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { copied, copyToClipboard } = useCopyToClipboard();
+
+  // Track if we're refreshing with a cached value (for optimistic UI pulse effect)
+  const isRefreshing = currentBranch !== null && currentBranch !== false && isSwitching;
 
   // Fetch current branch on mount to detect if we're in a git repo
   useEffect(() => {
@@ -63,7 +78,10 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         if (cancelled) return;
 
         if (result.success && result.data.success && result.data.output?.trim()) {
-          setCurrentBranch(result.data.output.trim());
+          const branch = result.data.output.trim();
+          setCurrentBranch(branch);
+          // Persist to localStorage for instant display on app restart
+          branchCache.set(workspaceId, branch);
         } else {
           // Not a git repo or git command failed
           setCurrentBranch(false);
@@ -210,6 +228,8 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
         } else {
           // Update current branch on successful checkout
           setCurrentBranch(checkoutTarget);
+          // Persist to localStorage for instant display on app restart
+          branchCache.set(workspaceId, checkoutTarget);
           // Refresh git status with new branch state
           invalidateGitStatus(workspaceId);
         }
@@ -327,17 +347,11 @@ export function BranchSelector({ workspaceId, workspaceName, className }: Branch
             disabled={isSwitching}
             className={cn(
               "text-muted-light hover:bg-hover hover:text-foreground flex min-w-0 max-w-[180px] items-center gap-1 rounded-sm px-1 py-0.5 font-mono text-[11px] transition-colors",
-              isSwitching && "opacity-50"
+              isRefreshing && "animate-pulse" // Show pulse during switch instead of replacing content
             )}
           >
-            {isSwitching ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <>
-                <GitBranch className="h-3 w-3 shrink-0 opacity-70" />
-                <span className="truncate">{displayName}</span>
-              </>
-            )}
+            <GitBranch className="h-3 w-3 shrink-0 opacity-70" />
+            <span className="truncate">{displayName}</span>
           </button>
         </PopoverTrigger>
         <PopoverContent align="start" className="w-[220px] p-0">

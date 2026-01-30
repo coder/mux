@@ -15,6 +15,7 @@
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { GitHubPRLink, GitHubPRStatus, GitHubPRLinkWithStatus } from "@/common/types/links";
+import { createLRUCache } from "@/browser/utils/lruCache";
 /**
  * Parse a GitHub PR URL to extract owner, repo, and number.
  * Returns null if the URL is not a valid GitHub PR URL.
@@ -33,6 +34,23 @@ const STATUS_CACHE_TTL_MS = 5 * 1000;
 
 // How long to wait before retrying after an error
 const ERROR_RETRY_DELAY_MS = 5 * 1000;
+
+/**
+ * Persisted PR status for localStorage LRU cache.
+ * Stores only the essential data needed to display the badge on app restart.
+ */
+interface PersistedPRStatus {
+  prLink: GitHubPRLink;
+  status?: GitHubPRStatus;
+}
+
+// LRU cache for persisting PR status across app restarts
+const prStatusLRU = createLRUCache<PersistedPRStatus>({
+  entryPrefix: "prStatus:",
+  indexKey: "prStatusIndex",
+  maxEntries: 50,
+  // No TTL - we refresh on mount anyway, just want instant display
+});
 
 function summarizeStatusCheckRollup(raw: unknown): {
   hasPendingChecks: boolean;
@@ -174,9 +192,29 @@ export class PRStatusStore {
 
   /**
    * Get workspace PR detection result.
+   * Checks in-memory cache first, then falls back to localStorage for persistence
+   * across app restarts.
    */
   getWorkspacePR(workspaceId: string): WorkspacePRCacheEntry | undefined {
-    return this.workspacePRCache.get(workspaceId);
+    const memCached = this.workspacePRCache.get(workspaceId);
+    if (memCached) return memCached;
+
+    // Check localStorage for persisted status (app restart scenario)
+    const persisted = prStatusLRU.get(workspaceId);
+    if (persisted) {
+      // Hydrate memory cache from localStorage, mark as loading to trigger refresh
+      // but show the cached value immediately (optimistic UI)
+      const entry: WorkspacePRCacheEntry = {
+        prLink: persisted.prLink,
+        status: persisted.status,
+        loading: true,
+        fetchedAt: 0,
+      };
+      this.workspacePRCache.set(workspaceId, entry);
+      return entry;
+    }
+
+    return undefined;
   }
 
   /**
@@ -272,6 +310,9 @@ export class PRStatusStore {
               loading: false,
               fetchedAt: Date.now(),
             });
+
+            // Persist to localStorage for instant display on app restart
+            prStatusLRU.set(workspaceId, { prLink, status });
           }
         }
       } else {

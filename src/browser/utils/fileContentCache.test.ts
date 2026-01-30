@@ -120,8 +120,12 @@ describe("fileContentCache", () => {
       expect(getCachedFileContent("ws1", "file.txt")).not.toBeNull();
 
       // Manually expire by modifying cachedAt in storage
+      // The LRU cache wraps data in { data: T, cachedAt: number }
       const key = "explorer:file:ws1:file.txt";
-      const stored = JSON.parse(globalThis.window.localStorage.getItem(key)!) as CachedFileContent;
+      const stored = JSON.parse(globalThis.window.localStorage.getItem(key)!) as {
+        data: CachedFileContent;
+        cachedAt: number;
+      };
       stored.cachedAt = Date.now() - 200; // 200ms ago, past TTL
       globalThis.window.localStorage.setItem(key, JSON.stringify(stored));
 
@@ -138,9 +142,12 @@ describe("fileContentCache", () => {
       const data: FileContentsResult = { type: "text", content: "test", size: 4 };
       setCachedFileContent("ws1", "file.txt", data, null);
 
-      // Expire the entry
+      // Expire the entry (LRU cache wraps data in { data: T, cachedAt: number })
       const key = "explorer:file:ws1:file.txt";
-      const stored = JSON.parse(globalThis.window.localStorage.getItem(key)!) as CachedFileContent;
+      const stored = JSON.parse(globalThis.window.localStorage.getItem(key)!) as {
+        data: CachedFileContent;
+        cachedAt: number;
+      };
       stored.cachedAt = Date.now() - 200;
       globalThis.window.localStorage.setItem(key, JSON.stringify(stored));
 
@@ -300,11 +307,13 @@ describe("fileContentCache", () => {
     });
 
     test("uses default mimeType when missing", () => {
-      // Manually create a cached entry without mimeType
+      // Manually create a cached entry without mimeType (wrapped in LRU cache format)
       const cached = {
-        type: "image" as const,
-        base64: "abc123",
-        size: 100,
+        data: {
+          type: "image" as const,
+          base64: "abc123",
+          size: 100,
+        },
         cachedAt: Date.now(),
       };
       globalThis.window.localStorage.setItem("explorer:file:ws1:test.bin", JSON.stringify(cached));
