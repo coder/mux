@@ -61,19 +61,16 @@ export const HistoryHiddenMessage: React.FC<HistoryHiddenMessageProps> = ({
       <span className="text-muted">
         Omitted {message.hiddenCount} message{message.hiddenCount !== 1 ? "s" : ""} for performance
         {omittedSuffix}
-        {workspaceId && (
-          <>
-            {" "}
-            <button
-              type="button"
-              className="text-link hover:text-link-hover cursor-pointer border-none bg-transparent p-0 font-medium hover:underline"
-              onClick={() => showAllMessages(workspaceId)}
-            >
-              Load all
-            </button>
-          </>
-        )}
       </span>
+      {workspaceId && (
+        <button
+          type="button"
+          className="text-link hover:text-link-hover cursor-pointer border-none bg-transparent p-0 font-medium underline"
+          onClick={() => showAllMessages(workspaceId)}
+        >
+          Load all
+        </button>
+      )}
       <svg
         aria-hidden="true"
         className="text-border shrink-0"
