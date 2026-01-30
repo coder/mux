@@ -33,7 +33,8 @@ export interface RuntimeUiSpec {
   };
 }
 
-export type RuntimeBadgeType = RuntimeMode | "coder";
+export type RuntimeChoice = RuntimeMode | "coder";
+export type RuntimeBadgeType = RuntimeChoice;
 
 export const RUNTIME_UI = {
   local: {
@@ -153,14 +154,27 @@ export const RUNTIME_UI = {
   },
 } satisfies Record<RuntimeMode, RuntimeUiSpec>;
 
+const CODER_RUNTIME_UI: RuntimeUiSpec = {
+  ...RUNTIME_UI.ssh,
+  label: "Coder",
+  description: "Coder-managed workspace via the Coder CLI",
+  docsPath: "/runtime/coder",
+  Icon: CoderIcon,
+};
+
+export const RUNTIME_CHOICE_UI = {
+  ...RUNTIME_UI,
+  coder: CODER_RUNTIME_UI,
+} satisfies Record<RuntimeChoice, RuntimeUiSpec>;
+
 export const RUNTIME_BADGE_UI = {
   ssh: {
     Icon: RUNTIME_UI.ssh.Icon,
     badge: RUNTIME_UI.ssh.badge,
   },
   coder: {
-    Icon: CoderIcon,
-    badge: RUNTIME_UI.ssh.badge,
+    Icon: CODER_RUNTIME_UI.Icon,
+    badge: CODER_RUNTIME_UI.badge,
   },
   worktree: {
     Icon: RUNTIME_UI.worktree.Icon,
