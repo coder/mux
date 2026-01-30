@@ -1,6 +1,6 @@
 import React from "react";
 import { Hourglass } from "lucide-react";
-import { Popover, PopoverAnchor, PopoverContent } from "./ui/popover";
+import { HoverClickPopover } from "./ui/hover-click-popover";
 import { TokenMeter } from "./RightSidebar/TokenMeter";
 import {
   HorizontalThresholdSlider,
@@ -29,6 +29,10 @@ function preventDismissForRadixPortals(e: {
     e.preventDefault();
   }
 }
+
+const CONTEXT_USAGE_POPOVER_CONTENT_PROPS = {
+  onPointerDownOutside: preventDismissForRadixPortals,
+};
 
 /** Compact threshold tick mark for the button view */
 const CompactThresholdIndicator: React.FC<{ threshold: number }> = ({ threshold }) => {
@@ -194,24 +198,6 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
   autoCompaction,
   idleCompaction,
 }) => {
-  const [isPinned, setIsPinned] = React.useState(false);
-  const [isHovering, setIsHovering] = React.useState(false);
-  const [isInteracting, setIsInteracting] = React.useState(false);
-  const triggerRef = React.useRef<HTMLButtonElement | null>(null);
-  const contentRef = React.useRef<HTMLDivElement | null>(null);
-  const closeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Keep the compaction slider draggable on hover and click by using a single popover.
-  // Hover opens it; click pins it until the user clicks away.
-  // Close is delayed to allow pointer to travel between trigger and content.
-
-  // Cleanup timeout on unmount
-  React.useEffect(() => {
-    return () => {
-      if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
-    };
-  }, []);
-
   const isAutoCompactionEnabled = autoCompaction && autoCompaction.threshold < 100;
   const idleHours = idleCompaction?.hours;
   const isIdleCompactionEnabled = idleHours !== null && idleHours !== undefined;
@@ -226,131 +212,54 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       )}%)`
     : `Context usage: ${formatTokens(data.totalTokens)} (unknown limit)`;
 
-  const isOpen = isPinned || isHovering;
-
-  const cancelPendingClose = () => {
-    if (closeTimeoutRef.current) {
-      clearTimeout(closeTimeoutRef.current);
-      closeTimeoutRef.current = null;
-    }
-  };
-
-  const scheduleClose = () => {
-    // Don't close if pinned or actively interacting (e.g., dragging slider)
-    if (isPinned || isInteracting) return;
-    cancelPendingClose();
-    closeTimeoutRef.current = setTimeout(() => {
-      setIsHovering(false);
-    }, 100); // 100ms grace period for pointer to travel between elements
-  };
-
-  const handleOpenChange = (open: boolean) => {
-    if (!open) {
-      cancelPendingClose();
-      setIsPinned(false);
-      setIsHovering(false);
-      setIsInteracting(false);
-    }
-  };
-
-  const handleTriggerClick = () => {
-    setIsPinned((prev) => !prev);
-  };
-
-  const handleTriggerPointerEnter = () => {
-    cancelPendingClose();
-    setIsHovering(true);
-  };
-
-  const handleTriggerPointerLeave = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const relatedTarget = event.relatedTarget;
-    // Don't schedule close if moving directly to content
-    if (relatedTarget instanceof Node && contentRef.current?.contains(relatedTarget)) {
-      return;
-    }
-    scheduleClose();
-  };
-
-  const handleContentPointerEnter = () => {
-    cancelPendingClose();
-    setIsHovering(true);
-  };
-
-  const handleContentPointerLeave = (event: React.PointerEvent<HTMLDivElement>) => {
-    const relatedTarget = event.relatedTarget;
-    // Don't schedule close if moving directly to trigger
-    if (relatedTarget instanceof Node && triggerRef.current?.contains(relatedTarget)) {
-      return;
-    }
-    scheduleClose();
-  };
-
-  // Track mousedown/mouseup to prevent close during drag interactions
-  const handleContentMouseDown = () => setIsInteracting(true);
-  const handleContentMouseUp = () => setIsInteracting(false);
-
   return (
-    <Popover open={isOpen} onOpenChange={handleOpenChange}>
-      <PopoverAnchor asChild>
-        <button
-          ref={triggerRef}
-          aria-label={ariaLabel}
-          aria-expanded={isOpen}
-          aria-haspopup="dialog"
-          className={cn(
-            "hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1",
-            "[@container(max-width:480px)]:h-8 [@container(max-width:480px)]:gap-2 [@container(max-width:480px)]:px-2"
-          )}
-          type="button"
-          onClick={handleTriggerClick}
-          onPointerEnter={handleTriggerPointerEnter}
-          onPointerLeave={handleTriggerPointerLeave}
-        >
-          {/* Idle compaction badge - shows hourglass with hours when enabled */}
-          {isIdleCompactionEnabled && (
-            <div
-              className="text-muted flex items-center gap-0.5 text-[10px] [@container(max-width:480px)]:text-xs"
-              title={`Auto-compact after ${idleHours}h idle`}
-            >
-              <Hourglass className="h-3 w-3 [@container(max-width:480px)]:h-3.5 [@container(max-width:480px)]:w-3.5" />
-              <span>{idleHours}h</span>
-            </div>
-          )}
-          {/* Show meter when there's usage, or show empty placeholder for settings access */}
-          {data.totalTokens > 0 ? (
-            <div className="relative h-2 w-20 [@container(max-width:480px)]:w-28">
-              <TokenMeter
-                segments={data.segments}
-                orientation="horizontal"
-                className="h-2"
-                trackClassName="bg-dark"
-              />
-              {isAutoCompactionEnabled && (
-                <CompactThresholdIndicator threshold={autoCompaction.threshold} />
-              )}
-            </div>
-          ) : (
-            /* Empty meter placeholder - allows access to settings with no usage */
-            <div className="bg-dark relative h-2 w-20 rounded-full [@container(max-width:480px)]:w-28" />
-          )}
-        </button>
-      </PopoverAnchor>
-
-      <PopoverContent
-        ref={contentRef}
-        side="bottom"
-        align="end"
-        // Invisible hit-area bridge: before: pseudo-element extends 8px above content
-        // to cover the sideOffset gap, preventing pointer-leave when crossing the gap
-        className="bg-modal-bg border-separator-light w-80 overflow-visible rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)] before:pointer-events-auto before:absolute before:-top-2 before:right-0 before:left-0 before:h-2 before:content-['']"
-        onPointerEnter={handleContentPointerEnter}
-        onPointerLeave={handleContentPointerLeave}
-        onPointerDownOutside={preventDismissForRadixPortals}
-        onMouseDown={handleContentMouseDown}
-        onMouseUp={handleContentMouseUp}
-      >
+    <HoverClickPopover
+      content={
         <AutoCompactSettings data={data} usageConfig={autoCompaction} idleConfig={idleCompaction} />
-      </PopoverContent>
-    </Popover>
+      }
+      side="bottom"
+      align="end"
+      interactiveContent
+      contentClassName="bg-modal-bg border-separator-light w-80 rounded px-[10px] py-[6px] text-[11px] font-normal shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+      contentProps={CONTEXT_USAGE_POPOVER_CONTENT_PROPS}
+    >
+      <button
+        aria-label={ariaLabel}
+        aria-haspopup="dialog"
+        className={cn(
+          "hover:bg-sidebar-hover flex h-6 cursor-pointer items-center gap-1.5 rounded px-1",
+          "[@container(max-width:480px)]:h-8 [@container(max-width:480px)]:gap-2 [@container(max-width:480px)]:px-2"
+        )}
+        type="button"
+      >
+        {/* Idle compaction badge - shows hourglass with hours when enabled */}
+        {isIdleCompactionEnabled && (
+          <div
+            className="text-muted flex items-center gap-0.5 text-[10px] [@container(max-width:480px)]:text-xs"
+            title={`Auto-compact after ${idleHours}h idle`}
+          >
+            <Hourglass className="h-3 w-3 [@container(max-width:480px)]:h-3.5 [@container(max-width:480px)]:w-3.5" />
+            <span>{idleHours}h</span>
+          </div>
+        )}
+        {/* Show meter when there's usage, or show empty placeholder for settings access */}
+        {data.totalTokens > 0 ? (
+          <div className="relative h-2 w-20 [@container(max-width:480px)]:w-28">
+            <TokenMeter
+              segments={data.segments}
+              orientation="horizontal"
+              className="h-2"
+              trackClassName="bg-dark"
+            />
+            {isAutoCompactionEnabled && (
+              <CompactThresholdIndicator threshold={autoCompaction.threshold} />
+            )}
+          </div>
+        ) : (
+          /* Empty meter placeholder - allows access to settings with no usage */
+          <div className="bg-dark relative h-2 w-20 rounded-full [@container(max-width:480px)]:w-28" />
+        )}
+      </button>
+    </HoverClickPopover>
   );
 };
