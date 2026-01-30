@@ -17,6 +17,7 @@ import {
   type ContextSwitchWarning,
 } from "@/browser/utils/compaction/contextSwitchCheck";
 import { getHigherContextCompactionSuggestion } from "@/browser/utils/compaction/suggestion";
+import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 
@@ -67,11 +68,14 @@ export function useContextSwitchWarning(
       });
 
       if (suggestion) {
-        return { ...w, compactionModel: suggestion.modelId, errorMessage: null };
+        const limit = getEffectiveContextLimit(suggestion.modelId, use1M);
+        if (limit && limit > w.currentTokens) {
+          return { ...w, compactionModel: suggestion.modelId, errorMessage: null };
+        }
       }
       return w;
     },
-    [providersConfig]
+    [providersConfig, use1M]
   );
 
   const handleModelChange = useCallback(

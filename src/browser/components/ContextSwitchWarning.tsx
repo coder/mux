@@ -1,5 +1,5 @@
 import React from "react";
-import { X } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { getModelName } from "@/common/utils/ai/models";
 import type { ContextSwitchWarning as WarningData } from "@/browser/utils/compaction/contextSwitchCheck";
 
@@ -27,7 +27,7 @@ export const ContextSwitchWarning: React.FC<Props> = ({ warning, onCompact, onDi
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <div className="text-plan-mode mb-1 flex items-center gap-2 text-[13px] font-medium">
-            <span>⚠️</span>
+            <AlertTriangle aria-hidden="true" className="h-4 w-4" />
             <span>Context May Exceed Model Limit</span>
           </div>
           <p className="text-foreground/80 text-[12px] leading-relaxed">
