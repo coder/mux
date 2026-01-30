@@ -5,10 +5,10 @@
  * without importing any Electron-only code.
  */
 
-export type MuxDeepLinkPayload = {
+export interface MuxDeepLinkPayload {
   type: "new_chat";
   projectPath?: string;
   projectId?: string;
   prompt?: string;
   sectionId?: string;
-};
+}
