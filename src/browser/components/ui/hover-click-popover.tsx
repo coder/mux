@@ -6,7 +6,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "./popover";
 
 type PopoverContentProps = React.ComponentPropsWithoutRef<typeof PopoverContent>;
 
-type HoverClickPopoverProps = {
+interface HoverClickPopoverProps {
   /** Trigger element for the popover. */
   children: React.ReactElement;
   /** Content to render inside the popover. */
@@ -19,7 +19,7 @@ type HoverClickPopoverProps = {
   /** Track pointer down/up to avoid closing during drag interactions. */
   interactiveContent?: boolean;
   onOpenChange?: (open: boolean) => void;
-};
+}
 
 // Invisible hit-area bridge for bottom-aligned hover popovers; covers the sideOffset gap.
 const HOVER_BRIDGE_CLASSNAME =
@@ -139,7 +139,11 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
         side={props.side}
         align={props.align}
         sideOffset={props.sideOffset}
-        className={cn(HOVER_BRIDGE_CLASSNAME, props.contentClassName, props.contentProps?.className)}
+        className={cn(
+          HOVER_BRIDGE_CLASSNAME,
+          props.contentClassName,
+          props.contentProps?.className
+        )}
         onPointerEnter={composeEventHandlers(
           props.contentProps?.onPointerEnter,
           handleContentPointerEnter

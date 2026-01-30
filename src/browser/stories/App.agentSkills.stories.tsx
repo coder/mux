@@ -135,7 +135,7 @@ const ALL_SKILLS: AgentSkillDescriptor[] = [
   },
 ];
 
-/** Shows the SkillIndicator tooltip with all skill scopes (project, global, built-in) */
+/** Shows the SkillIndicator popover with all skill scopes (project, global, built-in) */
 export const SkillIndicator_AllScopes: AppStory = {
   render: () => (
     <AppWithMocks
@@ -165,11 +165,11 @@ export const SkillIndicator_AllScopes: AppStory = {
     const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
     await userEvent.hover(skillButton);
 
-    // Wait for tooltip to appear (Radix has 200ms delay)
+    // Wait for popover to appear (hover triggers open)
     await waitFor(
       () => {
-        const tooltip = doc.querySelector('[role="tooltip"]');
-        if (!tooltip) throw new Error("Tooltip not visible");
+        const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
+        if (!popover) throw new Error("Popover not visible");
       },
       { timeout: 3000 }
     );
