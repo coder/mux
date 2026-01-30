@@ -353,21 +353,23 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             Configure MCP servers for this workspace
           </TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => void handleOpenInEditor()}
-              className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="center">
-            Open in editor ({formatKeybind(KEYBINDS.OPEN_IN_EDITOR)})
-          </TooltipContent>
-        </Tooltip>
+        <div className="max-[480px]:hidden">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleOpenInEditor()}
+                className="text-muted hover:text-foreground ml-1 h-6 w-6 shrink-0"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="center">
+              Open in editor ({formatKeybind(KEYBINDS.OPEN_IN_EDITOR)})
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
