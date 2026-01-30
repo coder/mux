@@ -500,6 +500,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           agentId: normalizedAgentId,
           aiSettings: { model: canonicalModel, thinkingLevel },
         })
+        .then((result) => {
+          if (!result.success) {
+            clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
+          }
+        })
         .catch(() => {
           clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
           // Best-effort only. If offline or backend is old, sendMessage will persist.

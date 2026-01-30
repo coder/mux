@@ -127,6 +127,11 @@ export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {
           agentId: normalizedAgentId,
           aiSettings: { model, thinkingLevel: level },
         })
+        .then((result) => {
+          if (!result.success) {
+            clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
+          }
+        })
         .catch(() => {
           clearPendingWorkspaceAiSettings(workspaceId, normalizedAgentId);
           // Best-effort only. If offline or backend is old, the next sendMessage will persist.
