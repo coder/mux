@@ -167,6 +167,15 @@ function AppInner() {
     projects,
     beginWorkspaceCreation,
   });
+  // Refs for async subscription callbacks (avoid stale closures)
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+
+  const pendingNewWorkspaceProjectRef = useRef(pendingNewWorkspaceProject);
+  pendingNewWorkspaceProjectRef.current = pendingNewWorkspaceProject;
+
+  const startWorkspaceCreationRef = useRef(startWorkspaceCreation);
+  startWorkspaceCreationRef.current = startWorkspaceCreation;
 
   // ProjectPage handles its own focus when mounted
 
@@ -673,6 +682,39 @@ function AppInner() {
 
     return () => abortController.abort();
   }, [api, openSettings]);
+
+  // Subscribe to menu-triggered "Start New Agent" (Dock/JumpList/Desktop Actions)
+  useEffect(() => {
+    if (!api) return;
+
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+
+    (async () => {
+      try {
+        const iterator = await api.menu.onStartNewAgent(undefined, { signal });
+        for await (const _ of iterator) {
+          if (signal.aborted) break;
+
+          const projectPath =
+            selectedWorkspaceRef.current?.projectPath ??
+            pendingNewWorkspaceProjectRef.current ??
+            getFirstProjectPath(projectsRef.current);
+
+          if (!projectPath) {
+            console.warn("No projects available for workspace creation");
+            continue;
+          }
+
+          startWorkspaceCreationRef.current(projectPath);
+        }
+      } catch {
+        // Subscription cancelled via abort signal - expected on cleanup
+      }
+    })();
+
+    return () => abortController.abort();
+  }, [api]);
 
   // Handle workspace fork switch event
   useEffect(() => {

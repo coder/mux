@@ -2537,6 +2537,23 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
+      onStartNewAgent: t
+        .input(schemas.menu.onStartNewAgent.input)
+        .output(schemas.menu.onStartNewAgent.output)
+        .handler(async function* ({ context }) {
+          // Use a sentinel value to signal events since void/undefined can't be queued
+          const queue = createAsyncEventQueue<true>();
+          const unsubscribe = context.menuEventService.onStartNewAgent(() => queue.push(true));
+
+          try {
+            for await (const _ of queue.iterate()) {
+              yield undefined;
+            }
+          } finally {
+            queue.end();
+            unsubscribe();
+          }
+        }),
     },
     voice: {
       transcribe: t
