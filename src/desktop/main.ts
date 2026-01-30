@@ -136,12 +136,22 @@ process.on("unhandledRejection", (reason, promise) => {
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 
-type DesktopAction = "startNewAgent";
+type DesktopAction = "open" | "startNewAgent" | "quit";
 
 const pendingDesktopActions: DesktopAction[] = [];
 
 function parseDesktopActionsFromArgv(argv: readonly string[]): DesktopAction[] {
   const actions: DesktopAction[] = [];
+
+  // Quit is a terminal action; ignore other desktop actions if present.
+  if (argv.includes(DESKTOP_ACTION_FLAGS.QUIT)) {
+    actions.push("quit");
+    return actions;
+  }
+
+  if (argv.includes(DESKTOP_ACTION_FLAGS.OPEN)) {
+    actions.push("open");
+  }
 
   if (argv.includes(DESKTOP_ACTION_FLAGS.NEW_AGENT)) {
     actions.push("startNewAgent");
@@ -161,7 +171,7 @@ function enqueueDesktopActionsFromArgv(argv: readonly string[]): void {
 }
 
 function flushPendingDesktopActions(): void {
-  if (!services || pendingDesktopActions.length === 0) {
+  if (pendingDesktopActions.length === 0) {
     return;
   }
 
@@ -172,13 +182,30 @@ function flushPendingDesktopActions(): void {
 }
 
 function dispatchDesktopAction(action: DesktopAction): void {
-  if (!services) {
-    pendingDesktopActions.push(action);
-    return;
-  }
-
   switch (action) {
+    case "quit": {
+      // Quit must work even if services are not ready (e.g. app is still starting up).
+      app.quit();
+      return;
+    }
+
+    case "open": {
+      // If we're still starting up, defer until services are ready so we can create the main window.
+      if (!services && !mainWindow) {
+        pendingDesktopActions.push(action);
+        return;
+      }
+
+      focusOrCreateMainWindow();
+      return;
+    }
+
     case "startNewAgent": {
+      if (!services) {
+        pendingDesktopActions.push(action);
+        return;
+      }
+
       // Ensure the main window exists/visible so the user sees the new agent flow.
       focusOrCreateMainWindow();
       services.menuEventService.emitStartNewAgent();
@@ -220,7 +247,10 @@ if (!gotTheLock) {
     console.log("Second instance attempted to start");
 
     enqueueDesktopActionsFromArgv(commandLine);
-    focusOrCreateMainWindow();
+
+    if (!commandLine.includes(DESKTOP_ACTION_FLAGS.QUIT)) {
+      focusOrCreateMainWindow();
+    }
   });
 }
 
@@ -315,9 +345,22 @@ function setupDesktopQuickActions() {
   if (process.platform === "darwin") {
     const dockMenu = Menu.buildFromTemplate([
       {
+        label: "Open Mux",
+        click: () => {
+          dispatchDesktopAction("open");
+        },
+      },
+      {
         label: "Start New Agent",
         click: () => {
           dispatchDesktopAction("startNewAgent");
+        },
+      },
+      { type: "separator" },
+      {
+        label: "Quit",
+        click: () => {
+          dispatchDesktopAction("quit");
         },
       },
     ]);
@@ -325,15 +368,31 @@ function setupDesktopQuickActions() {
     app.dock?.setMenu(dockMenu);
   }
 
-  // Windows: JumpList tasks.
-  if (process.platform === "win32") {
+  // Windows: JumpList tasks (packaged only; setting tasks in dev is noisy and persistent).
+  if (process.platform === "win32" && app.isPackaged) {
     try {
       app.setUserTasks([
+        {
+          program: process.execPath,
+          arguments: DESKTOP_ACTION_FLAGS.OPEN,
+          title: "Open Mux",
+          description: "Open the Mux window",
+          iconPath: process.execPath,
+          iconIndex: 0,
+        },
         {
           program: process.execPath,
           arguments: DESKTOP_ACTION_FLAGS.NEW_AGENT,
           title: "Start New Agent",
           description: "Create a new agent workspace",
+          iconPath: process.execPath,
+          iconIndex: 0,
+        },
+        {
+          program: process.execPath,
+          arguments: DESKTOP_ACTION_FLAGS.QUIT,
+          title: "Quit",
+          description: "Quit Mux",
           iconPath: process.execPath,
           iconIndex: 0,
         },
@@ -764,6 +823,10 @@ if (gotTheLock) {
       createMenu();
       setupDesktopQuickActions();
       enqueueDesktopActionsFromArgv(process.argv);
+
+      if (process.argv.includes(DESKTOP_ACTION_FLAGS.QUIT)) {
+        return;
+      }
 
       // Three-phase startup:
       // 1. Show splash immediately (<100ms) and wait for it to load
