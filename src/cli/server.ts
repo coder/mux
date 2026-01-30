@@ -70,7 +70,9 @@ const mockWindow: BrowserWindow = {
   // serviceContainer.initialize() and the HTTP server starting to listen, there can
   // be a brief moment where no ref'd handles exist, causing Node to exit with code 0.
   // This interval ensures the event loop stays alive until the server is listening.
-  const startupKeepalive = setInterval(() => {}, 1000);
+  const startupKeepalive = setInterval(() => {
+    // Intentionally empty - keeps event loop alive during startup
+  }, 1000);
 
   migrateLegacyMuxHome();
 
