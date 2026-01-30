@@ -281,7 +281,22 @@
       "target": "AppImage",
       "category": "Development",
       "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "desktop": {
+        "entry": {
+          "Actions": "NewAgent;Quit"
+        },
+        "desktopActions": {
+          "NewAgent": {
+            "Name": "Start New Agent",
+            "Exec": "mux --new-agent"
+          },
+          "Quit": {
+            "Name": "Quit",
+            "Exec": "mux --quit"
+          }
+        }
+      }
     },
     "win": {
       "target": "nsis",
