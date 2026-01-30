@@ -1,0 +1,273 @@
+import * as fsPromises from "fs/promises";
+import * as path from "node:path";
+
+import writeFileAtomic from "write-file-atomic";
+
+import { log } from "@/node/services/log";
+import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
+
+export interface SubagentReportArtifactsFile {
+  version: 1;
+  artifactsByChildTaskId: Record<string, SubagentReportArtifactIndexEntry>;
+}
+
+export interface SubagentReportArtifactIndexEntry {
+  childTaskId: string;
+  /** Immediate parent in the agent-task tree (matches WorkspaceConfigEntry.parentWorkspaceId). */
+  parentWorkspaceId: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  title?: string;
+  /** Full ancestor chain (parent first). Used for descendant scope checks after cleanup. */
+  ancestorWorkspaceIds: string[];
+}
+
+export interface SubagentReportArtifact extends SubagentReportArtifactIndexEntry {
+  reportMarkdown: string;
+}
+
+const SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION = 1 as const;
+
+const SUBAGENT_REPORT_ARTIFACTS_FILE_NAME = "subagent-reports.json";
+const SUBAGENT_REPORT_DIR_NAME = "subagent-reports";
+const SUBAGENT_REPORT_FILE_NAME = "report.json";
+
+export function getSubagentReportArtifactsFilePath(workspaceSessionDir: string): string {
+  return path.join(workspaceSessionDir, SUBAGENT_REPORT_ARTIFACTS_FILE_NAME);
+}
+
+export function getSubagentReportArtifactPath(
+  workspaceSessionDir: string,
+  childTaskId: string
+): string {
+  return path.join(
+    workspaceSessionDir,
+    SUBAGENT_REPORT_DIR_NAME,
+    childTaskId,
+    SUBAGENT_REPORT_FILE_NAME
+  );
+}
+
+export async function readSubagentReportArtifactsFile(
+  workspaceSessionDir: string
+): Promise<SubagentReportArtifactsFile> {
+  try {
+    const filePath = getSubagentReportArtifactsFilePath(workspaceSessionDir);
+    const raw = await fsPromises.readFile(filePath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!parsed || typeof parsed !== "object") {
+      return { version: SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+    }
+
+    const obj = parsed as {
+      version?: unknown;
+      artifactsByChildTaskId?: unknown;
+    };
+
+    if (obj.version !== SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION) {
+      // Unknown version; treat as empty.
+      return { version: SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+    }
+
+    if (!obj.artifactsByChildTaskId || typeof obj.artifactsByChildTaskId !== "object") {
+      return { version: SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+    }
+
+    return {
+      version: SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION,
+      artifactsByChildTaskId: obj.artifactsByChildTaskId as Record<
+        string,
+        SubagentReportArtifactIndexEntry
+      >,
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return { version: SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+    }
+
+    log.error("Failed to read subagent report artifacts file", { error });
+    return { version: SUBAGENT_REPORT_ARTIFACTS_FILE_VERSION, artifactsByChildTaskId: {} };
+  }
+}
+
+export async function readSubagentReportArtifactIndexEntry(
+  workspaceSessionDir: string,
+  childTaskId: string
+): Promise<SubagentReportArtifactIndexEntry | null> {
+  const file = await readSubagentReportArtifactsFile(workspaceSessionDir);
+  return file.artifactsByChildTaskId[childTaskId] ?? null;
+}
+
+export async function readSubagentReportArtifact(
+  workspaceSessionDir: string,
+  childTaskId: string
+): Promise<SubagentReportArtifact | null> {
+  const meta = await readSubagentReportArtifactIndexEntry(workspaceSessionDir, childTaskId);
+
+  const reportPath = getSubagentReportArtifactPath(workspaceSessionDir, childTaskId);
+  try {
+    const raw = await fsPromises.readFile(reportPath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const obj = parsed as {
+      childTaskId?: unknown;
+      parentWorkspaceId?: unknown;
+      createdAtMs?: unknown;
+      updatedAtMs?: unknown;
+      title?: unknown;
+      ancestorWorkspaceIds?: unknown;
+      reportMarkdown?: unknown;
+    };
+
+    const reportMarkdown = typeof obj.reportMarkdown === "string" ? obj.reportMarkdown : null;
+    if (!reportMarkdown || reportMarkdown.length === 0) {
+      return null;
+    }
+
+    const title = typeof obj.title === "string" ? obj.title : undefined;
+
+    if (meta) {
+      // Trust the index file for metadata (versioned), but allow per-task file to override title.
+      return {
+        ...meta,
+        title: title ?? meta.title,
+        reportMarkdown,
+      };
+    }
+
+    // Self-healing: if the index entry is missing/corrupted, fall back to the per-task artifact.
+    const parentWorkspaceId =
+      typeof obj.parentWorkspaceId === "string" ? obj.parentWorkspaceId : null;
+    const createdAtMs = typeof obj.createdAtMs === "number" ? obj.createdAtMs : null;
+    const updatedAtMs = typeof obj.updatedAtMs === "number" ? obj.updatedAtMs : null;
+    const ancestorWorkspaceIds =
+      Array.isArray(obj.ancestorWorkspaceIds) &&
+      obj.ancestorWorkspaceIds.every((v) => typeof v === "string")
+        ? (obj.ancestorWorkspaceIds as string[])
+        : null;
+
+    if (!parentWorkspaceId || !createdAtMs || !updatedAtMs || !ancestorWorkspaceIds) {
+      return null;
+    }
+
+    return {
+      childTaskId,
+      parentWorkspaceId,
+      createdAtMs,
+      updatedAtMs,
+      title,
+      ancestorWorkspaceIds,
+      reportMarkdown,
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+
+    log.error("Failed to read subagent report artifact", { childTaskId, error });
+    return null;
+  }
+}
+
+export async function updateSubagentReportArtifactsFile(params: {
+  workspaceId: string;
+  workspaceSessionDir: string;
+  update: (file: SubagentReportArtifactsFile) => void;
+}): Promise<SubagentReportArtifactsFile> {
+  return workspaceFileLocks.withLock(params.workspaceId, async () => {
+    const file = await readSubagentReportArtifactsFile(params.workspaceSessionDir);
+    params.update(file);
+
+    try {
+      await fsPromises.mkdir(params.workspaceSessionDir, { recursive: true });
+      const filePath = getSubagentReportArtifactsFilePath(params.workspaceSessionDir);
+      await writeFileAtomic(filePath, JSON.stringify(file, null, 2));
+    } catch (error) {
+      log.error("Failed to write subagent report artifacts file", { error });
+    }
+
+    return file;
+  });
+}
+
+export async function upsertSubagentReportArtifact(params: {
+  /** Workspace id that owns the session dir we're writing into (used for file locking). */
+  workspaceId: string;
+  workspaceSessionDir: string;
+  childTaskId: string;
+  parentWorkspaceId: string;
+  ancestorWorkspaceIds: string[];
+  reportMarkdown: string;
+  title?: string;
+  nowMs?: number;
+}): Promise<SubagentReportArtifactIndexEntry> {
+  let updated: SubagentReportArtifactIndexEntry | null = null;
+
+  await workspaceFileLocks.withLock(params.workspaceId, async () => {
+    const nowMs = params.nowMs ?? Date.now();
+
+    const file = await readSubagentReportArtifactsFile(params.workspaceSessionDir);
+    const existing = file.artifactsByChildTaskId[params.childTaskId] ?? null;
+    const createdAtMs = existing?.createdAtMs ?? nowMs;
+
+    // Write the report payload first so we never publish an index entry without a report body.
+    const reportPath = getSubagentReportArtifactPath(
+      params.workspaceSessionDir,
+      params.childTaskId
+    );
+    try {
+      await fsPromises.mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFileAtomic(
+        reportPath,
+        JSON.stringify(
+          {
+            childTaskId: params.childTaskId,
+            parentWorkspaceId: params.parentWorkspaceId,
+            createdAtMs,
+            updatedAtMs: nowMs,
+            title: params.title,
+            ancestorWorkspaceIds: params.ancestorWorkspaceIds,
+            reportMarkdown: params.reportMarkdown,
+          },
+          null,
+          2
+        )
+      );
+    } catch (error) {
+      log.error("Failed to write subagent report artifact", {
+        workspaceId: params.workspaceId,
+        childTaskId: params.childTaskId,
+        error,
+      });
+      return;
+    }
+
+    updated = {
+      childTaskId: params.childTaskId,
+      parentWorkspaceId: params.parentWorkspaceId,
+      createdAtMs,
+      updatedAtMs: nowMs,
+      title: params.title,
+      ancestorWorkspaceIds: params.ancestorWorkspaceIds,
+    };
+    file.artifactsByChildTaskId[params.childTaskId] = updated;
+
+    try {
+      await fsPromises.mkdir(params.workspaceSessionDir, { recursive: true });
+      const filePath = getSubagentReportArtifactsFilePath(params.workspaceSessionDir);
+      await writeFileAtomic(filePath, JSON.stringify(file, null, 2));
+    } catch (error) {
+      log.error("Failed to write subagent report artifacts file", { error });
+    }
+  });
+
+  if (!updated) {
+    throw new Error("upsertSubagentReportArtifact: failed to write report artifact");
+  }
+
+  return updated;
+}

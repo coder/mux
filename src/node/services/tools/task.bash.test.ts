@@ -73,7 +73,7 @@ describe("bash + task_* (background bash tasks)", () => {
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
-      isDescendantAgentTask: mock(() => false),
+      isDescendantAgentTask: mock(async () => false),
       waitForAgentReport: mock(() => Promise.resolve({ reportMarkdown: "ignored" })),
     } as unknown as TaskService;
 
@@ -120,7 +120,7 @@ describe("bash + task_* (background bash tasks)", () => {
 
     const taskService = {
       listDescendantAgentTasks: mock(() => []),
-      isDescendantAgentTask: mock(() => false),
+      isDescendantAgentTask: mock(async () => false),
     } as unknown as TaskService;
 
     const tool = createTaskListTool({
@@ -160,7 +160,7 @@ describe("bash + task_* (background bash tasks)", () => {
       terminateDescendantAgentTask: mock(() =>
         Promise.resolve({ success: false, error: "not used" })
       ),
-      isDescendantAgentTask: mock(() => false),
+      isDescendantAgentTask: mock(async () => false),
     } as unknown as TaskService;
 
     const tool = createTaskTerminateTool({

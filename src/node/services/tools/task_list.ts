@@ -33,7 +33,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
         for (const proc of processes) {
           const inScope =
             proc.workspaceId === workspaceId ||
-            taskService.isDescendantAgentTask(workspaceId, proc.workspaceId);
+            (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
           if (!inScope) continue;
 
           const status = proc.status === "running" ? "running" : "reported";

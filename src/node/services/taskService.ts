@@ -51,6 +51,11 @@ import {
   readSubagentGitPatchArtifact,
   upsertSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
+import {
+  readSubagentReportArtifact,
+  readSubagentReportArtifactsFile,
+  upsertSubagentReportArtifact,
+} from "@/node/services/subagentReportArtifacts";
 import { secretsToRecord } from "@/common/types/secrets";
 
 export type TaskKind = "agent";
@@ -99,7 +104,6 @@ export interface DescendantAgentTaskInfo {
 
 type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
-const COMPLETED_REPORT_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
 interface AgentTaskIndex {
@@ -124,7 +128,6 @@ interface PendingTaskStartWaiter {
 interface CompletedAgentReportCacheEntry {
   reportMarkdown: string;
   title?: string;
-  expiresAtMs: number;
   // Ancestor workspace IDs captured when the report was cached.
   // Used to keep descendant-scope checks working even if the task workspace is cleaned up.
   ancestorWorkspaceIds: string[];
@@ -256,8 +259,8 @@ export class TaskService {
   // agent_report). Used to avoid scheduler deadlocks when maxParallelAgentTasks is low and tasks
   // spawn nested tasks in the foreground.
   private readonly foregroundAwaitCountByWorkspaceId = new Map<string, number>();
-  // Cache completed reports so callers can retrieve them even after the task workspace is removed.
-  // Bounded by TTL + max entries (see COMPLETED_REPORT_CACHE_*).
+  // Cache completed reports so callers can retrieve them without re-reading disk.
+  // Bounded by max entries; disk persistence is the source of truth for restart-safety.
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
   private readonly pendingSubagentGitPatchJobsByTaskId = new Map<string, Promise<void>>();
   private readonly remindedAwaitingReport = new Set<string>();
@@ -999,7 +1002,7 @@ export class TaskService {
     };
   }
 
-  waitForAgentReport(
+  async waitForAgentReport(
     taskId: string,
     options?: { timeoutMs?: number; abortSignal?: AbortSignal; requestingWorkspaceId?: string }
   ): Promise<{ reportMarkdown: string; title?: string }> {
@@ -1007,11 +1010,7 @@ export class TaskService {
 
     const cached = this.completedReportsByTaskId.get(taskId);
     if (cached) {
-      const nowMs = Date.now();
-      if (cached.expiresAtMs > nowMs) {
-        return Promise.resolve({ reportMarkdown: cached.reportMarkdown, title: cached.title });
-      }
-      this.completedReportsByTaskId.delete(taskId);
+      return { reportMarkdown: cached.reportMarkdown, title: cached.title };
     }
 
     const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
@@ -1019,139 +1018,198 @@ export class TaskService {
 
     const requestingWorkspaceId = coerceNonEmptyString(options?.requestingWorkspaceId);
 
-    return new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
-      // Validate existence early to avoid waiting on never-resolving task IDs.
-      const cfg = this.config.loadConfigOrDefault();
-      const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
-      if (!taskWorkspaceEntry) {
-        reject(new Error("Task not found"));
-        return;
+    const tryReadPersistedReport = async (): Promise<{
+      reportMarkdown: string;
+      title?: string;
+    } | null> => {
+      if (!requestingWorkspaceId) {
+        return null;
       }
 
-      let timeout: ReturnType<typeof setTimeout> | null = null;
-      let startWaiter: PendingTaskStartWaiter | null = null;
-      let abortListener: (() => void) | null = null;
-      let stopBlockingRequester: (() => void) | null = requestingWorkspaceId
-        ? this.startForegroundAwait(requestingWorkspaceId)
-        : null;
+      const sessionDir = this.config.getSessionDir(requestingWorkspaceId);
+      const artifact = await readSubagentReportArtifact(sessionDir, taskId);
+      if (!artifact) {
+        return null;
+      }
 
-      const startReportTimeout = () => {
-        if (timeout) return;
-        timeout = setTimeout(() => {
-          entry.cleanup();
-          reject(new Error("Timed out waiting for agent_report"));
-        }, timeoutMs);
-      };
+      // Cache for the current process (best-effort). Disk is the source of truth.
+      this.completedReportsByTaskId.set(taskId, {
+        reportMarkdown: artifact.reportMarkdown,
+        title: artifact.title,
+        ancestorWorkspaceIds: artifact.ancestorWorkspaceIds,
+      });
+      this.enforceCompletedReportCacheLimit();
 
-      const cleanupStartWaiter = () => {
-        if (!startWaiter) return;
-        startWaiter.cleanup();
-        startWaiter = null;
-      };
+      return { reportMarkdown: artifact.reportMarkdown, title: artifact.title };
+    };
 
-      const entry: PendingTaskWaiter = {
-        createdAt: Date.now(),
-        resolve: (report) => {
-          entry.cleanup();
-          resolve(report);
-        },
-        reject: (error) => {
-          entry.cleanup();
-          reject(error);
-        },
-        cleanup: () => {
-          const current = this.pendingWaitersByTaskId.get(taskId);
-          if (current) {
-            const next = current.filter((w) => w !== entry);
-            if (next.length === 0) {
-              this.pendingWaitersByTaskId.delete(taskId);
-            } else {
-              this.pendingWaitersByTaskId.set(taskId, next);
-            }
+    // Fast-path: if the task is already gone (cleanup) or already reported (restart), return the
+    // persisted artifact from the requesting workspace session dir.
+    const cfg = this.config.loadConfigOrDefault();
+    const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
+    if (!taskWorkspaceEntry || taskWorkspaceEntry.workspace.taskStatus === "reported") {
+      const persisted = await tryReadPersistedReport();
+      if (persisted) {
+        return persisted;
+      }
+
+      throw new Error("Task not found");
+    }
+
+    return await new Promise<{ reportMarkdown: string; title?: string }>((resolve, reject) => {
+      void (async () => {
+        // Validate existence early to avoid waiting on never-resolving task IDs.
+        const cfg = this.config.loadConfigOrDefault();
+        const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
+        if (!taskWorkspaceEntry) {
+          const persisted = await tryReadPersistedReport();
+          if (persisted) {
+            resolve(persisted);
+            return;
           }
 
-          cleanupStartWaiter();
+          reject(new Error("Task not found"));
+          return;
+        }
 
-          if (timeout) {
-            clearTimeout(timeout);
-            timeout = null;
+        if (taskWorkspaceEntry.workspace.taskStatus === "reported") {
+          const persisted = await tryReadPersistedReport();
+          if (persisted) {
+            resolve(persisted);
+            return;
           }
 
-          if (abortListener && options?.abortSignal) {
-            options.abortSignal.removeEventListener("abort", abortListener);
-            abortListener = null;
-          }
+          reject(new Error("Task not found"));
+          return;
+        }
 
-          if (stopBlockingRequester) {
-            try {
-              stopBlockingRequester();
-            } finally {
-              stopBlockingRequester = null;
-            }
-          }
-        },
-      };
+        let timeout: ReturnType<typeof setTimeout> | null = null;
+        let startWaiter: PendingTaskStartWaiter | null = null;
+        let abortListener: (() => void) | null = null;
+        let stopBlockingRequester: (() => void) | null = requestingWorkspaceId
+          ? this.startForegroundAwait(requestingWorkspaceId)
+          : null;
 
-      const list = this.pendingWaitersByTaskId.get(taskId) ?? [];
-      list.push(entry);
-      this.pendingWaitersByTaskId.set(taskId, list);
+        const startReportTimeout = () => {
+          if (timeout) return;
+          timeout = setTimeout(() => {
+            entry.cleanup();
+            reject(new Error("Timed out waiting for agent_report"));
+          }, timeoutMs);
+        };
 
-      // Don't start the execution timeout while the task is still queued.
-      // The timer starts once the child actually begins running (queued -> running).
-      const initialStatus = taskWorkspaceEntry.workspace.taskStatus;
-      if (initialStatus === "queued") {
-        const startWaiterEntry: PendingTaskStartWaiter = {
+        const cleanupStartWaiter = () => {
+          if (!startWaiter) return;
+          startWaiter.cleanup();
+          startWaiter = null;
+        };
+
+        const entry: PendingTaskWaiter = {
           createdAt: Date.now(),
-          start: startReportTimeout,
+          resolve: (report) => {
+            entry.cleanup();
+            resolve(report);
+          },
+          reject: (error) => {
+            entry.cleanup();
+            reject(error);
+          },
           cleanup: () => {
-            const currentStartWaiters = this.pendingStartWaitersByTaskId.get(taskId);
-            if (currentStartWaiters) {
-              const next = currentStartWaiters.filter((w) => w !== startWaiterEntry);
+            const current = this.pendingWaitersByTaskId.get(taskId);
+            if (current) {
+              const next = current.filter((w) => w !== entry);
               if (next.length === 0) {
-                this.pendingStartWaitersByTaskId.delete(taskId);
+                this.pendingWaitersByTaskId.delete(taskId);
               } else {
-                this.pendingStartWaitersByTaskId.set(taskId, next);
+                this.pendingWaitersByTaskId.set(taskId, next);
+              }
+            }
+
+            cleanupStartWaiter();
+
+            if (timeout) {
+              clearTimeout(timeout);
+              timeout = null;
+            }
+
+            if (abortListener && options?.abortSignal) {
+              options.abortSignal.removeEventListener("abort", abortListener);
+              abortListener = null;
+            }
+
+            if (stopBlockingRequester) {
+              try {
+                stopBlockingRequester();
+              } finally {
+                stopBlockingRequester = null;
               }
             }
           },
         };
-        startWaiter = startWaiterEntry;
 
-        const currentStartWaiters = this.pendingStartWaitersByTaskId.get(taskId) ?? [];
-        currentStartWaiters.push(startWaiterEntry);
-        this.pendingStartWaitersByTaskId.set(taskId, currentStartWaiters);
+        const list = this.pendingWaitersByTaskId.get(taskId) ?? [];
+        list.push(entry);
+        this.pendingWaitersByTaskId.set(taskId, list);
 
-        // Close the race where the task starts between the initial config read and registering the waiter.
-        const cfgAfterRegister = this.config.loadConfigOrDefault();
-        const afterEntry = this.findWorkspaceEntry(cfgAfterRegister, taskId);
-        if (afterEntry?.workspace.taskStatus !== "queued") {
-          cleanupStartWaiter();
+        // Don't start the execution timeout while the task is still queued.
+        // The timer starts once the child actually begins running (queued -> running).
+        const initialStatus = taskWorkspaceEntry.workspace.taskStatus;
+        if (initialStatus === "queued") {
+          const startWaiterEntry: PendingTaskStartWaiter = {
+            createdAt: Date.now(),
+            start: startReportTimeout,
+            cleanup: () => {
+              const currentStartWaiters = this.pendingStartWaitersByTaskId.get(taskId);
+              if (currentStartWaiters) {
+                const next = currentStartWaiters.filter((w) => w !== startWaiterEntry);
+                if (next.length === 0) {
+                  this.pendingStartWaitersByTaskId.delete(taskId);
+                } else {
+                  this.pendingStartWaitersByTaskId.set(taskId, next);
+                }
+              }
+            },
+          };
+          startWaiter = startWaiterEntry;
+
+          const currentStartWaiters = this.pendingStartWaitersByTaskId.get(taskId) ?? [];
+          currentStartWaiters.push(startWaiterEntry);
+          this.pendingStartWaitersByTaskId.set(taskId, currentStartWaiters);
+
+          // Close the race where the task starts between the initial config read and registering the waiter.
+          const cfgAfterRegister = this.config.loadConfigOrDefault();
+          const afterEntry = this.findWorkspaceEntry(cfgAfterRegister, taskId);
+          if (afterEntry?.workspace.taskStatus !== "queued") {
+            cleanupStartWaiter();
+            startReportTimeout();
+          }
+
+          // If the awaited task is queued and the caller is blocked in the foreground, ensure the
+          // scheduler runs after the waiter is registered. This avoids deadlocks when
+          // maxParallelAgentTasks is low.
+          if (requestingWorkspaceId) {
+            void this.maybeStartQueuedTasks();
+          }
+        } else {
           startReportTimeout();
         }
 
-        // If the awaited task is queued and the caller is blocked in the foreground, ensure the
-        // scheduler runs after the waiter is registered. This avoids deadlocks when
-        // maxParallelAgentTasks is low.
-        if (requestingWorkspaceId) {
-          void this.maybeStartQueuedTasks();
-        }
-      } else {
-        startReportTimeout();
-      }
+        if (options?.abortSignal) {
+          if (options.abortSignal.aborted) {
+            entry.cleanup();
+            reject(new Error("Interrupted"));
+            return;
+          }
 
-      if (options?.abortSignal) {
-        if (options.abortSignal.aborted) {
-          entry.cleanup();
-          reject(new Error("Interrupted"));
-          return;
+          abortListener = () => {
+            entry.cleanup();
+            reject(new Error("Interrupted"));
+          };
+          options.abortSignal.addEventListener("abort", abortListener, { once: true });
         }
-
-        abortListener = () => {
-          entry.cleanup();
-          reject(new Error("Interrupted"));
-        };
-        options.abortSignal.addEventListener("abort", abortListener, { once: true });
-      }
+      })().catch((error: unknown) => {
+        reject(error instanceof Error ? error : new Error(String(error)));
+      });
     });
   }
 
@@ -1264,7 +1322,10 @@ export class TaskService {
     return result;
   }
 
-  filterDescendantAgentTaskIds(ancestorWorkspaceId: string, taskIds: string[]): string[] {
+  async filterDescendantAgentTaskIds(
+    ancestorWorkspaceId: string,
+    taskIds: string[]
+  ): Promise<string[]> {
     assert(
       ancestorWorkspaceId.length > 0,
       "filterDescendantAgentTaskIds: ancestorWorkspaceId required"
@@ -1274,23 +1335,37 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
 
-    const nowMs = Date.now();
-    this.cleanupExpiredCompletedReports(nowMs);
-
     const result: string[] = [];
+    const maybePersisted: string[] = [];
+
     for (const taskId of taskIds) {
       if (typeof taskId !== "string" || taskId.length === 0) continue;
+
       if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
         result.push(taskId);
         continue;
       }
 
-      // Preserve scope checks for tasks whose workspace was cleaned up after completion.
       const cached = this.completedReportsByTaskId.get(taskId);
-      if (cached && cached.expiresAtMs > nowMs) {
-        if (cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
-          result.push(taskId);
-        }
+      if (cached && cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+        result.push(taskId);
+        continue;
+      }
+
+      maybePersisted.push(taskId);
+    }
+
+    if (maybePersisted.length === 0) {
+      return result;
+    }
+
+    const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
+    const persisted = await readSubagentReportArtifactsFile(sessionDir);
+    for (const taskId of maybePersisted) {
+      const entry = persisted.artifactsByChildTaskId[taskId];
+      if (!entry) continue;
+      if (entry.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+        result.push(taskId);
       }
     }
 
@@ -1321,7 +1396,7 @@ export class TaskService {
     return result;
   }
 
-  isDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): boolean {
+  async isDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): Promise<boolean> {
     assert(ancestorWorkspaceId.length > 0, "isDescendantAgentTask: ancestorWorkspaceId required");
     assert(taskId.length > 0, "isDescendantAgentTask: taskId required");
 
@@ -1331,16 +1406,17 @@ export class TaskService {
       return true;
     }
 
-    // The task workspace may have been removed after it reported (cleanup). Preserve scope checks
-    // by consulting the completed-report cache, which tracks the task's ancestor chain.
-    const nowMs = Date.now();
-    this.cleanupExpiredCompletedReports(nowMs);
+    // The task workspace may have been removed after it reported (cleanup/restart). Preserve scope
+    // checks by consulting persisted report artifacts in the ancestor session dir.
     const cached = this.completedReportsByTaskId.get(taskId);
-    if (cached && cached.expiresAtMs > nowMs) {
-      return cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId);
+    if (cached && cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+      return true;
     }
 
-    return false;
+    const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
+    const persisted = await readSubagentReportArtifactsFile(sessionDir);
+    const entry = persisted.artifactsByChildTaskId[taskId];
+    return entry?.ancestorWorkspaceIds.includes(ancestorWorkspaceId) ?? false;
   }
 
   private isDescendantAgentTaskUsingParentById(
@@ -2164,6 +2240,36 @@ export class TaskService {
       return;
     }
 
+    const parentById = this.buildAgentTaskIndex(cfgAfterReport).parentById;
+    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+      parentById,
+      childWorkspaceId
+    );
+
+    // Persist the completed report in the session dirs of all ancestors so `task_await` can
+    // retrieve it after cleanup/restart (even if the task workspace itself is deleted).
+    const persistedAtMs = Date.now();
+    for (const ancestorWorkspaceId of ancestorWorkspaceIds) {
+      try {
+        const ancestorSessionDir = this.config.getSessionDir(ancestorWorkspaceId);
+        await upsertSubagentReportArtifact({
+          workspaceId: ancestorWorkspaceId,
+          workspaceSessionDir: ancestorSessionDir,
+          childTaskId: childWorkspaceId,
+          parentWorkspaceId,
+          ancestorWorkspaceIds,
+          reportMarkdown: reportArgs.reportMarkdown,
+          title: reportArgs.title,
+          nowMs: persistedAtMs,
+        });
+      } catch (error: unknown) {
+        log.error("Failed to persist subagent report artifact", {
+          workspaceId: ancestorWorkspaceId,
+          childTaskId: childWorkspaceId,
+          error,
+        });
+      }
+    }
     await this.deliverReportToParent(parentWorkspaceId, latestChildEntry, reportArgs);
 
     // Begin git-format-patch generation (best-effort).
@@ -2209,14 +2315,6 @@ export class TaskService {
           parentWorkspaceId,
           error: resumeResult.error,
         });
-      }
-    }
-  }
-
-  private cleanupExpiredCompletedReports(nowMs = Date.now()): void {
-    for (const [taskId, entry] of this.completedReportsByTaskId) {
-      if (entry.expiresAtMs <= nowMs) {
-        this.completedReportsByTaskId.delete(taskId);
       }
     }
   }
@@ -2631,9 +2729,6 @@ export class TaskService {
   }
 
   private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
-    const nowMs = Date.now();
-    this.cleanupExpiredCompletedReports(nowMs);
-
     const cfg = this.config.loadConfigOrDefault();
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
     const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(parentById, taskId);
@@ -2641,7 +2736,6 @@ export class TaskService {
     this.completedReportsByTaskId.set(taskId, {
       reportMarkdown: report.reportMarkdown,
       title: report.title,
-      expiresAtMs: nowMs + COMPLETED_REPORT_CACHE_TTL_MS,
       ancestorWorkspaceIds,
     });
     this.enforceCompletedReportCacheLimit();
