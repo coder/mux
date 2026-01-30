@@ -683,6 +683,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           allowSshHost: runtimePolicy.allowSshHost,
           allowSshCoder: runtimePolicy.allowSshCoder,
           runtimePolicyError: creationRuntimePolicyError,
+          coderInfo: coderState.coderInfo,
           runtimeFieldError,
           // Pass coderProps when CLI is available/outdated, Coder is enabled, or still checking (so "Checking…" UI renders)
           coderProps:
