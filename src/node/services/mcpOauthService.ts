@@ -46,6 +46,14 @@ interface DesktopFlow {
   serverName: string;
   serverUrl: string;
 
+  /**
+   * OAuth client information registered for this specific flow.
+   *
+   * Loopback redirect ports are typically ephemeral, so we keep the per-flow
+   * client_id in memory for the subsequent authorization code exchange.
+   */
+  clientInformation: MCPOAuthClientInformation | null;
+
   authorizeUrl: string;
   redirectUri: string;
 
@@ -507,6 +515,7 @@ export class McpOauthService {
       projectPath: projectKey,
       serverName: input.serverName,
       serverUrl: normalizedServerUrl,
+      clientInformation: null,
       authorizeUrl: "",
       redirectUri,
       scope: challenge?.scope,
@@ -636,19 +645,19 @@ export class McpOauthService {
         };
       },
       clientInformation: async () => {
-        const creds = await this.getValidStoredCredentials({
-          projectKey: flow.projectPath,
-          serverName: flow.serverName,
-          serverUrl: flow.serverUrl,
-        });
-        return creds?.clientInformation as unknown as MCPOAuthClientInformation | undefined;
+        // We intentionally re-register the OAuth client per desktop flow because
+        // loopback redirect ports are typically ephemeral.
+        return flow.clientInformation ?? undefined;
       },
       saveClientInformation: async (clientInformation) => {
+        const next = clientInformation as unknown as MCPOAuthClientInformation;
+        flow.clientInformation = next;
+
         await this.saveClientInformation({
           projectKey: flow.projectPath,
           serverName: flow.serverName,
           serverUrl: flow.serverUrl,
-          clientInformation: clientInformation as unknown as MCPOAuthClientInformation,
+          clientInformation: next,
         });
       },
       state: async () => flow.flowId,
@@ -948,6 +957,14 @@ export class McpOauthService {
 
       // Defensive: Never keep client info bound to a different URL.
       if (normalizeServerUrlForComparison(creds.serverUrl) !== input.serverUrl) {
+        creds.tokens = undefined;
+      }
+
+      // Defensive: Refresh tokens are bound to a specific OAuth client_id.
+      if (
+        creds.clientInformation?.client_id &&
+        creds.clientInformation.client_id !== input.clientInformation.client_id
+      ) {
         creds.tokens = undefined;
       }
 
