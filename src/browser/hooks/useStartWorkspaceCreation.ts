@@ -51,7 +51,7 @@ export function persistWorkspaceCreationPrefill(
 
 interface UseStartWorkspaceCreationOptions {
   projects: Map<string, ProjectConfig>;
-  beginWorkspaceCreation: (projectPath: string) => void;
+  createWorkspaceDraft: (projectPath: string) => void;
 }
 
 function resolveProjectPath(
@@ -67,7 +67,7 @@ function resolveProjectPath(
 
 export function useStartWorkspaceCreation({
   projects,
-  beginWorkspaceCreation,
+  createWorkspaceDraft,
 }: UseStartWorkspaceCreationOptions) {
   const startWorkspaceCreation = useCallback(
     (projectPath: string, detail?: StartWorkspaceCreationDetail) => {
@@ -79,9 +79,9 @@ export function useStartWorkspaceCreation({
       }
 
       persistWorkspaceCreationPrefill(resolvedProjectPath, detail);
-      beginWorkspaceCreation(resolvedProjectPath);
+      createWorkspaceDraft(resolvedProjectPath);
     },
-    [projects, beginWorkspaceCreation]
+    [projects, createWorkspaceDraft]
   );
 
   useEffect(() => {
