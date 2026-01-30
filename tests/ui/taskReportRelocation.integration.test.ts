@@ -76,7 +76,7 @@ async function seedHistory(historyService: HistoryService, workspaceId: string):
               status: "completed" as const,
               taskId,
               title: "Background analysis",
-              reportMarkdown: "Hello from report",
+              reportMarkdown: "Hello from **report**\n\n- item 1\n- item 2",
             },
           ],
         },
@@ -128,13 +128,24 @@ describe("Task report relocation UI", () => {
       await waitForWorkspaceChatToRender(view.container);
 
       await waitFor(() => {
-        expect(view?.queryAllByText("Hello from report")).toHaveLength(1);
+        expect(view?.queryAllByText("item 1")).toHaveLength(1);
       });
 
       const taskToolName = view.getByText(/^task$/);
       const taskMessageBlock = taskToolName.closest('[data-testid="chat-message"]');
       expect(taskMessageBlock).toBeTruthy();
       expect(taskMessageBlock?.textContent).toContain("Hello from report");
+      // Ensure markdown is actually rendered (not shown as raw "**bold**" syntax).
+      expect(taskMessageBlock?.textContent).not.toContain("**report**");
+
+      const strong = taskMessageBlock?.querySelector('[data-streamdown="strong"]');
+      expect(strong).toBeTruthy();
+      expect(strong?.textContent).toBe("report");
+
+      const listItems = taskMessageBlock?.querySelectorAll("li");
+      expect(listItems?.length).toBe(2);
+      expect(taskMessageBlock?.textContent).toContain("item 1");
+      expect(taskMessageBlock?.textContent).toContain("item 2");
 
       const awaitToolName = view.getByText("task_await");
       const awaitMessageBlock = awaitToolName.closest('[data-testid="chat-message"]');
@@ -142,6 +153,8 @@ describe("Task report relocation UI", () => {
       expect(awaitMessageBlock?.textContent).toContain("task-1");
       expect(awaitMessageBlock?.textContent).toContain("completed");
       expect(awaitMessageBlock?.textContent).not.toContain("Hello from report");
+      expect(awaitMessageBlock?.textContent).not.toContain("item 1");
+      expect(awaitMessageBlock?.textContent).not.toContain("item 2");
     } finally {
       if (view) {
         await cleanupView(view, cleanupDom);

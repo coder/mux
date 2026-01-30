@@ -282,7 +282,9 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
             {reportMarkdown && (
               <div className="task-divider border-t pt-2">
                 <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
-                <div className="text-[11px]">
+                <div
+                  className={cn("text-[11px]", hasLinkedCompletion && "bg-code-bg rounded-sm p-2")}
+                >
                   <MarkdownRenderer content={reportMarkdown} />
                 </div>
               </div>
