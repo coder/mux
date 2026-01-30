@@ -143,13 +143,26 @@ export function buildConversationShareMarkdown(options: {
     lines.push("---");
     lines.push(`## ${roleLabel}`);
 
+    // NOTE: Real MuxMessage history often contains many sequential "text" parts (streaming deltas).
+    // We want to preserve the exact text without inserting extra whitespace between chunks.
+    let pendingText = "";
+    const flushPendingText = () => {
+      if (pendingText.trim().length === 0) {
+        pendingText = "";
+        return;
+      }
+
+      lines.push(pendingText.trimEnd());
+      pendingText = "";
+    };
+
     for (const part of message.parts) {
       if (part.type === "text") {
-        if (part.text.trim().length > 0) {
-          lines.push(part.text.trimEnd());
-        }
+        pendingText += part.text;
         continue;
       }
+
+      flushPendingText();
 
       if (part.type === "reasoning") {
         if (part.text.trim().length === 0) {
@@ -186,6 +199,8 @@ export function buildConversationShareMarkdown(options: {
         continue;
       }
     }
+
+    flushPendingText();
   }
 
   return lines.join("\n\n").trimEnd() + "\n";

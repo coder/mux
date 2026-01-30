@@ -18,6 +18,21 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).toContain("Hi there");
   });
 
+  test("concatenates streaming text parts (no extra newlines between chunks)", () => {
+    const muxMessages = [
+      createMuxMessage("a1", "assistant", "", undefined, [
+        { type: "text" as const, text: "I" },
+        { type: "text" as const, text: "'ll" },
+        { type: "text" as const, text: " explore" },
+      ]),
+    ];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("I'll explore");
+    expect(md).not.toContain("I\n\n'll");
+  });
+
   test("includes tool calls as <details> blocks", () => {
     const bashTool: MuxToolPart = {
       type: "dynamic-tool",
