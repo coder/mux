@@ -616,7 +616,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
 
       {/* Actions row at the bottom (matching MessageWindow style) */}
       <div className="mt-3 flex items-center gap-0.5">
-        <div className="flex flex-1 min-w-0 items-center gap-0.5">
+        <div className="flex min-w-0 flex-1 items-center gap-0.5">
           {actionButtons.map((button, index) => (
             <IconActionButton key={index} button={button} />
           ))}
@@ -638,7 +638,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="text-placeholder h-6 px-2 text-[11px] gap-1 [&_svg]:size-3.5"
+                      className="text-placeholder h-6 gap-1 px-2 text-[11px] [&_svg]:size-3.5"
                       onClick={implementButton.onClick}
                       disabled={implementButton.disabled}
                     >
@@ -659,7 +659,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="text-placeholder h-6 px-2 text-[11px] gap-1 [&_svg]:size-3.5"
+                      className="text-placeholder h-6 gap-1 px-2 text-[11px] [&_svg]:size-3.5"
                       onClick={orchestratorButton.onClick}
                       disabled={orchestratorButton.disabled}
                     >
