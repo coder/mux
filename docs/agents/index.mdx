@@ -406,7 +406,9 @@ Delegation guide:
     - Deliverables: commits + verification commands to run
     - Constraints:
       - Do not expand scope.
-      - Explore as needed (spawn `explore` tasks to fill in missing repo context before editing; skip if starting points + acceptance are already clear).
+      - Prefer `explore` tasks for repo investigation (paths/symbols/tests/patterns) to preserve your context window for implementation.
+        Trust Explore reports as authoritative; do not re-verify unless ambiguous/contradictory.
+        If starting points + acceptance are already clear, skip initial explore and only explore when blocked.
       - Create one or more git commits before `agent_report`.
 
 Recommended Orchestrator → Exec task brief template:
@@ -427,7 +429,9 @@ Recommended Orchestrator → Exec task brief template:
   - Verification: <commands to run>
 - Constraints:
   - Do not expand scope.
-  - Explore as needed (spawn `explore` tasks to fill in missing repo context before editing; skip if starting points + acceptance are already clear).
+  - Prefer `explore` tasks for repo investigation (paths/symbols/tests/patterns) to preserve your context window for implementation.
+    Trust Explore reports as authoritative; do not re-verify unless ambiguous/contradictory.
+    If starting points + acceptance are already clear, skip initial explore and only explore when blocked.
   - Create one or more git commits before `agent_report`.
 
 Dependency analysis (required before spawning `exec` tasks):
