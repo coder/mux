@@ -18,9 +18,11 @@ interface Props {
 /**
  * Warning banner shown when user switches to a model that can't fit the current context.
  */
-export const ContextSwitchWarning: React.FC<Props> = ({ warning, onCompact, onDismiss }) => {
-  const targetName = getModelName(warning.targetModel);
-  const compactName = warning.compactionModel ? getModelName(warning.compactionModel) : null;
+export const ContextSwitchWarning: React.FC<Props> = (props) => {
+  const targetName = getModelName(props.warning.targetModel);
+  const compactName = props.warning.compactionModel
+    ? getModelName(props.warning.compactionModel)
+    : null;
 
   return (
     <div className="bg-plan-mode/10 border-plan-mode/30 mx-4 my-2 rounded-md border px-4 py-3">
@@ -31,14 +33,14 @@ export const ContextSwitchWarning: React.FC<Props> = ({ warning, onCompact, onDi
             <span>Context May Exceed Model Limit</span>
           </div>
           <p className="text-foreground/80 text-[12px] leading-relaxed">
-            Current context ({formatTokens(warning.currentTokens)} tokens) may exceed the{" "}
+            Current context ({formatTokens(props.warning.currentTokens)} tokens) may exceed the{" "}
             <span className="font-medium">{targetName}</span> limit (
-            {formatTokens(warning.targetLimit)}). Consider compacting before sending.
+            {formatTokens(props.warning.targetLimit)}). Consider compacting before sending.
           </p>
         </div>
         <button
           type="button"
-          onClick={onDismiss}
+          onClick={props.onDismiss}
           className="text-muted hover:text-foreground -mt-1 -mr-1 cursor-pointer p-1"
           title="Dismiss"
         >
@@ -46,12 +48,12 @@ export const ContextSwitchWarning: React.FC<Props> = ({ warning, onCompact, onDi
         </button>
       </div>
       <div className="mt-2.5 flex items-center gap-3">
-        {warning.errorMessage ? (
-          <span className="text-error text-[12px]">{warning.errorMessage}</span>
+        {props.warning.errorMessage ? (
+          <span className="text-error text-[12px]">{props.warning.errorMessage}</span>
         ) : (
           <button
             type="button"
-            onClick={onCompact}
+            onClick={props.onCompact}
             className="bg-plan-mode/20 hover:bg-plan-mode/30 text-plan-mode cursor-pointer rounded px-3 py-1.5 text-[12px] font-medium transition-colors"
           >
             Compact with {compactName}

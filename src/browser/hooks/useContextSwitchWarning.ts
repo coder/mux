@@ -144,17 +144,14 @@ export function useContextSwitchWarning(
           : null;
       setWarning(enhanceWarning(result));
     } else if (prevTokens === 0 && tokens > 0 && !warning) {
-      // Re-check if tokens became available after initial render (usage data loaded)
+      // Re-check if tokens became available after initial render (usage data loaded).
       // Gate on 0 -> >0 so a dismissal doesn't immediately recreate the warning.
-      // Use findPreviousModel since we don't have a "previous" model in this case
+      // Run the check even without a prior assistant model so late usage data still
+      // triggers warnings for lower-context switches (fresh chats can lack model metadata).
       const previousModel = findPreviousModel(messages);
-      if (previousModel && previousModel !== pendingModel) {
-        setWarning(
-          enhanceWarning(
-            checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions)
-          )
-        );
-      }
+      setWarning(
+        enhanceWarning(checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions))
+      );
     }
   }, [pendingModel, tokens, use1M, checkOptions, warning, messages, enhanceWarning]);
 
