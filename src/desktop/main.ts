@@ -45,6 +45,7 @@ import type { Config } from "@/node/config";
 import type { ServiceContainer } from "@/node/services/serviceContainer";
 import { VERSION } from "@/version";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
+import { DESKTOP_ACTION_FLAGS } from "@/common/constants/desktopActions";
 
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
@@ -132,6 +133,75 @@ process.on("unhandledRejection", (reason, promise) => {
   }
 });
 
+let mainWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
+
+type DesktopAction = "startNewAgent";
+
+const pendingDesktopActions: DesktopAction[] = [];
+
+function parseDesktopActionsFromArgv(argv: readonly string[]): DesktopAction[] {
+  const actions: DesktopAction[] = [];
+
+  if (argv.includes(DESKTOP_ACTION_FLAGS.NEW_AGENT)) {
+    actions.push("startNewAgent");
+  }
+
+  return actions;
+}
+
+function enqueueDesktopActionsFromArgv(argv: readonly string[]): void {
+  const actions = parseDesktopActionsFromArgv(argv);
+  if (actions.length === 0) {
+    return;
+  }
+
+  pendingDesktopActions.push(...actions);
+  flushPendingDesktopActions();
+}
+
+function flushPendingDesktopActions(): void {
+  if (!services || pendingDesktopActions.length === 0) {
+    return;
+  }
+
+  const actions = pendingDesktopActions.splice(0, pendingDesktopActions.length);
+  for (const action of actions) {
+    dispatchDesktopAction(action);
+  }
+}
+
+function dispatchDesktopAction(action: DesktopAction): void {
+  if (!services) {
+    pendingDesktopActions.push(action);
+    return;
+  }
+
+  switch (action) {
+    case "startNewAgent": {
+      // Ensure the main window exists/visible so the user sees the new agent flow.
+      focusOrCreateMainWindow();
+      services.menuEventService.emitStartNewAgent();
+      return;
+    }
+  }
+}
+
+function focusOrCreateMainWindow(): void {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  if (!app.isReady() || !services) {
+    return;
+  }
+
+  createWindow();
+}
+
 // Single instance lock (can be disabled for development with CMUX_ALLOW_MULTIPLE_INSTANCES=1)
 const allowMultipleInstances = process.env.CMUX_ALLOW_MULTIPLE_INSTANCES === "1";
 const gotTheLock = allowMultipleInstances || app.requestSingleInstanceLock();
@@ -144,18 +214,15 @@ if (!gotTheLock) {
 } else {
   // This is the primary instance
   console.log("This is the primary instance");
-  app.on("second-instance", () => {
-    // Someone tried to run a second instance, focus our window instead
+  app.on("second-instance", (_event, commandLine) => {
+    // Someone tried to run a second instance. Focus our window and route any
+    // desktop actions (e.g. JumpList tasks) back into the running app.
     console.log("Second instance attempted to start");
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+
+    enqueueDesktopActionsFromArgv(commandLine);
+    focusOrCreateMainWindow();
   });
 }
-
-let mainWindow: BrowserWindow | null = null;
-let splashWindow: BrowserWindow | null = null;
 
 /**
  * Format timestamp as HH:MM:SS.mmm for readable logging
@@ -241,6 +308,40 @@ function createMenu() {
 
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
+}
+
+function setupDesktopQuickActions() {
+  // macOS: native Dock menu.
+  if (process.platform === "darwin") {
+    const dockMenu = Menu.buildFromTemplate([
+      {
+        label: "Start New Agent",
+        click: () => {
+          dispatchDesktopAction("startNewAgent");
+        },
+      },
+    ]);
+    // app.dock is darwin-only; optional in Electron's type definitions.
+    app.dock?.setMenu(dockMenu);
+  }
+
+  // Windows: JumpList tasks.
+  if (process.platform === "win32") {
+    try {
+      app.setUserTasks([
+        {
+          program: process.execPath,
+          arguments: DESKTOP_ACTION_FLAGS.NEW_AGENT,
+          title: "Start New Agent",
+          description: "Create a new agent workspace",
+          iconPath: process.execPath,
+          iconIndex: 0,
+        },
+      ]);
+    } catch (error) {
+      console.warn("Failed to set Windows user tasks:", error);
+    }
+  }
 }
 
 /**
@@ -661,6 +762,8 @@ if (gotTheLock) {
       }
 
       createMenu();
+      setupDesktopQuickActions();
+      enqueueDesktopActionsFromArgv(process.argv);
 
       // Three-phase startup:
       // 1. Show splash immediately (<100ms) and wait for it to load
@@ -674,6 +777,7 @@ if (gotTheLock) {
       }
       await loadServices();
       createWindow();
+      flushPendingDesktopActions();
       // Note: splash closes in ready-to-show event handler
 
       // Tokenizer modules load in background after did-finish-load event (see createWindow())
