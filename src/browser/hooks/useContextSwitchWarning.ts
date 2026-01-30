@@ -5,15 +5,17 @@
  * Handles model changes, 1M toggle changes, and provides compact/dismiss actions.
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
 import {
   checkContextSwitch,
   findPreviousModel,
+  type ContextSwitchOptions,
   type ContextSwitchWarning,
 } from "@/browser/utils/compaction/contextSwitchCheck";
 import { getHigherContextCompactionSuggestion } from "@/browser/utils/compaction/suggestion";
@@ -52,6 +54,15 @@ export function useContextSwitchWarning(
   // Initialize to null so first render triggers check (handles page reload after model switch).
   const prevPendingModelRef = useRef<string | null>(null);
   const { config: providersConfig } = useProvidersConfig();
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
+
+  // Options for validating compaction model accessibility
+  const checkOptions: ContextSwitchOptions = useMemo(
+    () => ({ providersConfig, policy: effectivePolicy }),
+    [providersConfig, effectivePolicy]
+  );
 
   const getCurrentTokens = useCallback(() => {
     const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
@@ -67,6 +78,7 @@ export function useContextSwitchWarning(
       const suggestion = getHigherContextCompactionSuggestion({
         currentModel: w.targetModel,
         providersConfig,
+        policy: effectivePolicy,
       });
 
       if (suggestion) {
@@ -77,7 +89,7 @@ export function useContextSwitchWarning(
       }
       return w;
     },
-    [providersConfig, use1M]
+    [providersConfig, effectivePolicy, use1M]
   );
 
   const handleModelChange = useCallback(
@@ -87,10 +99,13 @@ export function useContextSwitchWarning(
       // so compaction fallback works even if user switches without sending
       const previousModel = prevPendingModelRef.current;
       prevPendingModelRef.current = newModel;
-      const result = tokens > 0 ? checkContextSwitch(tokens, newModel, previousModel, use1M) : null;
+      const result =
+        tokens > 0
+          ? checkContextSwitch(tokens, newModel, previousModel, use1M, checkOptions)
+          : null;
       setWarning(enhanceWarning(result));
     },
-    [getCurrentTokens, use1M, enhanceWarning]
+    [getCurrentTokens, use1M, checkOptions, enhanceWarning]
   );
 
   const handleCompact = useCallback(() => {
@@ -120,7 +135,10 @@ export function useContextSwitchWarning(
     const prevModel = prevPendingModelRef.current;
     if (prevModel !== pendingModel) {
       prevPendingModelRef.current = pendingModel;
-      const result = tokens > 0 ? checkContextSwitch(tokens, pendingModel, prevModel, use1M) : null;
+      const result =
+        tokens > 0
+          ? checkContextSwitch(tokens, pendingModel, prevModel, use1M, checkOptions)
+          : null;
       setWarning(enhanceWarning(result));
     } else if (prevTokens === 0 && tokens > 0 && !warning) {
       // Re-check if tokens became available after initial render (usage data loaded)
@@ -128,10 +146,14 @@ export function useContextSwitchWarning(
       // Use findPreviousModel since we don't have a "previous" model in this case
       const previousModel = findPreviousModel(messages);
       if (previousModel && previousModel !== pendingModel) {
-        setWarning(enhanceWarning(checkContextSwitch(tokens, pendingModel, previousModel, use1M)));
+        setWarning(
+          enhanceWarning(
+            checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions)
+          )
+        );
       }
     }
-  }, [pendingModel, tokens, use1M, warning, messages, enhanceWarning]);
+  }, [pendingModel, tokens, use1M, checkOptions, warning, messages, enhanceWarning]);
 
   // Sync with 1M toggle changes from ProviderOptionsContext.
   // Effect is appropriate here: we're syncing with an external context (not our own state),
@@ -146,14 +168,20 @@ export function useContextSwitchWarning(
     if (wasEnabled !== use1M) {
       const tokens = getCurrentTokens();
       if (tokens > 0) {
-        const result = checkContextSwitch(tokens, pendingModel, findPreviousModel(messages), use1M);
+        const result = checkContextSwitch(
+          tokens,
+          pendingModel,
+          findPreviousModel(messages),
+          use1M,
+          checkOptions
+        );
         setWarning(enhanceWarning(result));
       } else if (use1M) {
         // No tokens but toggled ON - clear any stale warning
         setWarning(null);
       }
     }
-  }, [use1M, getCurrentTokens, pendingModel, messages, enhanceWarning]);
+  }, [use1M, getCurrentTokens, pendingModel, messages, checkOptions, enhanceWarning]);
 
   return { warning, handleModelChange, handleCompact, handleDismiss };
 }

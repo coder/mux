@@ -5,8 +5,9 @@
  */
 
 import { isGatewayFormat, toGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
@@ -29,6 +30,7 @@ export interface CompactionSuggestion {
 export function getExplicitCompactionSuggestion(options: {
   modelId: string;
   providersConfig: ProvidersConfigMap | null;
+  policy?: EffectivePolicy | null;
 }): CompactionSuggestion | null {
   const modelId = options.modelId.trim();
   if (modelId.length === 0) {
@@ -46,6 +48,11 @@ export function getExplicitCompactionSuggestion(options: {
   // or gateway routing enabled for that model (avoids suggesting unusable models).
   const routesThroughGateway = isGatewayFormat(toGatewayModel(modelId));
   if (!isProviderConfigured && !routesThroughGateway) {
+    return null;
+  }
+
+  // Validate against policy if provided
+  if (!isModelAllowedByPolicy(options.policy ?? null, normalized)) {
     return null;
   }
 
@@ -75,6 +82,7 @@ export function getExplicitCompactionSuggestion(options: {
 export function getHigherContextCompactionSuggestion(options: {
   currentModel: string;
   providersConfig: ProvidersConfigMap | null;
+  policy?: EffectivePolicy | null;
 }): CompactionSuggestion | null {
   const currentStats = getModelStats(options.currentModel);
   if (!currentStats?.max_input_tokens) {
@@ -89,6 +97,11 @@ export function getHigherContextCompactionSuggestion(options: {
     const isProviderConfigured = options.providersConfig?.[known.provider]?.isConfigured === true;
     const routesThroughGateway = isGatewayFormat(toGatewayModel(known.id));
     if (!isProviderConfigured && !routesThroughGateway) {
+      continue;
+    }
+
+    // Skip models blocked by policy
+    if (!isModelAllowedByPolicy(options.policy ?? null, known.id)) {
       continue;
     }
 

@@ -7,7 +7,8 @@ import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { migrateGatewayModel } from "./useGatewayModels";
 import { isValidProvider } from "@/common/constants/providers";
-import type { ProvidersConfigMap, EffectivePolicy } from "@/common/orpc/types";
+import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 
 const HIDDEN_MODELS_KEY = "hidden-models";
 const DEFAULT_MODEL_KEY = "model-default";
@@ -15,41 +16,6 @@ const DEFAULT_MODEL_KEY = "model-default";
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
 const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
 
-function parseModelString(modelString: string): { provider: string; modelId: string } | null {
-  const colonIndex = modelString.indexOf(":");
-  if (colonIndex <= 0 || colonIndex === modelString.length - 1) {
-    return null;
-  }
-
-  return {
-    provider: modelString.slice(0, colonIndex),
-    modelId: modelString.slice(colonIndex + 1),
-  };
-}
-
-function isModelAllowedByPolicy(policy: EffectivePolicy | null, modelString: string): boolean {
-  const providerAccess = policy?.providerAccess;
-  if (providerAccess == null) {
-    return true;
-  }
-
-  const parsed = parseModelString(modelString);
-  if (!parsed) {
-    return true;
-  }
-
-  const providerPolicy = providerAccess.find((p) => p.id === parsed.provider);
-  if (!providerPolicy) {
-    return false;
-  }
-
-  const allowedModels = providerPolicy.allowedModels ?? null;
-  if (allowedModels === null) {
-    return true;
-  }
-
-  return allowedModels.includes(parsed.modelId);
-}
 function getCustomModels(config: ProvidersConfigMap | null): string[] {
   if (!config) return [];
   const models: string[] = [];

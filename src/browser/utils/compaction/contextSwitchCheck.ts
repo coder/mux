@@ -8,8 +8,10 @@
 
 import { readPersistedString } from "@/browser/hooks/usePersistedState";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { getEffectiveContextLimit } from "./contextLimit";
+import { getExplicitCompactionSuggestion } from "./suggestion";
 
 /** Safety buffer - warn if context exceeds 90% of target model's limit */
 const CONTEXT_FIT_THRESHOLD = 0.9;
@@ -36,22 +38,40 @@ export function findPreviousModel(messages: DisplayedMessage[]): string | null {
   return null;
 }
 
+/** Options for accessibility checks in context switch validation */
+export interface ContextSwitchOptions {
+  providersConfig: ProvidersConfigMap | null;
+  policy: EffectivePolicy | null;
+}
+
 /**
- * Resolve compaction model: preferred (if fits) → previous (if fits) → null.
+ * Resolve compaction model: preferred (if fits + accessible) → previous (if fits + accessible) → null.
  */
 function resolveCompactionModel(
   currentTokens: number,
   previousModel: string | null,
-  use1M: boolean
+  use1M: boolean,
+  options: ContextSwitchOptions
 ): string | null {
   const preferred = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
   if (preferred) {
+    // Validate accessibility via getExplicitCompactionSuggestion (checks provider config + policy)
+    const accessible = getExplicitCompactionSuggestion({
+      modelId: preferred,
+      providersConfig: options.providersConfig,
+      policy: options.policy,
+    });
     const limit = getEffectiveContextLimit(preferred, use1M);
-    if (limit && limit > currentTokens) return preferred;
+    if (accessible && limit && limit > currentTokens) return preferred;
   }
   if (previousModel) {
+    const accessible = getExplicitCompactionSuggestion({
+      modelId: previousModel,
+      providersConfig: options.providersConfig,
+      policy: options.policy,
+    });
     const limit = getEffectiveContextLimit(previousModel, use1M);
-    if (limit && limit > currentTokens) return previousModel;
+    if (accessible && limit && limit > currentTokens) return previousModel;
   }
   return null;
 }
@@ -59,12 +79,15 @@ function resolveCompactionModel(
 /**
  * Check if switching to targetModel would exceed its context limit.
  * Returns warning info if context doesn't fit, null otherwise.
+ *
+ * The `options` parameter validates compaction model accessibility via provider config and policy.
  */
 export function checkContextSwitch(
   currentTokens: number,
   targetModel: string,
   previousModel: string | null,
-  use1M: boolean
+  use1M: boolean,
+  options: ContextSwitchOptions
 ): ContextSwitchWarning | null {
   const targetLimit = getEffectiveContextLimit(targetModel, use1M);
 
@@ -73,7 +96,7 @@ export function checkContextSwitch(
     return null;
   }
 
-  const compactionModel = resolveCompactionModel(currentTokens, previousModel, use1M);
+  const compactionModel = resolveCompactionModel(currentTokens, previousModel, use1M, options);
 
   return {
     currentTokens,
