@@ -78,6 +78,14 @@ export const AgentDefinitionFrontmatterSchema = z
     // Inheritance: reference a built-in or custom agent ID
     base: AgentIdSchema.optional(),
 
+    // When true, this agent is disabled by default.
+    //
+    // Notes:
+    // - This is a top-level flag (separate from ui.disabled) so repos can ship agents that are
+    //   present on disk but opt-in.
+    // - When both are set, `disabled` takes precedence over `ui.disabled`.
+    disabled: z.boolean().optional(),
+
     // UI metadata (color, visibility, etc.)
     ui: AgentDefinitionUiSchema.optional(),
 

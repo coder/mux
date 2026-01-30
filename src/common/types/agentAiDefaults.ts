@@ -4,6 +4,14 @@ import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 export interface AgentAiDefaultsEntry {
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  /**
+   * Local enablement override.
+   *
+   * - true: force enable (even if the agent front-matter disables it)
+   * - false: force disable
+   * - undefined: inherit from agent front-matter
+   */
+  enabled?: boolean;
 }
 
 export type AgentAiDefaults = Record<string, AgentAiDefaultsEntry>;
@@ -28,11 +36,13 @@ export function normalizeAgentAiDefaults(raw: unknown): AgentAiDefaults {
 
     const thinkingLevel = coerceThinkingLevel(entry.thinkingLevel);
 
-    if (!modelString && !thinkingLevel) {
+    const enabled = typeof entry.enabled === "boolean" ? entry.enabled : undefined;
+
+    if (!modelString && !thinkingLevel && enabled === undefined) {
       continue;
     }
 
-    result[agentId] = { modelString, thinkingLevel };
+    result[agentId] = { modelString, thinkingLevel, enabled };
   }
 
   return result;

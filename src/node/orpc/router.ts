@@ -42,6 +42,7 @@ import {
   readAgentDefinition,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 
 /**
@@ -488,6 +489,8 @@ export const router = (authToken?: string) => {
 
           const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
 
+          const cfg = context.config.loadConfigOrDefault();
+
           const resolved = await Promise.all(
             descriptors.map(async (descriptor) => {
               try {
@@ -497,9 +500,17 @@ export const router = (authToken?: string) => {
                   descriptor.id
                 );
 
-                // If an agent is disabled anywhere in its base chain, omit it.
-                // (Overrides can re-enable by explicitly setting ui.disabled: false.)
-                if (resolvedFrontmatter.ui?.disabled === true) {
+                const effectivelyDisabled = isAgentEffectivelyDisabled({
+                  cfg,
+                  agentId: descriptor.id,
+                  resolvedFrontmatter,
+                });
+
+                // By default, disabled agents are omitted from discovery so they cannot be
+                // selected or cycled in the UI.
+                //
+                // Settings passes includeDisabled: true so users can opt in/out locally.
+                if (effectivelyDisabled && input.includeDisabled !== true) {
                   return null;
                 }
 

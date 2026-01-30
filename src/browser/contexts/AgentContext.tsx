@@ -225,6 +225,16 @@ function AgentProviderWithState(props: {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cycleToNextAgent]);
 
+  useEffect(() => {
+    const handleRefreshRequested = () => {
+      void refresh();
+    };
+
+    window.addEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handleRefreshRequested);
+    return () =>
+      window.removeEventListener(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED, handleRefreshRequested);
+  }, [refresh]);
+
   const normalizedAgentId = coerceAgentId(agentId);
   const currentAgent = loaded ? agents.find((a) => a.id === normalizedAgentId) : undefined;
 

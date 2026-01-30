@@ -16,6 +16,7 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
   normalizeAgentAiDefaults,
@@ -98,7 +99,7 @@ function updateAgentDefaultEntry(
     updated.thinkingLevel = enforceThinkingPolicy(updated.modelString, updated.thinkingLevel);
   }
 
-  if (!updated.modelString && !updated.thinkingLevel) {
+  if (!updated.modelString && !updated.thinkingLevel && updated.enabled === undefined) {
     delete next[normalizedId];
   } else {
     next[normalizedId] = updated;
@@ -229,6 +230,9 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
     if ((aEntry?.thinkingLevel ?? undefined) !== (bEntry?.thinkingLevel ?? undefined)) {
       return false;
     }
+    if ((aEntry?.enabled ?? undefined) !== (bEntry?.enabled ?? undefined)) {
+      return false;
+    }
   }
 
   return true;
@@ -238,10 +242,16 @@ export function TasksSection() {
   const { api } = useAPI();
   const { selectedWorkspace } = useWorkspaceContext();
 
+  const selectedWorkspaceRef = useRef(selectedWorkspace);
+  useEffect(() => {
+    selectedWorkspaceRef.current = selectedWorkspace;
+  }, [selectedWorkspace]);
+
   const [taskSettings, setTaskSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
   const [agentAiDefaults, setAgentAiDefaults] = useState<AgentAiDefaults>({});
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
+  const [enabledAgentIds, setEnabledAgentIds] = useState<string[]>([]);
   const [agentsLoaded, setAgentsLoaded] = useState(false);
   const [agentsLoadFailed, setAgentsLoadFailed] = useState(false);
 
@@ -296,6 +306,7 @@ export function TasksSection() {
     const workspaceId = selectedWorkspace?.workspaceId;
     if (!projectPath) {
       setAgents([]);
+      setEnabledAgentIds(FALLBACK_AGENTS.map((agent) => agent.id));
       setAgentsLoaded(true);
       setAgentsLoadFailed(false);
       return;
@@ -305,17 +316,21 @@ export function TasksSection() {
     setAgentsLoaded(false);
     setAgentsLoadFailed(false);
 
-    void api.agents
-      .list({ projectPath, workspaceId })
-      .then((list) => {
+    void Promise.all([
+      api.agents.list({ projectPath, workspaceId }),
+      api.agents.list({ projectPath, workspaceId, includeDisabled: true }),
+    ])
+      .then(([enabled, all]) => {
         if (cancelled) return;
-        setAgents(list);
+        setAgents(all);
+        setEnabledAgentIds(enabled.map((agent) => agent.id));
         setAgentsLoadFailed(false);
         setAgentsLoaded(true);
       })
       .catch(() => {
         if (cancelled) return;
         setAgents([]);
+        setEnabledAgentIds(FALLBACK_AGENTS.map((agent) => agent.id));
         setAgentsLoadFailed(true);
         setAgentsLoaded(true);
       });
@@ -372,9 +387,42 @@ export function TasksSection() {
             agentAiDefaults: payload.agentAiDefaults,
           })
           .then(() => {
+            const previousAgentDefaults = lastSyncedAgentAiDefaultsRef.current;
+            const agentDefaultsChanged =
+              !previousAgentDefaults ||
+              !areAgentAiDefaultsEqual(previousAgentDefaults, payload.agentAiDefaults);
+
             lastSyncedTaskSettingsRef.current = payload.taskSettings;
             lastSyncedAgentAiDefaultsRef.current = payload.agentAiDefaults;
             setSaveError(null);
+
+            if (agentDefaultsChanged) {
+              window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED));
+
+              const projectPath = selectedWorkspaceRef.current?.projectPath;
+              const workspaceId = selectedWorkspaceRef.current?.workspaceId;
+              if (!projectPath) {
+                return;
+              }
+
+              setAgentsLoaded(false);
+              void Promise.all([
+                api.agents.list({ projectPath, workspaceId }),
+                api.agents.list({ projectPath, workspaceId, includeDisabled: true }),
+              ])
+                .then(([enabled, all]) => {
+                  setAgents(all);
+                  setEnabledAgentIds(enabled.map((agent) => agent.id));
+                  setAgentsLoadFailed(false);
+                  setAgentsLoaded(true);
+                })
+                .catch(() => {
+                  setAgents([]);
+                  setEnabledAgentIds(FALLBACK_AGENTS.map((agent) => agent.id));
+                  setAgentsLoadFailed(true);
+                  setAgentsLoaded(true);
+                });
+            }
           })
           .catch((error: unknown) => {
             setSaveError(error instanceof Error ? error.message : String(error));
@@ -467,7 +515,24 @@ export function TasksSection() {
     );
   };
 
+  const setAgentEnabled = (agentId: string, value: boolean) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentDefaultEntry(prev, agentId, (updated) => {
+        updated.enabled = value;
+      })
+    );
+  };
+
+  const resetAgentEnabled = (agentId: string) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentDefaultEntry(prev, agentId, (updated) => {
+        delete updated.enabled;
+      })
+    );
+  };
+
   const listedAgents = agents.length > 0 ? agents : FALLBACK_AGENTS;
+  const enabledAgentIdSet = new Set(enabledAgentIds);
 
   const uiAgents = useMemo(
     () =>
@@ -506,6 +571,16 @@ export function TasksSection() {
     const entry = agentAiDefaults[agent.id];
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const enabledOverride = entry?.enabled;
+
+    const enablementLocked =
+      agent.id === "exec" || agent.id === "plan" || agent.id === "compact" || agent.id === "mux";
+
+    const enabledValue = enablementLocked
+      ? true
+      : typeof enabledOverride === "boolean"
+        ? enabledOverride
+        : enabledAgentIdSet.has(agent.id);
     const allowedThinkingLevels =
       modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
 
@@ -570,7 +645,7 @@ export function TasksSection() {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="space-y-1">
             <div className="text-muted text-xs">Model</div>
             <div className="flex items-center gap-2">
@@ -611,6 +686,27 @@ export function TasksSection() {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1">
+            <div className="text-muted text-xs">Enabled</div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={enabledValue}
+                disabled={enablementLocked}
+                onCheckedChange={(checked) => setAgentEnabled(agent.id, checked)}
+                aria-label={`Toggle ${agent.id} enabled`}
+              />
+              {enabledOverride !== undefined ? (
+                <button
+                  type="button"
+                  className="text-muted hover:text-foreground text-xs"
+                  onClick={() => resetAgentEnabled(agent.id)}
+                >
+                  Reset
+                </button>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>

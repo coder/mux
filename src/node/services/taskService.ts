@@ -16,6 +16,7 @@ import {
   discoverAgentDefinitions,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { createRuntime, runBackgroundInit } from "@/node/runtime/runtimeFactory";
@@ -572,7 +573,16 @@ export class TaskService {
                   parentWorkspacePath,
                   agent.id
                 );
-                return frontmatter.subagent?.runnable === true ? agent.id : null;
+                if (frontmatter.subagent?.runnable !== true) {
+                  return null;
+                }
+
+                const effectivelyDisabled = isAgentEffectivelyDisabled({
+                  cfg,
+                  agentId: agent.id,
+                  resolvedFrontmatter: frontmatter,
+                });
+                return effectivelyDisabled ? null : agent.id;
               } catch {
                 return null;
               }
@@ -594,6 +604,17 @@ export class TaskService {
       if (frontmatter.subagent?.runnable !== true) {
         const hint = await getRunnableHint();
         return Err(`Task.create: agentId is not runnable as a sub-agent (${agentId}). ${hint}`);
+      }
+
+      if (
+        isAgentEffectivelyDisabled({
+          cfg,
+          agentId,
+          resolvedFrontmatter: frontmatter,
+        })
+      ) {
+        const hint = await getRunnableHint();
+        return Err(`Task.create: agentId is disabled (${agentId}). ${hint}`);
       }
       skipInitHook = frontmatter.subagent?.skip_init_hook === true;
     } catch {
