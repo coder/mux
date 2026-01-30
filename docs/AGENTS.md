@@ -9,7 +9,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - `mux`: Electron + React desktop app for parallel agent workflows; UX must be fast, responsive, predictable.
 - Minor breaking changes are expected, but critical flows must allow upgrade↔downgrade without friction; skip migrations when breakage is tightly scoped.
-- For PRs, commits, and public issues, consult the `pull-requests` skill for attribution footer requirements and workflow conventions.
+- **Before creating or updating any PR, commit, or public issue**, you **MUST** read the `pull-requests` skill (`agent_skill_read`) for attribution footer requirements and workflow conventions. Do not skip this step.
 
 ## External Submissions
 
