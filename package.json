@@ -251,7 +251,9 @@
     "protocols": [
       {
         "name": "Mux",
-        "schemes": ["mux"]
+        "schemes": [
+          "mux"
+        ]
       }
     ],
     "publish": {
