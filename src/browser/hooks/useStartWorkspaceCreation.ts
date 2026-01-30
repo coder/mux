@@ -3,6 +3,7 @@ import type { ProjectConfig } from "@/node/config";
 import { CUSTOM_EVENTS, type CustomEventPayloads } from "@/common/constants/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
+  getDraftScopeId,
   getInputKey,
   getModelKey,
   getPendingScopeId,
@@ -20,17 +21,30 @@ export function getFirstProjectPath(projects: Map<string, ProjectConfig>): strin
 
 type PersistFn = typeof updatePersistedState;
 
+interface PersistWorkspaceCreationPrefillOptions {
+  draftId?: string | null;
+  persist?: PersistFn;
+}
+
 export function persistWorkspaceCreationPrefill(
   projectPath: string,
   detail: StartWorkspaceCreationDetail | undefined,
-  persist: PersistFn = updatePersistedState
+  options?: PersistWorkspaceCreationPrefillOptions
 ): void {
   if (!detail) {
     return;
   }
 
+  const persist = options?.persist ?? updatePersistedState;
+  const draftId = options?.draftId;
+
   if (detail.startMessage !== undefined) {
-    persist(getInputKey(getPendingScopeId(projectPath)), detail.startMessage);
+    const scopeId =
+      typeof draftId === "string" && draftId.trim().length > 0
+        ? getDraftScopeId(projectPath, draftId)
+        : getPendingScopeId(projectPath);
+
+    persist(getInputKey(scopeId), detail.startMessage);
   }
 
   if (detail.model !== undefined) {
@@ -51,7 +65,7 @@ export function persistWorkspaceCreationPrefill(
 
 interface UseStartWorkspaceCreationOptions {
   projects: Map<string, ProjectConfig>;
-  createWorkspaceDraft: (projectPath: string) => void;
+  createWorkspaceDraft: (projectPath: string) => string;
 }
 
 function resolveProjectPath(
@@ -78,8 +92,8 @@ export function useStartWorkspaceCreation({
         return;
       }
 
-      persistWorkspaceCreationPrefill(resolvedProjectPath, detail);
-      createWorkspaceDraft(resolvedProjectPath);
+      const draftId = createWorkspaceDraft(resolvedProjectPath);
+      persistWorkspaceCreationPrefill(resolvedProjectPath, detail, { draftId });
     },
     [projects, createWorkspaceDraft]
   );
