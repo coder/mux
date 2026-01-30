@@ -4,6 +4,7 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { Input } from "@/browser/components/ui/input";
 import { Switch } from "@/browser/components/ui/switch";
+import { Button } from "@/browser/components/ui/button";
 import { ModelSelector } from "@/browser/components/ModelSelector";
 import {
   Select,
@@ -581,6 +582,21 @@ export function TasksSection() {
       : typeof enabledOverride === "boolean"
         ? enabledOverride
         : enabledAgentIdSet.has(agent.id);
+
+    const enablementTitle = enablementLocked
+      ? "Core agent. Can't be disabled."
+      : enabledOverride === undefined
+        ? enabledValue
+          ? "Enabled by agent definition."
+          : "Disabled by agent definition."
+        : enabledOverride
+          ? "Enabled (local override)."
+          : "Disabled (local override).";
+
+    const enablementHint =
+      !enablementLocked && enabledOverride === undefined && !enabledValue
+        ? "Disabled by default"
+        : null;
     const allowedThinkingLevels =
       modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
 
@@ -616,7 +632,7 @@ export function TasksSection() {
         key={agent.id}
         className="border-border-medium bg-background-secondary rounded-md border p-3"
       >
-        <div className="flex items-baseline justify-between gap-3">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-foreground text-sm font-medium">{agent.name}</div>
             <div className="text-muted text-xs">
@@ -643,9 +659,34 @@ export function TasksSection() {
               <div className="text-muted mt-1 text-xs">{agent.description}</div>
             ) : null}
           </div>
+
+          <div className="flex shrink-0 items-center gap-3">
+            {enablementHint ? <div className="text-muted text-xs">{enablementHint}</div> : null}
+            <div className="flex items-center gap-2">
+              <div className="text-muted text-xs">Enabled</div>
+              <Switch
+                checked={enabledValue}
+                disabled={enablementLocked}
+                title={enablementTitle}
+                onCheckedChange={(checked) => setAgentEnabled(agent.id, checked)}
+                aria-label={`Toggle ${agent.id} enabled`}
+              />
+            </div>
+            {enabledOverride !== undefined ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="px-2"
+                onClick={() => resetAgentEnabled(agent.id)}
+              >
+                Reset
+              </Button>
+            ) : null}
+          </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <div className="text-muted text-xs">Model</div>
             <div className="flex items-center gap-2">
@@ -657,13 +698,15 @@ export function TasksSection() {
                 hiddenModels={hiddenModels}
               />
               {modelValue !== INHERIT ? (
-                <button
+                <Button
                   type="button"
-                  className="text-muted hover:text-foreground text-xs"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-2"
                   onClick={() => setAgentModel(agent.id, INHERIT)}
                 >
                   Reset
-                </button>
+                </Button>
               ) : null}
             </div>
           </div>
@@ -686,27 +729,6 @@ export function TasksSection() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
-
-          <div className="space-y-1">
-            <div className="text-muted text-xs">Enabled</div>
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={enabledValue}
-                disabled={enablementLocked}
-                onCheckedChange={(checked) => setAgentEnabled(agent.id, checked)}
-                aria-label={`Toggle ${agent.id} enabled`}
-              />
-              {enabledOverride !== undefined ? (
-                <button
-                  type="button"
-                  className="text-muted hover:text-foreground text-xs"
-                  onClick={() => resetAgentEnabled(agent.id)}
-                >
-                  Reset
-                </button>
-              ) : null}
-            </div>
           </div>
         </div>
       </div>
@@ -740,13 +762,15 @@ export function TasksSection() {
                 hiddenModels={hiddenModels}
               />
               {modelValue !== INHERIT ? (
-                <button
+                <Button
                   type="button"
-                  className="text-muted hover:text-foreground text-xs"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 px-2"
                   onClick={() => setAgentModel(agentId, INHERIT)}
                 >
                   Reset
-                </button>
+                </Button>
               ) : null}
             </div>
           </div>
