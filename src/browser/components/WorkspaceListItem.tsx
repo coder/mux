@@ -6,7 +6,7 @@ import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { getAgentIdKey, getModelKey } from "@/common/constants/storage";
+import { getModelKey } from "@/common/constants/storage";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect } from "react";
@@ -297,10 +297,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const [fallbackModel] = usePersistedState<string>(getModelKey(workspaceId), getDefaultModel(), {
     listener: true,
   });
-  const [fallbackMode] = usePersistedState<string>(getAgentIdKey(workspaceId), "exec", {
-    listener: true,
-  });
-
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
   // Note: we intentionally render the secondary row even while the workspace is still
@@ -497,11 +493,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (
-                <WorkspaceStatusIndicator
-                  workspaceId={workspaceId}
-                  fallbackModel={fallbackModel}
-                  fallbackMode={fallbackMode}
-                />
+                <WorkspaceStatusIndicator workspaceId={workspaceId} fallbackModel={fallbackModel} />
               )}
             </div>
           )}

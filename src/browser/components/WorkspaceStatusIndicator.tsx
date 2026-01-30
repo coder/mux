@@ -10,9 +10,8 @@ import { Button } from "./ui/button";
 export const WorkspaceStatusIndicator = memo<{
   workspaceId: string;
   fallbackModel: string;
-  fallbackMode: string;
-}>(({ workspaceId, fallbackModel, fallbackMode }) => {
-  const { canInterrupt, isStarting, awaitingUserQuestion, currentModel, currentMode, agentStatus } =
+}>(({ workspaceId, fallbackModel }) => {
+  const { canInterrupt, isStarting, awaitingUserQuestion, currentModel, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
   const { workspaceMetadata } = useWorkspaceContext();
 
@@ -60,18 +59,19 @@ export const WorkspaceStatusIndicator = memo<{
   }
 
   const modelToShow = canInterrupt ? (currentModel ?? fallbackModel) : fallbackModel;
-  const modeToShow = canInterrupt ? (currentMode ?? fallbackMode) : fallbackMode;
 
   return (
     <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
       {modelToShow ? (
-        <span className="min-w-0 truncate">
-          <ModelDisplay modelString={modelToShow} showTooltip={false} />
-        </span>
+        <>
+          <span className="min-w-0 truncate">
+            <ModelDisplay modelString={modelToShow} showTooltip={false} />
+          </span>
+          <span className="shrink-0 opacity-70">- streaming...</span>
+        </>
       ) : (
-        <span className="min-w-0 truncate">Assistant is responding</span>
+        <span className="min-w-0 truncate">Assistant - streaming...</span>
       )}
-      <span className="shrink-0 opacity-70">({modeToShow})</span>
     </div>
   );
 });

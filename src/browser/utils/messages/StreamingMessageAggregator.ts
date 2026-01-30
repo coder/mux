@@ -1122,24 +1122,6 @@ export class StreamingMessageAggregator {
     return undefined;
   }
 
-  getCurrentMode(): string | undefined {
-    // If there's an active stream, return its mode
-    for (const context of this.activeStreams.values()) {
-      return context.mode;
-    }
-
-    // Otherwise, return the mode from the most recent assistant message
-    const messages = this.getAllMessages();
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      if (message.role === "assistant" && message.metadata?.mode) {
-        return message.metadata.mode;
-      }
-    }
-
-    return undefined;
-  }
-
   clearActiveStreams(): void {
     const activeMessageIds = Array.from(this.activeStreams.keys());
     this.activeStreams.clear();
