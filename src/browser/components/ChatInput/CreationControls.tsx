@@ -149,6 +149,9 @@ interface RuntimeButtonGroupProps {
   disabled?: boolean;
   runtimeAvailabilityState?: RuntimeAvailabilityState;
   coderInfo?: CoderInfo | null;
+  allowedRuntimeModes?: RuntimeMode[] | null;
+  allowSshHost?: boolean;
+  allowSshCoder?: boolean;
 }
 
 const RUNTIME_CHOICE_ORDER: RuntimeChoice[] = [
@@ -184,6 +187,7 @@ const RUNTIME_CHOICE_OPTIONS: Array<{
 
 interface RuntimeButtonState {
   isModeDisabled: boolean;
+  isPolicyDisabled: boolean;
   disabledReason?: string;
   isDefault: boolean;
 }
@@ -192,13 +196,35 @@ const resolveRuntimeButtonState = (
   value: RuntimeChoice,
   availabilityMap: RuntimeAvailabilityMap | null,
   defaultMode: RuntimeChoice,
-  coderAvailability: CoderAvailabilityState
+  coderAvailability: CoderAvailabilityState,
+  allowedModeSet: Set<RuntimeMode> | null,
+  allowSshHost: boolean,
+  allowSshCoder: boolean
 ): RuntimeButtonState => {
+  const isPolicyAllowed = (): boolean => {
+    if (!allowedModeSet) {
+      return true;
+    }
+
+    if (value === "coder") {
+      return allowSshCoder;
+    }
+
+    if (value === RUNTIME_MODE.SSH) {
+      return allowSshHost || allowSshCoder;
+    }
+
+    return allowedModeSet.has(value);
+  };
+
+  const isPolicyDisabled = !isPolicyAllowed();
+
   // Coder outdated: button visible but disabled with version reason.
   if (value === "coder" && coderAvailability.state === "outdated") {
     return {
       isModeDisabled: true,
-      disabledReason: coderAvailability.reason,
+      isPolicyDisabled,
+      disabledReason: isPolicyDisabled ? "Disabled by policy" : coderAvailability.reason,
       isDefault: defaultMode === value,
     };
   }
@@ -210,10 +236,15 @@ const resolveRuntimeButtonState = (
   // When availability is undefined (loading or fetch failed), allow selection
   // as fallback - the config picker will validate before creation.
   const isModeDisabled = availability !== undefined && !availability.available;
-  const disabledReason = availability && !availability.available ? availability.reason : undefined;
+  const disabledReason = isPolicyDisabled
+    ? "Disabled by policy"
+    : availability && !availability.available
+      ? availability.reason
+      : undefined;
 
   return {
     isModeDisabled,
+    isPolicyDisabled,
     disabledReason,
     isDefault: defaultMode === value,
   };
@@ -302,20 +333,50 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
     coder: !hideCoder,
   };
 
-  const runtimeOptions = RUNTIME_CHOICE_OPTIONS.filter(
-    (option) => runtimeVisibilityOverrides[option.value] ?? true
-  );
+  const allowSshHost = props.allowSshHost ?? true;
+  const allowSshCoder = props.allowSshCoder ?? true;
+  const allowedModeSet = props.allowedRuntimeModes ? new Set(props.allowedRuntimeModes) : null;
+
+  // Policy filtering keeps forbidden runtimes out of the selector so users don't
+  // get stuck with defaults that can never be created.
+  const runtimeOptions = RUNTIME_CHOICE_OPTIONS.filter((option) => {
+    if (runtimeVisibilityOverrides[option.value] === false) {
+      return false;
+    }
+
+    const { isPolicyDisabled } = resolveRuntimeButtonState(
+      option.value,
+      availabilityMap,
+      props.defaultMode,
+      coderAvailability,
+      allowedModeSet,
+      allowSshHost,
+      allowSshCoder
+    );
+
+    if (isPolicyDisabled && props.value !== option.value) {
+      return false;
+    }
+
+    return true;
+  });
 
   return (
     <div className="flex flex-wrap gap-1 " role="group" aria-label="Runtime type">
       {runtimeOptions.map((option) => {
         const isActive = props.value === option.value;
-        const { isModeDisabled, disabledReason, isDefault } = resolveRuntimeButtonState(
-          option.value,
-          availabilityMap,
-          props.defaultMode,
-          coderAvailability
-        );
+        const { isModeDisabled, isPolicyDisabled, disabledReason, isDefault } =
+          resolveRuntimeButtonState(
+            option.value,
+            availabilityMap,
+            props.defaultMode,
+            coderAvailability,
+            allowedModeSet,
+            allowSshHost,
+            allowSshCoder
+          );
+        const isDisabled = Boolean(props.disabled) || isModeDisabled || isPolicyDisabled;
+        const showDisabledReason = isModeDisabled || isPolicyDisabled;
 
         const Icon = option.Icon;
 
@@ -331,13 +392,13 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
               <button
                 type="button"
                 onClick={() => props.onChange(option.value)}
-                disabled={Boolean(props.disabled) || isModeDisabled}
+                disabled={isDisabled}
                 aria-pressed={isActive}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-all duration-150",
                   "cursor-pointer",
                   isActive ? option.activeClass : option.idleClass,
-                  (Boolean(props.disabled) || isModeDisabled) && "cursor-not-allowed opacity-50"
+                  isDisabled && "cursor-not-allowed opacity-50"
                 )}
               >
                 <Icon size={12} />
@@ -353,7 +414,7 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
                 <span>{option.description}</span>
                 <DocsLink path={option.docsPath} />
               </div>
-              {isModeDisabled ? (
+              {showDisabledReason ? (
                 <p className="mt-1 text-yellow-500">{disabledReason ?? "Unavailable"}</p>
               ) : (
                 <label className="mt-1.5 flex cursor-pointer items-center gap-1.5 text-xs">
@@ -643,6 +704,9 @@ export function CreationControls(props: CreationControlsProps) {
             disabled={props.disabled}
             runtimeAvailabilityState={runtimeAvailabilityState}
             coderInfo={props.coderProps?.coderInfo ?? null}
+            allowedRuntimeModes={props.allowedRuntimeModes}
+            allowSshHost={props.allowSshHost}
+            allowSshCoder={props.allowSshCoder}
           />
 
           {/* Branch selector - shown for worktree/SSH */}
