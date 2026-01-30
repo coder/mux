@@ -19,11 +19,12 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
   getRightSidebarLayoutKey,
+  PREFERRED_COMPACTION_MODEL_KEY,
+  getAutoCompactionThresholdKey,
 } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { ComponentType } from "react";
 import type { MockSessionUsage } from "@/browser/stories/mocks/orpc";
-import { AGENT_AI_DEFAULTS_KEY, getAutoCompactionThresholdKey } from "@/common/constants/storage";
 
 export default {
   ...appMeta,
@@ -1313,14 +1314,12 @@ export const CostsTabCompactionModelWarning: AppStory = {
         localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
         localStorage.removeItem(getRightSidebarLayoutKey("ws-compact-warning"));
 
-        // Set compaction model to gpt-4o (128k context)
-        updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
-          compact: { modelString: "openai:gpt-4o" },
-        });
+        // Set preferred compaction model to gpt-4o (128k context)
+        updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, "openai:gpt-4o");
 
-        // Set auto-compact threshold to 80% for claude-opus-4-1
+        // Set auto-compact threshold to 80% for anthropic:claude-opus-4-1
         // 80% of 200k = 160k, which exceeds gpt-4o's 128k context
-        updatePersistedState(getAutoCompactionThresholdKey("claude-opus-4-1"), 80);
+        updatePersistedState(getAutoCompactionThresholdKey("anthropic:claude-opus-4-1"), 80);
 
         const client = setupSimpleChatStory({
           workspaceId: "ws-compact-warning",
@@ -1332,19 +1331,19 @@ export const CostsTabCompactionModelWarning: AppStory = {
             }),
             createAssistantMessage("msg-2", "I'll help you refactor the codebase.", {
               historySequence: 2,
-              // Use claude-opus-4-1 with high context usage to show warning
+              model: "anthropic:claude-opus-4-1",
               contextUsage: { inputTokens: 150000, outputTokens: 2000 },
             }),
           ],
           sessionUsage: {
             byModel: {
-              "claude-opus-4-1": {
+              "anthropic:claude-opus-4-1": {
                 input: { tokens: 150000, cost_usd: 2.25 },
                 cached: { tokens: 0, cost_usd: 0 },
                 cacheCreate: { tokens: 0, cost_usd: 0 },
                 output: { tokens: 2000, cost_usd: 0.15 },
                 reasoning: { tokens: 0, cost_usd: 0 },
-                model: "claude-opus-4-1",
+                model: "anthropic:claude-opus-4-1",
               },
             },
             version: 1,

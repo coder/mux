@@ -59,8 +59,8 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
         <div className="text-warning mt-2 flex items-start gap-1 text-[11px]">
           <AlertTriangle aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
           <span>
-            Compaction model context ({formatTokens(contextWarning.compactionModelMaxTokens)}) is smaller than
-            auto-compact threshold{" "}({formatTokens(contextWarning.thresholdTokens)})
+            Compaction model context ({formatTokens(contextWarning.compactionModelMaxTokens)}) is
+            smaller than auto-compact threshold ({formatTokens(contextWarning.thresholdTokens)})
           </span>
         </div>
       )}

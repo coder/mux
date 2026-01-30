@@ -7,8 +7,8 @@ import {
   type ChatUsageDisplay,
 } from "@/common/utils/tokens/usageAggregator";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
-import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
+import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
@@ -56,7 +56,9 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
   const consumers = useWorkspaceConsumers(workspaceId);
   const [viewMode, setViewMode] = usePersistedState<ViewMode>("costsTab:viewMode", "session");
-  const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {}, { listener: true });
+  const [preferredCompactionModel] = usePersistedState<string>(PREFERRED_COMPACTION_MODEL_KEY, "", {
+    listener: true,
+  });
   const { options } = useProviderOptions();
   const use1M = options.anthropic?.use1MContext ?? false;
 
@@ -71,8 +73,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   // Use lastContextUsage for context window display (last step's usage)
   const contextUsageForModel = usage.liveUsage ?? usage.lastContextUsage;
   const currentModel = contextUsageForModel?.model ?? null;
-  const compactionModelString = agentAiDefaults.compact?.modelString;
-  const effectiveCompactionModel = compactionModelString ?? currentModel;
+  // Align warning with /compact model resolution so it matches actual compaction behavior.
+  const effectiveCompactionModel = resolveCompactionModel(preferredCompactionModel) ?? currentModel;
 
   // Auto-compaction settings: threshold per-model (100 = disabled)
   const { threshold: autoCompactThreshold, setThreshold: setAutoCompactThreshold } =
@@ -129,7 +131,8 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
               // Warn when the compaction model can't fit the auto-compact threshold to avoid failures.
               const contextWarning = (() => {
                 const maxTokens = contextUsageData.maxTokens;
-                if (!maxTokens || autoCompactThreshold >= 100 || !effectiveCompactionModel) return undefined;
+                if (!maxTokens || autoCompactThreshold >= 100 || !effectiveCompactionModel)
+                  return undefined;
 
                 const thresholdTokens = Math.round((autoCompactThreshold / 100) * maxTokens);
                 const compactionStats = getModelStats(effectiveCompactionModel);
