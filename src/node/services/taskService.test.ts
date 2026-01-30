@@ -1262,7 +1262,7 @@ describe("TaskService", () => {
     expect(report.reportMarkdown).toBe("ok");
   });
 
-  test("waitForAgentReport returns cached report even after workspace is removed", async () => {
+  test("waitForAgentReport returns persisted report after workspace is removed", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1293,19 +1293,30 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    const { upsertSubagentReportArtifact } =
+      await import("@/node/services/subagentReportArtifacts");
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    const report = await taskService.waitForAgentReport(childId, { timeoutMs: 10 });
+    const report = await taskService.waitForAgentReport(childId, {
+      timeoutMs: 10,
+      requestingWorkspaceId: parentId,
+    });
     expect(report.reportMarkdown).toBe("ok");
     expect(report.title).toBe("t");
   });
 
-  test("isDescendantAgentTask consults cached ancestry after workspace is removed", async () => {
+  test("isDescendantAgentTask consults persisted ancestry after workspace is removed", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1336,18 +1347,26 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    const { upsertSubagentReportArtifact } =
+      await import("@/node/services/subagentReportArtifacts");
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    expect(taskService.isDescendantAgentTask(parentId, childId)).toBe(true);
-    expect(taskService.isDescendantAgentTask("other-parent", childId)).toBe(false);
+    expect(await taskService.isDescendantAgentTask(parentId, childId)).toBe(true);
+    expect(await taskService.isDescendantAgentTask("other-parent", childId)).toBe(false);
   });
 
-  test("filterDescendantAgentTaskIds consults completed-report cache after cleanup", async () => {
+  test("filterDescendantAgentTaskIds consults persisted ancestry after cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1378,18 +1397,26 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    const { upsertSubagentReportArtifact } =
+      await import("@/node/services/subagentReportArtifacts");
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    expect(taskService.filterDescendantAgentTaskIds(parentId, [childId])).toEqual([childId]);
-    expect(taskService.filterDescendantAgentTaskIds("other-parent", [childId])).toEqual([]);
+    expect(await taskService.filterDescendantAgentTaskIds(parentId, [childId])).toEqual([childId]);
+    expect(await taskService.filterDescendantAgentTaskIds("other-parent", [childId])).toEqual([]);
   });
 
-  test("waitForAgentReport cache is cleared by TTL cleanup", async () => {
+  test("waitForAgentReport falls back to persisted report after cache is cleared", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1420,26 +1447,32 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-      cleanupExpiredCompletedReports: (nowMs: number) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    const { upsertSubagentReportArtifact } =
+      await import("@/node/services/subagentReportArtifacts");
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    internal.cleanupExpiredCompletedReports(Date.now() + 2 * 60 * 60 * 1000);
+    // Simulate process restart / eviction.
+    (
+      taskService as unknown as { completedReportsByTaskId: Map<string, unknown> }
+    ).completedReportsByTaskId.clear();
 
-    let caught: unknown = null;
-    try {
-      await taskService.waitForAgentReport(childId, { timeoutMs: 10 });
-    } catch (error: unknown) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    if (caught instanceof Error) {
-      expect(caught.message).toMatch(/not found/i);
-    }
+    const report = await taskService.waitForAgentReport(childId, {
+      timeoutMs: 10,
+      requestingWorkspaceId: parentId,
+    });
+    expect(report.reportMarkdown).toBe("ok");
+    expect(report.title).toBe("t");
   });
 
   test("does not request agent_report on stream end while task has active descendants", async () => {
