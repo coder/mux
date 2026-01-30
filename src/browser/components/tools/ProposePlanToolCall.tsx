@@ -16,6 +16,7 @@ import {
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { IconActionButton, type ButtonConfig } from "../Messages/MessageWindow";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useStartHere } from "@/browser/hooks/useStartHere";
@@ -508,6 +509,34 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       }
     : null;
 
+  const shouldShowPrimaryActions = Boolean(
+    status === "completed" && !errorMessage && isLatest && !isEphemeralPreview && workspaceId
+  );
+
+  const implementButton: ButtonConfig | null = shouldShowPrimaryActions
+    ? {
+        label: "Implement",
+        onClick: () => void handleImplement(),
+        disabled: !api || isImplementing || isStartingOrchestrator,
+        icon: <Play />,
+        tooltip: implementReplacesChatHistory
+          ? "Replace chat history with this plan, switch to Exec, and start implementing"
+          : "Switch to Exec and start implementing",
+      }
+    : null;
+
+  const orchestratorButton: ButtonConfig | null = shouldShowPrimaryActions
+    ? {
+        label: "Start Orchestrator",
+        onClick: () => void handleStartOrchestrator(),
+        disabled: !api || isStartingOrchestrator || isImplementing,
+        icon: <Workflow />,
+        tooltip: implementReplacesChatHistory
+          ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
+          : "Switch to Orchestrator and start delegating",
+      }
+    : null;
+
   // Start Here button: only for tool calls, not ephemeral previews
   if (!isEphemeralPreview && workspaceId) {
     actionButtons.push({
@@ -517,28 +546,6 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       icon: <ListStart />,
       tooltip: "Replace all chat history with this plan",
     });
-
-    if (status === "completed" && !errorMessage && isLatest) {
-      actionButtons.push({
-        label: "Implement",
-        onClick: () => void handleImplement(),
-        disabled: !api || isImplementing || isStartingOrchestrator,
-        icon: <Play />,
-        tooltip: implementReplacesChatHistory
-          ? "Replace chat history with this plan, switch to Exec, and start implementing"
-          : "Switch to Exec and start implementing",
-      });
-
-      actionButtons.push({
-        label: "Start Orchestrator",
-        onClick: () => void handleStartOrchestrator(),
-        disabled: !api || isStartingOrchestrator || isImplementing,
-        icon: <Workflow />,
-        tooltip: implementReplacesChatHistory
-          ? "Replace chat history with this plan, switch to Orchestrator, and start delegating"
-          : "Switch to Orchestrator and start delegating",
-      });
-    }
   }
 
   // Show raw toggle
@@ -616,6 +623,52 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
         {editButton && (
           <div ref={editButtonRef}>
             <IconActionButton button={editButton} />
+          </div>
+        )}
+
+        {(implementButton ?? orchestratorButton) && (
+          <div className="ml-auto flex items-center gap-1">
+            {implementButton && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
+                    onClick={implementButton.onClick}
+                    disabled={implementButton.disabled}
+                  >
+                    {implementButton.icon}
+                    {implementButton.label}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
+                  {implementButton.tooltip ?? implementButton.label}
+                </TooltipContent>
+              </Tooltip>
+            )}
+
+            {orchestratorButton && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="h-6 px-2 text-[11px] [&_svg]:size-3.5"
+                    onClick={orchestratorButton.onClick}
+                    disabled={orchestratorButton.disabled}
+                  >
+                    {orchestratorButton.icon}
+                    {orchestratorButton.label}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent align="center">
+                  {orchestratorButton.tooltip ?? orchestratorButton.label}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         )}
       </div>
