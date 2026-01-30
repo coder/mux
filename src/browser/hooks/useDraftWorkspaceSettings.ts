@@ -110,6 +110,8 @@ export function useDraftWorkspaceSettings(
   recommendedTrunk: string | null
 ): {
   settings: DraftWorkspaceSettings;
+  /** Restores prior Coder selections when re-entering Coder mode. */
+  coderConfigFallback: CoderWorkspaceConfig;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
   /** Set the default runtime choice for this project (persists via checkbox) */
@@ -212,6 +214,9 @@ export function useDraftWorkspaceSettings(
   };
 
   const lastSshState = readSshRuntimeState(lastRuntimeConfigs);
+
+  // Restore prior Coder selections when switching back into Coder mode.
+  const coderConfigFallback = lastSshState.coderConfig ?? DEFAULT_CODER_CONFIG;
   const lastSsh = readSshRuntimeConfig(lastRuntimeConfigs);
   const lastDockerImage = readRuntimeConfig(RUNTIME_MODE.DOCKER, "image", "");
   const lastShareCredentials = readRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", false);
@@ -503,6 +508,7 @@ export function useDraftWorkspaceSettings(
       defaultRuntimeMode: defaultRuntimeChoice,
       trunkBranch,
     },
+    coderConfigFallback,
     setSelectedRuntime,
     setDefaultRuntimeChoice,
     setTrunkBranch,
