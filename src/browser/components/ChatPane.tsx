@@ -24,6 +24,7 @@ import {
   computeBashOutputGroupInfo,
   getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
+import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
 import { enableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
 import { getInterruptionContext } from "@/browser/utils/messages/retryEligibility";
@@ -205,6 +206,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     }
     return navMap;
   }, [deferredMessages]);
+
+  const taskReportLinking = useMemo(
+    () => computeTaskReportLinking(deferredMessages),
+    [deferredMessages]
+  );
 
   const autoCompactionResult = useMemo(
     () => checkAutoCompaction(workspaceUsage, pendingModel, use1M, autoCompactionThreshold / 100),
@@ -649,6 +655,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                               msg.id === latestProposePlanId
                             }
                             bashOutputGroup={bashOutputGroup}
+                            taskReportLinking={taskReportLinking}
                             userMessageNavigation={
                               msg.type === "user" && userMessageNavMap
                                 ? {
