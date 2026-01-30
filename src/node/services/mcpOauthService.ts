@@ -125,11 +125,11 @@ export function parseBearerWwwAuthenticate(header: string): BearerChallenge | nu
     return null;
   }
 
-  const scopeMatch = raw.match(/\bscope="([^"]*)"/i) ?? raw.match(/\bscope=([^,\s]+)/i);
+  const scopeMatch = /\bscope="([^"]*)"/i.exec(raw) ?? /\bscope=([^,\s]+)/i.exec(raw);
   const scope = scopeMatch ? scopeMatch[1] : undefined;
 
   const resourceMetadataMatch =
-    raw.match(/\bresource_metadata="([^"]*)"/i) ?? raw.match(/\bresource_metadata=([^,\s]+)/i);
+    /\bresource_metadata="([^"]*)"/i.exec(raw) ?? /\bresource_metadata=([^,\s]+)/i.exec(raw);
 
   let resourceMetadataUrl: URL | undefined;
   if (resourceMetadataMatch) {
@@ -357,7 +357,7 @@ export class McpOauthService {
       await this.storeLock.withLock(this.storeFilePath, async () => {
         const store = await this.ensureStoreLoadedLocked();
         const byServer = store.entries[projectKey];
-        if (!byServer || !byServer[serverName]) {
+        if (!byServer?.[serverName]) {
           return;
         }
 
@@ -605,7 +605,7 @@ export class McpOauthService {
 
   private createDesktopFlowProvider(flow: DesktopFlow): OAuthClientProvider {
     return {
-      tokens: async () => undefined,
+      tokens: () => Promise.resolve(undefined),
       saveTokens: async (tokens) => {
         await this.saveTokens({
           projectKey: flow.projectPath,
@@ -614,17 +614,19 @@ export class McpOauthService {
           tokens: tokens as unknown as MCPOAuthTokens,
         });
       },
-      redirectToAuthorization: async (authorizationUrl) => {
+      redirectToAuthorization: (authorizationUrl) => {
         flow.authorizeUrl = authorizationUrl.toString();
+        return Promise.resolve();
       },
-      saveCodeVerifier: async (codeVerifier) => {
+      saveCodeVerifier: (codeVerifier) => {
         flow.codeVerifier = codeVerifier;
+        return Promise.resolve();
       },
-      codeVerifier: async () => {
+      codeVerifier: () => {
         if (!flow.codeVerifier) {
-          throw new Error("Missing PKCE code verifier");
+          return Promise.reject(new Error("Missing PKCE code verifier"));
         }
-        return flow.codeVerifier;
+        return Promise.resolve(flow.codeVerifier);
       },
       invalidateCredentials: async (scope) => {
         await this.invalidateStoredCredentials({
@@ -646,10 +648,10 @@ export class McpOauthService {
           scope: flow.scope,
         };
       },
-      clientInformation: async () => {
+      clientInformation: () => {
         // We intentionally re-register the OAuth client per desktop flow because
         // loopback redirect ports are typically ephemeral.
-        return flow.clientInformation ?? undefined;
+        return Promise.resolve(flow.clientInformation ?? undefined);
       },
       saveClientInformation: async (clientInformation) => {
         const next = clientInformation as unknown as MCPOAuthClientInformation;
@@ -662,7 +664,7 @@ export class McpOauthService {
           clientInformation: next,
         });
       },
-      state: async () => flow.flowId,
+      state: () => Promise.resolve(flow.flowId),
     };
   }
 
@@ -698,12 +700,11 @@ export class McpOauthService {
         });
         throw new Error("MCP OAuth login required");
       },
-      saveCodeVerifier: async () => {
+      saveCodeVerifier: () => {
         // Background providers never start interactive flows.
+        return Promise.resolve();
       },
-      codeVerifier: async () => {
-        throw new Error("PKCE verifier is not available");
-      },
+      codeVerifier: () => Promise.reject(new Error("PKCE verifier is not available")),
       invalidateCredentials: async (scope) => {
         await this.invalidateStoredCredentials({
           projectKey: input.projectKey,
