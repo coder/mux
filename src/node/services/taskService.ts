@@ -1347,7 +1347,7 @@ export class TaskService {
       }
 
       const cached = this.completedReportsByTaskId.get(taskId);
-      if (cached && cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+      if (cached?.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
         result.push(taskId);
         continue;
       }
@@ -1409,7 +1409,7 @@ export class TaskService {
     // The task workspace may have been removed after it reported (cleanup/restart). Preserve scope
     // checks by consulting persisted report artifacts in the ancestor session dir.
     const cached = this.completedReportsByTaskId.get(taskId);
-    if (cached && cached.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+    if (cached?.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
       return true;
     }
 

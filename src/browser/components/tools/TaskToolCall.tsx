@@ -388,7 +388,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               {canViewTranscript && (
                 <button
                   type="button"
-                  className="text-link text-[10px] font-medium hover:underline underline-offset-2"
+                  className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
                   onClick={() => {
                     setTranscriptOpen(true);
                   }}

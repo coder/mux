@@ -11,6 +11,7 @@ import {
   getSubagentGitPatchMboxPath,
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
+import { upsertSubagentReportArtifact } from "@/node/services/subagentReportArtifacts";
 import { TaskService } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -1293,8 +1294,6 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const { upsertSubagentReportArtifact } =
-      await import("@/node/services/subagentReportArtifacts");
     await upsertSubagentReportArtifact({
       workspaceId: parentId,
       workspaceSessionDir: config.getSessionDir(parentId),
@@ -1347,8 +1346,6 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const { upsertSubagentReportArtifact } =
-      await import("@/node/services/subagentReportArtifacts");
     await upsertSubagentReportArtifact({
       workspaceId: parentId,
       workspaceSessionDir: config.getSessionDir(parentId),
@@ -1397,8 +1394,6 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const { upsertSubagentReportArtifact } =
-      await import("@/node/services/subagentReportArtifacts");
     await upsertSubagentReportArtifact({
       workspaceId: parentId,
       workspaceSessionDir: config.getSessionDir(parentId),
@@ -1447,8 +1442,6 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const { upsertSubagentReportArtifact } =
-      await import("@/node/services/subagentReportArtifacts");
     await upsertSubagentReportArtifact({
       workspaceId: parentId,
       workspaceSessionDir: config.getSessionDir(parentId),

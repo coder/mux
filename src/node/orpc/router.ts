@@ -1707,7 +1707,11 @@ export const router = (authToken?: string) => {
           const taskId = input.taskId.trim();
           assert(taskId.length > 0, "workspace.getSubagentTranscript: taskId must be non-empty");
 
-          const requestingWorkspaceId = input.workspaceId?.trim() || null;
+          const requestingWorkspaceIdTrimmed = input.workspaceId?.trim();
+          const requestingWorkspaceId =
+            requestingWorkspaceIdTrimmed && requestingWorkspaceIdTrimmed.length > 0
+              ? requestingWorkspaceIdTrimmed
+              : null;
 
           const tryLoadFromWorkspace = async (
             workspaceId: string
