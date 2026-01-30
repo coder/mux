@@ -122,15 +122,17 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
         )}
         aria-label={`${loadedCount} of ${totalCount} skill${totalCount === 1 ? "" : "s"} loaded`}
       >
-        <SkillIcon className="h-4 w-4" />
-        <span
-          className={cn(
-            "absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center",
-            "rounded-full border border-border bg-sidebar px-0.5 text-[9px] font-medium",
-            loadedCount > 0 ? "text-foreground" : "text-muted"
-          )}
-        >
-          {loadedCount}
+        <span className="relative flex h-6 w-6 items-center justify-center">
+          <SkillIcon className="h-4.5 w-4.5" />
+          <span
+            className={cn(
+              "absolute -bottom-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center",
+              "rounded-full border border-border bg-sidebar px-0.5 text-[9px] font-medium",
+              loadedCount > 0 ? "text-foreground" : "text-muted"
+            )}
+          >
+            {loadedCount}
+          </span>
         </span>
       </button>
     </HoverClickPopover>

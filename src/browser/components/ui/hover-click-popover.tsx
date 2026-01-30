@@ -47,6 +47,8 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const contentRef = React.useRef<HTMLDivElement | null>(null);
   const closeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isCoarsePointer =
+    typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
   // Cleanup timeout on unmount
   React.useEffect(() => {
@@ -87,11 +89,14 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
   };
 
   const handleTriggerPointerEnter = () => {
+    // Touch devices don't have a meaningful hover state; rely on click-to-pin instead.
+    if (isCoarsePointer) return;
     cancelPendingClose();
     setIsHovering(true);
   };
 
   const handleTriggerPointerLeave = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (isCoarsePointer) return;
     const relatedTarget = event.relatedTarget;
     if (relatedTarget instanceof Node && contentRef.current?.contains(relatedTarget)) {
       return;
@@ -100,11 +105,13 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
   };
 
   const handleContentPointerEnter = () => {
+    if (isCoarsePointer) return;
     cancelPendingClose();
     setIsHovering(true);
   };
 
   const handleContentPointerLeave = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (isCoarsePointer) return;
     const relatedTarget = event.relatedTarget;
     if (relatedTarget instanceof Node && triggerRef.current?.contains(relatedTarget)) {
       return;
