@@ -248,6 +248,12 @@
   "build": {
     "appId": "com.mux.app",
     "productName": "mux",
+    "protocols": [
+      {
+        "name": "Mux",
+        "schemes": ["mux"]
+      }
+    ],
     "publish": {
       "provider": "github",
       "releaseType": "release"
