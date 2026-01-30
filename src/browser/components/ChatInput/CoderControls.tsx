@@ -56,18 +56,24 @@ function hasTemplateDuplicateName(template: CoderTemplate, allTemplates: CoderTe
 }
 
 export type CoderAvailabilityState =
-  | { state: "loading"; shouldShowRuntimeButton: false }
+  | { state: "loading"; reason: string; shouldShowRuntimeButton: false }
   | { state: "outdated"; reason: string; shouldShowRuntimeButton: true }
-  | { state: "unavailable"; shouldShowRuntimeButton: false }
+  | { state: "unavailable"; reason: string; shouldShowRuntimeButton: false }
   | { state: "available"; shouldShowRuntimeButton: true };
 
 function getCoderOutdatedReason(coderInfo: Extract<CoderInfo, { state: "outdated" }>) {
   return `Coder CLI v${coderInfo.version} is below the minimum required v${coderInfo.minVersion}. Update the CLI to enable.`;
 }
 
+function getCoderUnavailableReason(coderInfo: Extract<CoderInfo, { state: "unavailable" }>) {
+  return coderInfo.reason === "missing"
+    ? "Coder CLI not found. Install to enable."
+    : `Coder CLI error: ${coderInfo.reason.message}`;
+}
+
 export function resolveCoderAvailability(coderInfo: CoderInfo | null): CoderAvailabilityState {
   if (coderInfo === null) {
-    return { state: "loading", shouldShowRuntimeButton: false };
+    return { state: "loading", reason: CODER_CHECKING_LABEL, shouldShowRuntimeButton: false };
   }
 
   if (coderInfo.state === "outdated") {
@@ -79,7 +85,11 @@ export function resolveCoderAvailability(coderInfo: CoderInfo | null): CoderAvai
   }
 
   if (coderInfo.state === "unavailable") {
-    return { state: "unavailable", shouldShowRuntimeButton: false };
+    return {
+      state: "unavailable",
+      reason: getCoderUnavailableReason(coderInfo),
+      shouldShowRuntimeButton: false,
+    };
   }
 
   // Only show the runtime button once the CLI is confirmed available (matches devcontainer UX).

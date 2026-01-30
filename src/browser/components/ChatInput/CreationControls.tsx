@@ -136,6 +136,8 @@ interface CreationControlsProps {
   allowSshCoder?: boolean;
   /** Optional policy error message to display near runtime controls */
   runtimePolicyError?: string | null;
+  /** Coder CLI availability info (null while checking) */
+  coderInfo?: CoderInfo | null;
   /** Coder workspace controls props (optional - only rendered when provided) */
   coderProps?: Omit<CoderControlsProps, "disabled">;
 }
@@ -220,8 +222,8 @@ const resolveRuntimeButtonState = (
 
   const isPolicyDisabled = !isPolicyAllowed();
 
-  // Coder outdated: button visible but disabled with version reason.
-  if (value === "coder" && coderAvailability.state === "outdated") {
+  // Coder availability: keep the button disabled with a reason until the CLI is ready.
+  if (value === "coder" && coderAvailability.state !== "available") {
     return {
       isModeDisabled: true,
       isPolicyDisabled,
@@ -318,25 +320,35 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
   const coderInfo = props.coderInfo ?? null;
   const coderAvailability = resolveCoderAvailability(coderInfo);
 
-  // Hide devcontainer while loading OR when confirmed missing.
-  // Only show when availability is loaded and devcontainer is available.
-  // This prevents layout flash for projects without devcontainer.json (the common case).
-  const hideDevcontainer =
-    state?.status === "loading" ||
-    (availabilityMap?.devcontainer?.available === false &&
-      availabilityMap.devcontainer.reason === "No devcontainer.json found");
-
-  // Match devcontainer UX: only surface Coder once availability is confirmed (no flash).
-  const hideCoder = !coderAvailability.shouldShowRuntimeButton;
-
-  const runtimeVisibilityOverrides: Partial<Record<RuntimeChoice, boolean>> = {
-    [RUNTIME_MODE.DEVCONTAINER]: !hideDevcontainer,
-    coder: !hideCoder,
-  };
-
   const allowSshHost = props.allowSshHost ?? true;
   const allowSshCoder = props.allowSshCoder ?? true;
   const allowedModeSet = props.allowedRuntimeModes ? new Set(props.allowedRuntimeModes) : null;
+  const isSshModeAllowed = !allowedModeSet || allowedModeSet.has(RUNTIME_MODE.SSH);
+
+  const isDevcontainerMissing =
+    availabilityMap?.devcontainer?.available === false &&
+    availabilityMap.devcontainer.reason === "No devcontainer.json found";
+  // Hide devcontainer while loading OR when confirmed missing.
+  // Only show when availability is loaded and devcontainer is available.
+  // This prevents layout flash for projects without devcontainer.json (the common case).
+  const hideDevcontainer = state?.status === "loading" || isDevcontainerMissing;
+  // Keep Devcontainer visible when policy requires it so the selector doesn't go empty.
+  const isDevcontainerOnlyPolicy =
+    allowedModeSet?.size === 1 && allowedModeSet.has(RUNTIME_MODE.DEVCONTAINER);
+  const shouldForceShowDevcontainer =
+    props.value === RUNTIME_MODE.DEVCONTAINER ||
+    (isDevcontainerOnlyPolicy && isDevcontainerMissing);
+
+  // Match devcontainer UX: only surface Coder once availability is confirmed (no flash),
+  // but keep it visible when policy requires it or when already selected to avoid an empty selector.
+  const shouldForceShowCoder =
+    props.value === "coder" || (allowSshCoder && !allowSshHost && isSshModeAllowed);
+  const shouldShowCoder = coderAvailability.shouldShowRuntimeButton || shouldForceShowCoder;
+
+  const runtimeVisibilityOverrides: Partial<Record<RuntimeChoice, boolean>> = {
+    [RUNTIME_MODE.DEVCONTAINER]: !hideDevcontainer || shouldForceShowDevcontainer,
+    coder: shouldShowCoder,
+  };
 
   // Policy filtering keeps forbidden runtimes out of the selector so users don't
   // get stuck with defaults that can never be created.
@@ -704,7 +716,7 @@ export function CreationControls(props: CreationControlsProps) {
             onSetDefault={props.onSetDefaultRuntime}
             disabled={props.disabled}
             runtimeAvailabilityState={runtimeAvailabilityState}
-            coderInfo={props.coderProps?.coderInfo ?? null}
+            coderInfo={props.coderInfo ?? props.coderProps?.coderInfo ?? null}
             allowedRuntimeModes={props.allowedRuntimeModes}
             allowSshHost={props.allowSshHost}
             allowSshCoder={props.allowSshCoder}
