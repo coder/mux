@@ -717,6 +717,7 @@ function createDraftSettingsHarness(
     runtimeString?: string | undefined;
     defaultRuntimeMode?: RuntimeChoice;
     coderConfigFallback?: CoderWorkspaceConfig;
+    sshHostFallback?: string;
   }>
 ) {
   const state = {
@@ -725,12 +726,14 @@ function createDraftSettingsHarness(
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,
     coderConfigFallback: initial?.coderConfigFallback ?? { existingWorkspace: false },
+    sshHostFallback: initial?.sshHostFallback ?? "",
   } satisfies {
     selectedRuntime: ParsedRuntime;
     defaultRuntimeMode: RuntimeChoice;
     trunkBranch: string;
     runtimeString: string | undefined;
     coderConfigFallback: CoderWorkspaceConfig;
+    sshHostFallback: string;
   };
 
   const setTrunkBranch = mock((branch: string) => {
@@ -788,6 +791,7 @@ function createDraftSettingsHarness(
     snapshot(): {
       settings: DraftWorkspaceSettings;
       coderConfigFallback: CoderWorkspaceConfig;
+      sshHostFallback: string;
       setSelectedRuntime: typeof setSelectedRuntime;
       setDefaultRuntimeChoice: typeof setDefaultRuntimeChoice;
       setTrunkBranch: typeof setTrunkBranch;
@@ -804,6 +808,7 @@ function createDraftSettingsHarness(
       return {
         settings,
         coderConfigFallback: state.coderConfigFallback,
+        sshHostFallback: state.sshHostFallback,
         setSelectedRuntime,
         setDefaultRuntimeChoice,
         setTrunkBranch,

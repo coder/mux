@@ -146,6 +146,8 @@ interface UseCreationWorkspaceReturn {
   selectedRuntime: ParsedRuntime;
   /** Fallback Coder config used when re-selecting Coder runtime. */
   coderConfigFallback: CoderWorkspaceConfig;
+  /** Fallback SSH host used when leaving the Coder runtime. */
+  sshHostFallback: string;
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
@@ -224,6 +226,7 @@ export function useCreationWorkspace({
   const {
     settings,
     coderConfigFallback,
+    sshHostFallback,
     setSelectedRuntime,
     setDefaultRuntimeChoice,
     setTrunkBranch,
@@ -576,6 +579,7 @@ export function useCreationWorkspace({
     setTrunkBranch,
     selectedRuntime: settings.selectedRuntime,
     coderConfigFallback,
+    sshHostFallback,
     defaultRuntimeMode: settings.defaultRuntimeMode,
     setSelectedRuntime,
     setDefaultRuntimeChoice,

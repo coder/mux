@@ -112,6 +112,8 @@ export function useDraftWorkspaceSettings(
   settings: DraftWorkspaceSettings;
   /** Restores prior Coder selections when re-entering Coder mode. */
   coderConfigFallback: CoderWorkspaceConfig;
+  /** Preserves the last SSH host when leaving Coder so the input stays populated. */
+  sshHostFallback: string;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
   /** Set the default runtime choice for this project (persists via checkbox) */
@@ -214,6 +216,9 @@ export function useDraftWorkspaceSettings(
   };
 
   const lastSshState = readSshRuntimeState(lastRuntimeConfigs);
+
+  // Preserve the last SSH host when switching out of Coder so the input stays populated.
+  const sshHostFallback = lastSshState.host;
 
   // Restore prior Coder selections when switching back into Coder mode.
   const coderConfigFallback = lastSshState.coderConfig ?? DEFAULT_CODER_CONFIG;
@@ -509,6 +514,7 @@ export function useDraftWorkspaceSettings(
       trunkBranch,
     },
     coderConfigFallback,
+    sshHostFallback,
     setSelectedRuntime,
     setDefaultRuntimeChoice,
     setTrunkBranch,

@@ -108,6 +108,8 @@ interface CreationControlsProps {
   selectedRuntime: ParsedRuntime;
   /** Fallback Coder config to restore prior selections. */
   coderConfigFallback: CoderWorkspaceConfig;
+  /** Fallback SSH host to restore when leaving Coder. */
+  sshHostFallback: string;
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
@@ -661,7 +663,7 @@ export function CreationControls(props: CreationControlsProps) {
                     selectedRuntime.mode === "ssh" &&
                     selectedRuntime.host !== CODER_RUNTIME_PLACEHOLDER
                       ? selectedRuntime.host
-                      : "";
+                      : props.sshHostFallback;
                   onSelectedRuntimeChange({
                     mode: "ssh",
                     host: sshHost,
