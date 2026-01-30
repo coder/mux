@@ -11,7 +11,11 @@ import {
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import { CODER_RUNTIME_PLACEHOLDER, type ParsedRuntime } from "@/common/types/runtime";
+import {
+  CODER_RUNTIME_PLACEHOLDER,
+  type CoderWorkspaceConfig,
+  type ParsedRuntime,
+} from "@/common/types/runtime";
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import type {
   FrontendWorkspaceMetadata,
@@ -712,6 +716,7 @@ function createDraftSettingsHarness(
     trunkBranch: string;
     runtimeString?: string | undefined;
     defaultRuntimeMode?: RuntimeChoice;
+    coderConfigFallback?: CoderWorkspaceConfig;
   }>
 ) {
   const state = {
@@ -719,11 +724,13 @@ function createDraftSettingsHarness(
     defaultRuntimeMode: initial?.defaultRuntimeMode ?? "worktree",
     trunkBranch: initial?.trunkBranch ?? "main",
     runtimeString: initial?.runtimeString,
+    coderConfigFallback: initial?.coderConfigFallback ?? { existingWorkspace: false },
   } satisfies {
     selectedRuntime: ParsedRuntime;
     defaultRuntimeMode: RuntimeChoice;
     trunkBranch: string;
     runtimeString: string | undefined;
+    coderConfigFallback: CoderWorkspaceConfig;
   };
 
   const setTrunkBranch = mock((branch: string) => {
@@ -780,6 +787,7 @@ function createDraftSettingsHarness(
     getRuntimeString,
     snapshot(): {
       settings: DraftWorkspaceSettings;
+      coderConfigFallback: CoderWorkspaceConfig;
       setSelectedRuntime: typeof setSelectedRuntime;
       setDefaultRuntimeChoice: typeof setDefaultRuntimeChoice;
       setTrunkBranch: typeof setTrunkBranch;
@@ -795,6 +803,7 @@ function createDraftSettingsHarness(
       };
       return {
         settings,
+        coderConfigFallback: state.coderConfigFallback,
         setSelectedRuntime,
         setDefaultRuntimeChoice,
         setTrunkBranch,

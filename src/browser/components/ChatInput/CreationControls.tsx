@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect } from "react";
 import {
   RUNTIME_MODE,
+  type CoderWorkspaceConfig,
   type RuntimeMode,
   type ParsedRuntime,
   CODER_RUNTIME_PLACEHOLDER,
@@ -106,6 +107,8 @@ interface CreationControlsProps {
   onTrunkBranchChange: (branch: string) => void;
   /** Currently selected runtime (discriminated union: SSH has host, Docker has image) */
   selectedRuntime: ParsedRuntime;
+  /** Fallback Coder config to restore prior selections. */
+  coderConfigFallback: CoderWorkspaceConfig;
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   onSelectedRuntimeChange: (runtime: ParsedRuntime) => void;
@@ -653,12 +656,11 @@ export function CreationControls(props: CreationControlsProps) {
                 if (!props.coderProps) {
                   return;
                 }
-                // Switch to SSH mode with a minimal config; the Coder hook will
-                // auto-select the first template once templates load.
+                // Switch to SSH mode with the last known Coder config so prior selections restore.
                 onSelectedRuntimeChange({
                   mode: "ssh",
                   host: CODER_RUNTIME_PLACEHOLDER,
-                  coder: props.coderProps.coderConfig ?? { existingWorkspace: false },
+                  coder: props.coderConfigFallback,
                 });
                 return;
               }

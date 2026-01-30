@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
+  CoderWorkspaceConfig,
   RuntimeConfig,
   RuntimeMode,
   ParsedRuntime,
@@ -143,6 +144,8 @@ interface UseCreationWorkspaceReturn {
   setTrunkBranch: (branch: string) => void;
   /** Currently selected runtime (discriminated union: SSH has host, Docker has image) */
   selectedRuntime: ParsedRuntime;
+  /** Fallback Coder config used when re-selecting Coder runtime. */
+  coderConfigFallback: CoderWorkspaceConfig;
   defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
@@ -218,8 +221,13 @@ export function useCreationWorkspace({
     useState<RuntimeAvailabilityState>({ status: "loading" });
 
   // Centralized draft workspace settings with automatic persistence
-  const { settings, setSelectedRuntime, setDefaultRuntimeChoice, setTrunkBranch } =
-    useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
+  const {
+    settings,
+    coderConfigFallback,
+    setSelectedRuntime,
+    setDefaultRuntimeChoice,
+    setTrunkBranch,
+  } = useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
   // Persist draft workspace name generation state per draft (so multiple drafts don't share a
   // single auto-naming/manual-name state).
@@ -567,6 +575,7 @@ export function useCreationWorkspace({
     trunkBranch: settings.trunkBranch,
     setTrunkBranch,
     selectedRuntime: settings.selectedRuntime,
+    coderConfigFallback,
     defaultRuntimeMode: settings.defaultRuntimeMode,
     setSelectedRuntime,
     setDefaultRuntimeChoice,

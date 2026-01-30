@@ -192,4 +192,31 @@ describe("useDraftWorkspaceSettings", () => {
     );
     expect(defaultRuntimeString).toBe(`ssh ${CODER_RUNTIME_PLACEHOLDER}`);
   });
+
+  test("exposes persisted Coder config as fallback when re-selecting Coder", async () => {
+    const projectPath = "/tmp/project";
+    const savedCoderConfig = { existingWorkspace: true, workspaceName: "saved-workspace" };
+
+    updatePersistedState(getLastRuntimeConfigKey(projectPath), {
+      ssh: {
+        host: "dev@host",
+        coderEnabled: false,
+        coderConfig: savedCoderConfig,
+      },
+    });
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.coderConfigFallback).toEqual(savedCoderConfig);
+    });
+  });
 });

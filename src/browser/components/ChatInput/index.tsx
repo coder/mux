@@ -661,6 +661,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           trunkBranch: creationState.trunkBranch,
           onTrunkBranchChange: creationState.setTrunkBranch,
           selectedRuntime: creationState.selectedRuntime,
+          coderConfigFallback: creationState.coderConfigFallback,
           defaultRuntimeMode: creationState.defaultRuntimeMode,
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
           onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
