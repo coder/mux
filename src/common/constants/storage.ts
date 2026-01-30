@@ -468,6 +468,18 @@ export function getWorkspaceLastReadKey(workspaceId: string): string {
 }
 
 /**
+ * Left sidebar collapsed state (global, manual toggle)
+ * Format: "sidebarCollapsed"
+ */
+export const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
+
+/**
+ * Left sidebar width
+ * Format: "left-sidebar:width"
+ */
+export const LEFT_SIDEBAR_WIDTH_KEY = "left-sidebar:width";
+
+/**
  * Right sidebar tab selection (global)
  * Format: "right-sidebar-tab"
  */

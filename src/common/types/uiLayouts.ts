@@ -56,6 +56,7 @@ export interface LayoutPreset {
   id: string;
   name: string;
   leftSidebarCollapsed: boolean;
+  leftSidebarWidthPx?: number;
   rightSidebar: {
     collapsed: boolean;
     width: RightSidebarWidthPreset;
@@ -241,6 +242,11 @@ function normalizeLayoutPreset(raw: unknown): LayoutPreset | undefined {
   const leftSidebarCollapsed =
     typeof record.leftSidebarCollapsed === "boolean" ? record.leftSidebarCollapsed : false;
 
+  const leftSidebarWidthPx =
+    typeof record.leftSidebarWidthPx === "number" && Number.isFinite(record.leftSidebarWidthPx)
+      ? Math.min(600, Math.max(200, Math.floor(record.leftSidebarWidthPx)))
+      : undefined;
+
   if (!record.rightSidebar || typeof record.rightSidebar !== "object") {
     return undefined;
   }
@@ -261,6 +267,7 @@ function normalizeLayoutPreset(raw: unknown): LayoutPreset | undefined {
     id,
     name,
     leftSidebarCollapsed,
+    leftSidebarWidthPx,
     rightSidebar: {
       collapsed,
       width,

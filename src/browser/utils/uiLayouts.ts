@@ -12,6 +12,8 @@ import {
 import type { Keybind } from "@/common/types/keybind";
 import {
   getRightSidebarLayoutKey,
+  LEFT_SIDEBAR_COLLAPSED_KEY,
+  LEFT_SIDEBAR_WIDTH_KEY,
   RIGHT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
@@ -34,8 +36,6 @@ import {
 import { isTabType, makeTerminalTabType, type TabType } from "@/browser/types/rightSidebar";
 import { createTerminalSession } from "@/browser/utils/terminal";
 import type { APIClient } from "@/browser/contexts/API";
-
-const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 
 export function createLayoutPresetId(): string {
   const maybeCrypto = globalThis.crypto;
@@ -117,6 +117,14 @@ function readCurrentLeftSidebarCollapsed(): boolean {
   // persisted preference yet.
   const defaultCollapsed = typeof window !== "undefined" && window.innerWidth <= 768;
   return readPersistedState<boolean>(LEFT_SIDEBAR_COLLAPSED_KEY, defaultCollapsed);
+}
+
+function readCurrentLeftSidebarWidthPx(): number {
+  const raw = readPersistedString(LEFT_SIDEBAR_WIDTH_KEY);
+  if (!raw) return 288;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return 288;
+  return clampInt(parsed, 200, 600);
 }
 
 function createTerminalPlaceholder(counter: number): RightSidebarPresetTabType {
@@ -252,6 +260,7 @@ export function createPresetFromCurrentWorkspace(
   assert(trimmedName.length > 0, "preset name must be non-empty");
 
   const leftSidebarCollapsed = readCurrentLeftSidebarCollapsed();
+  const leftSidebarWidthPx = readCurrentLeftSidebarWidthPx();
   const rightSidebarCollapsed = readCurrentRightSidebarCollapsed();
   const rightSidebarWidthPx = readCurrentRightSidebarWidthPx();
   const rightSidebarLayout = readCurrentRightSidebarLayoutState(workspaceId);
@@ -262,6 +271,7 @@ export function createPresetFromCurrentWorkspace(
     id: existingPresetId ?? createLayoutPresetId(),
     name: trimmedName,
     leftSidebarCollapsed,
+    leftSidebarWidthPx,
     rightSidebar: {
       collapsed: rightSidebarCollapsed,
       width: { mode: "px", value: rightSidebarWidthPx },
@@ -411,6 +421,10 @@ export async function applyLayoutPresetToWorkspace(
   // Apply global UI keys first so the UI immediately reflects a partially-applied preset
   // even if terminal creation fails.
   updatePersistedState<boolean>(LEFT_SIDEBAR_COLLAPSED_KEY, preset.leftSidebarCollapsed);
+  updatePersistedState<number>(
+    LEFT_SIDEBAR_WIDTH_KEY,
+    clampInt(preset.leftSidebarWidthPx ?? 288, 200, 600)
+  );
   updatePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, preset.rightSidebar.collapsed);
   updatePersistedState<number>(
     RIGHT_SIDEBAR_WIDTH_KEY,

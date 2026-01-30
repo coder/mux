@@ -82,6 +82,7 @@ export const LayoutPresetSchema = z
     id: z.string().min(1),
     name: z.string().min(1),
     leftSidebarCollapsed: z.boolean(),
+    leftSidebarWidthPx: z.number().int().optional(),
     rightSidebar: z
       .object({
         collapsed: z.boolean(),

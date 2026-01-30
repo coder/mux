@@ -26,6 +26,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getStorageChangeEvent } from "@/common/constants/events";
 import { readPersistedString, updatePersistedState } from "@/browser/hooks/usePersistedState";
 
+export type ResizableSidebarSide = "left" | "right";
+
 interface UseResizableSidebarOptions {
   /** Enable/disable resize functionality (typically tied to tab state) */
   enabled: boolean;
@@ -37,6 +39,8 @@ interface UseResizableSidebarOptions {
   maxWidth: number;
   /** localStorage key for persisting width across sessions */
   storageKey: string;
+  /** Which side of the viewport the sidebar is on. Impacts drag direction. */
+  side?: ResizableSidebarSide;
 }
 
 interface UseResizableSidebarResult {
@@ -56,6 +60,7 @@ export function useResizableSidebar({
   minWidth,
   maxWidth,
   storageKey,
+  side = "right",
 }: UseResizableSidebarOptions): UseResizableSidebarResult {
   // Load persisted width from localStorage on mount
   // Always load persisted value regardless of enabled flag to maintain size across workspace switches
@@ -126,22 +131,24 @@ export function useResizableSidebar({
   }, [storageKey, minWidth, maxWidth, isResizing]);
 
   /**
-   * Handle mouse movement during drag
-   * Calculates new width based on horizontal mouse delta from start position
-   * Width grows as mouse moves LEFT (expanding sidebar from right edge)
+   * Handle mouse movement during drag.
+   * Calculates new width based on horizontal mouse delta from start position.
+   *
+   * Width grows as mouse moves:
+   * - left for right-side sidebars
+   * - right for left-side sidebars
    */
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
       if (!isResizing) return;
 
-      // Calculate delta from drag start position
-      // Positive deltaX = mouse moved left = sidebar wider
-      const deltaX = startXRef.current - e.clientX;
+      const deltaX =
+        side === "right" ? startXRef.current - e.clientX : e.clientX - startXRef.current;
       const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidthRef.current + deltaX));
 
       setWidth(newWidth);
     },
-    [isResizing, minWidth, maxWidth]
+    [isResizing, minWidth, maxWidth, side]
   );
 
   /**
