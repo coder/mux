@@ -290,11 +290,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
-  const hasStatusText = Boolean(agentStatus ?? awaitingUserQuestion);
+
+  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+  const hasStatusText = Boolean(agentStatus ?? awaitingUserQuestion ?? isWorking);
   const hasSecondaryRow = !isCreating && (isArchiving === true || hasStatusText);
 
   const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
-  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections

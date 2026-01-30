@@ -59,6 +59,7 @@ export interface WorkspaceState {
   loading: boolean;
   muxMessages: MuxMessage[];
   currentModel: string | null;
+  currentMode: string | null;
   recencyTimestamp: number | null;
   todos: TodoItem[];
   loadedSkills: LoadedSkill[];
@@ -161,6 +162,7 @@ export interface WorkspaceSidebarState {
   isStarting: boolean;
   awaitingUserQuestion: boolean;
   currentModel: string | null;
+  currentMode: string | null;
   recencyTimestamp: number | null;
   loadedSkills: LoadedSkill[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
@@ -956,6 +958,7 @@ export class WorkspaceStore {
         loading: !hasMessages && !transient.caughtUp,
         muxMessages: messages,
         currentModel: aggregator.getCurrentModel() ?? null,
+        currentMode: aggregator.getCurrentMode() ?? null,
         recencyTimestamp: aggregator.getRecencyTimestamp(),
         todos: aggregator.getCurrentTodos(),
         loadedSkills: aggregator.getLoadedSkills(),
@@ -1001,6 +1004,7 @@ export class WorkspaceStore {
       cached.isStarting === isStarting &&
       cached.awaitingUserQuestion === fullState.awaitingUserQuestion &&
       cached.currentModel === fullState.currentModel &&
+      cached.currentMode === fullState.currentMode &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
       cached.loadedSkills === fullState.loadedSkills &&
       cached.agentStatus === fullState.agentStatus
@@ -1017,6 +1021,7 @@ export class WorkspaceStore {
       isStarting,
       awaitingUserQuestion: fullState.awaitingUserQuestion,
       currentModel: fullState.currentModel,
+      currentMode: fullState.currentMode,
       recencyTimestamp: fullState.recencyTimestamp,
       loadedSkills: fullState.loadedSkills,
       agentStatus: fullState.agentStatus,
