@@ -620,7 +620,7 @@ describe("isEligibleForAutoRetry", () => {
       expect(isEligibleForAutoRetry(messages, null)).toBe(true);
     });
 
-    it("suppresses auto-retry after user abort while keeping manual retry eligible", () => {
+    it("hides retry barrier for user-initiated abort (Ctrl+C)", () => {
       const messages: DisplayedMessage[] = [
         {
           type: "user",
@@ -631,11 +631,12 @@ describe("isEligibleForAutoRetry", () => {
         },
       ];
       const lastAbortReason = { reason: "user" as const, at: Date.now() };
-      expect(hasInterruptedStream(messages, null, null, lastAbortReason)).toBe(true);
+      // User abort = intentional action, not an error - no warning banner
+      expect(hasInterruptedStream(messages, null, null, lastAbortReason)).toBe(false);
       expect(isEligibleForAutoRetry(messages, null, null, lastAbortReason)).toBe(false);
     });
 
-    it("suppresses auto-retry after startup abort", () => {
+    it("hides retry barrier for startup abort", () => {
       const messages: DisplayedMessage[] = [
         {
           type: "user",
@@ -646,6 +647,8 @@ describe("isEligibleForAutoRetry", () => {
         },
       ];
       const lastAbortReason = { reason: "startup" as const, at: Date.now() };
+      // Startup abort = intentional action during app init, not an error
+      expect(hasInterruptedStream(messages, null, null, lastAbortReason)).toBe(false);
       expect(isEligibleForAutoRetry(messages, null, null, lastAbortReason)).toBe(false);
     });
     it("returns false when user message sent very recently (within grace period)", () => {

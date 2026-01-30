@@ -174,8 +174,10 @@ export function getInterruptionContext(
     return { hasInterruptedStream: false, isEligibleForAutoRetry: false };
   }
 
+  // User-initiated aborts (Ctrl+C/Escape) are intentional, not errors.
+  // Don't show the warning RetryBarrier - just the subtle InterruptedBarrier line.
   if (shouldSuppressAutoRetry(lastAbortReason)) {
-    return { hasInterruptedStream: true, isEligibleForAutoRetry: false };
+    return { hasInterruptedStream: false, isEligibleForAutoRetry: false };
   }
 
   const lastMessage = messages[messages.length - 1];
