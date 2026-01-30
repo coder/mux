@@ -544,6 +544,10 @@ export class McpOauthService {
       });
 
       if (result !== "REDIRECT" || !flow.authorizeUrl) {
+        // If auth() completes without redirecting the user, we must ensure
+        // we tear down the loopback listener and timeout, since this flow
+        // was never inserted into `desktopFlows`.
+        await this.finishDesktopFlow(flowId, Err("Failed to start OAuth authorization"));
         return Err("Failed to start OAuth authorization");
       }
 
