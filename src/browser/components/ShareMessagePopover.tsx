@@ -271,25 +271,46 @@ function formatExpiration(expiresAt: number | undefined): string {
   return date.toLocaleDateString();
 }
 
-interface ShareMessagePopoverProps {
-  content: string;
+type ShareMessagePopoverProps = {
   model?: string;
   thinking?: string;
   disabled?: boolean;
   /** Workspace name used for uploaded filename (e.g., "my-workspace" -> "my-workspace.md") */
   workspaceName?: string;
-}
 
-export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
-  content,
-  model,
-  thinking,
-  disabled = false,
-  workspaceName,
-}) => {
+  /** Optional tooltip for the trigger button (useful for header-level actions). */
+  tooltip?: string;
+  /** Optional test id for the trigger button. */
+  dataTestId?: string;
+  /** Optional override for the uploaded filename. */
+  fileNameOverride?: string;
+} & (
+  | {
+      content: string;
+      getContent?: never;
+    }
+  | {
+      content?: string;
+      getContent: () => string;
+    }
+);
+
+export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) => {
   // Hide share button when user explicitly disabled telemetry
   const linkSharingEnabled = useLinkSharingEnabled();
   const { api } = useAPI();
+
+  const disabled = props.disabled ?? false;
+  const model = props.model;
+  const thinking = props.thinking;
+  const workspaceName = props.workspaceName;
+  const tooltip = props.tooltip;
+  const dataTestId = props.dataTestId;
+  const fileNameOverride = props.fileNameOverride;
+
+  // For conversation shares, content can be generated lazily on popover open.
+  // Keep a resolved copy so cache keys + uploads use a stable string.
+  const [resolvedContent, setResolvedContent] = useState(() => props.content ?? "");
 
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -323,18 +344,32 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   }, [isOpen, api, signingCapabilitiesLoaded]);
 
-  // Load cached data when content changes
+  // If content is provided directly (message-level shares), keep resolvedContent in sync.
   useEffect(() => {
-    if (content) {
-      const cached = getShareData(content);
-      setLocalShareData(cached ?? null);
+    if (typeof props.content === "string") {
+      setResolvedContent(props.content);
     }
-  }, [content]);
+  }, [props.content]);
+
+  // Load cached data when resolved content changes.
+  useEffect(() => {
+    if (resolvedContent) {
+      const cached = getShareData(resolvedContent);
+      setLocalShareData(cached ?? null);
+    } else {
+      setLocalShareData(null);
+    }
+  }, [resolvedContent]);
 
   // Auto-upload when popover opens, no cached data exists, and signing capabilities are loaded
   useEffect(() => {
     const canAutoUpload =
-      isOpen && content && !shareData && !isUploading && !error && signingCapabilitiesLoaded;
+      isOpen &&
+      resolvedContent &&
+      !shareData &&
+      !isUploading &&
+      !error &&
+      signingCapabilitiesLoaded;
 
     if (canAutoUpload) {
       void handleShare();
@@ -378,19 +413,33 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     }
   };
 
-  // Derive filename: prefer workspaceName, fallback to default
+  function sanitizeFileName(name: string): string {
+    const safeName = name
+      .trim()
+      .replaceAll(/[/\\]/g, "-")
+      .replaceAll(/[^a-zA-Z0-9._-]/g, "-")
+      .replaceAll(/-+/g, "-");
+
+    return safeName.length > 0 ? safeName : "message";
+  }
+
+  // Derive filename: allow override, otherwise prefer workspaceName.
   const getFileName = (): string => {
-    if (workspaceName) {
-      // Sanitize workspace name for filename (remove unsafe chars)
-      const safeName = workspaceName.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
-      return `${safeName}.md`;
+    if (fileNameOverride?.trim()) {
+      const safeOverride = sanitizeFileName(fileNameOverride);
+      return safeOverride.endsWith(".md") ? safeOverride : `${safeOverride}.md`;
     }
+
+    if (workspaceName) {
+      return `${sanitizeFileName(workspaceName)}.md`;
+    }
+
     return "message.md";
   };
 
   // Upload with preferred expiration and optional signing
   const handleShare = async () => {
-    if (!content || isUploading) return;
+    if (!resolvedContent || isUploading) return;
 
     setIsUploading(true);
     setError(null);
@@ -405,7 +454,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       let signature: SignatureEnvelope | undefined;
       if (signingEnabled && signingCapabilities?.publicKey && api) {
         try {
-          signature = await api.signing.signMessage({ content });
+          signature = await api.signing.signMessage({ content: resolvedContent });
         } catch (signErr) {
           console.warn("Failed to sign share content, uploading without signature:", signErr);
           // Continue without signature - don't fail the upload
@@ -413,11 +462,11 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       }
 
       const result = await uploadToMuxMd(
-        content,
+        resolvedContent,
         {
           name: getFileName(),
           type: "text/markdown",
-          size: new TextEncoder().encode(content).length,
+          size: new TextEncoder().encode(resolvedContent).length,
           model,
           thinking,
         },
@@ -434,7 +483,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       };
 
       // Cache the share data
-      setShareData(content, data);
+      setShareData(resolvedContent, data);
       setLocalShareData(data);
     } catch (err) {
       console.error("Share failed:", err);
@@ -462,7 +511,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       const newExpiration = await updateMuxMdExpiration(data.id, data.mutateKey, expiresAt);
 
       // Update cache
-      updateShareExpiration(content, newExpiration);
+      updateShareExpiration(resolvedContent, newExpiration);
       setLocalShareData((prev) => (prev ? { ...prev, expiresAt: newExpiration } : null));
 
       // Save preference for future shares
@@ -494,7 +543,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       await deleteFromMuxMd(shareData.id, shareData.mutateKey);
 
       // Remove from cache
-      removeShareData(content);
+      removeShareData(resolvedContent);
       setLocalShareData(null);
 
       // Close the popover after successful delete
@@ -520,13 +569,13 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
       try {
         // Delete the old share
         await deleteFromMuxMd(shareData.id, shareData.mutateKey);
-        removeShareData(content);
+        removeShareData(resolvedContent);
 
         // Request a mux.md signature envelope from the backend if signing is now enabled.
         let signature: SignatureEnvelope | undefined;
         if (newSigningEnabled && signingCapabilities?.publicKey && api) {
           try {
-            signature = await api.signing.signMessage({ content });
+            signature = await api.signing.signMessage({ content: resolvedContent });
           } catch {
             // Continue without signature
           }
@@ -538,11 +587,11 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
         const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
 
         const result = await uploadToMuxMd(
-          content,
+          resolvedContent,
           {
             name: getFileName(),
             type: "text/markdown",
-            size: new TextEncoder().encode(content).length,
+            size: new TextEncoder().encode(resolvedContent).length,
             model,
             thinking,
           },
@@ -558,7 +607,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
           signed: Boolean(signature),
         };
 
-        setShareData(content, data);
+        setShareData(resolvedContent, data);
         setLocalShareData(data);
       } catch (err) {
         console.error("Failed to regenerate share:", err);
@@ -585,6 +634,26 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
   }, [shareData?.url]);
 
   const handleOpenChange = (open: boolean) => {
+    if (open) {
+      setError(null);
+
+      // For lazy content (conversation shares), compute the content when the popover opens.
+      // We also sync-load cached share data here so the auto-upload effect doesn't fire
+      // unnecessarily before cache lookup completes.
+      if (props.getContent) {
+        try {
+          const nextContent = props.getContent();
+          setResolvedContent(nextContent);
+          setLocalShareData(nextContent ? (getShareData(nextContent) ?? null) : null);
+        } catch (err) {
+          console.error("Failed to generate share content:", err);
+          setResolvedContent("");
+          setLocalShareData(null);
+          setError(err instanceof Error ? err.message : "Failed to generate content");
+        }
+      }
+    }
+
     setIsOpen(open);
     if (!open) {
       // Reset transient state when closing
@@ -602,22 +671,40 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = ({
     return null;
   }
 
+  const ariaLabel = tooltip ?? (isAlreadyShared ? "Already shared" : "Share");
+
+  const triggerButton = (
+    <Button
+      variant="ghost"
+      size="icon"
+      disabled={disabled}
+      aria-label={ariaLabel}
+      data-testid={dataTestId}
+      className={cn(
+        "flex h-6 w-6 items-center justify-center [&_svg]:size-3.5",
+        isAlreadyShared ? "text-blue-400" : "text-placeholder"
+      )}
+    >
+      <Link2 />
+    </Button>
+  );
+
+  const trigger = tooltip ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="center">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  ) : (
+    <PopoverTrigger asChild>{triggerButton}</PopoverTrigger>
+  );
+
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          disabled={disabled}
-          aria-label={isAlreadyShared ? "Already shared" : "Share"}
-          className={cn(
-            "flex h-6 w-6 items-center justify-center [&_svg]:size-3.5",
-            isAlreadyShared ? "text-blue-400" : "text-placeholder"
-          )}
-        >
-          <Link2 />
-        </Button>
-      </PopoverTrigger>
+      {trigger}
       <PopoverContent side="top" align="start" collisionPadding={16} className="w-[280px] p-3">
         {!shareData ? (
           // Uploading state (auto-triggered on open)

@@ -559,6 +559,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         projectName={projectName}
         projectPath={projectPath}
         workspaceName={workspaceName}
+        muxMessages={workspaceState.muxMessages}
         leftSidebarCollapsed={leftSidebarCollapsed}
         onToggleLeftSidebarCollapsed={onToggleLeftSidebarCollapsed}
         namedWorkspacePath={namedWorkspacePath}

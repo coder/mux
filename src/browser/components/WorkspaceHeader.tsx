@@ -34,6 +34,9 @@ import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
+import { buildConversationShareMarkdown } from "@/browser/utils/messages/conversationShareMarkdown";
+import { ShareMessagePopover } from "./ShareMessagePopover";
+import type { MuxMessage } from "@/common/types/message";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
 interface WorkspaceHeaderProps {
@@ -41,6 +44,7 @@ interface WorkspaceHeaderProps {
   projectName: string;
   projectPath: string;
   workspaceName: string;
+  muxMessages: MuxMessage[];
   namedWorkspacePath: string;
   runtimeConfig?: RuntimeConfig;
   leftSidebarCollapsed: boolean;
@@ -54,6 +58,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   projectName,
   projectPath,
   workspaceName,
+  muxMessages,
   namedWorkspacePath,
   runtimeConfig,
   leftSidebarCollapsed,
@@ -232,6 +237,20 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />
+        {/* Share the entire conversation transcript via mux.md (end-to-end encrypted). */}
+        <ShareMessagePopover
+          disabled={muxMessages.length === 0}
+          tooltip="Share conversation"
+          dataTestId="share-conversation-button"
+          workspaceName={workspaceName}
+          fileNameOverride={`${workspaceName}-conversation.md`}
+          getContent={() =>
+            buildConversationShareMarkdown({
+              muxMessages,
+              workspaceName,
+            })
+          }
+        />
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
           <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
             <TooltipTrigger asChild>
