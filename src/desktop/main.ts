@@ -371,6 +371,7 @@ async function loadServices(): Promise<void> {
     sessionTimingService: services.sessionTimingService,
     workspaceMcpOverridesService: services.workspaceMcpOverridesService,
     mcpConfigService: services.mcpConfigService,
+    mcpOauthService: services.mcpOauthService,
     mcpServerManager: services.mcpServerManager,
     menuEventService: services.menuEventService,
     voiceService: services.voiceService,

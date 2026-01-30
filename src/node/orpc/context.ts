@@ -14,6 +14,7 @@ import type { ServerService } from "@/node/services/serverService";
 import type { MenuEventService } from "@/node/services/menuEventService";
 import type { VoiceService } from "@/node/services/voiceService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
+import type { McpOauthService } from "@/node/services/mcpOauthService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -43,6 +44,7 @@ export interface ORPCContext {
   menuEventService: MenuEventService;
   voiceService: VoiceService;
   mcpConfigService: MCPConfigService;
+  mcpOauthService: McpOauthService;
   workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   mcpServerManager: MCPServerManager;
   featureFlagService: FeatureFlagService;
