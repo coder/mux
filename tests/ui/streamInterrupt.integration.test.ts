@@ -13,6 +13,7 @@ import "./dom";
 import { waitFor } from "@testing-library/react";
 
 import { preloadTestModules } from "../ipc/setup";
+import { createStreamCollector } from "../ipc/streamCollector";
 import { createAppHarness } from "./harness";
 
 describe("Stream Interrupt UI (mock AI router)", () => {
@@ -23,23 +24,33 @@ describe("Stream Interrupt UI (mock AI router)", () => {
   test("user-initiated interrupt hides RetryBarrier warning", async () => {
     const app = await createAppHarness({ branchPrefix: "stream-interrupt" });
 
+    // Create a stream collector for explicit synchronization with backend events
+    const collector = createStreamCollector(app.env.orpc, app.workspaceId);
+    collector.start();
+    await collector.waitForSubscription(5000);
+
     try {
       // Send a message to start streaming
       // The mock router will respond with "Mock response: <message>"
       await app.chat.send("Test message for interrupt");
 
-      // Wait for response to complete
-      await app.chat.expectTranscriptContains("Mock response:", 30_000);
+      // Wait for the first stream to complete using explicit event synchronization
+      const streamEnd = await collector.waitForEvent("stream-end", 30_000);
+      expect(streamEnd).not.toBeNull();
 
-      // Now send another message to trigger a new stream, then immediately interrupt it
+      // Verify response appeared in UI
+      await app.chat.expectTranscriptContains("Mock response:", 5_000);
+
+      // Now send another message to trigger a new stream, then interrupt it
       // This creates a partial message state with lastAbortReason="user"
       const interruptMessage = "Message to interrupt";
 
       // Start the message but don't wait for completion
       const sendPromise = app.chat.send(interruptMessage);
 
-      // Give the stream a moment to start
-      await new Promise((r) => setTimeout(r, 200));
+      // Wait for stream-start event (explicit synchronization instead of setTimeout)
+      const streamStart = await collector.waitForEventN("stream-start", 2, 10_000);
+      expect(streamStart).not.toBeNull();
 
       // Interrupt the stream (simulating user pressing Escape)
       // This should set lastAbortReason to "user"
@@ -47,13 +58,14 @@ describe("Stream Interrupt UI (mock AI router)", () => {
         workspaceId: app.workspaceId,
       });
 
-      // Wait for the send to complete (it will fail/abort)
+      // Wait for stream-abort event (explicit synchronization instead of setTimeout)
+      const streamAbort = await collector.waitForEvent("stream-abort", 5_000);
+      expect(streamAbort).not.toBeNull();
+
+      // Wait for the send to complete (it will succeed but stream was interrupted)
       await sendPromise.catch(() => {
         // Expected - message send was interrupted
       });
-
-      // Give UI time to update
-      await new Promise((r) => setTimeout(r, 500));
 
       // Verify: The warning RetryBarrier should NOT be visible
       // RetryBarrier shows "Stream interrupted" text with a Retry button
@@ -72,6 +84,7 @@ describe("Stream Interrupt UI (mock AI router)", () => {
       const retryButton = buttons.find((btn) => btn.textContent?.includes("Retry"));
       expect(retryButton).toBeUndefined();
     } finally {
+      collector.stop();
       await app.dispose();
     }
   }, 60_000);
