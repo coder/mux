@@ -10,6 +10,14 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui
 export interface AutoCompactionConfig {
   threshold: number;
   setThreshold: (threshold: number) => void;
+  /**
+   * Warning if the compaction model context window is smaller than the
+   * auto-compact threshold, which could make compaction fail.
+   */
+  contextWarning?: {
+    compactionModelMaxTokens: number;
+    thresholdTokens: number;
+  };
 }
 
 // ----- Constants -----

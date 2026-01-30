@@ -1,4 +1,5 @@
 import React from "react";
+import { AlertTriangle } from "lucide-react";
 import { TokenMeter } from "./TokenMeter";
 import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
@@ -23,6 +24,7 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
 
   const showWarning = !data.maxTokens;
   const showThresholdSlider = Boolean(autoCompaction && data.maxTokens);
+  const contextWarning = autoCompaction?.contextWarning;
 
   if (data.totalTokens === 0) return null;
 
@@ -51,6 +53,15 @@ const ContextUsageBarComponent: React.FC<ContextUsageBarProps> = ({
       {showWarning && (
         <div className="text-subtle mt-2 text-[11px] italic">
           Unknown model limits - showing relative usage only
+        </div>
+      )}
+      {contextWarning && (
+        <div className="text-warning mt-2 flex items-start gap-1 text-[11px]">
+          <AlertTriangle aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
+          <span>
+            Compaction model context ({formatTokens(contextWarning.compactionModelMaxTokens)}) is
+            smaller than auto-compact threshold ({formatTokens(contextWarning.thresholdTokens)})
+          </span>
         </div>
       )}
     </div>

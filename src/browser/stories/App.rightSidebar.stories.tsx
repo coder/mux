@@ -19,6 +19,8 @@ import {
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
   getRightSidebarLayoutKey,
+  PREFERRED_COMPACTION_MODEL_KEY,
+  getAutoCompactionThresholdKey,
 } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import type { ComponentType } from "react";
@@ -1295,5 +1297,81 @@ export const ManyTabsWrap: AppStory = {
     });
 
     blurActiveElement();
+  },
+};
+
+/**
+ * Costs tab showing compaction model context warning.
+ * When the compaction model (gpt-4o, 128k) has a smaller context window
+ * than the auto-compact threshold (80% of 200k = 160k), a warning appears.
+ */
+export const CostsTabCompactionModelWarning: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("costs"));
+        localStorage.setItem("costsTab:viewMode", JSON.stringify("session"));
+        localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "400");
+        localStorage.removeItem(getRightSidebarLayoutKey("ws-compact-warning"));
+
+        // Set preferred compaction model to gpt-4o (128k context)
+        updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, "openai:gpt-4o");
+
+        // Set auto-compact threshold to 80% for anthropic:claude-opus-4-1
+        // 80% of 200k = 160k, which exceeds gpt-4o's 128k context
+        updatePersistedState(getAutoCompactionThresholdKey("anthropic:claude-opus-4-1"), 80);
+
+        const client = setupSimpleChatStory({
+          workspaceId: "ws-compact-warning",
+          workspaceName: "feature/compaction",
+          projectName: "my-app",
+          messages: [
+            createUserMessage("msg-1", "Help me refactor this large codebase", {
+              historySequence: 1,
+            }),
+            createAssistantMessage("msg-2", "I'll help you refactor the codebase.", {
+              historySequence: 2,
+              model: "anthropic:claude-opus-4-1",
+              contextUsage: { inputTokens: 150000, outputTokens: 2000 },
+            }),
+          ],
+          sessionUsage: {
+            byModel: {
+              "anthropic:claude-opus-4-1": {
+                input: { tokens: 150000, cost_usd: 2.25 },
+                cached: { tokens: 0, cost_usd: 0 },
+                cacheCreate: { tokens: 0, cost_usd: 0 },
+                output: { tokens: 2000, cost_usd: 0.15 },
+                reasoning: { tokens: 0, cost_usd: 0 },
+                model: "anthropic:claude-opus-4-1",
+              },
+            },
+            version: 1,
+          },
+        });
+        expandRightSidebar();
+        return client;
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for the warning to appear
+    await waitFor(
+      () => {
+        canvas.getByText(/compaction model context/i);
+      },
+      { timeout: 5000 }
+    );
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the compaction model context warning when the configured compaction model (gpt-4o, 128k) " +
+          "has a smaller context window than the auto-compact threshold (80% of 200k = 160k tokens).",
+      },
+    },
   },
 };
