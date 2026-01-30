@@ -25,4 +25,21 @@ export class MenuEventService {
     this.emitter.on("openSettings", callback);
     return () => this.emitter.off("openSettings", callback);
   }
+
+  /**
+   * Emit a "start new agent" event. Called by main process entrypoints like Dock
+   * menus, JumpList tasks, or desktop actions.
+   */
+  emitStartNewAgent(): void {
+    this.emitter.emit("startNewAgent");
+  }
+
+  /**
+   * Subscribe to "start new agent" events. Used by oRPC subscription handler.
+   * Returns a cleanup function.
+   */
+  onStartNewAgent(callback: () => void): () => void {
+    this.emitter.on("startNewAgent", callback);
+    return () => this.emitter.off("startNewAgent", callback);
+  }
 }
