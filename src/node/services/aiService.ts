@@ -1370,7 +1370,8 @@ export class AIService extends EventEmitter {
             "exec");
       const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
       const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
-      const effectiveAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+      const requestedAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+      let effectiveAgentId = requestedAgentId;
 
       // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
       // Use project path so only built-in/global agents are available. This allows "unbricking"
@@ -1393,6 +1394,8 @@ export class AIService extends EventEmitter {
         agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
       }
 
+      // Keep agent ID aligned with the actual definition used (may fall back to exec).
+      effectiveAgentId = agentDefinition.id;
       // Enforce per-agent enablement for sub-agent workspaces (tasks).
       //
       // Disabled agents should never run as sub-agents, even if a task workspace already exists
@@ -1431,9 +1434,10 @@ export class AIService extends EventEmitter {
 
             workspaceLog.warn("Selected agent is disabled; falling back to exec", {
               agentId: agentDefinition.id,
-              requestedAgentId: effectiveAgentId,
+              requestedAgentId,
             });
             agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+            effectiveAgentId = agentDefinition.id;
           }
         } catch (error: unknown) {
           // Best-effort only - do not fail a stream due to disablement resolution.
