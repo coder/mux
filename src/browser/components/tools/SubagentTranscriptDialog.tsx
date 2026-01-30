@@ -28,12 +28,20 @@ export const SubagentTranscriptDialog: React.FC<SubagentTranscriptDialogProps> =
         </DialogTitle>
       </DialogHeader>
 
-      <SubagentTranscriptViewer workspaceId={props.workspaceId} taskId={props.taskId} />
+      <SubagentTranscriptViewer
+        open={props.open}
+        workspaceId={props.workspaceId}
+        taskId={props.taskId}
+      />
     </DialogContent>
   </Dialog>
 );
 
-const SubagentTranscriptViewer: React.FC<{ workspaceId?: string; taskId: string }> = (props) => {
+const SubagentTranscriptViewer: React.FC<{
+  open: boolean;
+  workspaceId?: string;
+  taskId: string;
+}> = (props) => {
   const { api } = useAPI();
 
   const [isLoading, setIsLoading] = useState(false);
@@ -41,6 +49,12 @@ const SubagentTranscriptViewer: React.FC<{ workspaceId?: string; taskId: string 
   const [messages, setMessages] = useState<MuxMessage[] | null>(null);
 
   useEffect(() => {
+    // TaskToolCall renders this dialog component for each completed task even while closed.
+    // Avoid expensive disk/IPC transcript loads until the dialog is opened.
+    if (!props.open) {
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
     setMessages(null);
@@ -76,7 +90,7 @@ const SubagentTranscriptViewer: React.FC<{ workspaceId?: string; taskId: string 
     return () => {
       cancelled = true;
     };
-  }, [api, props.taskId, props.workspaceId]);
+  }, [api, props.open, props.taskId, props.workspaceId]);
 
   const displayedMessages: DisplayedMessage[] | null = useMemo(() => {
     if (!messages) {
