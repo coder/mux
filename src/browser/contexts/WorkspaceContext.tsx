@@ -513,8 +513,12 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       if (!resolvedProjectPath) {
         // Startup deep links can arrive before the projects list is populated.
-        // Buffer unresolved links in-memory and retry when projects are loaded.
-        if (projectsLoading) {
+        //
+        // NOTE: ProjectContext can set `projectsLoading=false` even when the API isn't
+        // connected yet (refreshProjects() returns early but the effect still flips loading).
+        // In that window, buffer unresolved links in-memory and retry once projects load.
+        const shouldBuffer = projectsLoading || !api || projects.size === 0;
+        if (shouldBuffer) {
           const queue = pendingDeepLinksRef.current;
           if (queue.length >= 10) {
             queue.shift();
@@ -562,7 +566,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
       navigateToProject(resolvedProjectPath, normalizedSectionId ?? undefined, draftId);
     },
-    [navigateToProject, projects, projectsLoading, setWorkspaceDraftsByProjectState]
+    [api, navigateToProject, projects, projectsLoading, setWorkspaceDraftsByProjectState]
   );
 
   const deepLinkHandlerRef = useRef(handleDeepLink);
