@@ -6,6 +6,7 @@ import type {
   ParsedRuntime,
   RuntimeAvailabilityStatus,
 } from "@/common/types/runtime";
+import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
@@ -142,7 +143,7 @@ interface UseCreationWorkspaceReturn {
   setTrunkBranch: (branch: string) => void;
   /** Currently selected runtime (discriminated union: SSH has host, Docker has image) */
   selectedRuntime: ParsedRuntime;
-  defaultRuntimeMode: RuntimeMode;
+  defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
   /** Set the default runtime mode for this project (persists via checkbox) */

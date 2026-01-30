@@ -111,8 +111,8 @@ const mockWorkspaces: CoderWorkspace[] = [
 ];
 
 /**
- * SSH runtime with Coder available - shows Coder checkbox.
- * When user selects SSH runtime, they can enable Coder workspace mode.
+ * Coder available - shows Coder runtime button.
+ * When Coder CLI is available, the Coder button appears in the runtime selector.
  */
 export const SSHWithCoderAvailable: AppStory = {
   render: () => (
@@ -142,24 +142,14 @@ export const SSHWithCoderAvailable: AppStory = {
     // Wait for the runtime button group to appear
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Click SSH runtime button
-    const sshButton = canvas.getByRole("button", { name: /SSH/i });
-    await userEvent.click(sshButton);
-
-    // Wait for SSH mode to be active and Coder checkbox to appear
-    await waitFor(
-      () => {
-        const coderCheckbox = canvas.queryByTestId("coder-checkbox");
-        if (!coderCheckbox) throw new Error("Coder checkbox not found");
-      },
-      { timeout: 5000 }
-    );
+    // Coder button should appear when Coder CLI is available
+    await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
   },
 };
 
 /**
  * Coder new workspace flow - shows template and preset dropdowns.
- * User enables Coder, selects template, and optionally a preset.
+ * User clicks Coder runtime button, then selects template and optionally a preset.
  */
 export const CoderNewWorkspace: AppStory = {
   render: () => (
@@ -189,13 +179,9 @@ export const CoderNewWorkspace: AppStory = {
     // Wait for runtime controls
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Click SSH runtime button
-    const sshButton = canvas.getByRole("button", { name: /SSH/i });
-    await userEvent.click(sshButton);
-
-    // Enable Coder
-    const coderCheckbox = await canvas.findByTestId("coder-checkbox", {}, { timeout: 5000 });
-    await userEvent.click(coderCheckbox);
+    // Click Coder runtime button directly
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await userEvent.click(coderButton);
 
     // Wait for Coder controls to appear
     await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
@@ -207,7 +193,7 @@ export const CoderNewWorkspace: AppStory = {
 
 /**
  * Coder existing workspace flow - shows workspace dropdown.
- * User switches to "Existing" mode and selects from running workspaces.
+ * User clicks Coder runtime, switches to "Existing" mode and selects from running workspaces.
  */
 export const CoderExistingWorkspace: AppStory = {
   render: () => (
@@ -237,13 +223,9 @@ export const CoderExistingWorkspace: AppStory = {
     // Wait for runtime controls
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Click SSH runtime button
-    const sshButton = canvas.getByRole("button", { name: /SSH/i });
-    await userEvent.click(sshButton);
-
-    // Enable Coder
-    const coderCheckbox = await canvas.findByTestId("coder-checkbox", {}, { timeout: 5000 });
-    await userEvent.click(coderCheckbox);
+    // Click Coder runtime button directly
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await userEvent.click(coderButton);
 
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
@@ -258,8 +240,8 @@ export const CoderExistingWorkspace: AppStory = {
 };
 
 /**
- * Coder not available - checkbox should not appear.
- * When Coder CLI is not installed, the SSH runtime shows normal host input.
+ * Coder not available - Coder button should not appear.
+ * When Coder CLI is not installed, the runtime selector only shows SSH (no Coder).
  */
 export const CoderNotAvailable: AppStory = {
   render: () => (
@@ -279,33 +261,23 @@ export const CoderNotAvailable: AppStory = {
     await openProjectCreationView(storyRoot);
     const canvas = within(storyRoot);
 
-    // Wait for runtime controls
+    // Wait for runtime controls to load
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Click SSH runtime button
-    const sshButton = canvas.getByRole("button", { name: /SSH/i });
-    await userEvent.click(sshButton);
+    // SSH button should be present
+    await canvas.findByRole("button", { name: /SSH/i }, { timeout: 5000 });
 
-    // SSH host input should appear (normal SSH mode)
-    await waitFor(
-      () => {
-        const hostInput = canvas.queryByPlaceholderText("user@host");
-        if (!hostInput) throw new Error("SSH host input not found");
-      },
-      { timeout: 5000 }
-    );
-
-    // Coder checkbox should NOT appear
-    const coderCheckbox = canvas.queryByTestId("coder-checkbox");
-    if (coderCheckbox) {
-      throw new Error("Coder checkbox should not appear when Coder is unavailable");
+    // Coder button should NOT appear when Coder CLI is unavailable
+    const coderButton = canvas.queryByRole("button", { name: /Coder/i });
+    if (coderButton) {
+      throw new Error("Coder button should not appear when Coder CLI is unavailable");
     }
   },
 };
 
 /**
- * Coder CLI outdated - checkbox appears but is disabled with tooltip.
- * When Coder CLI is installed but version is below minimum, shows explanation.
+ * Coder CLI outdated - Coder button appears but is disabled with tooltip.
+ * When Coder CLI is installed but version is below minimum, shows explanation on hover.
  */
 export const CoderOutdated: AppStory = {
   render: () => (
@@ -328,26 +300,16 @@ export const CoderOutdated: AppStory = {
     // Wait for runtime controls
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Click SSH runtime button
-    const sshButton = canvas.getByRole("button", { name: /SSH/i });
-    await userEvent.click(sshButton);
-
-    // Coder checkbox should appear but be disabled
-    const coderCheckbox = await canvas.findByTestId("coder-checkbox", {}, { timeout: 5000 });
+    // Coder button should appear but be disabled
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await waitFor(() => {
-      if (!(coderCheckbox instanceof HTMLInputElement)) {
-        throw new Error("Coder checkbox should be an input element");
-      }
-      if (!coderCheckbox.disabled) {
-        throw new Error("Coder checkbox should be disabled when CLI is outdated");
-      }
-      if (coderCheckbox.checked) {
-        throw new Error("Coder checkbox should be unchecked when CLI is outdated");
+      if (!coderButton.hasAttribute("disabled")) {
+        throw new Error("Coder button should be disabled when CLI is outdated");
       }
     });
 
-    // Hover over checkbox to trigger tooltip
-    await userEvent.hover(coderCheckbox.parentElement!);
+    // Hover over Coder button to trigger tooltip with version error
+    await userEvent.hover(coderButton);
 
     // Wait for tooltip to appear with version info
     await waitFor(
@@ -396,13 +358,9 @@ export const CoderNoPresets: AppStory = {
     // Wait for runtime controls
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Click SSH runtime button
-    const sshButton = canvas.getByRole("button", { name: /SSH/i });
-    await userEvent.click(sshButton);
-
-    // Enable Coder
-    const coderCheckbox = await canvas.findByTestId("coder-checkbox", {}, { timeout: 5000 });
-    await userEvent.click(coderCheckbox);
+    // Click Coder runtime button directly
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await userEvent.click(coderButton);
 
     // Wait for Coder controls
     await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
@@ -452,13 +410,9 @@ export const CoderNoRunningWorkspaces: AppStory = {
     // Wait for runtime controls
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Click SSH runtime button
-    const sshButton = canvas.getByRole("button", { name: /SSH/i });
-    await userEvent.click(sshButton);
-
-    // Enable Coder
-    const coderCheckbox = await canvas.findByTestId("coder-checkbox", {}, { timeout: 5000 });
-    await userEvent.click(coderCheckbox);
+    // Click Coder runtime button directly
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await userEvent.click(coderButton);
 
     // Click "Existing" button
     const existingButton = await canvas.findByRole(
