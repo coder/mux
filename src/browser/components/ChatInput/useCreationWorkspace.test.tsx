@@ -11,7 +11,8 @@ import {
   getThinkingLevelKey,
 } from "@/common/constants/storage";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import type { RuntimeMode, ParsedRuntime } from "@/common/types/runtime";
+import { CODER_RUNTIME_PLACEHOLDER, type ParsedRuntime } from "@/common/types/runtime";
+import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
@@ -710,7 +711,7 @@ function createDraftSettingsHarness(
     selectedRuntime: ParsedRuntime;
     trunkBranch: string;
     runtimeString?: string | undefined;
-    defaultRuntimeMode?: RuntimeMode;
+    defaultRuntimeMode?: RuntimeChoice;
   }>
 ) {
   const state = {
@@ -720,7 +721,7 @@ function createDraftSettingsHarness(
     runtimeString: initial?.runtimeString,
   } satisfies {
     selectedRuntime: ParsedRuntime;
-    defaultRuntimeMode: RuntimeMode;
+    defaultRuntimeMode: RuntimeChoice;
     trunkBranch: string;
     runtimeString: string | undefined;
   };
@@ -742,18 +743,27 @@ function createDraftSettingsHarness(
     }
   });
 
-  const setDefaultRuntimeMode = mock((mode: RuntimeMode) => {
-    state.defaultRuntimeMode = mode;
+  const setDefaultRuntimeChoice = mock((choice: RuntimeChoice) => {
+    state.defaultRuntimeMode = choice;
     // Update selected runtime to match new default
-    if (mode === "ssh") {
+    if (choice === "coder") {
+      state.selectedRuntime = {
+        mode: "ssh",
+        host: CODER_RUNTIME_PLACEHOLDER,
+        coder: { existingWorkspace: false },
+      };
+      state.runtimeString = `ssh ${CODER_RUNTIME_PLACEHOLDER}`;
+      return;
+    }
+    if (choice === "ssh") {
       const host = state.selectedRuntime.mode === "ssh" ? state.selectedRuntime.host : "";
       state.selectedRuntime = { mode: "ssh", host };
       state.runtimeString = host ? `ssh ${host}` : "ssh";
-    } else if (mode === "docker") {
+    } else if (choice === "docker") {
       const image = state.selectedRuntime.mode === "docker" ? state.selectedRuntime.image : "";
       state.selectedRuntime = { mode: "docker", image };
       state.runtimeString = image ? `docker ${image}` : "docker";
-    } else if (mode === "local") {
+    } else if (choice === "local") {
       state.selectedRuntime = { mode: "local" };
       state.runtimeString = undefined;
     } else {
@@ -765,13 +775,13 @@ function createDraftSettingsHarness(
   return {
     state,
     setSelectedRuntime,
-    setDefaultRuntimeMode,
+    setDefaultRuntimeChoice,
     setTrunkBranch,
     getRuntimeString,
     snapshot(): {
       settings: DraftWorkspaceSettings;
       setSelectedRuntime: typeof setSelectedRuntime;
-      setDefaultRuntimeMode: typeof setDefaultRuntimeMode;
+      setDefaultRuntimeChoice: typeof setDefaultRuntimeChoice;
       setTrunkBranch: typeof setTrunkBranch;
       getRuntimeString: typeof getRuntimeString;
     } {
@@ -786,7 +796,7 @@ function createDraftSettingsHarness(
       return {
         settings,
         setSelectedRuntime,
-        setDefaultRuntimeMode,
+        setDefaultRuntimeChoice,
         setTrunkBranch,
         getRuntimeString,
       };
