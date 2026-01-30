@@ -64,6 +64,14 @@ const mockWindow: BrowserWindow = {
 } as unknown as BrowserWindow;
 
 (async () => {
+  // Keepalive interval to prevent premature process exit during async initialization.
+  // During startup, taskService.initialize() may resume running tasks by calling
+  // sendMessage(), which spawns background AI streams. Between the completion of
+  // serviceContainer.initialize() and the HTTP server starting to listen, there can
+  // be a brief moment where no ref'd handles exist, causing Node to exit with code 0.
+  // This interval ensures the event loop stays alive until the server is listening.
+  const startupKeepalive = setInterval(() => {}, 1000);
+
   migrateLegacyMuxHome();
 
   // Check for existing server (Electron or another mux server instance)
@@ -129,6 +137,9 @@ const mockWindow: BrowserWindow = {
     context,
     serveStatic: true,
   });
+
+  // Server is now listening - clear the startup keepalive since httpServer keeps the loop alive
+  clearInterval(startupKeepalive);
 
   // Acquire lockfile so other instances know we're running
   await lockfile.acquire(server.baseUrl, AUTH_TOKEN ?? "");
