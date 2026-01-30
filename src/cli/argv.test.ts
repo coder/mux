@@ -147,6 +147,11 @@ describe("isElectronLaunchArg", () => {
     expect(isElectronLaunchArg("--enable-logging", env)).toBe(true);
   });
 
+  test("returns true for mux:// deep links in packaged mode", () => {
+    const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
+    expect(isElectronLaunchArg("mux://chat/new?foo=bar", env)).toBe(true);
+  });
+
   test("returns false for CLI flags in packaged mode (--help, --version)", () => {
     const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
     expect(isElectronLaunchArg("--help", env)).toBe(false);
