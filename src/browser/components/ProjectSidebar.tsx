@@ -7,12 +7,15 @@ import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
+  getAgentIdKey,
   getDraftScopeId,
   getInputKey,
+  getModelKey,
   getWorkspaceNameStateKey,
 } from "@/common/constants/storage";
 import { getDisplayTitleFromPersistedState } from "@/browser/hooks/useWorkspaceName";
@@ -304,6 +307,29 @@ const ProjectDragLayer: React.FC = () => {
     </div>
   );
 };
+
+function MuxChatStatusIndicator() {
+  const [fallbackModel] = usePersistedState<string>(
+    getModelKey(MUX_HELP_CHAT_WORKSPACE_ID),
+    getDefaultModel(),
+    { listener: true }
+  );
+  const [fallbackMode] = usePersistedState<string>(
+    getAgentIdKey(MUX_HELP_CHAT_WORKSPACE_ID),
+    "exec",
+    {
+      listener: true,
+    }
+  );
+
+  return (
+    <WorkspaceStatusIndicator
+      workspaceId={MUX_HELP_CHAT_WORKSPACE_ID}
+      fallbackModel={fallbackModel}
+      fallbackMode={fallbackMode}
+    />
+  );
+}
 
 interface ProjectSidebarProps {
   collapsed: boolean;
@@ -721,7 +747,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                         onClick={handleOpenMuxChat}
                         isSelected={selectedWorkspace?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID}
                       />
-                      <WorkspaceStatusIndicator workspaceId={MUX_HELP_CHAT_WORKSPACE_ID} />
+                      <MuxChatStatusIndicator />
                     </>
                   )}
                 </div>
