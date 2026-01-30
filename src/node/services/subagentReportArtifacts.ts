@@ -32,6 +32,10 @@ const SUBAGENT_REPORT_ARTIFACTS_FILE_NAME = "subagent-reports.json";
 const SUBAGENT_REPORT_DIR_NAME = "subagent-reports";
 const SUBAGENT_REPORT_FILE_NAME = "report.json";
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "string");
+}
+
 export function getSubagentReportArtifactsFilePath(workspaceSessionDir: string): string {
   return path.join(workspaceSessionDir, SUBAGENT_REPORT_ARTIFACTS_FILE_NAME);
 }
@@ -144,11 +148,9 @@ export async function readSubagentReportArtifact(
       typeof obj.parentWorkspaceId === "string" ? obj.parentWorkspaceId : null;
     const createdAtMs = typeof obj.createdAtMs === "number" ? obj.createdAtMs : null;
     const updatedAtMs = typeof obj.updatedAtMs === "number" ? obj.updatedAtMs : null;
-    const ancestorWorkspaceIds =
-      Array.isArray(obj.ancestorWorkspaceIds) &&
-      obj.ancestorWorkspaceIds.every((v) => typeof v === "string")
-        ? (obj.ancestorWorkspaceIds as string[])
-        : null;
+    const ancestorWorkspaceIds = isStringArray(obj.ancestorWorkspaceIds)
+      ? obj.ancestorWorkspaceIds
+      : null;
 
     if (!parentWorkspaceId || !createdAtMs || !updatedAtMs || !ancestorWorkspaceIds) {
       return null;

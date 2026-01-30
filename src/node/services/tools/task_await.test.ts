@@ -33,7 +33,7 @@ describe("task_await tool", () => {
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
-      isDescendantAgentTask: mock(async () => true),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
       waitForAgentReport: mock(async (taskId: string) => {
         await fs.promises.writeFile(
           artifactsPath,
@@ -76,7 +76,7 @@ describe("task_await tool", () => {
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["t1", "t2"]),
-      isDescendantAgentTask: mock(async () => true),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
       waitForAgentReport: mock((taskId: string) =>
         Promise.resolve({ reportMarkdown: `report:${taskId}`, title: `title:${taskId}` })
       ),
@@ -101,17 +101,14 @@ describe("task_await tool", () => {
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
     const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ok" }));
-    const isDescendantAgentTask = mock(async () => true);
+    const isDescendantAgentTask = mock(() => Promise.resolve(true));
 
     const taskService = {
-      filterDescendantAgentTaskIds: async function (
-        ancestorWorkspaceId: string,
-        taskIds: string[]
-      ) {
+      filterDescendantAgentTaskIds: function (ancestorWorkspaceId: string, taskIds: string[]) {
         expect(this).toBe(taskService);
         expect(ancestorWorkspaceId).toBe("parent-workspace");
         expect(taskIds).toEqual(["t1"]);
-        return taskIds;
+        return Promise.resolve(taskIds);
       },
       listActiveDescendantAgentTaskIds: mock(() => []),
       isDescendantAgentTask,
@@ -135,7 +132,7 @@ describe("task_await tool", () => {
     using tempDir = new TestTempDir("test-task-await-tool-invalid-scope");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
-    const isDescendantAgentTask = mock(async (ancestorId: string, taskId: string) => {
+    const isDescendantAgentTask = mock((ancestorId: string, taskId: string) => {
       expect(ancestorId).toBe("parent-workspace");
       return taskId !== "other";
     });
@@ -168,7 +165,7 @@ describe("task_await tool", () => {
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
     const listActiveDescendantAgentTaskIds = mock(() => ["t1"]);
-    const isDescendantAgentTask = mock(async () => true);
+    const isDescendantAgentTask = mock(() => Promise.resolve(true));
     const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ok" }));
 
     const taskService = {
@@ -203,7 +200,7 @@ describe("task_await tool", () => {
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => []),
-      isDescendantAgentTask: mock(async () => true),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
       getAgentTaskStatus: mock((taskId: string) => (taskId === "timeout" ? "running" : null)),
       waitForAgentReport,
     } as unknown as TaskService;
@@ -234,7 +231,7 @@ describe("task_await tool", () => {
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
-      isDescendantAgentTask: mock(async () => true),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
       getAgentTaskStatus,
       waitForAgentReport,
     } as unknown as TaskService;
@@ -261,7 +258,7 @@ describe("task_await tool", () => {
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["t1"]),
-      isDescendantAgentTask: mock(async () => true),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
       getAgentTaskStatus,
       waitForAgentReport,
     } as unknown as TaskService;
