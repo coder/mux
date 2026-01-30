@@ -64,6 +64,9 @@ Recommended Orchestrator → Exec task brief template:
   - Scope: <what to change>
   - Non-goals: <explicitly out of scope>
 - Starting points: <paths / symbols / callsites>
+- Dependencies / assumptions:
+  - Assumes: <prereq patch(es) already applied in parent workspace, or required files/targets already exist>
+  - If unmet: stop and report back; do not expand scope to create prerequisites.
 - Acceptance: <bullets / checks>
 - Deliverables:
   - Commits: <what to commit>
@@ -72,6 +75,23 @@ Recommended Orchestrator → Exec task brief template:
   - Do not expand scope.
   - Explore as needed (spawn `explore` tasks to fill in missing repo context before editing; skip if starting points + acceptance are already clear).
   - Create one or more git commits before `agent_report`.
+
+Dependency analysis (required before spawning `exec` tasks):
+
+- For each candidate subtask, write:
+  - Outputs: files/targets/artifacts introduced/renamed/generated
+  - Inputs / prerequisites (including for verification): what must already exist
+- A subtask is "independent" only if its patch can be applied + verified on the current parent workspace HEAD, without any other pending patch.
+- Default to sequential if unsure. Parallelism is an optimization; correctness is the requirement.
+- If task B depends on outputs from task A:
+  - Do not spawn B until A has completed and A's patch is applied in the parent workspace.
+  - If the dependency chain is tight (download → generate → wire-up), prefer one `exec` task rather than splitting.
+
+Example dependency chain (schema download → generation):
+
+- Task A outputs: a new download target + new schema files.
+- Task B inputs: those schema files; verifies by running generation.
+- Therefore: run Task A (await + apply patch) before spawning Task B.
 
 Patch integration loop (default):
 
@@ -87,9 +107,14 @@ Patch integration loop (default):
    - PASS: summary-only (no long logs).
    - FAIL: include the failing command + key error lines; then delegate a fix to `exec` and re-verify.
 
-Sequential fallback:
+Sequential protocol (when any dependency exists):
 
-- If subtasks depend on one another, do them in order and apply patches between them.
+1. Spawn the prerequisite `exec` task with `run_in_background: false` (or spawn, then immediately `task_await`).
+2. Dry-run apply its patch; then apply for real.
+3. Only after the patch is applied, spawn the dependent `exec` task.
+4. Repeat until the dependency chain is complete.
+
+Note: child workspaces are created at spawn time. Spawning dependents too early means they work from the wrong repo snapshot and get forced into scope expansion.
 
 Keep context minimal:
 
