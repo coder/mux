@@ -784,6 +784,8 @@ const AgentDiscoveryInputSchema = z
     workspaceId: z.string().optional(),
     /** When true, skip workspace worktree and discover from projectPath (but still use workspace runtime) */
     disableWorkspaceAgents: z.boolean().optional(),
+    /** When true, include agents disabled by front-matter (for Settings UI). */
+    includeDisabled: z.boolean().optional(),
   })
   .refine((data) => Boolean(data.projectPath ?? data.workspaceId), {
     message: "Either projectPath or workspaceId must be provided",
@@ -968,6 +970,7 @@ const SubagentAiDefaultsEntrySchema = z
   .object({
     modelString: z.string().min(1).optional(),
     thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+    enabled: z.boolean().optional(),
   })
   .strict();
 

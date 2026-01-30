@@ -114,6 +114,7 @@ import {
   resolveAgentFrontmatter,
   discoverAgentDefinitions,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
@@ -1369,12 +1370,16 @@ export class AIService extends EventEmitter {
             "exec");
       const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
       const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
-      const effectiveAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+      const requestedAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+      let effectiveAgentId = requestedAgentId;
 
       // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
       // Use project path so only built-in/global agents are available. This allows "unbricking"
       // when iterating on agent files - a broken agent in the worktree won't affect message sending.
       const agentDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
+
+      const cfg = this.config.loadConfigOrDefault();
+      const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
 
       let agentDefinition;
       try {
@@ -1389,26 +1394,77 @@ export class AIService extends EventEmitter {
         agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
       }
 
+      // Keep agent ID aligned with the actual definition used (may fall back to exec).
+      effectiveAgentId = agentDefinition.id;
+      // Enforce per-agent enablement for sub-agent workspaces (tasks).
+      //
+      // Disabled agents should never run as sub-agents, even if a task workspace already exists
+      // on disk (e.g., config changed since creation).
+      //
+      // For top-level workspaces, fall back to exec to keep the workspace usable.
+      if (agentDefinition.id !== "exec") {
+        try {
+          const resolvedFrontmatter = await resolveAgentFrontmatter(
+            runtime,
+            agentDiscoveryPath,
+            agentDefinition.id
+          );
+
+          const effectivelyDisabled = isAgentEffectivelyDisabled({
+            cfg,
+            agentId: agentDefinition.id,
+            resolvedFrontmatter,
+          });
+
+          if (effectivelyDisabled) {
+            const errorMessage = `Agent '${agentDefinition.id}' is disabled.`;
+
+            if (isSubagentWorkspace) {
+              const errorMessageId = createAssistantMessageId();
+              this.emit(
+                "error",
+                createErrorEvent(workspaceId, {
+                  messageId: errorMessageId,
+                  error: errorMessage,
+                  errorType: "unknown",
+                })
+              );
+              return Err({ type: "unknown", raw: errorMessage });
+            }
+
+            workspaceLog.warn("Selected agent is disabled; falling back to exec", {
+              agentId: agentDefinition.id,
+              requestedAgentId,
+            });
+            agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
+            effectiveAgentId = agentDefinition.id;
+          }
+        } catch (error: unknown) {
+          // Best-effort only - do not fail a stream due to disablement resolution.
+          workspaceLog.debug("Failed to resolve agent enablement; continuing", {
+            agentId: agentDefinition.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       // Determine if agent is plan-like by checking if propose_plan is in its resolved tools
       // (including inherited tools from base agents).
       const agentsForInheritance = await resolveAgentInheritanceChain({
         runtime,
         workspacePath: agentDiscoveryPath,
-        agentId: effectiveAgentId,
+        agentId: agentDefinition.id,
         agentDefinition,
         workspaceId,
       });
 
       const agentIsPlanLike = isPlanLikeInResolvedChain(agentsForInheritance);
       const effectiveMode =
-        effectiveAgentId === "compact" ? "compact" : agentIsPlanLike ? "plan" : "exec";
+        agentDefinition.id === "compact" ? "compact" : agentIsPlanLike ? "plan" : "exec";
 
-      const cfg = this.config.loadConfigOrDefault();
       const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
       const taskDepth = getTaskDepthFromConfig(cfg, workspaceId);
       const shouldDisableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
-
-      const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
 
       // NOTE: Caller-supplied policy is applied AFTER agent tool policy so callers can
       // further restrict the tool set (e.g., disable all tools for testing).
@@ -1717,10 +1773,41 @@ export class AIService extends EventEmitter {
           ? `${resolvedBody}\n\n${subagentAppendPrompt}`
           : resolvedBody;
 
-      // Discover available agent definitions for sub-agent context (only for top-level workspaces)
-      const agentDefinitions = isSubagentWorkspace
-        ? undefined
-        : await discoverAgentDefinitions(runtime, agentDiscoveryPath);
+      // Discover available agent definitions for sub-agent context (only for top-level workspaces).
+      //
+      // NOTE: discoverAgentDefinitions returns disabled agents too, so Settings can surface them.
+      // For tool descriptions (task tool), filter to agents that are effectively enabled.
+      let agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
+      if (!isSubagentWorkspace) {
+        const discovered = await discoverAgentDefinitions(runtime, agentDiscoveryPath);
+
+        const filtered = await Promise.all(
+          discovered.map(async (descriptor) => {
+            try {
+              const resolvedFrontmatter = await resolveAgentFrontmatter(
+                runtime,
+                agentDiscoveryPath,
+                descriptor.id
+              );
+
+              const effectivelyDisabled = isAgentEffectivelyDisabled({
+                cfg,
+                agentId: descriptor.id,
+                resolvedFrontmatter,
+              });
+
+              return effectivelyDisabled ? null : descriptor;
+            } catch {
+              // Best-effort: keep the descriptor if enablement can't be resolved.
+              return descriptor;
+            }
+          })
+        );
+
+        agentDefinitions = filtered.filter(
+          (descriptor): descriptor is NonNullable<typeof descriptor> => Boolean(descriptor)
+        );
+      }
 
       // Discover available skills for tool description context
       let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;

@@ -40,6 +40,12 @@ export const CUSTOM_EVENTS = {
   CLOSE_AGENT_PICKER: "mux:closeAgentPicker",
 
   /**
+   * Event to request a refresh of the agent definition list (AgentContext).
+   * No detail.
+   */
+  AGENTS_REFRESH_REQUESTED: "mux:agentsRefreshRequested",
+
+  /**
    * Event to trigger resume check for a workspace
    * Detail: { workspaceId: string }
    *
@@ -98,6 +104,7 @@ export interface CustomEventPayloads {
   };
   [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload
+  [CUSTOM_EVENTS.AGENTS_REFRESH_REQUESTED]: never; // No payload
   [CUSTOM_EVENTS.OPEN_MODEL_SELECTOR]: never; // No payload
   [CUSTOM_EVENTS.RESUME_CHECK_REQUESTED]: {
     workspaceId: string;

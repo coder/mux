@@ -474,8 +474,19 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
     },
     agents: {
-      list: (_input: { workspaceId: string }) => Promise.resolve(agentDefinitions),
-      get: (input: { workspaceId: string; agentId: string }) => {
+      list: (_input: {
+        projectPath?: string;
+        workspaceId?: string;
+        disableWorkspaceAgents?: boolean;
+        includeDisabled?: boolean;
+      }) => Promise.resolve(agentDefinitions),
+      get: (input: {
+        projectPath?: string;
+        workspaceId?: string;
+        disableWorkspaceAgents?: boolean;
+        includeDisabled?: boolean;
+        agentId: string;
+      }) => {
         const descriptor =
           agentDefinitions.find((agent) => agent.id === input.agentId) ?? agentDefinitions[0];
 

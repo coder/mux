@@ -76,7 +76,8 @@ function resolveUiDisabled(ui: { disabled?: boolean } | undefined): boolean {
 
 /**
  * Internal type for tracking agent definitions during discovery.
- * Includes the `disabled` flag which is used to filter agents but not exposed in the final result.
+ * Includes a legacy `disabled` flag (from ui.disabled) for debugging/logging only.
+ * Filtering is applied at higher layers so Settings can surface opt-in agents.
  */
 interface AgentDiscoveryEntry {
   descriptor: AgentDefinitionDescriptor;
@@ -301,9 +302,9 @@ export async function discoverAgentDefinitions(
     }
   }
 
-  // Filter out disabled agents and return only the descriptors
+  // Return all discovered agents (including those disabled by front-matter).
+  // Filtering is applied at higher layers (e.g., agents.list) so Settings can still surface opt-in agents.
   return Array.from(byId.values())
-    .filter((entry) => !entry.disabled)
     .map((entry) => entry.descriptor)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
