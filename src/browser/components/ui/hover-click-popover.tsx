@@ -47,8 +47,6 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const contentRef = React.useRef<HTMLDivElement | null>(null);
   const closeTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isCoarsePointer =
-    typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
   // Cleanup timeout on unmount
   React.useEffect(() => {
@@ -88,15 +86,15 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
     setIsPinned((prev) => !prev);
   };
 
-  const handleTriggerPointerEnter = () => {
-    // Touch devices don't have a meaningful hover state; rely on click-to-pin instead.
-    if (isCoarsePointer) return;
+  const handleTriggerPointerEnter = (event: React.PointerEvent<HTMLButtonElement>) => {
+    // Avoid disabling hover for mouse on hybrid devices: only ignore *touch* pointers.
+    if (event.pointerType === "touch") return;
     cancelPendingClose();
     setIsHovering(true);
   };
 
   const handleTriggerPointerLeave = (event: React.PointerEvent<HTMLButtonElement>) => {
-    if (isCoarsePointer) return;
+    if (event.pointerType === "touch") return;
     const relatedTarget = event.relatedTarget;
     if (relatedTarget instanceof Node && contentRef.current?.contains(relatedTarget)) {
       return;
@@ -104,14 +102,14 @@ export const HoverClickPopover: React.FC<HoverClickPopoverProps> = (props) => {
     scheduleClose();
   };
 
-  const handleContentPointerEnter = () => {
-    if (isCoarsePointer) return;
+  const handleContentPointerEnter = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") return;
     cancelPendingClose();
     setIsHovering(true);
   };
 
   const handleContentPointerLeave = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (isCoarsePointer) return;
+    if (event.pointerType === "touch") return;
     const relatedTarget = event.relatedTarget;
     if (relatedTarget instanceof Node && triggerRef.current?.contains(relatedTarget)) {
       return;
