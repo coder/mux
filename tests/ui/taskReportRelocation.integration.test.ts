@@ -139,7 +139,8 @@ describe("Task report relocation UI", () => {
       const awaitToolName = view.getByText("task_await");
       const awaitMessageBlock = awaitToolName.closest('[data-testid="chat-message"]');
       expect(awaitMessageBlock).toBeTruthy();
-      expect(awaitMessageBlock?.textContent).toContain("Report shown above in the task card.");
+      expect(awaitMessageBlock?.textContent).toContain("task-1");
+      expect(awaitMessageBlock?.textContent).toContain("completed");
       expect(awaitMessageBlock?.textContent).not.toContain("Hello from report");
     } finally {
       if (view) {

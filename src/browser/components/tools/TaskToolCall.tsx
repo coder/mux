@@ -440,9 +440,11 @@ const TaskAwaitResult: React.FC<{
   })();
   const elapsedMs = "elapsed_ms" in result ? result.elapsed_ms : undefined;
 
+  const showDetails = suppressReport !== true;
+
   return (
     <div className="bg-code-bg rounded-sm p-2">
-      <div className="mb-1 flex flex-wrap items-center gap-2">
+      <div className={cn("flex flex-wrap items-center gap-2", showDetails && "mb-1")}>
         <TaskId id={result.taskId} />
         <TaskStatusBadge status={result.status} />
         {title && <span className="text-foreground text-[11px] font-medium">{title}</span>}
@@ -466,23 +468,17 @@ const TaskAwaitResult: React.FC<{
         )}
       </div>
 
-      {patchSummary && <div className="text-muted text-[10px]">{patchSummary}</div>}
+      {showDetails && patchSummary && <div className="text-muted text-[10px]">{patchSummary}</div>}
 
-      {!isCompleted && output && output.length > 0 && (
+      {showDetails && !isCompleted && output && output.length > 0 && (
         <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
           {output}
         </div>
       )}
 
-      {reportMarkdown && !suppressReport && (
+      {showDetails && reportMarkdown && (
         <div className="mt-2 text-[11px]">
           <MarkdownRenderer content={reportMarkdown} />
-        </div>
-      )}
-
-      {reportMarkdown && suppressReport && (
-        <div className="text-muted mt-2 text-[10px] italic">
-          Report shown above in the task card.
         </div>
       )}
 

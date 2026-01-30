@@ -15,6 +15,7 @@ import {
   createFailedTaskTool,
   createTaskApplyGitPatchTool,
   createTaskAwaitTool,
+  createTaskListTool,
   createTaskTerminateTool,
 } from "./mockFactory";
 import { userEvent, waitFor } from "@storybook/test";
@@ -25,7 +26,7 @@ export default {
 };
 
 /**
- * Full task workflow: spawn parallel tasks, then await results.
+ * Full task workflow: spawn parallel tasks, list them, await results.
  * Demonstrates retroactive report placement (reports render under the original `task` cards).
  */
 export const TaskWorkflow: AppStory = {
@@ -59,12 +60,40 @@ export const TaskWorkflow: AppStory = {
                 }),
               ],
             }),
-            // User waits for results
-            createUserMessage("u2", "Wait for all tasks to complete", { historySequence: 3 }),
-            createAssistantMessage("a2", "Both tasks have completed.", {
+            // User checks task status
+            createUserMessage("u2", "What tasks are running?", { historySequence: 3 }),
+            createAssistantMessage("a2", "Here are the active tasks:", {
               historySequence: 4,
               toolCalls: [
-                createTaskAwaitTool("tc3", {
+                createTaskListTool("tc3", {
+                  statuses: ["running", "queued"],
+                  tasks: [
+                    {
+                      taskId: "task-fe-001",
+                      status: "running",
+                      parentWorkspaceId: "ws-main",
+                      agentType: "explore",
+                      title: "Frontend analysis",
+                      depth: 0,
+                    },
+                    {
+                      taskId: "task-be-002",
+                      status: "queued",
+                      parentWorkspaceId: "ws-main",
+                      agentType: "exec",
+                      title: "Backend linting",
+                      depth: 0,
+                    },
+                  ],
+                }),
+              ],
+            }),
+            // User waits for results
+            createUserMessage("u3", "Wait for all tasks to complete", { historySequence: 5 }),
+            createAssistantMessage("a3", "Both tasks have completed.", {
+              historySequence: 6,
+              toolCalls: [
+                createTaskAwaitTool("tc4", {
                   task_ids: ["task-fe-001", "task-be-002"],
                   results: [
                     {
