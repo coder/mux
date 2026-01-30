@@ -292,7 +292,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     useWorkspaceSidebarState(workspaceId);
 
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
-  const hasStatusText = Boolean(agentStatus ?? awaitingUserQuestion ?? isWorking);
+  const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
   // Note: we intentionally render the secondary row even while the workspace is still
   // "creating" so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
