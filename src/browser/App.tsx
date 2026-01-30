@@ -105,6 +105,7 @@ function AppInner() {
 
   const {
     projects,
+    loading: projectsLoading,
     refreshProjects,
     removeProject,
     openProjectCreateModal,
@@ -170,6 +171,13 @@ function AppInner() {
   // Refs for async subscription callbacks (avoid stale closures)
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
+
+  const projectsLoadingRef = useRef(projectsLoading);
+  projectsLoadingRef.current = projectsLoading;
+
+  // When "Start New Agent" is triggered during cold start, projects may still be loading.
+  // Buffer the action and flush it once projects are available.
+  const pendingStartNewAgentRef = useRef(false);
 
   const pendingNewWorkspaceProjectRef = useRef(pendingNewWorkspaceProject);
   pendingNewWorkspaceProjectRef.current = pendingNewWorkspaceProject;
@@ -696,6 +704,11 @@ function AppInner() {
         for await (const _ of iterator) {
           if (signal.aborted) break;
 
+          if (projectsLoadingRef.current) {
+            pendingStartNewAgentRef.current = true;
+            continue;
+          }
+
           const projectPath =
             selectedWorkspaceRef.current?.projectPath ??
             pendingNewWorkspaceProjectRef.current ??
@@ -716,6 +729,25 @@ function AppInner() {
     return () => abortController.abort();
   }, [api]);
 
+  // Flush any pending menu-triggered "Start New Agent" once projects finish loading.
+  useEffect(() => {
+    if (projectsLoading) return;
+    if (!pendingStartNewAgentRef.current) return;
+
+    const projectPath =
+      selectedWorkspaceRef.current?.projectPath ??
+      pendingNewWorkspaceProjectRef.current ??
+      getFirstProjectPath(projects);
+
+    pendingStartNewAgentRef.current = false;
+
+    if (!projectPath) {
+      console.warn("No projects available for workspace creation");
+      return;
+    }
+
+    startWorkspaceCreationRef.current(projectPath);
+  }, [projectsLoading, projects]);
   // Handle workspace fork switch event
   useEffect(() => {
     const handleForkSwitch = (e: Event) => {
