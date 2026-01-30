@@ -1,7 +1,4 @@
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
-import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { getAgentIdKey, getModelKey } from "@/common/constants/storage";
 import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -10,7 +7,11 @@ import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Button } from "./ui/button";
 
-export const WorkspaceStatusIndicator = memo<{ workspaceId: string }>(({ workspaceId }) => {
+export const WorkspaceStatusIndicator = memo<{
+  workspaceId: string;
+  fallbackModel: string;
+  fallbackMode: string;
+}>(({ workspaceId, fallbackModel, fallbackMode }) => {
   const { canInterrupt, isStarting, awaitingUserQuestion, currentModel, currentMode, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
   const { workspaceMetadata } = useWorkspaceContext();
@@ -58,11 +59,8 @@ export const WorkspaceStatusIndicator = memo<{ workspaceId: string }>(({ workspa
     return null;
   }
 
-  const persistedModel = readPersistedState(getModelKey(workspaceId), getDefaultModel());
-  const persistedMode = readPersistedState(getAgentIdKey(workspaceId), "exec");
-
-  const modelToShow = canInterrupt ? (currentModel ?? persistedModel) : persistedModel;
-  const modeToShow = canInterrupt ? (currentMode ?? persistedMode) : persistedMode;
+  const modelToShow = canInterrupt ? (currentModel ?? fallbackModel) : fallbackModel;
+  const modeToShow = canInterrupt ? (currentMode ?? fallbackMode) : fallbackMode;
 
   return (
     <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
