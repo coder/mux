@@ -12,7 +12,6 @@ import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
   EXPANDED_PROJECTS_KEY,
-  getAgentIdKey,
   getDraftScopeId,
   getInputKey,
   getModelKey,
@@ -314,19 +313,10 @@ function MuxChatStatusIndicator() {
     getDefaultModel(),
     { listener: true }
   );
-  const [fallbackMode] = usePersistedState<string>(
-    getAgentIdKey(MUX_HELP_CHAT_WORKSPACE_ID),
-    "exec",
-    {
-      listener: true,
-    }
-  );
-
   return (
     <WorkspaceStatusIndicator
       workspaceId={MUX_HELP_CHAT_WORKSPACE_ID}
       fallbackModel={fallbackModel}
-      fallbackMode={fallbackMode}
     />
   );
 }
