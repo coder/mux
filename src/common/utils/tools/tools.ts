@@ -26,6 +26,8 @@ import { createMuxGlobalAgentsWriteTool } from "@/node/services/tools/mux_global
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
 import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_ranges";
 import { wrapWithInitWait } from "@/node/services/tools/wrapWithInitWait";
+import { createMemoryReadTool } from "@/node/services/tools/memory_read";
+import { createMemoryWriteTool } from "@/node/services/tools/memory_write";
 import { withHooks, type HookConfig } from "@/node/services/tools/withHooks";
 import { log } from "@/node/services/log";
 import { attachModelOnlyToolNotifications } from "@/common/utils/tools/internalToolResultFields";
@@ -313,6 +315,8 @@ export async function getToolsForModel(
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
     ...(config.enableAgentReport ? { agent_report: createAgentReportTool(config) } : {}),
+    memory_read: createMemoryReadTool(config),
+    memory_write: createMemoryWriteTool(config),
     system1_keep_ranges: createSystem1KeepRangesTool(config),
     todo_write: createTodoWriteTool(config),
     todo_read: createTodoReadTool(config),

@@ -487,10 +487,10 @@ export function TasksSection() {
     [listedAgents]
   );
 
-  const internalAgents = useMemo(
+  const system1Agents = useMemo(
     () =>
       [...listedAgents]
-        .filter((agent) => !agent.uiSelectable && !agent.subagentRunnable)
+        .filter((agent) => agent.id.startsWith("system1_"))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [listedAgents]
   );
@@ -505,7 +505,11 @@ export function TasksSection() {
   const renderAgentDefaults = (agent: AgentDefinitionDescriptor) => {
     const entry = agentAiDefaults[agent.id];
     const modelValue = entry?.modelString ?? INHERIT;
-    const thinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const rawThinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const thinkingValue =
+      modelValue !== INHERIT && rawThinkingValue !== INHERIT
+        ? enforceThinkingPolicy(modelValue, rawThinkingValue)
+        : rawThinkingValue;
     const allowedThinkingLevels =
       modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
 
@@ -620,7 +624,11 @@ export function TasksSection() {
   const renderUnknownAgentDefaults = (agentId: string) => {
     const entry = agentAiDefaults[agentId];
     const modelValue = entry?.modelString ?? INHERIT;
-    const thinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const rawThinkingValue = entry?.thinkingLevel ?? INHERIT;
+    const thinkingValue =
+      modelValue !== INHERIT && rawThinkingValue !== INHERIT
+        ? enforceThinkingPolicy(modelValue, rawThinkingValue)
+        : rawThinkingValue;
     const allowedThinkingLevels =
       modelValue !== INHERIT ? getThinkingPolicyForModel(modelValue) : ALL_THINKING_LEVELS;
 
@@ -775,10 +783,10 @@ export function TasksSection() {
         </div>
       ) : null}
 
-      {internalAgents.length > 0 ? (
+      {system1Agents.length > 0 ? (
         <div>
-          <h4 className="text-foreground mb-3 text-sm font-medium">Internal</h4>
-          <div className="space-y-4">{internalAgents.map(renderAgentDefaults)}</div>
+          <h4 className="text-foreground mb-3 text-sm font-medium">System1 Defaults (internal)</h4>
+          <div className="space-y-4">{system1Agents.map(renderAgentDefaults)}</div>
         </div>
       ) : null}
 

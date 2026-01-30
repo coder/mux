@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import {
   Settings,
   Key,
@@ -11,15 +11,15 @@ import {
   Layout,
   BrainCircuit,
 } from "lucide-react";
-import { useSettings } from "@/browser/contexts/SettingsContext";
-import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { useExperimentValue } from "@/browser/contexts/ExperimentsContext";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import { Dialog, DialogContent, DialogTitle, VisuallyHidden } from "@/browser/components/ui/dialog";
 import { GeneralSection } from "./sections/GeneralSection";
 import { TasksSection } from "./sections/TasksSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
-import { ModelsSection } from "./sections/ModelsSection";
 import { System1Section } from "./sections/System1Section";
+import { ModelsSection } from "./sections/ModelsSection";
 import { Button } from "@/browser/components/ui/button";
 import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
 import { LayoutsSection } from "./sections/LayoutsSection";
@@ -71,6 +71,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     component: ExperimentsSection,
   },
   {
+    id: "system1",
+    label: "System 1",
+    icon: <BrainCircuit className="h-4 w-4" />,
+    component: System1Section,
+  },
+  {
     id: "keybinds",
     label: "Keybinds",
     icon: <Keyboard className="h-4 w-4" />,
@@ -82,23 +88,23 @@ export function SettingsModal() {
   const { isOpen, close, activeSection, setActiveSection } = useSettings();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
 
-  React.useEffect(() => {
-    if (!system1Enabled && activeSection === "system1") {
-      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
-    }
-  }, [activeSection, setActiveSection, system1Enabled]);
-
   const sections = system1Enabled
-    ? [
-        ...BASE_SECTIONS,
-        {
-          id: "system1",
-          label: "System 1",
-          icon: <BrainCircuit className="h-4 w-4" />,
-          component: System1Section,
-        },
-      ]
-    : BASE_SECTIONS;
+    ? BASE_SECTIONS
+    : BASE_SECTIONS.filter((section) => section.id !== "system1");
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    if (system1Enabled) {
+      return;
+    }
+    if (activeSection !== "system1") {
+      return;
+    }
+
+    setActiveSection("general");
+  }, [activeSection, isOpen, setActiveSection, system1Enabled]);
 
   const currentSection = sections.find((s) => s.id === activeSection) ?? sections[0];
   const SectionComponent = currentSection.component;

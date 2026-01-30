@@ -18,6 +18,10 @@ import {
 import { decideBashOutputCompaction } from "@/node/services/system1/bashCompactionPolicy";
 import { runSystem1KeepRangesForBashOutput } from "@/node/services/system1/system1AgentRunner";
 import {
+  MemoryWriterPolicy,
+  type MemoryWriterStreamContext,
+} from "@/node/services/system1/memoryWriterPolicy";
+import {
   formatBashOutputReport,
   tryParseBashOutputReport,
 } from "@/node/services/tools/bashTaskReport";
@@ -469,6 +473,9 @@ export class AIService extends EventEmitter {
   private taskService?: TaskService;
   private extraTools?: Record<string, Tool>;
 
+  private readonly memoryWriterPolicy: MemoryWriterPolicy;
+  private readonly memoryWriterContextsByMessageId = new Map<string, MemoryWriterStreamContext>();
+
   constructor(
     config: Config,
     historyService: HistoryService,
@@ -491,6 +498,23 @@ export class AIService extends EventEmitter {
     this.backgroundProcessManager = backgroundProcessManager;
     this.sessionUsageService = sessionUsageService;
     this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
+
+    this.memoryWriterPolicy = new MemoryWriterPolicy(
+      this.config,
+      this.historyService,
+      async (modelStringToCreate, muxProviderOptions) => {
+        const created = await this.createModel(modelStringToCreate, muxProviderOptions);
+        if (!created.success) {
+          log.debug("[system1][memory] Failed to create model", {
+            modelString: modelStringToCreate,
+            error: created.error,
+          });
+          return undefined;
+        }
+
+        return created.data;
+      }
+    );
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
     this.mockModeEnabled = false;
@@ -561,11 +585,26 @@ export class AIService extends EventEmitter {
         log.warn("Failed to capture debug LLM response snapshot", { error: errMsg });
       }
 
+      try {
+        const ctx = this.memoryWriterContextsByMessageId.get(data.messageId);
+        if (ctx) {
+          this.memoryWriterContextsByMessageId.delete(data.messageId);
+          void this.memoryWriterPolicy.onAssistantStreamEnd(ctx);
+        }
+      } catch (error) {
+        log.debug("[system1][memory] Failed to schedule memory writer", {
+          workspaceId: data.workspaceId,
+          messageId: data.messageId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       this.emit("stream-end", data);
     });
 
     // Handle stream-abort: dispose of partial based on abandonPartial flag
     this.streamManager.on("stream-abort", (data: StreamAbortEvent) => {
+      this.memoryWriterContextsByMessageId.delete(data.messageId);
       void (async () => {
         if (data.abandonPartial) {
           // Caller requested discarding partial - delete without committing
@@ -585,7 +624,16 @@ export class AIService extends EventEmitter {
       })();
     });
 
-    this.streamManager.on("error", (data) => this.emit("error", data));
+    this.streamManager.on("error", (data) => {
+      if (data && typeof data === "object" && "messageId" in data) {
+        const messageId = (data as { messageId?: unknown }).messageId;
+        if (typeof messageId === "string" && messageId.length > 0) {
+          this.memoryWriterContextsByMessageId.delete(messageId);
+        }
+      }
+
+      this.emit("error", data);
+    });
     // Forward tool events
     this.streamManager.on("tool-call-start", (data) => this.emit("tool-call-start", data));
     this.streamManager.on("tool-call-delta", (data) => this.emit("tool-call-delta", data));
@@ -1158,8 +1206,6 @@ export class AIService extends EventEmitter {
     changedFileAttachments?: EditedFileAttachment[],
     postCompactionAttachments?: PostCompactionAttachment[] | null,
     experiments?: SendMessageOptions["experiments"],
-    system1Model?: string,
-    system1ThinkingLevel?: ThinkingLevel,
     disableWorkspaceAgents?: boolean,
     hasQueuedMessage?: () => boolean,
     openaiTruncationModeOverride?: "auto" | "disabled"
@@ -2242,13 +2288,65 @@ export class AIService extends EventEmitter {
               const bashOutputExecuteFn = getExecuteFnForTool(baseBashOutputTool);
               const taskAwaitExecuteFn = getExecuteFnForTool(baseTaskAwaitTool);
 
-              const system1ModelString =
-                typeof system1Model === "string" ? system1Model.trim() : "";
-              const effectiveSystem1ModelStringForThinking = system1ModelString || modelString;
+              const applyMuxGatewayToSystem1Model = (candidateModelString: string): string => {
+                const trimmedCandidate = candidateModelString.trim();
+                if (!trimmedCandidate) {
+                  return "";
+                }
+                if (trimmedCandidate.startsWith("mux-gateway:")) {
+                  return trimmedCandidate;
+                }
+
+                if (cfg.muxGatewayEnabled === false) {
+                  return trimmedCandidate;
+                }
+
+                const enabledModels = cfg.muxGatewayModels ?? [];
+                if (!enabledModels.includes(trimmedCandidate)) {
+                  return trimmedCandidate;
+                }
+
+                const colonIndex = trimmedCandidate.indexOf(":");
+                if (colonIndex === -1) {
+                  return trimmedCandidate;
+                }
+
+                const provider = trimmedCandidate.slice(0, colonIndex);
+                if (
+                  provider !== "anthropic" &&
+                  provider !== "openai" &&
+                  provider !== "google" &&
+                  provider !== "xai"
+                ) {
+                  return trimmedCandidate;
+                }
+
+                const providersConfig = this.config.loadProvidersConfig();
+                const gatewayConfig: ProviderConfig = providersConfig?.["mux-gateway"] ?? {};
+                const gatewayCreds = resolveProviderCredentials("mux-gateway", gatewayConfig);
+                if (!gatewayCreds.isConfigured || !gatewayCreds.couponCode) {
+                  return trimmedCandidate;
+                }
+
+                const model = trimmedCandidate.slice(colonIndex + 1);
+                return `mux-gateway:${provider}/${model}`;
+              };
+
+              const system1Defaults = cfg.agentAiDefaults?.system1_bash;
+              const system1ModelOverride =
+                typeof system1Defaults?.modelString === "string"
+                  ? system1Defaults.modelString.trim()
+                  : "";
+              const system1ModelCandidate = system1ModelOverride || modelString;
+              const system1ModelString = applyMuxGatewayToSystem1Model(system1ModelCandidate);
+
+              const system1ThinkingLevel = system1Defaults?.thinkingLevel ?? "off";
               const effectiveSystem1ThinkingLevel = enforceThinkingPolicy(
-                effectiveSystem1ModelStringForThinking,
-                system1ThinkingLevel ?? "off"
+                system1ModelString,
+                system1ThinkingLevel
               );
+
+              const usePrimaryModelForSystem1 = system1ModelString === modelString;
 
               let cachedSystem1Model: { modelString: string; model: LanguageModel } | undefined;
               let cachedSystem1ModelFailed = false;
@@ -2256,7 +2354,7 @@ export class AIService extends EventEmitter {
               const getSystem1ModelForStream = async (): Promise<
                 { modelString: string; model: LanguageModel } | undefined
               > => {
-                if (!system1ModelString) {
+                if (usePrimaryModelForSystem1) {
                   return { modelString, model: modelResult.data };
                 }
 
@@ -2823,6 +2921,18 @@ export class AIService extends EventEmitter {
             })()
           : tools;
 
+      this.memoryWriterContextsByMessageId.set(assistantMessageId, {
+        workspaceId,
+        messageId: assistantMessageId,
+        workspaceName: metadata.name,
+        projectPath: metadata.projectPath,
+        runtimeConfig: metadata.runtimeConfig,
+        parentWorkspaceId: metadata.parentWorkspaceId,
+        modelString,
+        muxProviderOptions: effectiveMuxProviderOptions,
+        system1Enabled: experiments?.system1 === true,
+      });
+
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
@@ -2849,6 +2959,7 @@ export class AIService extends EventEmitter {
       );
 
       if (!streamResult.success) {
+        this.memoryWriterContextsByMessageId.delete(assistantMessageId);
         // StreamManager already returns SendMessageError
         return Err(streamResult.error);
       }
@@ -2856,6 +2967,7 @@ export class AIService extends EventEmitter {
       // If we were interrupted during StreamManager startup before the stream was registered,
       // make sure we don't leave an empty assistant placeholder behind.
       if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
+        this.memoryWriterContextsByMessageId.delete(assistantMessageId);
         const deleteResult = await this.historyService.deleteMessage(
           workspaceId,
           assistantMessageId

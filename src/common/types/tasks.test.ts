@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_TASK_SETTINGS,
   SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS,
+  SYSTEM1_MEMORY_WRITER_LIMITS,
   TASK_SETTINGS_LIMITS,
   normalizeTaskSettings,
 } from "./tasks";
@@ -21,6 +22,7 @@ describe("normalizeTaskSettings", () => {
       bashOutputCompactionMinTotalBytes: 999999999999,
       bashOutputCompactionMaxKeptLines: 0,
       bashOutputCompactionTimeoutMs: 0,
+      memoryWriterIntervalMessages: 999,
     });
 
     expect(normalized.maxParallelAgentTasks).toBe(TASK_SETTINGS_LIMITS.maxParallelAgentTasks.max);
@@ -35,6 +37,10 @@ describe("normalizeTaskSettings", () => {
     expect(normalized.bashOutputCompactionMaxKeptLines).toBe(
       SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMaxKeptLines.min
     );
+
+    expect(normalized.memoryWriterIntervalMessages).toBe(
+      SYSTEM1_MEMORY_WRITER_LIMITS.memoryWriterIntervalMessages.max
+    );
     expect(normalized.bashOutputCompactionTimeoutMs).toBe(
       SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionTimeoutMs.min
     );
@@ -48,6 +54,7 @@ describe("normalizeTaskSettings", () => {
       bashOutputCompactionMinTotalBytes: Number.NaN,
       bashOutputCompactionMaxKeptLines: Number.NaN,
       bashOutputCompactionTimeoutMs: Number.NaN,
+      memoryWriterIntervalMessages: Number.NaN,
     });
 
     expect(normalized).toEqual(DEFAULT_TASK_SETTINGS);

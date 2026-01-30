@@ -900,8 +900,6 @@ export class AgentSession {
       changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
       options?.experiments,
-      options?.system1Model,
-      options?.system1ThinkingLevel,
       options?.disableWorkspaceAgents,
       () => !this.messageQueue.isEmpty(),
       openaiTruncationModeOverride

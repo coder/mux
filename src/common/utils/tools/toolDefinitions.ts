@@ -786,6 +786,30 @@ export const TOOL_DEFINITIONS = {
       "Call this exactly once when you have a final answer (after any spawned sub-tasks complete).",
     schema: AgentReportToolArgsSchema,
   },
+  memory_read: {
+    description:
+      "Internal tool used by mux to read the per-project memory file stored under ~/.mux/memories/.",
+    schema: z.object({}).strict(),
+  },
+  memory_write: {
+    description:
+      "Internal tool used by mux to update the per-project memory file stored under ~/.mux/memories/.",
+    schema: z
+      .object({
+        old_string: z
+          .string()
+          .describe("Exact text to replace (usually the full current file content)"),
+        new_string: z.string().describe("Replacement text (usually the full updated file content)"),
+        replace_count: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "Number of occurrences to replace (default: 1). Use -1 to replace all occurrences. If 1, old_string must be unique."
+          ),
+      })
+      .strict(),
+  },
   system1_keep_ranges: {
     description:
       "Internal tool used by mux to record which line ranges to keep when filtering large bash output.",
@@ -1347,6 +1371,8 @@ export function getAvailableTools(
     "task_terminate",
     "task_list",
     ...(enableAgentReport ? ["agent_report"] : []),
+    "memory_read",
+    "memory_write",
     "system1_keep_ranges",
     "todo_write",
     "todo_read",
