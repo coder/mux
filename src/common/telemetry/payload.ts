@@ -183,6 +183,34 @@ export interface MCPServerConfigChangedPayload {
   /** Only set when action=set_tool_allowlist */
   tool_allowlist_size_b2?: number;
 }
+
+export type TelemetryMCPOAuthFlowErrorCategory =
+  | "timeout"
+  | "cancelled"
+  | "state_mismatch"
+  | "provider_error"
+  | "unknown";
+
+export interface MCPOAuthFlowStartedPayload {
+  transport: TelemetryMCPServerTransport;
+  has_scope_hint: boolean;
+  has_resource_metadata_hint: boolean;
+}
+
+export interface MCPOAuthFlowCompletedPayload {
+  transport: TelemetryMCPServerTransport;
+  duration_ms_b2: number;
+  has_scope_hint: boolean;
+  has_resource_metadata_hint: boolean;
+}
+
+export interface MCPOAuthFlowFailedPayload {
+  transport: TelemetryMCPServerTransport;
+  duration_ms_b2: number;
+  has_scope_hint: boolean;
+  has_resource_metadata_hint: boolean;
+  error_category: TelemetryMCPOAuthFlowErrorCategory;
+}
 /**
  * Stats tab event - tracks when users view timing stats.
  */
@@ -336,6 +364,9 @@ export type TelemetryEventPayload =
   | { event: "mcp_context_injected"; properties: MCPContextInjectedPayload }
   | { event: "mcp_server_tested"; properties: MCPServerTestedPayload }
   | { event: "mcp_server_config_changed"; properties: MCPServerConfigChangedPayload }
+  | { event: "mcp_oauth_flow_started"; properties: MCPOAuthFlowStartedPayload }
+  | { event: "mcp_oauth_flow_completed"; properties: MCPOAuthFlowCompletedPayload }
+  | { event: "mcp_oauth_flow_failed"; properties: MCPOAuthFlowFailedPayload }
   | { event: "stats_tab_opened"; properties: StatsTabOpenedPayload }
   | { event: "stream_timing_computed"; properties: StreamTimingComputedPayload }
   | { event: "stream_timing_invalid"; properties: StreamTimingInvalidPayload }

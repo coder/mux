@@ -156,6 +156,35 @@ const MCPServerConfigChangedPropertiesSchema = z.object({
   tool_allowlist_size_b2: z.number().optional(),
 });
 
+const TelemetryMCPOAuthFlowErrorCategorySchema = z.enum([
+  "timeout",
+  "cancelled",
+  "state_mismatch",
+  "provider_error",
+  "unknown",
+]);
+
+const MCPOAuthFlowStartedPropertiesSchema = z.object({
+  transport: TelemetryMCPServerTransportSchema,
+  has_scope_hint: z.boolean(),
+  has_resource_metadata_hint: z.boolean(),
+});
+
+const MCPOAuthFlowCompletedPropertiesSchema = z.object({
+  transport: TelemetryMCPServerTransportSchema,
+  duration_ms_b2: z.number(),
+  has_scope_hint: z.boolean(),
+  has_resource_metadata_hint: z.boolean(),
+});
+
+const MCPOAuthFlowFailedPropertiesSchema = z.object({
+  transport: TelemetryMCPServerTransportSchema,
+  duration_ms_b2: z.number(),
+  has_scope_hint: z.boolean(),
+  has_resource_metadata_hint: z.boolean(),
+  error_category: TelemetryMCPOAuthFlowErrorCategorySchema,
+});
+
 const StreamCompletedPropertiesSchema = z.object({
   model: z.string(),
   wasInterrupted: z.boolean(),
@@ -233,6 +262,18 @@ export const TelemetryEventSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("mcp_server_config_changed"),
     properties: MCPServerConfigChangedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("mcp_oauth_flow_started"),
+    properties: MCPOAuthFlowStartedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("mcp_oauth_flow_completed"),
+    properties: MCPOAuthFlowCompletedPropertiesSchema,
+  }),
+  z.object({
+    event: z.literal("mcp_oauth_flow_failed"),
+    properties: MCPOAuthFlowFailedPropertiesSchema,
   }),
   z.object({
     event: z.literal("message_sent"),
