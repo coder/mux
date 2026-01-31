@@ -3,15 +3,25 @@ title: Forking Workspaces
 description: Clone workspaces with conversation history to explore alternatives
 ---
 
-Use `/fork` to clone a workspace with its full conversation history and UI state. The forked workspace gets a new workspace on a new branch (using the same backend as the current workspace).
+Use `/fork` to clone a workspace with its full conversation history and UI state. Forking creates a new workspace on a new branch (using the same backend as the current workspace).
 
-Usage:
+You can fork either:
+
+- By running `/fork` in chat
+- By clicking the **Fork** button on any completed assistant message
+
+## Usage
 
 ```
-/fork <new-workspace-name>
-
-[start-message (optional)]
+/fork [new-workspace-name]
 ```
+
+If you omit the name, mux will auto-generate one based on the current workspace:
+
+- `<name>-fork`
+- `<name>-fork-2`
+- `<name>-fork-3`
+- ...
 
 ## Use cases
 
@@ -24,7 +34,7 @@ Usage:
 The new workspace:
 
 - Appears at the top of the workspace list (most recent)
-- Uses the provided workspace name (you can rename later)
+- Uses the provided workspace name (or an auto-generated one; you can rename later)
 - Branches from the current workspace's HEAD commit
 
 **What's copied**: Conversation history, model selection, thinking level, auto-retry setting, UI mode (plan/exec), chat input text

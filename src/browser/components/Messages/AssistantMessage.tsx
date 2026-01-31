@@ -2,9 +2,19 @@ import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { useStartHere } from "@/browser/hooks/useStartHere";
 import type { DisplayedMessage } from "@/common/types/message";
 import { copyToClipboard } from "@/browser/utils/clipboard";
-import { Clipboard, ClipboardCheck, FileText, ListStart, Moon, Package } from "lucide-react";
+import {
+  Clipboard,
+  ClipboardCheck,
+  FileText,
+  GitFork,
+  ListStart,
+  Moon,
+  Package,
+} from "lucide-react";
 import { ShareMessagePopover } from "@/browser/components/ShareMessagePopover";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useAPI } from "@/browser/contexts/API";
+import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { Button } from "../ui/button";
 import React, { useState } from "react";
 import { CompactingMessageContent } from "./CompactingMessageContent";
@@ -31,6 +41,8 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
   clipboardWriteText = copyToClipboard,
 }) => {
   const [showRaw, setShowRaw] = useState(false);
+  const { api } = useAPI();
+  const [isForking, setIsForking] = useState(false);
   const workspaceContext = useOptionalWorkspaceContext();
 
   // Get workspace name from context for share filename
@@ -74,6 +86,34 @@ export const AssistantMessage: React.FC<AssistantMessageProps> = ({
       disabled: startHereDisabled,
       tooltip: "Replace all chat history with this message",
       icon: <ListStart />,
+    });
+    buttons.push({
+      label: "Fork",
+      onClick: () => {
+        if (!api || !workspaceId) return;
+
+        setIsForking(true);
+
+        void forkWorkspace({
+          client: api,
+          sourceWorkspaceId: workspaceId,
+        })
+          .then((result) => {
+            if (!result.success) {
+              console.error("Failed to fork workspace:", result.error);
+            }
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error("Failed to fork workspace:", message);
+          })
+          .finally(() => {
+            setIsForking(false);
+          });
+      },
+      disabled: !api || !workspaceId || isForking,
+      tooltip: "Fork workspace into a new workspace",
+      icon: <GitFork />,
     });
     buttons.push({
       label: "Share",
