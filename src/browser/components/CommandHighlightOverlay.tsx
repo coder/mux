@@ -42,9 +42,9 @@ interface CommandPrefixTextProps {
 
 /**
  * Shared styling for command prefix text (e.g., "/compact" or "/skill-name").
- * Used in both the chat input overlay and sent message display.
+ * Used in the chat input highlight and sent message display.
  *
- * Font-family is inherited by default. When used outside of VimTextArea
+ * Font-family is inherited by default. When used outside of RichTextInput
  * (e.g., in UserMessageContent), pass className="font-mono" explicitly.
  */
 export const CommandPrefixText: React.FC<CommandPrefixTextProps> = (props) => (
