@@ -20,7 +20,9 @@ function formatError(error: unknown): string {
  */
 function buildSkillReadDescription(config: ToolConfiguration): string {
   const baseDescription = TOOL_DEFINITIONS.agent_skill_read.description;
-  const skills = config.availableSkills ?? [];
+  // Filter out unadvertised skills from the tool description.
+  // Unadvertised skills can still be invoked via /skill-name or agent_skill_read.
+  const skills = (config.availableSkills ?? []).filter((s) => s.advertise !== false);
 
   if (skills.length === 0) {
     return baseDescription;

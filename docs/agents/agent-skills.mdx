@@ -12,7 +12,19 @@ Mux follows the Agent Skills specification and exposes skills to models in two s
 1. **Index in the system prompt**: Mux lists available skills (name + description).
 2. **Tool-based loading**: the agent calls tools to load a full skill when needed.
 
-This keeps the system prompt small while still making skills discoverable.
+Skills help you practice progressive disclosure, where the LLM sees only the necessary context to complete
+the task at hand.
+
+The easiest way to invoke a skill in Mux is to use the `/<skill-name>` slash command. For example:
+`/mux-docs suggest tool hooks for this project`.
+
+You can find a list of community-maintained, curated skills at [skills.sh](https://skills.sh/).
+
+You can easily add those skills to your Mux instance with:
+
+```bash
+npx skills add https://github.com/anthropics/skills --skill frontend-design
+```
 
 ## Where skills live
 
@@ -58,54 +70,116 @@ Optional fields:
 - `license`
 - `compatibility`
 - `metadata` (string key/value map)
+- `advertise` (boolean) — set to `false` to omit a skill from the system prompt index (see [Unadvertised skills](#unadvertised-skills) below)
 
 Mux ignores unknown frontmatter keys (for example `allowed-tools`).
 
-Example:
+## Unadvertised skills
+
+By default, Mux _advertises_ skills by listing them in the system prompt’s `<agent-skills>` index.
+
+Set `advertise: false` in the frontmatter to exclude a skill from that index. Unadvertised skills:
+
+- **Are not listed** in the system prompt (reducing token overhead)
+- **Can still be invoked** via `/{skill-name}` slash command or `agent_skill_read({ name: "skill-name" })`
+- **Still appear** in Mux’s UI lists (for example `/` slash suggestions)
+- **Are useful for**: skills meant only for sub-agents, advanced users, or internal orchestration
+
+### Example: `deep-review` skill
+
+The Mux repository includes an unadvertised `deep-review` skill that encourages aggressive use of sub-agents to produce excellent code reviews (correctness, tests, consistency, UX, performance). Invoke it with `/deep-review` when you want a thorough, parallelized review. This skill is defined in `.mux/skills/deep-review/SKILL.md`.
+
+{/* BEGIN DEEP_REVIEW_SKILL */}
 
 ```md
 ---
-name: my-skill
-description: Build and validate a release branch.
-license: MIT
-metadata:
-  owner: platform
+name: deep-review
+description: Sub-agent powered code reviews spanning correctness, tests, consistency, and fit
+advertise: false
 ---
 
-# My Skill
+# Deep Review Mode
 
-1. Do the thing...
+Provide an **excellent code review** by defaulting to **parallelism**.
+
+You should use sub-agents to review the change from multiple angles (correctness, tests, consistency, UX, performance, safety). Each sub-agent should have a focused mandate and return actionable findings with file paths.
+
+## Step 0: Establish the review surface
+
+Before reviewing, gather context:
+
+- Identify the change scope: `git diff --name-only` (or the file list the user provides).
+- Skim the diff for intent and risk: `git diff`.
+- Note which layers are touched:
+  - UI (React/components/styles)
+  - Main process / backend services
+  - IPC boundary / shared types
+  - Tooling/scripts
+  - Docs
+  - Tests
+
+If the change is large, split review by module and prioritize **high-risk** paths.
+
+## Spawn the right sub-agents (change-type aware)
+
+Spawn **2–5** sub-agents depending on scope. Tailor them to the change.
+
+### Suggested sub-agent set
+
+- **Correctness & edge cases** (always)
+  - Goal: find logic bugs, missing error handling, race conditions, broken invariants.
+- **Tests & verification** (always)
+  - Goal: evaluate test coverage, propose missing tests, suggest commands to validate.
+- **Consistency & architecture** (usually)
+  - Goal: ensure changes match existing patterns, abstractions, and boundaries.
+- **UX & accessibility** (when UI changed)
+  - Goal: keyboard flows, a11y, visual consistency, empty/loading/error states.
+- **Performance & reliability** (when hot paths / streaming / IO changed)
+  - Goal: latency, unnecessary work, blocking calls, memory growth, resilience.
+- **Docs & developer experience** (when docs/scripts/public API changed)
+  - Goal: clarity, correctness, navigation updates, link integrity.
+
+## Synthesize into a single excellent review
+
+When sub-agent results arrive, produce a consolidated review with:
+
+1. **Summary** (what changed + overall risk)
+2. **Issues**
+3. **Questions** (unknown intent; ask for clarification)
+4. **Suggested validation plan** (commands + manual checks)
+
+Issues should have a severity in form of:
+
+| Severity | Description                              | Example                                                                                       |
+| -------- | ---------------------------------------- | --------------------------------------------------------------------------------------------- |
+| P0       | Change must not be merged until resolved | Change would permanently break core workflows if merged.                                      |
+| P1       | Change should not be merged              | New code will not work as expected due to severe bugs                                         |
+| P2       | Consideration required before merging    | The change creates inconsistency / fragility                                                  |
+| P3       | Minor issue                              | The change introduces a minor issue that may be addressed later                               |
+| P4       | Long-term issue                          | The change raises concerns about long-term maintainability or may break under rare conditions |
+
+### Review rubric
+
+Use this rubric to avoid blind spots:
+
+- **Correctness**: invariants, edge cases, error handling, races
+- **Fitness**: does it meet the user goal, and does it match product constraints?
+- **Tests**: coverage of new logic, regression tests, deterministic behavior
+- **Consistency**: patterns, naming, types, boundaries, IPC typing
+- **Maintainability**: complexity, duplication, readability
+- **Performance**: hot paths, streaming, excessive re-renders/IO
+- **Safety**: secrets, path traversal, injection risks, filesystem safety
+- **DX**: logs, error messages, debuggability
+
+## Anti-patterns
+
+- **Single-threaded review** of a large change (spawn sub-agents).
+- **Vague feedback** (“looks good”) without actionable items and file paths.
+- **Non-verifiable suggestions** (always include a validation plan).
+- **Scope creep** disguised as review (focus on minimal changes unless risk demands more).
 ```
 
-## Using skills in Mux
-
-Mux injects an `<agent-skills>` block into the system prompt listing the available skills.
-
-You can apply a skill in two ways:
-
-- **Explicit (slash command)**: type `/{skill-name}` (optionally followed by a message: `/{skill-name} ...`) in the chat input. Mux will send your message normally (or a small default message if you omit one), and persist a synthetic snapshot of the skill body in history immediately before that message.
-  - Example: `/init` runs the built-in `init` skill to bootstrap `AGENTS.md`. You can override it with `~/.mux/skills/init/SKILL.md` (or `.mux/skills/init/SKILL.md` for a single project).
-  - Type `/` to see skills in the suggestions list.
-- **Agent-initiated (tool call)**: the agent can load skills on-demand.
-
-To load a skill, the agent calls:
-
-```ts
-agent_skill_read({ name: "my-skill" });
-```
-
-If your skill references additional files (cheatsheets, templates, etc.), the agent can read them with:
-
-```ts
-agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
-```
-
-`agent_skill_read_file` supports `offset` / `limit` (like `file_read`) and rejects absolute paths and `..` traversal.
-
-<Info>
-  `agent_skill_read_file` uses the same output limits as `file_read` (roughly 16KB per call,
-  numbered lines). Files are limited to 1MB. Read large files in chunks with `offset`/`limit`.
-</Info>
+{/* END DEEP_REVIEW_SKILL */}
 
 ## Current limitations
 
@@ -126,3 +200,7 @@ agent_skill_read_file({ name: "my-skill", filePath: "references/template.md" });
 - [Integrate skills into your agent](https://agentskills.io/integrate-skills) (tool-based vs filesystem-based)
 - [Example skills (GitHub)](https://github.com/anthropics/skills)
 - [skills-ref validation library (GitHub)](https://github.com/agentskills/agentskills/tree/main/skills-ref)
+
+```
+
+```

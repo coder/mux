@@ -57,6 +57,7 @@ export function getBuiltInSkillDescriptors(): AgentSkillDescriptor[] {
     name: pkg.frontmatter.name,
     description: pkg.frontmatter.description,
     scope: pkg.scope,
+    advertise: pkg.frontmatter.advertise,
   }));
 }
 

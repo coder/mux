@@ -38,6 +38,7 @@ describe("agentSkillsService", () => {
     const skills = await discoverAgentSkills(runtime, project.path, { roots });
 
     // Should include project/global skills plus built-in skills
+    // Note: deep-review skill is a project skill in the Mux repo, not a built-in
     expect(skills.map((s) => s.name)).toEqual(["bar", "foo", "init", "mux-docs"]);
 
     const foo = skills.find((s) => s.name === "foo");

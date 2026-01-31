@@ -135,6 +135,31 @@ const ALL_SKILLS: AgentSkillDescriptor[] = [
   },
 ];
 
+const SKILLS_WITH_UNADVERTISED: AgentSkillDescriptor[] = [
+  {
+    name: "pull-requests",
+    description: "Guidelines for creating and managing Pull Requests in this repo",
+    scope: "project",
+  },
+  {
+    name: "deep-review",
+    description: "Sub-agent powered code reviews spanning correctness, tests, consistency, and fit",
+    scope: "project",
+    advertise: false,
+  },
+  {
+    name: "internal-debug",
+    description: "Internal debugging utilities (not advertised in system prompt)",
+    scope: "global",
+    advertise: false,
+  },
+  {
+    name: "init",
+    description: "Bootstrap an AGENTS.md file in a new or existing project",
+    scope: "built-in",
+  },
+];
+
 /** Shows the SkillIndicator popover with all skill scopes (project, global, built-in) */
 export const SkillIndicator_AllScopes: AppStory = {
   render: () => (
@@ -170,6 +195,52 @@ export const SkillIndicator_AllScopes: AppStory = {
       () => {
         const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
         if (!popover) throw new Error("Popover not visible");
+      },
+      { timeout: 3000 }
+    );
+
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+/** Shows unadvertised skills (advertise: false) with EyeOff icon in the popover */
+export const SkillIndicator_UnadvertisedSkills: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skill-indicator-unadvertised",
+          messages: [],
+          agentSkills: SKILLS_WITH_UNADVERTISED,
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    const doc = canvasElement.ownerDocument;
+    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
+    await waitFor(
+      () => {
+        const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
+        if (!skillButton) throw new Error("Skill indicator not found");
+      },
+      { timeout: 5000 }
+    );
+
+    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
+    await userEvent.hover(skillButton);
+
+    // Wait for popover to appear with EyeOff icons for unadvertised skills
+    await waitFor(
+      () => {
+        const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
+        if (!popover) throw new Error("Popover not visible");
+        // Verify EyeOff icon is present (aria-label for unadvertised skills)
+        const eyeOffIcon = popover.querySelector('[aria-label="Not advertised in system prompt"]');
+        if (!eyeOffIcon) throw new Error("EyeOff icon not found for unadvertised skill");
       },
       { timeout: 3000 }
     );

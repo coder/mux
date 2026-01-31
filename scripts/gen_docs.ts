@@ -16,16 +16,10 @@ import * as path from "path";
 import * as yaml from "yaml";
 import * as prettier from "prettier";
 import { KNOWN_MODELS, DEFAULT_MODEL } from "../src/common/constants/knownModels";
-import {
-  buildCompactionPrompt,
-  DEFAULT_COMPACTION_WORD_TARGET,
-} from "../src/common/constants/ui";
+import { buildCompactionPrompt, DEFAULT_COMPACTION_WORD_TARGET } from "../src/common/constants/ui";
 import { formatModelDisplayName } from "../src/common/utils/ai/modelDisplay";
 import { AgentDefinitionFrontmatterSchema } from "../src/common/orpc/schemas/agentDefinition";
-import {
-  PROVIDER_ENV_VARS,
-  AZURE_OPENAI_ENV_VARS,
-} from "../src/node/utils/providerRequirements";
+import { PROVIDER_ENV_VARS, AZURE_OPENAI_ENV_VARS } from "../src/node/utils/providerRequirements";
 
 const MODE = process.argv[2] === "check" ? "check" : "write";
 const DOCS_DIR = path.join(import.meta.dir, "..", "docs");
@@ -308,7 +302,6 @@ function generateCompactionUserPromptBlock(): string {
   return "```text\n" + prompt.trim() + "\n```";
 }
 
-
 async function syncCompactionCustomizationDocs(): Promise<boolean> {
   // These markers live in the same file, so they must be updated sequentially.
   const systemPromptResult = await syncCompactAgentSystemPrompt();
@@ -323,7 +316,6 @@ async function syncCompactionUserPrompt(): Promise<boolean> {
     generateBlock: generateCompactionUserPromptBlock,
   });
 }
-
 
 // ---------------------------------------------------------------------------
 // User notify tool docs sync
@@ -415,26 +407,32 @@ function generateProviderEnvVarsBlock(): string {
 
     if (vars.baseUrl?.length) {
       lines.push(
-        `| ${displayName.padEnd(12)} | \`${vars.baseUrl[0]}\``.padEnd(42) + " | Custom API endpoint |"
+        `| ${displayName.padEnd(12)} | \`${vars.baseUrl[0]}\``.padEnd(42) +
+          " | Custom API endpoint |"
       );
     }
     if (vars.organization?.length) {
       lines.push(
-        `| ${displayName.padEnd(12)} | \`${vars.organization[0]}\``.padEnd(42) + " | Organization ID     |"
+        `| ${displayName.padEnd(12)} | \`${vars.organization[0]}\``.padEnd(42) +
+          " | Organization ID     |"
       );
     }
   }
 
   // Azure OpenAI (special case)
-  lines.push(`| Azure OpenAI | \`${AZURE_OPENAI_ENV_VARS.apiKey}\``.padEnd(42) + " | API key             |");
+  lines.push(
+    `| Azure OpenAI | \`${AZURE_OPENAI_ENV_VARS.apiKey}\``.padEnd(42) + " | API key             |"
+  );
   lines.push(
     `| Azure OpenAI | \`${AZURE_OPENAI_ENV_VARS.endpoint}\``.padEnd(42) + " | Endpoint URL        |"
   );
   lines.push(
-    `| Azure OpenAI | \`${AZURE_OPENAI_ENV_VARS.deployment}\``.padEnd(42) + " | Deployment name     |"
+    `| Azure OpenAI | \`${AZURE_OPENAI_ENV_VARS.deployment}\``.padEnd(42) +
+      " | Deployment name     |"
   );
   lines.push(
-    `| Azure OpenAI | \`${AZURE_OPENAI_ENV_VARS.apiVersion}\``.padEnd(42) + " | API version         |"
+    `| Azure OpenAI | \`${AZURE_OPENAI_ENV_VARS.apiVersion}\``.padEnd(42) +
+      " | API version         |"
   );
 
   lines.push("");
@@ -459,13 +457,7 @@ async function syncProviderEnvVars(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 function generateAutoLabelWorkflowBlock(): string {
-  const workflowPath = path.join(
-    import.meta.dir,
-    "..",
-    ".github",
-    "workflows",
-    "auto-label.yml"
-  );
+  const workflowPath = path.join(import.meta.dir, "..", ".github", "workflows", "auto-label.yml");
   const content = fs.readFileSync(workflowPath, "utf-8");
   return "```yaml\n" + content.trim() + "\n```";
 }
@@ -476,6 +468,26 @@ async function syncAutoLabelWorkflow(): Promise<boolean> {
     sourceLabel: ".github/workflows/auto-label.yml",
     markerName: "AUTO_LABEL_WORKFLOW",
     generateBlock: generateAutoLabelWorkflowBlock,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Deep review skill sync
+// ---------------------------------------------------------------------------
+
+function generateDeepReviewSkillBlock(): string {
+  const skillPath = path.join(import.meta.dir, "..", ".mux", "skills", "deep-review", "SKILL.md");
+  const content = fs.readFileSync(skillPath, "utf-8");
+  // Use 5 backticks to wrap the skill content since it may contain nested code blocks with 3 backticks.
+  return "`````md\n" + content.trim() + "\n`````";
+}
+
+async function syncDeepReviewSkill(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "agents/agent-skills.mdx",
+    sourceLabel: ".mux/skills/deep-review/SKILL.md",
+    markerName: "DEEP_REVIEW_SKILL",
+    generateBlock: generateDeepReviewSkillBlock,
   });
 }
 
@@ -492,6 +504,7 @@ async function main(): Promise<void> {
     syncNotifyDocs(),
     syncProviderEnvVars(),
     syncAutoLabelWorkflow(),
+    syncDeepReviewSkill(),
   ]);
 
   if (results.some((r) => !r)) {

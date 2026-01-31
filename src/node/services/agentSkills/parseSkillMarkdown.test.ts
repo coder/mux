@@ -47,6 +47,27 @@ Body
     expect(result.frontmatter.description).toBe("Hello");
   });
 
+  test("parses advertise field in frontmatter", () => {
+    const content = `---
+name: internal-skill
+description: An internal skill not shown in the index
+advertise: false
+---
+Body
+`;
+
+    const directoryName = SkillNameSchema.parse("internal-skill");
+
+    const result = parseSkillMarkdown({
+      content,
+      byteSize: Buffer.byteLength(content, "utf-8"),
+      directoryName,
+    });
+
+    expect(result.frontmatter.name).toBe("internal-skill");
+    expect(result.frontmatter.advertise).toBe(false);
+  });
+
   test("throws on missing frontmatter", () => {
     const content = "# No frontmatter\n";
     expect(() =>

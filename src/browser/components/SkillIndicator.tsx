@@ -1,5 +1,5 @@
 import React from "react";
-import { Check } from "lucide-react";
+import { Check, EyeOff } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SkillIcon } from "@/browser/components/icons/SkillIcon";
 import { HoverClickPopover } from "@/browser/components/ui/hover-click-popover";
@@ -49,6 +49,7 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
             </div>
             {skills.map((skill) => {
               const isLoaded = loadedSkillNames.has(skill.name);
+              const isUnadvertised = skill.advertise === false;
               return (
                 <div key={skill.name} className="flex items-start gap-2">
                   <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
@@ -60,6 +61,12 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
                       )}
                     >
                       {skill.name}
+                      {isUnadvertised && (
+                        <EyeOff
+                          className="text-muted-foreground ml-1 inline h-3 w-3"
+                          aria-label="Not advertised in system prompt"
+                        />
+                      )}
                       {isLoaded && <Check className="text-success ml-1 inline h-3 w-3" />}
                     </span>
                     <span className="text-muted-foreground text-[11px] leading-snug">
