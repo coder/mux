@@ -381,7 +381,16 @@ export const TaskTranscriptViewer: AppStory = {
 
     // Find the transcript button associated with our specific task.
     // The app may render multiple tasks (and multiple "View transcript" buttons).
-    const taskIdButton = await canvas.findByRole("button", { name: taskId });
+    const taskIdButton = await waitFor(
+      () => {
+        const button = canvas.queryByRole("button", { name: taskId });
+        if (!button) {
+          throw new Error(`Task id button not rendered yet: ${taskId}`);
+        }
+        return button;
+      },
+      { timeout: 5_000 }
+    );
 
     let viewTranscriptButton: HTMLElement | null = null;
     let searchNode: HTMLElement | null = taskIdButton;
