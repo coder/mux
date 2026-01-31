@@ -12,7 +12,7 @@ import {
   CACHE_CONFIG,
   type CachedFileContent,
 } from "./fileContentCache";
-import type { FileContentsResult } from "./fileExplorer";
+import type { FileContentsResult } from "@/extensions/explorer/fileExplorer";
 
 describe("fileContentCache", () => {
   // Store original config values

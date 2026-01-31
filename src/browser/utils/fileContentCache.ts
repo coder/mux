@@ -4,7 +4,7 @@
  */
 
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import type { FileContentsResult } from "./fileExplorer";
+import type { FileContentsResult } from "@/extensions/explorer/fileExplorer";
 
 /** Prefix for individual file entries */
 const ENTRY_PREFIX = "explorer:file:";

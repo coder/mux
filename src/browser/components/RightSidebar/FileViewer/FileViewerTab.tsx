@@ -17,7 +17,7 @@ import {
   processFileContents,
   EXIT_CODE_TOO_LARGE,
   type FileContentsResult,
-} from "@/browser/utils/fileExplorer";
+} from "@/extensions/explorer/fileExplorer";
 import {
   getCachedFileContent,
   setCachedFileContent,

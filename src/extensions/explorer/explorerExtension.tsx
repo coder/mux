@@ -1,10 +1,10 @@
 import React from "react";
 import type { ExtensionModule } from "@/extensions/api/ExtensionModule";
-import { ExplorerTab } from "@/browser/components/RightSidebar/ExplorerTab";
+import { ExplorerTab } from "@/extensions/explorer/browser/ExplorerTab";
 import { ExplorerTabLabel } from "@/browser/components/RightSidebar/tabs";
 
-export const rightSidebarTabsBuiltinExtension: ExtensionModule = {
-  id: "builtin:rightSidebarTabs",
+export const explorerExtension: ExtensionModule = {
+  id: "mux.explorer",
   activate(ctx) {
     ctx.contribute.rightSidebar.registerTab({
       id: "explorer",

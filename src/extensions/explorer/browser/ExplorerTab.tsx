@@ -23,10 +23,10 @@ import {
   FolderOpen,
   RefreshCw,
 } from "lucide-react";
-import { FileIcon } from "../FileIcon";
+import { FileIcon } from "@/browser/components/FileIcon";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { cn } from "@/common/lib/utils";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import {
   validateRelativePath,
   buildListDirScript,
@@ -36,7 +36,7 @@ import {
   parseGitStatus,
   parseGitCheckIgnoreOutput,
   type GitStatusResult,
-} from "@/browser/utils/fileExplorer";
+} from "@/extensions/explorer/fileExplorer";
 
 interface ExplorerTabProps {
   workspaceId: string;

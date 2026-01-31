@@ -2,16 +2,12 @@ import type { HostApi } from "@/extensions/api/HostApi";
 import { createExtensionContext } from "@/extensions/api/createExtensionContext";
 import type { ExtensionModule } from "@/extensions/api/ExtensionModule";
 import type { ExtensionRegistry } from "@/extensions/registry/ExtensionRegistry";
-import { rightSidebarTabsBuiltinExtension } from "@/extensions/builtin/rightSidebarTabsBuiltinExtension";
+import { explorerExtension } from "@/extensions/explorer/explorerExtension";
 import { reviewExtension } from "@/extensions/review/reviewExtension";
 import { metricsExtension } from "@/extensions/metrics/metricsExtension";
 
 export function loadBuiltinExtensions(registry: ExtensionRegistry, hostApi: HostApi): void {
-  const builtins: ExtensionModule[] = [
-    rightSidebarTabsBuiltinExtension,
-    reviewExtension,
-    metricsExtension,
-  ];
+  const builtins: ExtensionModule[] = [explorerExtension, reviewExtension, metricsExtension];
 
   for (const ext of builtins) {
     try {
