@@ -1202,14 +1202,26 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       lastHoverLineIndexRef.current = null;
       delete el.dataset.visible;
       delete el.dataset.lineIndex;
+
+      // A hidden-but-transformed absolutely-positioned element can still affect
+      // scroll extents in some layouts. Ensure it's fully removed from layout.
+      el.style.display = "none";
+      el.style.transform = "";
+      el.style.width = "";
+      el.style.height = "";
     };
 
     const getClosestHTMLElement = (
       target: EventTarget | null,
       selector: string
     ): HTMLElement | null => {
-      if (!(target instanceof Element)) return null;
-      const el = target.closest(selector);
+      // `e.target` can be a Text node when hovering the +/- character.
+      const startEl =
+        target instanceof Element ? target : ((target as Node | null)?.parentElement ?? null);
+
+      if (!startEl) return null;
+
+      const el = startEl.closest(selector);
       return el instanceof HTMLElement ? el : null;
     };
 
@@ -1231,6 +1243,9 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
       const x = indicatorRect.left - gridRect.left;
       const y = indicatorRect.top - gridRect.top;
+
+      // Keep hidden buttons out of layout to avoid accidental scroll extents.
+      buttonEl.style.display = "flex";
 
       buttonEl.dataset.lineIndex = String(lineIndex);
       buttonEl.style.transform = `translate(${x}px, ${y}px)`;
@@ -1409,6 +1424,7 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             type="button"
             data-review-comment-button={true}
             data-diff-indicator={true}
+            style={{ display: "none" }}
             className="pointer-events-none absolute top-0 left-0 z-10 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity hover:text-[var(--color-review-accent)] active:scale-90 data-[visible=true]:pointer-events-auto data-[visible=true]:opacity-100"
             title={"Add review comment\n(Shift-click or drag to select range)"}
             aria-label="Add review comment"
