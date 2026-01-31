@@ -91,6 +91,10 @@ export function isElectronLaunchArg(
 ): boolean {
   if (!env.isElectron) return false;
 
+  // In packaged Electron, Windows/Linux deep links are passed in argv.
+  // Treat them as desktop launch args instead of unknown CLI subcommands.
+  if (subcommand?.startsWith("mux://") === true) return true;
+
   if (env.isPackagedElectron) {
     // In packaged: flags that aren't CLI flags should launch desktop
     return Boolean(
