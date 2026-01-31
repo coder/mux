@@ -1291,32 +1291,13 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
     const handleGridMouseOver: React.MouseEventHandler<HTMLDivElement> = (e) => {
       if (!onReviewNote) return;
-      if (!isDragging) return;
-
-      const indicatorEl = getClosestHTMLElement(e.target, "[data-diff-indicator]");
-      if (!indicatorEl) return;
-
-      const lineIndex = getLineIndexFromElement(indicatorEl);
-      if (lineIndex === null) return;
-
-      if (lastDragLineIndexRef.current === lineIndex) return;
-      lastDragLineIndexRef.current = lineIndex;
-
-      updateDragSelection(lineIndex);
-    };
-
-    const handleGridMouseMove: React.MouseEventHandler<HTMLDivElement> = (e) => {
-      if (!onReviewNote) return;
-
-      // Hide during selection/drag; showing the button here adds noise and can flicker.
-      if (selection || isDragging) {
-        hideReviewButton();
-        return;
-      }
 
       const indicatorEl = getClosestHTMLElement(e.target, "[data-diff-indicator]");
       if (!indicatorEl) {
-        hideReviewButton();
+        // Leaving the indicator column should immediately clear the affordance.
+        if (lastHoverLineIndexRef.current !== null) {
+          hideReviewButton();
+        }
         return;
       }
 
@@ -1326,6 +1307,24 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         return;
       }
 
+      // Drag-to-select: update range on hover of new indicators.
+      if (isDragging) {
+        hideReviewButton();
+
+        if (lastDragLineIndexRef.current === lineIndex) return;
+        lastDragLineIndexRef.current = lineIndex;
+
+        updateDragSelection(lineIndex);
+        return;
+      }
+
+      // While composing a note, keep the hover button hidden.
+      if (selection) {
+        hideReviewButton();
+        return;
+      }
+
+      // Show on mouseover (not mousemove) so it appears immediately on entry.
       if (lastHoverLineIndexRef.current === lineIndex) return;
       lastHoverLineIndexRef.current = lineIndex;
 
@@ -1362,7 +1361,6 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         contentProps={{
           onMouseDown: handleGridMouseDown,
           onMouseOver: handleGridMouseOver,
-          onMouseMove: handleGridMouseMove,
           onMouseLeave: hideReviewButton,
         }}
       >
