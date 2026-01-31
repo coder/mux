@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { createServer } from "http";
 
 import { MCPServerManager } from "./mcpServerManager";
 import type { MCPConfigService } from "./mcpConfigService";
@@ -425,5 +426,49 @@ describe("MCPServerManager", () => {
     // Tool names are normalized to provider-safe keys (lowercase + underscore-delimited).
     expect(Object.keys(toolsResult.tools)).toContain("servera_tool");
     expect(Object.keys(toolsResult.tools)).not.toContain("serverb_tool");
+  });
+
+  test("test() includes oauthChallenge when server responds 401 + WWW-Authenticate Bearer", async () => {
+    let baseUrl = "";
+    let resourceMetadataUrl = "";
+
+    const server = createServer((_req, res) => {
+      res.statusCode = 401;
+      res.setHeader(
+        "WWW-Authenticate",
+        `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`
+      );
+      res.end("Unauthorized");
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind OAuth challenge test server");
+      }
+
+      baseUrl = `http://127.0.0.1:${address.port}/`;
+      resourceMetadataUrl = `${baseUrl}.well-known/oauth-protected-resource`;
+
+      const result = await manager.test({
+        projectPath: "/tmp/project",
+        transport: "http",
+        url: baseUrl,
+      });
+
+      expect(result.success).toBe(false);
+      if (result.success) {
+        throw new Error("Expected test() to fail");
+      }
+
+      expect(result.oauthChallenge).toEqual({
+        scope: "mcp.read",
+        resourceMetadataUrl,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

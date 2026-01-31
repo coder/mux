@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { createServer } from "http";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -151,13 +152,25 @@ describe("McpOauthService store", () => {
 describe("parseBearerWwwAuthenticate", () => {
   test("extracts scope and resource_metadata", () => {
     const header =
-      'Bearer realm="example", scope="mcp.read mcp.write", resource_metadata="https://example.com/.well-known/oauth-authorization-server"';
+      'Bearer realm="example", scope="mcp.read mcp.write", resource_metadata="https://example.com/.well-known/oauth-protected-resource"';
 
     const challenge = parseBearerWwwAuthenticate(header);
     expect(challenge).not.toBeNull();
     expect(challenge?.scope).toBe("mcp.read mcp.write");
     expect(challenge?.resourceMetadataUrl?.toString()).toBe(
-      "https://example.com/.well-known/oauth-authorization-server"
+      "https://example.com/.well-known/oauth-protected-resource"
+    );
+  });
+
+  test("extracts unquoted scope and resource_metadata", () => {
+    const header =
+      "Bearer scope=mcp.read resource_metadata=http://example.com/.well-known/oauth-protected-resource";
+
+    const challenge = parseBearerWwwAuthenticate(header);
+    expect(challenge).not.toBeNull();
+    expect(challenge?.scope).toBe("mcp.read");
+    expect(challenge?.resourceMetadataUrl?.toString()).toBe(
+      "http://example.com/.well-known/oauth-protected-resource"
     );
   });
 
@@ -172,5 +185,126 @@ describe("parseBearerWwwAuthenticate", () => {
     expect(challenge).not.toBeNull();
     expect(challenge?.scope).toBe("mcp.read");
     expect(challenge?.resourceMetadataUrl).toBeUndefined();
+  });
+});
+
+describe("McpOauthService.startDesktopFlow", () => {
+  let muxHome: string;
+  let projectPath: string;
+  let config: Config;
+  let mcpConfigService: MCPConfigService;
+  let service: McpOauthService;
+
+  beforeEach(async () => {
+    muxHome = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-flow-home-"));
+    projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-flow-project-"));
+
+    config = new Config(muxHome);
+    mcpConfigService = new MCPConfigService();
+    service = new McpOauthService(config, mcpConfigService);
+  });
+
+  afterEach(async () => {
+    await service.dispose();
+    await fs.rm(muxHome, { recursive: true, force: true });
+    await fs.rm(projectPath, { recursive: true, force: true });
+  });
+
+  test("generates an authorizeUrl with PKCE S256 + RFC 8707 resource", async () => {
+    let baseUrl = "";
+    let resourceMetadataUrl = "";
+
+    const server = createServer((req, res) => {
+      void (async () => {
+        const pathname = (req.url ?? "/").split("?")[0];
+
+        if (pathname === "/.well-known/oauth-protected-resource") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              resource: baseUrl,
+              authorization_servers: [baseUrl],
+            })
+          );
+          return;
+        }
+
+        if (pathname === "/.well-known/oauth-authorization-server") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              issuer: baseUrl,
+              authorization_endpoint: `${baseUrl}authorize`,
+              token_endpoint: `${baseUrl}token`,
+              registration_endpoint: `${baseUrl}register`,
+              response_types_supported: ["code"],
+              code_challenge_methods_supported: ["S256"],
+            })
+          );
+          return;
+        }
+
+        if (pathname === "/register") {
+          let raw = "";
+          for await (const chunk of req) {
+            raw += Buffer.from(chunk as Uint8Array).toString("utf-8");
+          }
+
+          const clientMetadata = JSON.parse(raw) as Record<string, unknown>;
+
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ...clientMetadata,
+              client_id: "test-client-id",
+            })
+          );
+          return;
+        }
+
+        // Default: act like an MCP server requiring OAuth.
+        res.statusCode = 401;
+        res.setHeader(
+          "WWW-Authenticate",
+          `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`
+        );
+        res.end("Unauthorized");
+      })();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind OAuth test server");
+      }
+
+      baseUrl = `http://127.0.0.1:${address.port}/`;
+      resourceMetadataUrl = `${baseUrl}.well-known/oauth-protected-resource`;
+
+      const serverName = "oauth-server";
+
+      const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+        transport: "http",
+        url: baseUrl,
+      });
+      expect(addResult).toEqual({ success: true, data: undefined });
+
+      const startResult = await service.startDesktopFlow({ projectPath, serverName });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) {
+        throw new Error(startResult.error);
+      }
+
+      const authorizeUrl = new URL(startResult.data.authorizeUrl);
+      expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
+      expect(authorizeUrl.searchParams.get("resource")).toBe(baseUrl);
+
+      // Clean up the loopback listener (no callback will occur during this test).
+      await service.cancelDesktopFlow(startResult.data.flowId);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
