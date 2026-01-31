@@ -176,6 +176,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // runtimeType for telemetry - defaults to "worktree" if not provided
   const runtimeType = variant === "workspace" ? (props.runtimeType ?? "worktree") : "worktree";
 
+  // Callback for model changes (both variants support this)
+  const onModelChange = props.onModelChange;
+
   // Storage keys differ by variant
   const storageKeys = (() => {
     if (variant === "creation") {
@@ -455,6 +458,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
       updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
 
+      // Notify parent of model change (for context switch warning)
+      // Called before early returns so warning works even offline or with custom agents
+      onModelChange?.(canonicalModel);
+
       if (variant !== "workspace" || !workspaceId) {
         return;
       }
@@ -503,7 +510,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // Best-effort only. If offline or backend is old, sendMessage will persist.
         });
     },
-    [api, agentId, storageKeys.modelKey, ensureModelInSettings, thinkingLevel, variant, workspaceId]
+    [
+      api,
+      agentId,
+      storageKeys.modelKey,
+      ensureModelInSettings,
+      thinkingLevel,
+      variant,
+      workspaceId,
+      onModelChange,
+    ]
   );
 
   // Model cycling candidates: all visible models (custom + built-in, minus hidden).

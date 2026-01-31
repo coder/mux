@@ -14,43 +14,15 @@ import { useGateway } from "@/browser/hooks/useGatewayModels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
-import type { EffectivePolicy } from "@/common/orpc/types";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
-import { getAllowedProvidersForUi } from "@/browser/utils/policyUi";
+import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
   PREFERRED_COMPACTION_MODEL_KEY,
 } from "@/common/constants/storage";
 import { ModelRow } from "./ModelRow";
-
-function isModelAllowedByPolicy(policy: EffectivePolicy | null, modelString: string): boolean {
-  const providerAccess = policy?.providerAccess;
-  if (providerAccess == null) {
-    return true;
-  }
-
-  const colonIndex = modelString.indexOf(":");
-  if (colonIndex <= 0 || colonIndex === modelString.length - 1) {
-    return true;
-  }
-
-  const provider = modelString.slice(0, colonIndex);
-  const modelId = modelString.slice(colonIndex + 1);
-
-  const providerPolicy = providerAccess.find((p) => p.id === provider);
-  if (!providerPolicy) {
-    return false;
-  }
-
-  const allowedModels = providerPolicy.allowedModels ?? null;
-  if (allowedModels === null) {
-    return true;
-  }
-
-  return allowedModels.includes(modelId);
-}
 
 // Providers to exclude from the custom models UI (handled specially or internal)
 const HIDDEN_PROVIDERS = new Set(["mux-gateway"]);

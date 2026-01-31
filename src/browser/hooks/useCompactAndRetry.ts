@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
@@ -68,6 +69,9 @@ function buildFollowUpFromSource(
 export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRetryState {
   const workspaceState = useWorkspaceState(props.workspaceId);
   const { api } = useAPI();
+  const policyState = usePolicy();
+  const effectivePolicy =
+    policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
   const [providersConfig, setProvidersConfig] = useState<ProvidersConfigMap | null>(null);
   const [isRetryingWithCompaction, setIsRetryingWithCompaction] = useState(false);
   const isMountedRef = useRef(true);
@@ -144,6 +148,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       return getHigherContextCompactionSuggestion({
         currentModel: compactionTargetModel,
         providersConfig,
+        policy: effectivePolicy,
       });
     }
 
@@ -152,6 +157,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       const explicit = getExplicitCompactionSuggestion({
         modelId: preferred,
         providersConfig,
+        policy: effectivePolicy,
       });
       if (explicit) {
         return explicit;
@@ -161,12 +167,14 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
     return getHigherContextCompactionSuggestion({
       currentModel: compactionTargetModel,
       providersConfig,
+      policy: effectivePolicy,
     });
   }, [
     compactionTargetModel,
     showCompactionUI,
     isCompactionRecoveryFlow,
     providersConfig,
+    effectivePolicy,
     preferredCompactionModel,
   ]);
 

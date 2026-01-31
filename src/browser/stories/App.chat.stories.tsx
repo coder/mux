@@ -1978,3 +1978,59 @@ export const ToolHooksOutputExpanded: AppStory = {
     },
   },
 };
+
+/**
+ * Context switch warning banner - shows when switching to a model that can't fit current context.
+ *
+ * Scenario: Workspace has ~150K tokens of context. The user switches from Sonnet (200K+ limit)
+ * to GPT-4o (128K limit). Since 150K > 90% of 128K, the warning banner appears.
+ */
+export const ContextSwitchWarning: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-context-switch";
+
+        // Set GPT-4o as current model (128K limit)
+        // Previous message was from Sonnet with 150K tokens
+        // On mount, effect sees model "changed" from Sonnet → GPT-4o and triggers warning
+        updatePersistedState(getModelKey(workspaceId), "openai:gpt-4o");
+
+        return setupSimpleChatStory({
+          workspaceId,
+          messages: [
+            createUserMessage("msg-1", "Help me refactor this large codebase", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            // Large context usage - 150K tokens from Sonnet (which handles 200K+)
+            // Now switching to GPT-4o (128K limit): 150K > 90% of 128K triggers warning
+            createAssistantMessage(
+              "msg-2",
+              "I've analyzed the codebase. Here's my refactoring plan...",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                model: "anthropic:claude-sonnet-4-5",
+                contextUsage: {
+                  inputTokens: 150000,
+                  outputTokens: 2000,
+                },
+              }
+            ),
+          ],
+        });
+      }}
+    />
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Shows the context switch warning banner. Previous message used Sonnet (150K tokens), " +
+          "but workspace is now set to GPT-4o (128K limit). Since 150K exceeds 90% of 128K, " +
+          "the warning banner appears offering a one-click compact action.",
+      },
+    },
+  },
+};
