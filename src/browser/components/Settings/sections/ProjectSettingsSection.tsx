@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
@@ -174,6 +174,445 @@ const ToolAllowlistSection: React.FC<{
   );
 };
 
+type MCPOAuthLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
+
+interface MCPOAuthAuthStatus {
+  serverUrl?: string;
+  isLoggedIn: boolean;
+  hasRefreshToken: boolean;
+  scope?: string;
+  updatedAtMs?: number;
+}
+
+type MCPOAuthAPI = NonNullable<ReturnType<typeof useAPI>["api"]>["projects"]["mcpOauth"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Defensive runtime guard: `projects.mcpOauth` may not exist when running against older backends
+ * or in non-desktop environments. Treat OAuth as unavailable instead of surfacing raw exceptions.
+ */
+function getMCPOAuthAPI(api: ReturnType<typeof useAPI>["api"]): MCPOAuthAPI | null {
+  if (!api) return null;
+
+  // Avoid direct property access since `api.projects.mcpOauth` may be missing at runtime.
+  const maybeOauth: unknown = Reflect.get(api.projects, "mcpOauth");
+  if (!isRecord(maybeOauth)) return null;
+
+  const requiredFns = [
+    "getAuthStatus",
+    "startDesktopFlow",
+    "waitForDesktopFlow",
+    "cancelDesktopFlow",
+    "logout",
+  ] as const;
+
+  for (const fn of requiredFns) {
+    if (typeof maybeOauth[fn] !== "function") {
+      return null;
+    }
+  }
+
+  return maybeOauth as unknown as MCPOAuthAPI;
+}
+
+function useMCPOAuthDesktopLogin(input: {
+  api: ReturnType<typeof useAPI>["api"];
+  isDesktop: boolean;
+  projectPath: string;
+  serverName: string;
+  onSuccess?: () => void | Promise<void>;
+}) {
+  const { api, isDesktop, projectPath, serverName, onSuccess } = input;
+  const loginAttemptRef = useRef(0);
+  const [desktopFlowId, setDesktopFlowId] = useState<string | null>(null);
+
+  const [loginStatus, setLoginStatus] = useState<MCPOAuthLoginStatus>("idle");
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const loginInProgress = loginStatus === "starting" || loginStatus === "waiting";
+
+  const cancelLogin = useCallback(() => {
+    loginAttemptRef.current++;
+
+    const mcpOauthApi = getMCPOAuthAPI(api);
+    if (isDesktop && mcpOauthApi && desktopFlowId) {
+      void mcpOauthApi.cancelDesktopFlow({ flowId: desktopFlowId });
+    }
+
+    setDesktopFlowId(null);
+    setLoginStatus("idle");
+    setLoginError(null);
+  }, [api, desktopFlowId, isDesktop]);
+
+  const startLogin = useCallback(async () => {
+    const attempt = ++loginAttemptRef.current;
+
+    try {
+      setLoginError(null);
+      setDesktopFlowId(null);
+
+      if (!isDesktop) {
+        setLoginStatus("error");
+        setLoginError("OAuth login is only available in the desktop app.");
+        return;
+      }
+
+      if (!api) {
+        setLoginStatus("error");
+        setLoginError("Mux API not connected.");
+        return;
+      }
+
+      if (!serverName.trim()) {
+        setLoginStatus("error");
+        setLoginError("Server name is required to start OAuth login.");
+        return;
+      }
+
+      const mcpOauthApi = getMCPOAuthAPI(api);
+      if (!mcpOauthApi) {
+        setLoginStatus("error");
+        setLoginError("OAuth is not available in this environment.");
+        return;
+      }
+
+      setLoginStatus("starting");
+      const startResult = await mcpOauthApi.startDesktopFlow({ projectPath, serverName });
+
+      if (attempt !== loginAttemptRef.current) {
+        if (startResult.success) {
+          void mcpOauthApi.cancelDesktopFlow({ flowId: startResult.data.flowId });
+        }
+        return;
+      }
+
+      if (!startResult.success) {
+        setLoginStatus("error");
+        setLoginError(startResult.error);
+        return;
+      }
+
+      const { flowId, authorizeUrl } = startResult.data;
+      setDesktopFlowId(flowId);
+      setLoginStatus("waiting");
+
+      // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+      window.open(authorizeUrl, "_blank", "noopener");
+
+      if (attempt !== loginAttemptRef.current) {
+        return;
+      }
+
+      const waitResult = await mcpOauthApi.waitForDesktopFlow({ flowId });
+
+      if (attempt !== loginAttemptRef.current) {
+        return;
+      }
+
+      if (waitResult.success) {
+        setLoginStatus("success");
+        await onSuccess?.();
+        return;
+      }
+
+      setLoginStatus("error");
+      setLoginError(waitResult.error);
+    } catch (err) {
+      if (attempt !== loginAttemptRef.current) {
+        return;
+      }
+
+      const message = err instanceof Error ? err.message : String(err);
+      setLoginStatus("error");
+      setLoginError(message);
+    }
+  }, [api, isDesktop, onSuccess, projectPath, serverName]);
+
+  return {
+    loginStatus,
+    loginError,
+    loginInProgress,
+    startLogin,
+    cancelLogin,
+  };
+}
+
+const MCPOAuthRequiredCallout: React.FC<{
+  projectPath: string;
+  serverName: string;
+  disabledReason?: string;
+  onLoginSuccess?: () => void | Promise<void>;
+}> = ({ projectPath, serverName, disabledReason, onLoginSuccess }) => {
+  const { api } = useAPI();
+  const isDesktop = !!window.api;
+
+  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } =
+    useMCPOAuthDesktopLogin({
+      api,
+      isDesktop,
+      projectPath,
+      serverName,
+      onSuccess: onLoginSuccess,
+    });
+
+  const disabledTitle =
+    disabledReason ??
+    (!isDesktop
+      ? "OAuth login is only available in the desktop app"
+      : !api
+        ? "Mux API not connected"
+        : undefined);
+
+  const loginDisabled = Boolean(disabledReason) || !isDesktop || !api || loginInProgress;
+
+  return (
+    <div className="bg-warning/10 border-warning/30 text-warning rounded-md border px-3 py-2 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium">This server requires OAuth.</p>
+          {disabledReason && <p className="text-muted mt-0.5">{disabledReason}</p>}
+
+          {loginStatus === "waiting" && (
+            <p className="text-muted mt-0.5">
+              Finish the login flow in your browser, then return here.
+            </p>
+          )}
+
+          {loginStatus === "success" && (
+            <p className="text-muted mt-0.5">Logged in. Try testing the server again.</p>
+          )}
+
+          {loginStatus === "error" && loginError && (
+            <p className="text-destructive mt-0.5">OAuth error: {loginError}</p>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => {
+              void startLogin();
+            }}
+            disabled={loginDisabled}
+            title={disabledTitle}
+          >
+            {loginInProgress ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Waiting for login...
+              </>
+            ) : (
+              "Login via OAuth"
+            )}
+          </Button>
+
+          {loginStatus === "waiting" && (
+            <Button variant="secondary" size="sm" onClick={cancelLogin}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RemoteMCPOAuthSection: React.FC<{
+  projectPath: string;
+  serverName: string;
+  transport: Exclude<MCPServerTransport, "stdio">;
+  url: string;
+  oauthRefreshNonce?: number;
+}> = ({ projectPath, serverName, transport, url, oauthRefreshNonce }) => {
+  const { api } = useAPI();
+  const isDesktop = !!window.api;
+
+  const [authStatus, setAuthStatus] = useState<MCPOAuthAuthStatus | null>(null);
+  const [authStatusLoading, setAuthStatusLoading] = useState(false);
+  const [authStatusError, setAuthStatusError] = useState<string | null>(null);
+
+  const [logoutInProgress, setLogoutInProgress] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  const refreshAuthStatus = useCallback(async () => {
+    if (!isDesktop) {
+      setAuthStatus(null);
+      setAuthStatusLoading(false);
+      setAuthStatusError(null);
+      return;
+    }
+
+    const mcpOauthApi = getMCPOAuthAPI(api);
+    if (!mcpOauthApi) {
+      setAuthStatus(null);
+      setAuthStatusLoading(false);
+      setAuthStatusError(null);
+      return;
+    }
+
+    setAuthStatusLoading(true);
+    setAuthStatusError(null);
+
+    try {
+      const status = await mcpOauthApi.getAuthStatus({ projectPath, serverName });
+      setAuthStatus(status);
+    } catch (err) {
+      setAuthStatus(null);
+      setAuthStatusError(err instanceof Error ? err.message : "Failed to load OAuth status");
+    } finally {
+      setAuthStatusLoading(false);
+    }
+  }, [api, isDesktop, projectPath, serverName]);
+
+  useEffect(() => {
+    void refreshAuthStatus();
+  }, [refreshAuthStatus, transport, url, oauthRefreshNonce]);
+
+  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } =
+    useMCPOAuthDesktopLogin({
+      api,
+      isDesktop,
+      projectPath,
+      serverName,
+      onSuccess: refreshAuthStatus,
+    });
+
+  const mcpOauthApi = getMCPOAuthAPI(api);
+  const oauthAvailable = isDesktop && Boolean(mcpOauthApi);
+
+  const isLoggedIn = (authStatus?.isLoggedIn ?? false) || loginStatus === "success";
+
+  const oauthDebugErrors = [
+    authStatusError ? { label: "Status", message: authStatusError } : null,
+    loginStatus === "error" && loginError ? { label: "Login", message: loginError } : null,
+    logoutError ? { label: "Logout", message: logoutError } : null,
+  ].filter((entry): entry is { label: string; message: string } => entry !== null);
+
+  const authStatusText = !oauthAvailable
+    ? "Not available"
+    : authStatusLoading
+      ? "Checking..."
+      : loginInProgress
+        ? "Waiting..."
+        : oauthDebugErrors.length > 0
+          ? "Error"
+          : isLoggedIn
+            ? "Logged in"
+            : "Not logged in";
+
+  const updatedAtText =
+    oauthAvailable && isLoggedIn && authStatus?.updatedAtMs
+      ? ` (${formatRelativeTime(authStatus.updatedAtMs)})`
+      : "";
+
+  const loginButtonLabel = loginStatus === "error" ? "Retry" : isLoggedIn ? "Re-login" : "Login";
+
+  const logout = useCallback(async () => {
+    if (!isDesktop) {
+      setLogoutError("OAuth logout is only available in the desktop app.");
+      return;
+    }
+
+    const mcpOauthApi = getMCPOAuthAPI(api);
+    if (!mcpOauthApi) {
+      setLogoutError("OAuth is not available in this environment.");
+      return;
+    }
+
+    setLogoutError(null);
+    cancelLogin();
+    setLogoutInProgress(true);
+
+    try {
+      const result = await mcpOauthApi.logout({ projectPath, serverName });
+      if (!result.success) {
+        setLogoutError(result.error);
+        return;
+      }
+
+      await refreshAuthStatus();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLogoutError(message);
+    } finally {
+      setLogoutInProgress(false);
+    }
+  }, [api, cancelLogin, isDesktop, projectPath, refreshAuthStatus, serverName]);
+
+  return (
+    <div className="mt-1 flex items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2 text-xs">
+        <span className="text-foreground font-medium">OAuth</span>
+        <span className="text-muted truncate">
+          {authStatusText}
+          {updatedAtText}
+        </span>
+
+        {oauthDebugErrors.length > 0 && (
+          <details className="group inline-block">
+            <summary className="text-muted hover:text-foreground cursor-pointer list-none text-[11px] underline-offset-2 group-open:underline">
+              Details
+            </summary>
+            <div className="border-border-medium bg-background-secondary mt-1 space-y-1 rounded-md border px-2 py-1 text-xs">
+              {oauthDebugErrors.map((entry) => (
+                <div key={entry.label} className="text-destructive break-words">
+                  <span className="font-medium">{entry.label}:</span> {entry.message}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+
+      {oauthAvailable && (
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            onClick={() => {
+              void startLogin();
+            }}
+            disabled={loginInProgress || logoutInProgress}
+          >
+            {loginInProgress ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {loginButtonLabel}
+              </>
+            ) : (
+              loginButtonLabel
+            )}
+          </Button>
+
+          {loginInProgress && (
+            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={cancelLogin}>
+              Cancel
+            </Button>
+          )}
+
+          {isLoggedIn && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2"
+              onClick={() => {
+                void logout();
+              }}
+              disabled={loginInProgress || logoutInProgress}
+            >
+              {logoutInProgress ? "Logging out..." : "Logout"}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const ProjectSettingsSection: React.FC = () => {
   const { api } = useAPI();
   const policyState = usePolicy();
@@ -201,6 +640,7 @@ export const ProjectSettingsSection: React.FC = () => {
     clearResult: clearTestResult,
   } = useMCPTestCache(selectedProject);
   const [testingServer, setTestingServer] = useState<string | null>(null);
+  const [mcpOauthRefreshNonce, setMcpOauthRefreshNonce] = useState(0);
 
   interface EditableServer {
     name: string;
@@ -452,14 +892,21 @@ export const ProjectSettingsSection: React.FC = () => {
 
   const handleAddServer = useCallback(async () => {
     if (!api || !selectedProject || !newServer.name.trim() || !newServer.value.trim()) return;
+
+    const serverName = newServer.name.trim();
+    const serverTransport = newServer.transport;
+    const serverValue = newServer.value.trim();
+    const serverHeadersRows = newServer.headersRows;
+    const existingTestResult = newTestResult;
+
     setAddingServer(true);
     setError(null);
 
     try {
       const { headers, validation } =
-        newServer.transport === "stdio"
+        serverTransport === "stdio"
           ? { headers: undefined, validation: { errors: [], warnings: [] } }
-          : mcpHeaderRowsToRecord(newServer.headersRows, {
+          : mcpHeaderRowsToRecord(serverHeadersRows, {
               knownSecretKeys: new Set(projectSecretKeys),
             });
 
@@ -469,26 +916,49 @@ export const ProjectSettingsSection: React.FC = () => {
 
       const result = await api.projects.mcp.add({
         projectPath: selectedProject,
-        name: newServer.name.trim(),
-        ...(newServer.transport === "stdio"
-          ? { transport: "stdio", command: newServer.value.trim() }
+        name: serverName,
+        ...(serverTransport === "stdio"
+          ? { transport: "stdio", command: serverValue }
           : {
-              transport: newServer.transport,
-              url: newServer.value.trim(),
+              transport: serverTransport,
+              url: serverValue,
               headers,
             }),
       });
 
       if (!result.success) {
         setError(result.error ?? "Failed to add MCP server");
-      } else {
-        // Cache the test result if we have one
-        if (newTestResult?.result.success) {
-          cacheTestResult(newServer.name.trim(), newTestResult.result);
+        return;
+      }
+
+      setNewServer({ name: "", transport: "stdio", value: "", headersRows: [] });
+      setNewTestResult(null);
+      await refresh();
+
+      // For stdio, avoid running arbitrary user-provided commands automatically.
+      if (serverTransport === "stdio") {
+        if (existingTestResult?.result.success) {
+          cacheTestResult(serverName, existingTestResult.result);
         }
-        setNewServer({ name: "", transport: "stdio", value: "", headersRows: [] });
-        setNewTestResult(null);
-        await refresh();
+        return;
+      }
+
+      // For remote servers, always run a test immediately after adding so OAuth-required servers can
+      // surface an OAuth callout without requiring a manual Test click.
+      setTestingServer(serverName);
+      try {
+        const testResult = await api.projects.mcp.test({
+          projectPath: selectedProject,
+          name: serverName,
+        });
+        cacheTestResult(serverName, testResult);
+      } catch (err) {
+        cacheTestResult(serverName, {
+          success: false,
+          error: err instanceof Error ? err.message : "Test failed",
+        });
+      } finally {
+        setTestingServer(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add MCP server");
@@ -648,12 +1118,13 @@ export const ProjectSettingsSection: React.FC = () => {
                   const cached = testCache[name];
                   const isEditing = editing?.name === name;
                   const isEnabled = !entry.disabled;
+                  const remoteEntry = entry.transport === "stdio" ? null : entry;
                   return (
                     <div
                       key={name}
                       className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
                     >
-                      <div className="flex items-start gap-3 px-3 py-2.5">
+                      <div className="flex items-start gap-3 px-3 py-2">
                         <Switch
                           checked={isEnabled}
                           onCheckedChange={(checked) => void handleToggleEnabled(name, checked)}
@@ -711,6 +1182,16 @@ export const ProjectSettingsSection: React.FC = () => {
                             <p className="text-muted mt-0.5 font-mono text-xs break-all">
                               {serverDisplayValue(entry)}
                             </p>
+                          )}
+
+                          {!isEditing && remoteEntry && (
+                            <RemoteMCPOAuthSection
+                              projectPath={selectedProject}
+                              serverName={name}
+                              transport={remoteEntry.transport}
+                              url={remoteEntry.url}
+                              oauthRefreshNonce={mcpOauthRefreshNonce}
+                            />
                           )}
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
@@ -785,11 +1266,26 @@ export const ProjectSettingsSection: React.FC = () => {
                         </div>
                       </div>
                       {cached && !cached.result.success && !isEditing && (
-                        <div className="border-border-medium text-destructive border-t px-3 py-2 text-xs">
-                          <div className="flex items-start gap-1.5">
+                        <div className="border-border-medium border-t px-3 py-2 text-xs">
+                          <div className="text-destructive flex items-start gap-1.5">
                             <XCircle className="mt-0.5 h-3 w-3 shrink-0" />
                             <span>{cached.result.error}</span>
                           </div>
+
+                          {cached.result.oauthChallenge && (
+                            <div className="mt-2">
+                              <MCPOAuthRequiredCallout
+                                projectPath={selectedProject}
+                                serverName={name}
+                                disabledReason={
+                                  remoteEntry
+                                    ? undefined
+                                    : "OAuth login is only supported for remote (http/sse) MCP servers."
+                                }
+                                onLoginSuccess={() => setMcpOauthRefreshNonce((prev) => prev + 1)}
+                              />
+                            </div>
+                          )}
                         </div>
                       )}
                       {cached?.result.success && cached.result.tools.length > 0 && !isEditing && (
@@ -930,6 +1426,34 @@ export const ProjectSettingsSection: React.FC = () => {
                   </div>
                 )}
 
+                {newTestResult &&
+                  !newTestResult.result.success &&
+                  newTestResult.result.oauthChallenge && (
+                    <div className="mt-2">
+                      <MCPOAuthRequiredCallout
+                        projectPath={selectedProject}
+                        serverName={newServer.name.trim()}
+                        disabledReason={(() => {
+                          const pendingName = newServer.name.trim();
+                          if (!pendingName) {
+                            return "Enter a server name, then add it to enable OAuth login.";
+                          }
+
+                          const existing = servers[pendingName];
+                          if (!existing) {
+                            return "Add this server first to enable OAuth login.";
+                          }
+
+                          if (existing.transport === "stdio") {
+                            return "OAuth login is only supported for remote (http/sse) MCP servers.";
+                          }
+
+                          return undefined;
+                        })()}
+                        onLoginSuccess={() => setMcpOauthRefreshNonce((prev) => prev + 1)}
+                      />
+                    </div>
+                  )}
                 <div className="flex gap-2 pt-1">
                   <Button
                     variant="outline"

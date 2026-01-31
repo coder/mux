@@ -48,6 +48,7 @@ import { BackgroundProcessManager } from "@/node/services/backgroundProcessManag
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
+import { McpOauthService } from "@/node/services/mcpOauthService";
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
@@ -97,6 +98,7 @@ export class ServiceContainer {
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
   public readonly mcpConfigService: MCPConfigService;
+  public readonly mcpOauthService: McpOauthService;
   public readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   public readonly mcpServerManager: MCPServerManager;
   public readonly telemetryService: TelemetryService;
@@ -167,6 +169,8 @@ export class ServiceContainer {
       (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
     );
     this.windowService = new WindowService();
+    this.mcpOauthService = new McpOauthService(config, this.mcpConfigService, this.windowService);
+    this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
     this.providerService = new ProviderService(config);
     this.muxGatewayOauthService = new MuxGatewayOauthService(
       this.providerService,
@@ -185,6 +189,7 @@ export class ServiceContainer {
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
     this.telemetryService = new TelemetryService(config.rootDir);
+    this.mcpOauthService.setTelemetryService(this.telemetryService);
     this.aiService.setTelemetryService(this.telemetryService);
     this.workspaceService.setTelemetryService(this.telemetryService);
     this.experimentsService = new ExperimentsService({
@@ -369,6 +374,7 @@ export class ServiceContainer {
   async dispose(): Promise<void> {
     this.policyService.dispose();
     this.mcpServerManager.dispose();
+    await this.mcpOauthService.dispose();
     await this.muxGatewayOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
