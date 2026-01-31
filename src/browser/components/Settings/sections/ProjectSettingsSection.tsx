@@ -544,7 +544,7 @@ const RemoteMCPOAuthSection: React.FC<{
 
   return (
     <div className="mt-1 flex items-center justify-between gap-2">
-      <div className="min-w-0 flex items-center gap-2 text-xs">
+      <div className="flex min-w-0 items-center gap-2 text-xs">
         <span className="text-foreground font-medium">OAuth</span>
         <span className="text-muted truncate">
           {authStatusText}
