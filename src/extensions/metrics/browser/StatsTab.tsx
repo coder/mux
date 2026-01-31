@@ -2,7 +2,7 @@ import React from "react";
 
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
-import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
+import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 import { computeTimingPercentages } from "@/browser/utils/timingPercentages";
 import { calculateAverageTPS } from "@/browser/utils/messages/StreamingTPSCalculator";

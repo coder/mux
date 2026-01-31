@@ -1,6 +1,11 @@
 import React from "react";
 import type { TokenConsumer } from "@/common/types/chatStats";
-import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "../ui/tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  HelpIndicator,
+} from "@/browser/components/ui/tooltip";
 
 // Format token display - show k for thousands with 1 decimal
 const formatTokens = (tokens: number) =>

@@ -9,7 +9,7 @@ import {
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
-import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
+import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup";
 import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { supports1MContext } from "@/common/utils/ai/models";
 import {
@@ -21,7 +21,7 @@ import { ConsumerBreakdown } from "./ConsumerBreakdown";
 import { FileBreakdown } from "./FileBreakdown";
 import { ContextUsageBar } from "./ContextUsageBar";
 import { useAutoCompactionSettings } from "@/browser/hooks/useAutoCompactionSettings";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { PostCompactionSection } from "./PostCompactionSection";
 import { usePostCompactionState } from "@/browser/hooks/usePostCompactionState";
 import { useOptionalWorkspaceContext } from "@/browser/contexts/WorkspaceContext";

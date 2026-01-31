@@ -4,9 +4,14 @@ import type { ExtensionModule } from "@/extensions/api/ExtensionModule";
 import type { ExtensionRegistry } from "@/extensions/registry/ExtensionRegistry";
 import { rightSidebarTabsBuiltinExtension } from "@/extensions/builtin/rightSidebarTabsBuiltinExtension";
 import { reviewExtension } from "@/extensions/review/reviewExtension";
+import { metricsExtension } from "@/extensions/metrics/metricsExtension";
 
 export function loadBuiltinExtensions(registry: ExtensionRegistry, hostApi: HostApi): void {
-  const builtins: ExtensionModule[] = [rightSidebarTabsBuiltinExtension, reviewExtension];
+  const builtins: ExtensionModule[] = [
+    rightSidebarTabsBuiltinExtension,
+    reviewExtension,
+    metricsExtension,
+  ];
 
   for (const ext of builtins) {
     try {

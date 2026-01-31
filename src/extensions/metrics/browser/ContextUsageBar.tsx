@@ -1,7 +1,10 @@
 import React from "react";
 import { AlertTriangle } from "lucide-react";
-import { TokenMeter } from "./TokenMeter";
-import { HorizontalThresholdSlider, type AutoCompactionConfig } from "./ThresholdSlider";
+import { TokenMeter } from "@/browser/components/RightSidebar/TokenMeter";
+import {
+  HorizontalThresholdSlider,
+  type AutoCompactionConfig,
+} from "@/browser/components/RightSidebar/ThresholdSlider";
 import { formatTokens, type TokenMeterData } from "@/common/utils/tokens/tokenMeterUtils";
 
 interface ContextUsageBarProps {
