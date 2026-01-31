@@ -15,14 +15,47 @@ interface AgentSkillMetadata {
   scope: "project" | "global" | "built-in";
 }
 
-function isAgentSkillMetadata(meta: unknown): meta is AgentSkillMetadata {
+interface AgentSkillSetMetadata {
+  type: "agent-skill-set";
+  rawCommand: string;
+  skills: Array<{
+    skillName: string;
+    scope: "project" | "global" | "built-in";
+  }>;
+}
+
+function isAgentSkillMetadata(meta: unknown): meta is AgentSkillMetadata | AgentSkillSetMetadata {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
-  if (obj.type !== "agent-skill") return false;
-  if (typeof obj.rawCommand !== "string") return false;
-  if (typeof obj.skillName !== "string") return false;
-  if (obj.scope !== "project" && obj.scope !== "global" && obj.scope !== "built-in") return false;
-  return true;
+
+  if (obj.type === "agent-skill") {
+    if (typeof obj.rawCommand !== "string") return false;
+    if (typeof obj.skillName !== "string") return false;
+    if (obj.scope !== "project" && obj.scope !== "global" && obj.scope !== "built-in") return false;
+    return true;
+  }
+
+  if (obj.type === "agent-skill-set") {
+    if (typeof obj.rawCommand !== "string") return false;
+    if (!Array.isArray(obj.skills)) return false;
+
+    for (const skill of obj.skills) {
+      if (typeof skill !== "object" || skill === null) return false;
+      const skillObj = skill as Record<string, unknown>;
+      if (typeof skillObj.skillName !== "string") return false;
+      if (
+        skillObj.scope !== "project" &&
+        skillObj.scope !== "global" &&
+        skillObj.scope !== "built-in"
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  return false;
 }
 
 function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {

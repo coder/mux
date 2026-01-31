@@ -117,6 +117,7 @@ import {
 import { RecordingOverlay } from "./RecordingOverlay";
 import { AttachedReviewsPanel } from "./AttachedReviewsPanel";
 import {
+  buildHashSkillInvocationMetadata,
   buildSkillInvocationMetadata,
   parseCommandWithSkillInvocation,
   validateCreationRuntime,
@@ -1701,7 +1702,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       // Regular message - send directly via API
       // Check for hash skill mentions if no slash skill invocation
-      const validSkillNames = new Set(agentSkillDescriptors.map((s) => s.name));
+      const validSkillNames = new Set(agentSkillDescriptors.map((s) => s.name.toLowerCase()));
       const hashSkillMentions = !skillInvocation
         ? extractHashSkillMentions(messageText, validSkillNames)
         : [];
@@ -1717,7 +1718,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       } else if (hashSkillMentions.length > 0) {
         // Hash skill mentions: #skill-name (multiple allowed)
         messageTextForSend = formatHashSkillInvocationText(messageText, hashSkillMentions);
-        skillMuxMetadata = undefined;
+        skillMuxMetadata = buildHashSkillInvocationMetadata(
+          messageText,
+          agentSkillDescriptors,
+          hashSkillMentions
+        );
       } else {
         // Normal message
         messageTextForSend = messageText;

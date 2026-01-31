@@ -261,6 +261,26 @@ export function buildAgentSkillMetadata(
   };
 }
 
+export interface AgentSkillInvocation {
+  skillName: string;
+  scope: AgentSkillScope;
+}
+
+export interface BuildAgentSkillSetMetadataOptions {
+  rawCommand: string;
+  skills: AgentSkillInvocation[];
+}
+
+export function buildAgentSkillSetMetadata(
+  options: BuildAgentSkillSetMetadataOptions
+): MuxFrontendMetadata {
+  return {
+    type: "agent-skill-set",
+    rawCommand: options.rawCommand,
+    skills: options.skills,
+  };
+}
+
 /** Base fields common to all metadata types */
 interface MuxFrontendMetadataBase {
   /** Structured review data for rich UI display (orthogonal to message type) */
@@ -301,6 +321,12 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
         rawCommand: string;
         skillName: string;
         scope: "project" | "global" | "built-in";
+      }
+    | {
+        type: "agent-skill-set";
+        /** The original message that contained #skill mentions (for display + debugging). */
+        rawCommand: string;
+        skills: AgentSkillInvocation[];
       }
     | {
         type: "plan-display"; // Ephemeral plan display from /plan command

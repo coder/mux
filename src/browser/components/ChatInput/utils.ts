@@ -4,7 +4,11 @@ import type { APIClient } from "@/browser/contexts/API";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ParsedRuntime } from "@/common/types/runtime";
-import { buildAgentSkillMetadata, type MuxFrontendMetadata } from "@/common/types/message";
+import {
+  buildAgentSkillMetadata,
+  buildAgentSkillSetMetadata,
+  type MuxFrontendMetadata,
+} from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/types";
 import type { ChatAttachment } from "../ChatAttachments";
 import type { Review } from "@/common/types/review";
@@ -57,6 +61,36 @@ export function buildSkillInvocationMetadata(
     skillName: descriptor.name,
     scope: descriptor.scope,
   });
+}
+
+export function buildHashSkillInvocationMetadata(
+  rawCommand: string,
+  descriptors: AgentSkillDescriptor[],
+  mentions: Array<{ name: string }>
+): MuxFrontendMetadata | undefined {
+  const descriptorByName = new Map(descriptors.map((d) => [d.name.toLowerCase(), d] as const));
+
+  const skills: Array<{ skillName: string; scope: AgentSkillDescriptor["scope"] }> = [];
+  const seen = new Set<string>();
+
+  for (const mention of mentions) {
+    const key = mention.name.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    const descriptor = descriptorByName.get(key);
+    if (!descriptor) {
+      continue;
+    }
+    seen.add(key);
+    skills.push({ skillName: descriptor.name, scope: descriptor.scope });
+  }
+
+  if (skills.length === 0) {
+    return undefined;
+  }
+
+  return buildAgentSkillSetMetadata({ rawCommand, skills });
 }
 
 /**
