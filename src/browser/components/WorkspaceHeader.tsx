@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Bell, BellOff, Menu, Pencil, Server } from "lucide-react";
-import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 
 import {
@@ -335,7 +335,18 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </div>
           </PopoverContent>
         </Popover>
-        <SkillIndicator loadedSkills={loadedSkills} availableSkills={availableSkills} />
+        <SkillIndicator
+          loadedSkills={loadedSkills}
+          availableSkills={availableSkills}
+          onInsertSkill={(skillName) => {
+            window.dispatchEvent(
+              createCustomEvent(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, {
+                text: `#${skillName} `,
+                mode: "append",
+              })
+            );
+          }}
+        />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>
