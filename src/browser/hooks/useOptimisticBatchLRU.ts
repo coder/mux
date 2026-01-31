@@ -106,8 +106,11 @@ export function useOptimisticBatchLRU<T>({
           if (value !== undefined) {
             cache.set(key, value);
             next[key] = value;
-          } else if (next[key] === undefined) {
-            // Keep cached value if fetch returned undefined
+          } else {
+            // Fresh data returned undefined (e.g., usage file deleted/corrupt).
+            // Clear the cache and state so we don't show stale data.
+            cache.remove(key);
+            delete next[key];
           }
         }
         return next;
