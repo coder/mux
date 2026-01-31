@@ -17,6 +17,7 @@ import {
   type ToolStatus,
 } from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
+import { SubagentTranscriptDialog } from "./SubagentTranscriptDialog";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import {
@@ -177,6 +178,7 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface TaskToolCallProps {
+  workspaceId?: string;
   args: TaskToolArgs;
   result?: TaskToolResult;
   status?: ToolStatus;
@@ -184,6 +186,7 @@ interface TaskToolCallProps {
 }
 
 export const TaskToolCall: React.FC<TaskToolCallProps> = ({
+  workspaceId,
   args,
   result,
   status = "pending",
@@ -241,6 +244,8 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const agentType = args.agentId ?? args.subagent_type ?? "unknown";
   const kindBadge = <AgentTypeBadge type={agentType} />;
 
+  const canViewTranscript = displayTaskStatus === "completed" && typeof taskId === "string";
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
   // Show preview (first line or truncated)
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
 
@@ -259,6 +264,15 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         </StatusIndicator>
       </ToolHeader>
 
+      {canViewTranscript && taskId && (
+        <SubagentTranscriptDialog
+          open={transcriptOpen}
+          onOpenChange={setTranscriptOpen}
+          workspaceId={workspaceId}
+          taskId={taskId}
+        />
+      )}
+
       {expanded && (
         <ToolDetails>
           {/* Task info surface */}
@@ -269,6 +283,17 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
               </span>
               {taskId && <TaskId id={taskId} />}
               {displayTaskStatus && <TaskStatusBadge status={displayTaskStatus} />}
+              {canViewTranscript && (
+                <button
+                  type="button"
+                  className="text-link text-[10px] font-medium underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setTranscriptOpen(true);
+                  }}
+                >
+                  View transcript
+                </button>
+              )}
             </div>
 
             {/* Prompt / script */}

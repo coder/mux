@@ -47,7 +47,7 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
 
             const inScope =
               proc.workspaceId === workspaceId ||
-              taskService.isDescendantAgentTask(workspaceId, proc.workspaceId);
+              (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
             if (!inScope) {
               return { status: "invalid_scope" as const, taskId };
             }
