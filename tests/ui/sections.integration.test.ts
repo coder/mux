@@ -18,6 +18,7 @@
 
 import "./dom";
 import { act, fireEvent, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { shouldRunIntegrationTests } from "../testUtils";
 import {
@@ -45,6 +46,17 @@ const describeIntegration = shouldRunIntegrationTests() ? describe : describe.sk
  */
 function findWorkspaceRow(container: HTMLElement, workspaceId: string): HTMLElement | null {
   return container.querySelector(`[data-workspace-id="${workspaceId}"]`);
+}
+
+/**
+ * Find a workspace row in the sidebar by its displayed title (usually the workspace name).
+ *
+ * Note: We include `data-workspace-path` to avoid matching nested buttons/inputs that also
+ * carry `data-workspace-id`.
+ */
+function findWorkspaceRowByTitle(container: HTMLElement, title: string): HTMLElement | null {
+  const rows = container.querySelectorAll<HTMLElement>("[data-workspace-id][data-workspace-path]");
+  return Array.from(rows).find((row) => row.getAttribute("aria-label")?.includes(title)) ?? null;
 }
 
 /**
@@ -297,6 +309,143 @@ describeIntegration("Workspace Sections", () => {
     }
   }, 60_000);
 
+  test("/fork preserves section assignment", async () => {
+    const env = getSharedEnv();
+    const projectPath = getSharedRepoPath();
+    const trunkBranch = await detectDefaultTrunkBranch(projectPath);
+
+    // Create a workspace first to ensure the project is registered.
+    const setupWs = await env.orpc.workspace.create({
+      projectPath,
+      branchName: generateBranchName("setup-fork-section"),
+      trunkBranch,
+    });
+    if (!setupWs.success) throw new Error(`Setup failed: ${setupWs.error}`);
+
+    // Create a section and a workspace inside it.
+    const sectionId = await createSectionViaAPI(env, projectPath, "Fork Section");
+
+    let sourceWorkspaceId: string | undefined;
+    let forkedWorkspaceId: string | undefined;
+
+    try {
+      const sourceWsResult = await env.orpc.workspace.create({
+        projectPath,
+        branchName: generateBranchName("fork-section-source"),
+        trunkBranch,
+        sectionId,
+      });
+      if (!sourceWsResult.success) {
+        throw new Error(`Failed to create source workspace: ${sourceWsResult.error}`);
+      }
+
+      sourceWorkspaceId = sourceWsResult.metadata.id;
+      const sourceMetadata = sourceWsResult.metadata;
+
+      const cleanupDom = installDom();
+      expandProjects([projectPath]);
+
+      // Render with the source workspace selected so we can run /fork from the chat input.
+      const view = renderApp({ apiClient: env.orpc, metadata: sourceMetadata });
+
+      try {
+        await setupWorkspaceView(view, sourceMetadata, sourceWorkspaceId);
+
+        const forkedName = generateBranchName("forked-in-section");
+
+        const user = userEvent.setup({ document: view.container.ownerDocument });
+        const textarea = await waitFor(
+          () => {
+            // There can be multiple ChatInput instances mounted (e.g., ProjectPage + Workspace view).
+            // Use the last enabled textarea in DOM order to target the active workspace view.
+            const textareas = Array.from(
+              view.container.querySelectorAll('textarea[aria-label="Message Claude"]')
+            ) as HTMLTextAreaElement[];
+
+            if (textareas.length === 0) {
+              throw new Error("Chat textarea not found");
+            }
+
+            const enabled = [...textareas].reverse().find((el) => !el.disabled);
+            if (!enabled) {
+              throw new Error(`Chat textarea is disabled (found ${textareas.length})`);
+            }
+
+            return enabled;
+          },
+          { timeout: 10_000 }
+        );
+
+        textarea.focus();
+        await user.clear(textarea);
+        await user.type(textarea, `/fork ${forkedName}`);
+
+        const chatInputSection = textarea.closest('[data-component="ChatInputSection"]');
+        if (!chatInputSection) {
+          throw new Error("ChatInputSection not found for textarea");
+        }
+
+        const sendButton = await waitFor(
+          () => {
+            const el = chatInputSection.querySelector(
+              'button[aria-label="Send message"]'
+            ) as HTMLButtonElement | null;
+            if (!el) {
+              throw new Error("Send button not found");
+            }
+            if (el.disabled) {
+              throw new Error("Send button disabled");
+            }
+            return el;
+          },
+          { timeout: 10_000 }
+        );
+
+        await user.click(sendButton);
+
+        // Ensure the slash command succeeded.
+        await waitFor(
+          () => {
+            expect(view.container.textContent ?? "").toContain(
+              `Forked to workspace "${forkedName}"`
+            );
+          },
+          { timeout: 30_000 }
+        );
+
+        // Find the forked workspace in the sidebar by its name/title.
+        // Avoid polling the backend (workspace.list) in a UI integration test.
+        await waitFor(
+          () => {
+            const workspaceRow = findWorkspaceRowByTitle(view.container, forkedName);
+            if (!workspaceRow) {
+              throw new Error(`Forked workspace row "${forkedName}" not found in sidebar`);
+            }
+
+            forkedWorkspaceId = workspaceRow.getAttribute("data-workspace-id") ?? undefined;
+            if (!forkedWorkspaceId) {
+              throw new Error("Forked workspace row missing data-workspace-id");
+            }
+
+            // The key behavior: the forked workspace stays in the same section.
+            expect(workspaceRow.getAttribute("data-section-id")).toBe(sectionId);
+          },
+          { timeout: 30_000 }
+        );
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    } finally {
+      if (forkedWorkspaceId) {
+        await env.orpc.workspace.remove({ workspaceId: forkedWorkspaceId });
+      }
+      if (sourceWorkspaceId) {
+        await env.orpc.workspace.remove({ workspaceId: sourceWorkspaceId });
+      }
+      await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });
+      await env.orpc.projects.sections.remove({ projectPath, sectionId });
+    }
+  }, 60_000);
   // ─────────────────────────────────────────────────────────────────────────────
   // Section Reordering
   // ─────────────────────────────────────────────────────────────────────────────

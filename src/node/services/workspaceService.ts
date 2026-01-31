@@ -1719,6 +1719,8 @@ export class WorkspaceService extends EventEmitter {
         createdAt: new Date().toISOString(),
         runtimeConfig: forkedRuntimeConfig,
         namedWorkspacePath,
+        // Preserve workspace organization when forking via /fork.
+        sectionId: sourceMetadata.sectionId,
       };
 
       await this.config.addWorkspace(foundProjectPath, metadata);

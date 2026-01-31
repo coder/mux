@@ -807,8 +807,23 @@ export class Config {
         path: workspacePath,
         id: metadata.id,
         name: metadata.name,
+        title: metadata.title,
         createdAt: metadata.createdAt,
+        aiSettingsByAgent: metadata.aiSettingsByAgent,
         runtimeConfig: metadata.runtimeConfig,
+        aiSettings: metadata.aiSettings,
+        parentWorkspaceId: metadata.parentWorkspaceId,
+        agentType: metadata.agentType,
+        agentId: metadata.agentId,
+        taskStatus: metadata.taskStatus,
+        reportedAt: metadata.reportedAt,
+        taskModelString: metadata.taskModelString,
+        taskThinkingLevel: metadata.taskThinkingLevel,
+        taskPrompt: metadata.taskPrompt,
+        taskTrunkBranch: metadata.taskTrunkBranch,
+        archivedAt: metadata.archivedAt,
+        unarchivedAt: metadata.unarchivedAt,
+        sectionId: metadata.sectionId,
       };
 
       if (existingIndex >= 0) {
