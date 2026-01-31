@@ -490,7 +490,7 @@ export class McpOauthService {
         // Note: We only fail once the flow has an authorizeUrl to avoid cancelling
         // due to unrelated localhost probes against the ephemeral loopback port.
         const flow = this.desktopFlows.get(flowId);
-        if (flow && flow.authorizeUrl && !flow.settled) {
+        if (flow?.authorizeUrl && !flow?.settled) {
           void this.finishDesktopFlow(flowId, Err("Invalid OAuth state"));
         }
         return;
