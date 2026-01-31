@@ -393,7 +393,8 @@ export const TaskTranscriptViewer: AppStory = {
       () => {
         // MessageRenderer renders each message inside a MessageWindow with data-message-block.
         if (dialog.querySelectorAll("[data-message-block]").length === 0) {
-          throw new Error("Transcript messages not rendered");
+          const debugText = dialog.textContent?.trim().slice(0, 200) ?? "<no text>";
+          throw new Error(`Transcript messages not rendered. Dialog text: ${debugText}`);
         }
       },
       { timeout: 5_000 }
