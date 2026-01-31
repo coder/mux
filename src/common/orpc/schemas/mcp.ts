@@ -148,7 +148,16 @@ export const MCPTestParamsSchema = z
     });
   });
 
+export const BearerChallengeSchema = z.object({
+  scope: z.string().optional(),
+  resourceMetadataUrl: z.url().optional(),
+});
+
 export const MCPTestResultSchema = z.discriminatedUnion("success", [
   z.object({ success: z.literal(true), tools: z.array(z.string()) }),
-  z.object({ success: z.literal(false), error: z.string() }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+    oauthChallenge: BearerChallengeSchema.optional(),
+  }),
 ]);

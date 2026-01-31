@@ -41,8 +41,21 @@ export interface MCPConfig {
  */
 export type MCPServerMap = Record<string, MCPServerInfo>;
 
+/**
+ * Parsed OAuth hints from a `WWW-Authenticate: Bearer ...` challenge.
+ *
+ * NOTE: This type is safe for IPC/UI; it must never contain tokens.
+ */
+export interface BearerChallenge {
+  scope?: string;
+  /** `resource_metadata` hint URL (if present and parseable). */
+  resourceMetadataUrl?: string;
+}
+
 /** Result of testing an MCP server connection */
-export type MCPTestResult = { success: true; tools: string[] } | { success: false; error: string };
+export type MCPTestResult =
+  | { success: true; tools: string[] }
+  | { success: false; error: string; oauthChallenge?: BearerChallenge };
 
 /** Cached test result with timestamp for age display */
 export interface CachedMCPTestResult {
