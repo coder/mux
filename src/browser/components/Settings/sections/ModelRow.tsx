@@ -1,7 +1,7 @@
 import React from "react";
 import { Check, Eye, Info, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
-import { GatewayIcon } from "@/browser/components/icons/GatewayIcon";
+import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
@@ -266,20 +266,10 @@ export function ModelRow(props: ModelRowProps) {
           )}
           {/* Gateway toggle button */}
           {props.onToggleGateway && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onToggleGateway?.();
-              }}
-              className={cn(
-                "p-0.5 transition-colors",
-                props.isGatewayEnabled ? "text-accent" : "text-muted hover:text-accent"
-              )}
-              aria-label={props.isGatewayEnabled ? "Disable Mux Gateway" : "Enable Mux Gateway"}
-            >
-              <GatewayIcon className="h-3.5 w-3.5" active={props.isGatewayEnabled} />
-            </button>
+            <GatewayToggleButton
+              active={props.isGatewayEnabled ?? false}
+              onToggle={() => props.onToggleGateway?.()}
+            />
           )}
           {/* Favorite/default button */}
           <button

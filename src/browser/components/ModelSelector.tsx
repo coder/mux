@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { cn } from "@/common/lib/utils";
 import { Eye, Settings, ShieldCheck, Star, ChevronDown } from "lucide-react";
+import { GatewayToggleButton } from "./GatewayToggleButton";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
@@ -393,40 +394,13 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     <span className="min-w-0 truncate">{model}</span>
                     {/* Gateway toggle */}
                     {gateway.canToggleModel(model) ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              gateway.toggleModelGateway(model);
-                            }}
-                            className={cn(
-                              "flex h-5 w-5 items-center justify-center rounded-sm border transition-colors duration-150",
-                              gateway.modelUsesGateway(model)
-                                ? "text-accent border-accent/40"
-                                : "text-muted-light border-border-light/40 hover:border-foreground/60 hover:text-foreground"
-                            )}
-                            aria-label={
-                              gateway.modelUsesGateway(model)
-                                ? "Disable Mux Gateway"
-                                : "Enable Mux Gateway"
-                            }
-                          >
-                            <GatewayIcon
-                              className="h-3 w-3"
-                              active={gateway.modelUsesGateway(model)}
-                            />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent align="center">
-                          {gateway.modelUsesGateway(model)
-                            ? "Using Mux Gateway"
-                            : "Use Mux Gateway"}
-                        </TooltipContent>
-                      </Tooltip>
+                      <GatewayToggleButton
+                        active={gateway.modelUsesGateway(model)}
+                        onToggle={() => gateway.toggleModelGateway(model)}
+                        variant="bordered"
+                        size="sm"
+                        showTooltip
+                      />
                     ) : (
                       <span /> // Empty cell for alignment
                     )}
