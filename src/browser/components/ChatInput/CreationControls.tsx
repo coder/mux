@@ -306,6 +306,15 @@ export function CreationControls(props: CreationControlsProps) {
   // Show loading skeleton while branches are loading to avoid layout flash
   const showBranchLoadingPlaceholder = !props.branchesLoaded && runtimeMode !== RUNTIME_MODE.LOCAL;
 
+  // Keep runtime button layout stable by always rendering runtime options on their own line.
+  // This avoids flex-wrap jitter when the branch list ("from") and SSH host input load.
+  const showRuntimeOptionsRow =
+    runtimeMode !== RUNTIME_MODE.LOCAL &&
+    (showTrunkBranchSelector ||
+      showBranchLoadingPlaceholder ||
+      selectedRuntime.mode === "ssh" ||
+      selectedRuntime.mode === "docker");
+
   // Centralized devcontainer selection logic
   const devcontainerSelection = resolveDevcontainerSelection({
     selectedRuntime,
@@ -472,7 +481,7 @@ export function CreationControls(props: CreationControlsProps) {
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
         <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-2">
           <RuntimeButtonGroup
             value={runtimeMode}
             onChange={(mode) => {
@@ -527,82 +536,80 @@ export function CreationControls(props: CreationControlsProps) {
             runtimeAvailabilityState={runtimeAvailabilityState}
           />
 
-          {/* Branch selector - shown for worktree/SSH */}
-          {showTrunkBranchSelector && (
-            <div
-              className="flex items-center gap-2"
-              data-component="TrunkBranchGroup"
-              data-tutorial="trunk-branch"
-            >
-              <label htmlFor="trunk-branch" className="text-muted-foreground text-xs">
-                from
-              </label>
-              <Select
-                id="trunk-branch"
-                value={props.trunkBranch}
-                options={props.branches}
-                onChange={props.onTrunkBranchChange}
-                disabled={props.disabled}
-                className="h-7 max-w-[140px]"
-              />
-            </div>
-          )}
-          {/* Loading placeholder - reserves space while branches load to avoid layout flash */}
-          {showBranchLoadingPlaceholder && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground text-xs">from</span>
-              <Skeleton className="h-7 w-24 rounded-md" />
-            </div>
-          )}
-
-          {/* SSH Host Input - hidden when Coder is enabled or will be enabled after checking */}
-          {selectedRuntime.mode === "ssh" &&
-            (props.allowSshHost ?? true) &&
-            !props.coderProps?.enabled &&
-            // Also hide when Coder is still checking but has saved config (will enable after check)
-            !(props.coderProps?.coderInfo === null && props.coderProps?.coderConfig) && (
-              <div className="flex items-center gap-2">
-                <label className="text-muted-foreground text-xs">host</label>
-                <input
-                  type="text"
-                  value={selectedRuntime.host}
-                  onChange={(e) => onSelectedRuntimeChange({ mode: "ssh", host: e.target.value })}
-                  placeholder="user@host"
-                  disabled={props.disabled}
-                  className={cn(
-                    "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
-                    props.runtimeFieldError === "ssh" && "border-red-500"
+          {showRuntimeOptionsRow && (
+            <div className="flex flex-wrap items-center gap-3" data-component="RuntimeOptionsRow">
+              {(showTrunkBranchSelector || showBranchLoadingPlaceholder) && (
+                <div
+                  className="flex items-center gap-2"
+                  data-component="TrunkBranchGroup"
+                  data-tutorial="trunk-branch"
+                >
+                  <label className="text-muted-foreground text-xs">from</label>
+                  {showTrunkBranchSelector ? (
+                    <Select
+                      id="trunk-branch"
+                      value={props.trunkBranch}
+                      options={props.branches}
+                      onChange={props.onTrunkBranchChange}
+                      disabled={props.disabled}
+                      className="h-7 w-[140px]"
+                    />
+                  ) : (
+                    <Skeleton className="h-7 w-[140px] rounded-md" />
                   )}
-                />
-              </div>
-            )}
+                </div>
+              )}
 
-          {/* Runtime-specific config inputs */}
-
-          {selectedRuntime.mode === "docker" && (
-            <div className="flex items-center gap-2">
-              <label htmlFor="docker-image" className="text-muted-foreground text-xs">
-                image
-              </label>
-              <input
-                id="docker-image"
-                aria-label="Docker image"
-                type="text"
-                value={selectedRuntime.image}
-                onChange={(e) =>
-                  onSelectedRuntimeChange({
-                    mode: "docker",
-                    image: e.target.value,
-                    shareCredentials: selectedRuntime.shareCredentials,
-                  })
-                }
-                placeholder="node:20"
-                disabled={props.disabled}
-                className={cn(
-                  "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
-                  props.runtimeFieldError === "docker" && "border-red-500"
+              {/* SSH Host Input - hidden when Coder is enabled or will be enabled after checking */}
+              {selectedRuntime.mode === "ssh" &&
+                (props.allowSshHost ?? true) &&
+                !props.coderProps?.enabled &&
+                // Also hide when Coder is still checking but has saved config (will enable after check)
+                !(props.coderProps?.coderInfo === null && props.coderProps?.coderConfig) && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-muted-foreground text-xs">host</label>
+                    <input
+                      type="text"
+                      value={selectedRuntime.host}
+                      onChange={(e) =>
+                        onSelectedRuntimeChange({ mode: "ssh", host: e.target.value })
+                      }
+                      placeholder="user@host"
+                      disabled={props.disabled}
+                      className={cn(
+                        "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+                        props.runtimeFieldError === "ssh" && "border-red-500"
+                      )}
+                    />
+                  </div>
                 )}
-              />
+
+              {selectedRuntime.mode === "docker" && (
+                <div className="flex items-center gap-2">
+                  <label htmlFor="docker-image" className="text-muted-foreground text-xs">
+                    image
+                  </label>
+                  <input
+                    id="docker-image"
+                    aria-label="Docker image"
+                    type="text"
+                    value={selectedRuntime.image}
+                    onChange={(e) =>
+                      onSelectedRuntimeChange({
+                        mode: "docker",
+                        image: e.target.value,
+                        shareCredentials: selectedRuntime.shareCredentials,
+                      })
+                    }
+                    placeholder="node:20"
+                    disabled={props.disabled}
+                    className={cn(
+                      "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+                      props.runtimeFieldError === "docker" && "border-red-500"
+                    )}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>
