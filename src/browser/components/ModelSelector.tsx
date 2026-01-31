@@ -389,8 +389,15 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   )}
                   onClick={() => handleSelectModel(model)}
                 >
-                  {/* Grid: model name | gateway | visibility | default */}
-                  <div className="grid w-full min-w-0 grid-cols-[1fr_20px_30px_30px] items-center gap-1">
+                  {/* Grid: model name | gateway | [visibility] | default - visibility column only when callbacks present */}
+                  <div
+                    className={cn(
+                      "grid w-full min-w-0 items-center gap-1",
+                      (onHideModel ?? onUnhideModel)
+                        ? "grid-cols-[1fr_20px_30px_30px]"
+                        : "grid-cols-[1fr_20px_30px]"
+                    )}
+                  >
                     <span className="min-w-0 truncate">{model}</span>
                     {/* Gateway toggle */}
                     {gateway.canToggleModel(model) ? (
@@ -405,7 +412,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       <span /> // Empty cell for alignment
                     )}
                     {/* Visibility toggle - Eye with line-through when hidden */}
-                    {(onHideModel ?? onUnhideModel) ? (
+                    {(onHideModel ?? onUnhideModel) && (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
@@ -449,8 +456,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                             : "Hide model from selector"}
                         </TooltipContent>
                       </Tooltip>
-                    ) : (
-                      <span /> // Empty cell for alignment
                     )}
                     {/* Default star */}
                     {onSetDefaultModel ? (

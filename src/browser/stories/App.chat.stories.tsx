@@ -945,6 +945,80 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
 };
 
 /**
+ * Model selector dropdown open, showing icon alignment.
+ * The gateway toggle and default star icons should appear side-by-side without gaps.
+ */
+export const ModelSelectorDropdownOpen: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-model-dropdown";
+        const baseModel = "openai:gpt-4o";
+
+        // Set the selected model for this workspace
+        updatePersistedState(getModelKey(workspaceId), baseModel);
+
+        return setupSimpleChatStory({
+          workspaceId,
+          messages: [],
+          providersConfig: {
+            openai: { apiKeySet: true, couponCodeSet: false, isConfigured: true },
+            anthropic: { apiKeySet: true, couponCodeSet: false, isConfigured: true },
+          },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+
+    // Wait for chat input to mount
+    await canvas.findAllByText("Exec", {}, { timeout: 10000 });
+
+    // Wait for model selector to be clickable (shows pretty name "GPT-4o")
+    const modelSelector = await waitFor(
+      () => {
+        const el = canvas.getByText("GPT-4o");
+        if (!el) throw new Error("Model selector not found");
+        return el;
+      },
+      { timeout: 5000 }
+    );
+
+    // Click to open the selector (enters editing mode, shows dropdown)
+    await userEvent.click(modelSelector);
+
+    // Wait for the dropdown to appear - it has the class pattern "overflow-y-auto" and "min-w-80"
+    await waitFor(
+      () => {
+        const dropdown = canvasElement.querySelector(
+          ".min-w-80.overflow-y-auto, .overflow-y-auto.min-w-80"
+        );
+        if (!dropdown) {
+          // Alternative: look for the dropdown by structure
+          const dropdownAlt = canvasElement.querySelector(
+            '[class*="overflow-y-auto"][class*="min-w-80"]'
+          );
+          if (!dropdownAlt) throw new Error("Model selector dropdown not found");
+        }
+      },
+      { timeout: 3000 }
+    );
+
+    // Double RAF for visual stability after dropdown renders
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "Model selector dropdown open, showing gateway toggle and default star icons properly aligned without gaps.",
+      },
+    },
+  },
+};
+
+/**
  * Editing message state - shows the edit cutoff barrier and amber-styled input.
  * Demonstrates the UI when a user clicks "Edit" on a previous message.
  */
