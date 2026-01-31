@@ -1725,6 +1725,28 @@ export const router = (authToken?: string) => {
             return entry ? { workspaceId, entry } : null;
           };
 
+          const tryLoadFromDescendantWorkspaces = async (
+            ancestorWorkspaceId: string
+          ): Promise<{
+            workspaceId: string;
+            entry: SubagentTranscriptArtifactIndexEntry;
+          } | null> => {
+            // If a grandchild task has already been cleaned up, its transcript is archived into the
+            // immediate parent workspace's session dir. Until that parent workspace is cleaned up and
+            // its artifacts are rolled up, the requesting workspace won't have the transcript index.
+            const descendants = context.taskService.listDescendantAgentTasks(ancestorWorkspaceId);
+
+            // Prefer shallower tasks first so we find the owning parent quickly.
+            descendants.sort((a, b) => a.depth - b.depth);
+
+            for (const descendant of descendants) {
+              const loaded = await tryLoadFromWorkspace(descendant.taskId);
+              if (loaded) return loaded;
+            }
+
+            return null;
+          };
+
           // Auth: allow if the task is a descendant OR if we have an on-disk transcript artifact entry.
           // The descendant check is best-effort: if it throws (corrupt config), we fall back to the
           // artifact existence check to keep the UI usable.
@@ -1778,13 +1800,26 @@ export const router = (authToken?: string) => {
             return mergePartialIntoHistory(messages ?? [], partial);
           };
 
-          const resolved =
-            requestingWorkspaceId !== null
-              ? await tryLoadFromWorkspace(requestingWorkspaceId)
-              : await findSubagentTranscriptEntryByScanningSessions({
-                  sessionsDir: context.config.sessionsDir,
-                  taskId,
-                });
+          let resolved: {
+            workspaceId: string;
+            entry: SubagentTranscriptArtifactIndexEntry;
+          } | null = null;
+          let hasArtifactInRequestingTree = false;
+
+          if (requestingWorkspaceId !== null) {
+            resolved = await tryLoadFromWorkspace(requestingWorkspaceId);
+            if (resolved) {
+              hasArtifactInRequestingTree = true;
+            } else {
+              resolved = await tryLoadFromDescendantWorkspaces(requestingWorkspaceId);
+              hasArtifactInRequestingTree = resolved !== null;
+            }
+          } else {
+            resolved = await findSubagentTranscriptEntryByScanningSessions({
+              sessionsDir: context.config.sessionsDir,
+              taskId,
+            });
+          }
 
           // If the transcript hasn't been archived yet (common while patch artifacts are pending),
           // fall back to reading from the task's live session dir while it still exists.
@@ -1807,11 +1842,8 @@ export const router = (authToken?: string) => {
             );
           }
 
-          if (requestingWorkspaceId) {
-            const hasArtifactInRequestingWorkspace = resolved.workspaceId === requestingWorkspaceId;
-            if (!isDescendant && !hasArtifactInRequestingWorkspace) {
-              throw new Error("Task is not a descendant of this workspace");
-            }
+          if (requestingWorkspaceId && !isDescendant && !hasArtifactInRequestingTree) {
+            throw new Error("Task is not a descendant of this workspace");
           }
 
           return readTranscriptFromPaths({
