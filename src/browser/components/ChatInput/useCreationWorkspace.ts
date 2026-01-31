@@ -10,6 +10,7 @@ import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { workspaceAiSettingsBackend } from "@/browser/utils/workspaceAiSettingsBackend";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
   getAgentIdKey,
@@ -100,7 +101,8 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
           [effectiveAgentId]: { model: projectModel, thinkingLevel: effectiveThinking },
         };
       },
-      {}
+      {},
+      { backend: workspaceAiSettingsBackend }
     );
   }
 

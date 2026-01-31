@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { getStorageChangeEvent } from "@/common/constants/events";
+import type { PersistedStateBackend } from "@/browser/utils/persistedStateBackend";
 
 type SetValue<T> = T | ((prev: T) => T);
 
@@ -106,6 +107,11 @@ export function readPersistedString(key: string): string | undefined {
   return storedValue;
 }
 
+export interface PersistedStateWriteOptions<T> {
+  backend?: PersistedStateBackend<T>;
+  skipBackend?: boolean;
+}
+
 /**
  * Update a persisted state value from outside the hook.
  * This is useful when you need to update state from a different component/context
@@ -120,17 +126,17 @@ export function readPersistedString(key: string): string | undefined {
 export function updatePersistedState<T>(
   key: string,
   value: T | ((prev: T) => T),
-  defaultValue?: T
+  defaultValue?: T,
+  options?: PersistedStateWriteOptions<T>
 ): void {
   if (typeof window === "undefined" || !window.localStorage) {
     return;
   }
 
   try {
+    const previousValue = readPersistedState(key, defaultValue as T);
     const newValue: T | null | undefined =
-      typeof value === "function"
-        ? (value as (prev: T) => T)(readPersistedState(key, defaultValue as T))
-        : value;
+      typeof value === "function" ? (value as (prev: T) => T)(previousValue) : value;
 
     if (newValue === undefined || newValue === null) {
       window.localStorage.removeItem(key);
@@ -147,14 +153,27 @@ export function updatePersistedState<T>(
       detail: { key, newValue },
     });
     window.dispatchEvent(customEvent);
+
+    if (
+      options?.backend?.write &&
+      !options.skipBackend &&
+      newValue !== undefined &&
+      newValue !== null
+    ) {
+      options.backend.write(key, newValue, previousValue).catch(() => {
+        // Best-effort only.
+      });
+    }
   } catch (error) {
     console.warn(`Error writing to localStorage key "${key}":`, error);
   }
 }
 
-interface UsePersistedStateOptions {
+interface UsePersistedStateOptions<T> {
   /** Enable listening to storage changes from other components/tabs */
   listener?: boolean;
+  /** Optional backend adapter for cross-device persistence */
+  backend?: PersistedStateBackend<T>;
 }
 
 /**
@@ -169,7 +188,7 @@ interface UsePersistedStateOptions {
 export function usePersistedState<T>(
   key: string,
   initialValue: T,
-  options?: UsePersistedStateOptions
+  options?: UsePersistedStateOptions<T>
 ): [T, Dispatch<SetStateAction<T>>] {
   // Unique component ID for distinguishing self-updates.
   const componentIdRef = useRef(Math.random().toString(36));
@@ -178,13 +197,28 @@ export function usePersistedState<T>(
 
   const subscribe = useCallback(
     (callback: () => void) => {
-      return addSubscriber(key, {
+      const unsubscribeLocal = addSubscriber(key, {
         callback,
         componentId: componentIdRef.current,
         listener: Boolean(options?.listener),
       });
+
+      let unsubscribeBackend: (() => void) | undefined;
+      if (options?.backend?.subscribe) {
+        unsubscribeBackend = options.backend.subscribe(key, (value) => {
+          updatePersistedState(key, value, undefined, {
+            backend: options.backend,
+            skipBackend: true,
+          });
+        });
+      }
+
+      return () => {
+        unsubscribeLocal();
+        unsubscribeBackend?.();
+      };
     },
-    [key, options?.listener]
+    [key, options?.listener, options?.backend]
   );
 
   // Match the previous `usePersistedState` behavior: `initialValue` is only used
@@ -260,11 +294,17 @@ export function usePersistedState<T>(
           detail: { key, newValue, origin: componentIdRef.current },
         });
         window.dispatchEvent(customEvent);
+
+        if (options?.backend?.write && newValue !== undefined && newValue !== null) {
+          options.backend.write(key, newValue, prevState).catch(() => {
+            // Best-effort only.
+          });
+        }
       } catch (error) {
         console.warn(`Error writing to localStorage key "${key}":`, error);
       }
     },
-    [key]
+    [key, options?.backend]
   );
 
   return [state, setPersistedState];
