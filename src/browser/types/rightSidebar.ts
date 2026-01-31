@@ -8,7 +8,7 @@ export type BaseTabType = (typeof RIGHT_SIDEBAR_TABS)[number];
  * - Terminal tabs: "terminal" (placeholder for new) or "terminal:<sessionId>" for real sessions
  * - File tabs: "file:<relativePath>" for file viewer panes
  */
-export type TabType = BaseTabType | `terminal:${string}` | `file:${string}`;
+export type TabType = BaseTabType | `terminal:${string}` | `file:${string}` | `ext:${string}`;
 
 /** Check if a value is a valid tab type (base tab, terminal instance, or file tab) */
 export function isTabType(value: unknown): value is TabType {
@@ -17,7 +17,9 @@ export function isTabType(value: unknown): value is TabType {
   // Support terminal instances like "terminal:ws-123-1704567890"
   if (value.startsWith("terminal:")) return true;
   // Support file tabs like "file:src/App.tsx"
-  return value.startsWith("file:");
+  if (value.startsWith("file:")) return true;
+  // Support extension-provided tabs
+  return value.startsWith("ext:");
 }
 
 /** Check if a tab type represents a file viewer tab */

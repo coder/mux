@@ -21,13 +21,21 @@ export interface ReviewStats {
 
 /** Context passed to tab renderers */
 export interface TabRenderContext {
+  /** Unique ID of the tabset node this tab is rendered within */
+  tabsetId: string;
+
   workspaceId: string;
   workspacePath: string;
   projectPath: string;
   isCreating: boolean;
   focusTrigger: number;
+
+  /** Request that a file be opened in a new File tab */
+  onOpenFile: (relativePath: string) => void;
+
   onReviewNote?: (data: ReviewNoteData) => void;
   onReviewStatsChange: (stats: ReviewStats | null) => void;
+
   /** Whether this tab is currently visible/active */
   visible: boolean;
 }
@@ -120,6 +128,13 @@ export function getTabConfig(tab: TabType): TabConfig {
   // File tabs
   if (tab.startsWith("file:")) {
     return FILE_TAB_CONFIG;
+  }
+  // Extension tabs (fallback config; the real config comes from the ExtensionRegistry)
+  if (tab.startsWith("ext:")) {
+    return {
+      name: tab,
+      contentClassName: "overflow-y-auto p-[15px]",
+    };
   }
   // All terminal tabs (including "terminal" placeholder)
   return TERMINAL_TAB_CONFIG;

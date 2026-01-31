@@ -24,6 +24,7 @@ import { useWorkspaceStoreRaw, useWorkspaceRecency } from "./stores/WorkspaceSto
 
 import { useStableReference, compareMaps } from "./hooks/useStableReference";
 import { CommandRegistryProvider, useCommandRegistry } from "./contexts/CommandRegistryContext";
+import { ExtensionRegistryProvider } from "./contexts/ExtensionRegistryContext";
 import { useOpenTerminal } from "./hooks/useOpenTerminal";
 import type { CommandAction } from "./contexts/CommandRegistryContext";
 import { useTheme, type ThemeMode } from "./contexts/ThemeContext";
@@ -971,7 +972,9 @@ function App() {
               <SplashScreenProvider>
                 <TutorialProvider>
                   <CommandRegistryProvider>
-                    <AppInner />
+                    <ExtensionRegistryProvider>
+                      <AppInner />
+                    </ExtensionRegistryProvider>
                   </CommandRegistryProvider>
                 </TutorialProvider>
               </SplashScreenProvider>
