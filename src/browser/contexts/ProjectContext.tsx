@@ -99,14 +99,39 @@ export function ProjectProvider(props: { children: ReactNode }) {
   });
   const workspaceModalProjectRef = useRef<string | null>(null);
 
+  // Used to guard against refreshProjects() races.
+  //
+  // Example: the initial refresh (on mount) can start before a workspace fork, then
+  // resolve after a fork-triggered refresh. Without this guard, the stale response
+  // could overwrite the newer project list and make the forked workspace disappear
+  // from the sidebar again.
+  const projectsRefreshSeqRef = useRef(0);
+  const latestAppliedProjectsRefreshSeqRef = useRef(0);
+
   const refreshProjects = useCallback(async () => {
     if (!api) return;
+
+    const refreshSeq = projectsRefreshSeqRef.current + 1;
+    projectsRefreshSeqRef.current = refreshSeq;
+
     try {
       const projectsList = await api.projects.list();
+
+      // Ignore out-of-date refreshes so an older response can't clobber a newer success.
+      if (refreshSeq < latestAppliedProjectsRefreshSeqRef.current) {
+        return;
+      }
+
+      latestAppliedProjectsRefreshSeqRef.current = refreshSeq;
       setProjects(new Map(projectsList));
     } catch (error) {
+      // Ignore out-of-date refreshes so an older error can't clobber a newer success.
+      if (refreshSeq < latestAppliedProjectsRefreshSeqRef.current) {
+        return;
+      }
+
+      // Keep the previous project list on error to avoid emptying the sidebar.
       console.error("Failed to load projects:", error);
-      setProjects(new Map());
     }
   }, [api]);
 

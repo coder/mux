@@ -102,6 +102,7 @@ function AppInner() {
 
   const {
     projects,
+    refreshProjects,
     removeProject,
     openProjectCreateModal,
     isProjectCreateModalOpen,
@@ -646,11 +647,17 @@ function AppInner() {
 
       const workspaceInfo = e.detail;
 
-      // Find the project in config
+      // Ensure the workspace's project is present in the sidebar config.
+      //
+      // IMPORTANT: don't early-return here. In practice this event can fire before
+      // ProjectContext has finished loading (or before a refresh runs), and returning
+      // would make the forked workspace appear "missing" until a later refresh.
       const project = projects.get(workspaceInfo.projectPath);
       if (!project) {
-        console.error(`Project not found for path: ${workspaceInfo.projectPath}`);
-        return;
+        console.warn(
+          `[Frontend] Project not found for forked workspace path: ${workspaceInfo.projectPath} (will refresh)`
+        );
+        void refreshProjects();
       }
 
       // DEFENSIVE: Ensure createdAt exists
@@ -679,7 +686,7 @@ function AppInner() {
         CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH,
         handleForkSwitch as EventListener
       );
-  }, [projects, setSelectedWorkspace, setWorkspaceMetadata]);
+  }, [projects, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata]);
 
   // Set up navigation callback for notification clicks
   useEffect(() => {
