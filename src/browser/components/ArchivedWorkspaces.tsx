@@ -266,21 +266,29 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
 
   // Cost data with optimistic caching - shows cached costs immediately, fetches fresh in background
   const workspaceIds = React.useMemo(() => workspaces.map((w) => w.id), [workspaces]);
+
+  // Memoize fetchBatch so the hook doesn't refetch on every local state change.
+  const fetchWorkspaceCosts = React.useCallback(
+    async (ids: string[]) => {
+      if (!api) return {};
+
+      const usageData = await api.workspace.getSessionUsageBatch({ workspaceIds: ids });
+
+      // Compute costs from usage data and return as record
+      const costs: Record<string, number | undefined> = {};
+      for (const id of ids) {
+        costs[id] = getSessionTotalCost(usageData[id]);
+      }
+      return costs;
+    },
+    [api]
+  );
+
   const { values: costsByWorkspace, status: costsStatus } = useOptimisticBatchLRU({
     keys: workspaceIds,
     cache: sessionCostCache,
     skip: !api,
-    fetchBatch: async (ids) => {
-      if (!api) return {};
-      const usageData = await api.workspace.getSessionUsageBatch({ workspaceIds: ids });
-      // Compute costs from usage data and return as record
-      const costs: Record<string, number | undefined> = {};
-      for (const id of ids) {
-        const usage = usageData[id];
-        costs[id] = getSessionTotalCost(usage);
-      }
-      return costs;
-    },
+    fetchBatch: fetchWorkspaceCosts,
   });
   const costsLoading = costsStatus === "idle" || costsStatus === "loading";
 
