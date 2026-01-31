@@ -14,11 +14,7 @@ import {
 import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
-import { CostsTab } from "./RightSidebar/CostsTab";
-
-import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
-import { ErrorBoundary } from "./ErrorBoundary";
-import { StatsTab } from "./RightSidebar/StatsTab";
+import { useExtensionRegistry } from "@/browser/contexts/ExtensionRegistryContext";
 
 import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
@@ -58,28 +54,20 @@ import {
   type RightSidebarLayoutNode,
   type RightSidebarLayoutState,
 } from "@/browser/utils/rightSidebarLayout";
-import {
-  RightSidebarTabStrip,
-  getTabName,
-  type TabDragData,
-} from "./RightSidebar/RightSidebarTabStrip";
+import { RightSidebarTabStrip, type TabDragData } from "./RightSidebar/RightSidebarTabStrip";
 import {
   createTerminalSession,
   openTerminalPopout,
   type TerminalSessionCreateOptions,
 } from "@/browser/utils/terminal";
 import {
-  CostsTabLabel,
-  ExplorerTabLabel,
+  FILE_TAB_CONFIG,
+  TERMINAL_TAB_CONFIG,
   FileTabLabel,
-  ReviewTabLabel,
-  StatsTabLabel,
   TerminalTabLabel,
-  getTabContentClassName,
   type ReviewStats,
 } from "./RightSidebar/tabs";
 import { FileViewerTab } from "./RightSidebar/FileViewer";
-import { ExplorerTab } from "./RightSidebar/ExplorerTab";
 import {
   DndContext,
   DragOverlay,
@@ -237,11 +225,25 @@ interface RightSidebarTabsetNodeProps {
 const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) => {
   const tabsetBaseId = `${props.baseId}-${props.node.id}`;
 
-  // Content container class comes from tab registry - each tab defines its own padding/overflow
-  const tabsetContentClassName = cn(
-    "relative flex-1 min-h-0",
-    getTabContentClassName(props.node.activeTab)
-  );
+  const extensionRegistry = useExtensionRegistry();
+
+  // Content container class comes from the tab registry - each tab defines its own padding/overflow.
+  const activeTab = props.node.activeTab;
+  const activeContribution =
+    !isTerminalTab(activeTab) && !isFileTab(activeTab)
+      ? extensionRegistry.getRightSidebarTab(activeTab)
+      : undefined;
+
+  const activeContentClassName = isTerminalTab(activeTab)
+    ? TERMINAL_TAB_CONFIG.contentClassName
+    : isFileTab(activeTab)
+      ? FILE_TAB_CONFIG.contentClassName
+      : activeContribution &&
+          !(activeContribution.config.featureFlag === "statsTab" && !props.statsTabEnabled)
+        ? activeContribution.config.contentClassName
+        : "overflow-y-auto p-[15px]";
+
+  const tabsetContentClassName = cn("relative flex-1 min-h-0", activeContentClassName);
 
   // Drop zones using @dnd-kit's useDroppable
   const { setNodeRef: contentRef, isOver: isOverContent } = useDroppable({
@@ -295,10 +297,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
   const terminalTabs = props.node.tabs.filter(isTerminalTab);
 
   const items = props.node.tabs.flatMap((tab) => {
-    if (tab === "stats" && !props.statsTabEnabled) {
-      return [];
-    }
-
     const tabId = `${tabsetBaseId}-tab-${tab}`;
     const panelId = `${tabsetBaseId}-panel-${tab}`;
 
@@ -339,15 +337,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     // Build label using tab-specific label components
     let label: React.ReactNode;
 
-    if (tab === "costs") {
-      label = <CostsTabLabel sessionCost={props.sessionCost} />;
-    } else if (tab === "review") {
-      label = <ReviewTabLabel reviewStats={props.reviewStats} />;
-    } else if (tab === "explorer") {
-      label = <ExplorerTabLabel />;
-    } else if (tab === "stats") {
-      label = <StatsTabLabel sessionDuration={props.sessionDuration} />;
-    } else if (isTerminal) {
+    if (isTerminal) {
       const terminalIndex = terminalTabs.indexOf(tab);
       label = (
         <TerminalTabLabel
@@ -361,7 +351,18 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       const filePath = getFilePath(tab);
       label = <FileTabLabel filePath={filePath ?? tab} onClose={() => props.onCloseFile(tab)} />;
     } else {
-      label = tab;
+      const contribution = extensionRegistry.getRightSidebarTab(tab);
+      if (contribution?.config.featureFlag === "statsTab" && !props.statsTabEnabled) {
+        return [];
+      }
+
+      label = contribution
+        ? contribution.renderLabel({
+            sessionCost: props.sessionCost,
+            reviewStats: props.reviewStats,
+            sessionDuration: props.sessionDuration,
+          })
+        : tab;
     }
 
     return [
@@ -382,16 +383,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
       },
     ];
   });
-
-  const costsPanelId = `${tabsetBaseId}-panel-costs`;
-  const reviewPanelId = `${tabsetBaseId}-panel-review`;
-  const explorerPanelId = `${tabsetBaseId}-panel-explorer`;
-  const statsPanelId = `${tabsetBaseId}-panel-stats`;
-
-  const costsTabId = `${tabsetBaseId}-tab-costs`;
-  const reviewTabId = `${tabsetBaseId}-tab-review`;
-  const explorerTabId = `${tabsetBaseId}-tab-explorer`;
-  const statsTabId = `${tabsetBaseId}-tab-stats`;
 
   // Generate sortable IDs for tabs in this tabset
   const sortableIds = items.map((item) => `${props.node.id}:${item.tab}`);
@@ -463,11 +454,55 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           )}
         />
 
-        {props.node.activeTab === "costs" && (
-          <div role="tabpanel" id={costsPanelId} aria-labelledby={costsTabId}>
-            <CostsTab workspaceId={props.workspaceId} />
-          </div>
-        )}
+        {/* Extension-provided tabs (including built-ins like costs/review/explorer/stats) */}
+        {props.node.tabs
+          .filter((tab) => !isTerminalTab(tab) && !isFileTab(tab))
+          .map((tab) => {
+            const tabId = `${tabsetBaseId}-tab-${tab}`;
+            const panelId = `${tabsetBaseId}-panel-${tab}`;
+            const isActive = props.node.activeTab === tab;
+
+            const contribution = extensionRegistry.getRightSidebarTab(tab);
+            const config = contribution?.config;
+
+            if (config?.featureFlag === "statsTab" && !props.statsTabEnabled) {
+              return null;
+            }
+
+            if (!isActive && !config?.keepAlive) {
+              return null;
+            }
+
+            return (
+              <div
+                key={panelId}
+                role="tabpanel"
+                id={panelId}
+                aria-labelledby={tabId}
+                className="h-full"
+                hidden={!isActive}
+              >
+                {contribution ? (
+                  contribution.renderPanel({
+                    tabsetId: props.node.id,
+                    workspaceId: props.workspaceId,
+                    workspacePath: props.workspacePath,
+                    projectPath: props.projectPath,
+                    isCreating: props.isCreating,
+                    focusTrigger: props.focusTrigger,
+                    onOpenFile: props.onOpenFile,
+                    onReviewNote: props.onReviewNote,
+                    onReviewStatsChange: props.onReviewStatsChange,
+                    visible: isActive,
+                  })
+                ) : (
+                  <div className="text-muted-foreground text-sm">
+                    This tab is unavailable (<code className="font-mono">{tab}</code>).
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
         {/* Render all terminal tabs (keep-alive: hidden but mounted) */}
         {terminalTabs.map((terminalTab) => {
@@ -499,34 +534,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
           );
         })}
 
-        {props.node.tabs.includes("stats") && props.statsTabEnabled && (
-          <div
-            role="tabpanel"
-            id={statsPanelId}
-            aria-labelledby={statsTabId}
-            hidden={props.node.activeTab !== "stats"}
-          >
-            <ErrorBoundary workspaceInfo="Stats tab">
-              <StatsTab workspaceId={props.workspaceId} />
-            </ErrorBoundary>
-          </div>
-        )}
-
-        {props.node.activeTab === "explorer" && (
-          <div
-            role="tabpanel"
-            id={explorerPanelId}
-            aria-labelledby={explorerTabId}
-            className="h-full"
-          >
-            <ExplorerTab
-              workspaceId={props.workspaceId}
-              workspacePath={props.workspacePath}
-              onOpenFile={props.onOpenFile}
-            />
-          </div>
-        )}
-
         {/* Render file viewer tabs */}
         {props.node.tabs.filter(isFileTab).map((fileTab) => {
           const filePath = getFilePath(fileTab);
@@ -553,22 +560,6 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
             </div>
           );
         })}
-
-        {props.node.activeTab === "review" && (
-          <div role="tabpanel" id={reviewPanelId} aria-labelledby={reviewTabId} className="h-full">
-            <ReviewPanel
-              key={`${props.workspaceId}:${props.node.id}`}
-              workspaceId={props.workspaceId}
-              workspacePath={props.workspacePath}
-              projectPath={props.projectPath}
-              onReviewNote={props.onReviewNote}
-              focusTrigger={props.focusTrigger}
-              isCreating={props.isCreating}
-              onStatsChange={props.onReviewStatsChange}
-              onOpenFile={props.onOpenFile}
-            />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -585,6 +576,8 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   isCreating = false,
   addTerminalRef,
 }) => {
+  const extensionRegistry = useExtensionRegistry();
+
   // Trigger for focusing Review panel (preserves hunk selection)
   const [focusTrigger, _setFocusTrigger] = React.useState(0);
 
@@ -1276,7 +1269,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       <DragOverlay>
         {activeDragData ? (
           <div className="border-border bg-background/95 cursor-grabbing rounded-md border px-3 py-1 text-xs font-medium shadow">
-            {getTabName(activeDragData.tab)}
+            {isTerminalTab(activeDragData.tab)
+              ? TERMINAL_TAB_CONFIG.name
+              : isFileTab(activeDragData.tab)
+                ? FILE_TAB_CONFIG.name
+                : (extensionRegistry.getRightSidebarTab(activeDragData.tab)?.config.name ??
+                  activeDragData.tab)}
           </div>
         ) : null}
       </DragOverlay>
