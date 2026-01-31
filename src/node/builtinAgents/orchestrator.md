@@ -86,7 +86,8 @@ Dependency analysis (required before spawning `exec` tasks):
   - Outputs: files/targets/artifacts introduced/renamed/generated
   - Inputs / prerequisites (including for verification): what must already exist
 - A subtask is "independent" only if its patch can be applied + verified on the current parent workspace HEAD, without any other pending patch.
-- Default to sequential if unsure. Parallelism is an optimization; correctness is the requirement.
+- Parallelism is the default: maximize the size of each independent batch and run it in parallel.
+  Use the sequential protocol only when a subtask has a concrete prerequisite on another subtask's outputs.
 - If task B depends on outputs from task A:
   - Do not spawn B until A has completed and A's patch is applied in the parent workspace.
   - If the dependency chain is tight (download → generate → wire-up), prefer one `exec` task rather than splitting.
@@ -111,7 +112,7 @@ Patch integration loop (default):
    - PASS: summary-only (no long logs).
    - FAIL: include the failing command + key error lines; then delegate a fix to `exec` and re-verify.
 
-Sequential protocol (when any dependency exists):
+Sequential protocol (only for dependency chains):
 
 1. Spawn the prerequisite `exec` task with `run_in_background: false` (or spawn, then immediately `task_await`).
 2. Dry-run apply its patch; then apply for real.
