@@ -6,13 +6,13 @@
 import React, { useState, useMemo } from "react";
 import { Check, Circle } from "lucide-react";
 import type { DiffHunk, Review, ReviewNoteData } from "@/common/types/review";
-import { SelectableDiffRenderer } from "../../shared/DiffRenderer";
-import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
+import { SelectableDiffRenderer } from "@/browser/components/shared/DiffRenderer";
+import type { ReviewActionCallbacks } from "@/browser/components/shared/InlineReviewNote";
 import {
   type SearchHighlightConfig,
   highlightSearchInText,
 } from "@/browser/utils/highlighting/highlightSearchTerms";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../../ui/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { getReviewExpandStateKey } from "@/common/constants/storage";
 import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";

@@ -26,7 +26,7 @@ import { LRUCache } from "lru-cache";
 import { AlertTriangle, Lightbulb, Loader2 } from "lucide-react";
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { HunkViewer } from "./HunkViewer";
-import type { ReviewActionCallbacks } from "../../shared/InlineReviewNote";
+import type { ReviewActionCallbacks } from "@/browser/components/shared/InlineReviewNote";
 import { ReviewControls } from "./ReviewControls";
 import { FileTree } from "./FileTree";
 import { UntrackedStatus } from "./UntrackedStatus";

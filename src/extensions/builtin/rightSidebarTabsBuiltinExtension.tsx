@@ -1,14 +1,12 @@
 import React from "react";
 import type { ExtensionModule } from "@/extensions/api/ExtensionModule";
 import { CostsTab } from "@/browser/components/RightSidebar/CostsTab";
-import { ReviewPanel } from "@/browser/components/RightSidebar/CodeReview/ReviewPanel";
 import { StatsTab } from "@/browser/components/RightSidebar/StatsTab";
 import { ExplorerTab } from "@/browser/components/RightSidebar/ExplorerTab";
 import { ErrorBoundary } from "@/browser/components/ErrorBoundary";
 import {
   CostsTabLabel,
   ExplorerTabLabel,
-  ReviewTabLabel,
   StatsTabLabel,
 } from "@/browser/components/RightSidebar/tabs";
 
@@ -23,28 +21,6 @@ export const rightSidebarTabsBuiltinExtension: ExtensionModule = {
       },
       renderLabel: (props) => <CostsTabLabel sessionCost={props.sessionCost ?? null} />,
       renderPanel: (props) => <CostsTab workspaceId={props.workspaceId} />,
-    });
-
-    ctx.contribute.rightSidebar.registerTab({
-      id: "review",
-      config: {
-        name: "Review",
-        contentClassName: "overflow-y-auto p-0",
-      },
-      renderLabel: (props) => <ReviewTabLabel reviewStats={props.reviewStats ?? null} />,
-      renderPanel: (props) => (
-        <ReviewPanel
-          key={`${props.workspaceId}:${props.tabsetId}`}
-          workspaceId={props.workspaceId}
-          workspacePath={props.workspacePath}
-          projectPath={props.projectPath}
-          onReviewNote={props.onReviewNote}
-          focusTrigger={props.focusTrigger}
-          isCreating={props.isCreating}
-          onStatsChange={props.onReviewStatsChange}
-          onOpenFile={props.onOpenFile}
-        />
-      ),
     });
 
     ctx.contribute.rightSidebar.registerTab({

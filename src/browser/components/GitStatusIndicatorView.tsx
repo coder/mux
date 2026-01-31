@@ -4,7 +4,7 @@ import type { GitCommit, GitBranchHeader } from "@/common/utils/git/parseGitLog"
 import { cn } from "@/common/lib/utils";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
-import { BaseSelectorPopover } from "./RightSidebar/CodeReview/BaseSelectorPopover";
+import { BaseSelectorPopover } from "@/extensions/review/browser/CodeReview/BaseSelectorPopover";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
