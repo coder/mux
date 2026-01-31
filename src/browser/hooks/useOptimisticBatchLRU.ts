@@ -78,11 +78,17 @@ export function useOptimisticBatchLRU<T>({
 
   const [status, setStatus] = React.useState<OptimisticBatchStatus>("idle");
 
-  // Stable reference for keys to avoid unnecessary refetches
+  // We want to refetch when the *contents* of `keys` change, not merely when the
+  // array identity changes.
+  //
+  // Also: avoid having a `keysChanged` boolean in the effect dependency list.
+  // That pattern can cause a double-fetch when `keysChanged` flips true→false
+  // across renders.
+  const keysKey = React.useMemo(() => keys.join("\u0000"), [keys]);
+  const keysKeyRef = React.useRef(keysKey);
   const keysRef = React.useRef(keys);
-  const keysChanged =
-    keys.length !== keysRef.current.length || keys.some((k, i) => k !== keysRef.current[i]);
-  if (keysChanged) {
+  if (keysKeyRef.current !== keysKey) {
+    keysKeyRef.current = keysKey;
     keysRef.current = keys;
   }
 
@@ -122,28 +128,32 @@ export function useOptimisticBatchLRU<T>({
     }
   }, [cache, fetchBatch]);
 
-  // Fetch on mount and when keys change
+  // Fetch on mount and when keys change (by value, not identity)
   React.useEffect(() => {
     if (skip) return;
 
-    // Re-seed from cache when keys change (for immediate values)
-    if (keysChanged) {
-      setValues((prev) => {
-        const next = { ...prev };
-        for (const key of keys) {
-          if (next[key] === undefined) {
-            const cached = cache.get(key);
-            if (cached !== null) {
-              next[key] = cached;
-            }
-          }
+    const currentKeys = keysRef.current;
+
+    // Re-seed from cache for immediate values and prune removed keys.
+    setValues((prev) => {
+      const next: Record<string, T | undefined> = {};
+      for (const key of currentKeys) {
+        const existing = prev[key];
+        if (existing !== undefined) {
+          next[key] = existing;
+          continue;
         }
-        return next;
-      });
-    }
+
+        const cached = cache.get(key);
+        if (cached !== null) {
+          next[key] = cached;
+        }
+      }
+      return next;
+    });
 
     void doFetch();
-  }, [skip, keysChanged, keys, cache, doFetch]);
+  }, [skip, keysKey, cache, doFetch]);
 
   // Wrap refresh to be a void function (callers don't need to await)
   const refresh = React.useCallback(() => {
