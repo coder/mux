@@ -78,6 +78,13 @@ export function useOptimisticBatchLRU<T>({
 
   const [status, setStatus] = React.useState<OptimisticBatchStatus>("idle");
 
+  // Capture the latest fetchBatch without making it a dependency.
+  //
+  // Call sites often pass inline async functions; if we depend on the callback
+  // identity, we can refetch on every render.
+  const fetchBatchRef = React.useRef(fetchBatch);
+  fetchBatchRef.current = fetchBatch;
+
   // We want to refetch when the *contents* of `keys` change, not merely when the
   // array identity changes.
   //
@@ -92,7 +99,7 @@ export function useOptimisticBatchLRU<T>({
     keysRef.current = keys;
   }
 
-  // Fetch function - also updates cache
+  // Fetch function - reads keys from refs and writes through to the cache.
   const doFetch = React.useCallback(async () => {
     const currentKeys = keysRef.current;
     if (currentKeys.length === 0) {
@@ -102,20 +109,35 @@ export function useOptimisticBatchLRU<T>({
 
     setStatus("loading");
     try {
-      const freshData = await fetchBatch(currentKeys);
+      const freshData = await fetchBatchRef.current(currentKeys);
 
-      // Update cache + state
+      // Decide what to update. If the response doesn't contain a key at all, we
+      // treat it as "no update" (keep cached value). If the response contains a
+      // key with `undefined`, we treat it as an explicit delete.
+      const updates: Array<{ key: string; value: T | undefined }> = [];
+      for (const key of currentKeys) {
+        if (!Object.prototype.hasOwnProperty.call(freshData, key)) {
+          continue;
+        }
+        updates.push({ key, value: freshData[key] });
+      }
+
+      // Apply cache updates as a side effect (outside the React state updater).
+      for (const { key, value } of updates) {
+        if (value !== undefined) {
+          cache.set(key, value);
+        } else {
+          cache.remove(key);
+        }
+      }
+
+      // Then update React state (pure updater).
       setValues((prev) => {
         const next = { ...prev };
-        for (const key of currentKeys) {
-          const value = freshData[key];
+        for (const { key, value } of updates) {
           if (value !== undefined) {
-            cache.set(key, value);
             next[key] = value;
           } else {
-            // Fresh data returned undefined (e.g., usage file deleted/corrupt).
-            // Clear the cache and state so we don't show stale data.
-            cache.remove(key);
             delete next[key];
           }
         }
@@ -126,7 +148,7 @@ export function useOptimisticBatchLRU<T>({
     } catch {
       setStatus("error");
     }
-  }, [cache, fetchBatch]);
+  }, [cache]);
 
   // Fetch on mount and when keys change (by value, not identity)
   React.useEffect(() => {
