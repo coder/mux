@@ -14,7 +14,7 @@ import { resolveModelAlias } from "@/common/utils/ai/models";
 
 /**
  * Parse multiline command input into first-line tokens and remaining message
- * Used by commands that support messages on subsequent lines (/compact, /fork, /new)
+ * Used by commands that support messages on subsequent lines (/compact, /new)
  */
 function parseMultilineCommand(rawInput: string): {
   firstLine: string;
@@ -492,33 +492,15 @@ const planCommandDefinition: SlashCommandDefinition = {
 
 const forkCommandDefinition: SlashCommandDefinition = {
   key: "fork",
-  description:
-    "Fork workspace with new name and optional start message. Add start message on lines after the command.",
+  description: "Fork workspace. If no name is provided, Mux will auto-generate one.",
   handler: ({ rawInput }): ParsedCommand => {
-    const { tokens, message } = parseMultilineCommand(rawInput);
-
-    if (tokens.length === 0) {
-      return {
-        type: "fork-help",
-      };
-    }
-
-    const newName = tokens[0];
-
-    // Start message can be from remaining tokens on same line or multiline content
-    let startMessage: string | undefined;
-    if (message) {
-      // Multiline content takes precedence
-      startMessage = message;
-    } else if (tokens.length > 1) {
-      // Join remaining tokens on first line
-      startMessage = tokens.slice(1).join(" ").trim();
-    }
+    // Fork doesn't accept a "continue message" anymore.
+    // We only read the first-line tokens and ignore any additional content.
+    const { tokens } = parseMultilineCommand(rawInput);
 
     return {
       type: "fork",
-      newName,
-      startMessage: startMessage && startMessage.length > 0 ? startMessage : undefined,
+      newName: tokens[0],
     };
   },
 };

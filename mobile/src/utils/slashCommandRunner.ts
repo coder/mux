@@ -63,12 +63,6 @@ export async function executeSlashCommand(
       return true;
     case "fork":
       return handleFork(ctx, parsed);
-    case "fork-help":
-      ctx.showInfo(
-        "/fork",
-        "Usage: /fork <new-workspace-name>. Optionally add text on new lines to send as the first message."
-      );
-      return true;
     case "new":
       return handleNew(ctx, parsed);
     case "truncate":
@@ -235,14 +229,6 @@ async function handleFork(
 
     ctx.onNavigateToWorkspace(result.metadata.id);
     ctx.showInfo("Fork", `Switched to ${result.metadata.name}`);
-
-    if (parsed.startMessage) {
-      await ctx.client.workspace.sendMessage({
-        workspaceId: result.metadata.id,
-        message: parsed.startMessage,
-        options: ctx.sendMessageOptions,
-      });
-    }
     return true;
   } catch (error) {
     ctx.showError("Fork", getErrorMessage(error));

@@ -65,9 +65,7 @@ const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((mode
 export interface ForkOptions {
   client: RouterClient<AppRouter>;
   sourceWorkspaceId: string;
-  newName: string;
-  startMessage?: string;
-  sendMessageOptions?: SendMessageOptions;
+  newName?: string;
 }
 
 export interface ForkResult {
@@ -77,10 +75,9 @@ export interface ForkResult {
 }
 
 /**
- * Fork a workspace and switch to it
- * Handles copying storage, dispatching switch event, and optionally sending start message
+ * Fork a workspace and switch to it.
  *
- * Caller is responsible for error handling, logging, and showing toasts
+ * Caller is responsible for error handling, logging, and showing toasts.
  */
 export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   const { client } = options;
@@ -96,37 +93,10 @@ export async function forkWorkspace(options: ForkOptions): Promise<ForkResult> {
   // Copy UI state to the new workspace
   copyWorkspaceStorage(options.sourceWorkspaceId, result.metadata.id);
 
-  // Get workspace info for switching
-  const workspaceInfo = await client.workspace.getInfo({ workspaceId: result.metadata.id });
-  if (!workspaceInfo) {
-    return { success: false, error: "Failed to get workspace info after fork" };
-  }
-
   // Dispatch event to switch workspace
-  dispatchWorkspaceSwitch(workspaceInfo);
+  dispatchWorkspaceSwitch(result.metadata);
 
-  // If there's a start message, defer until React finishes rendering and WorkspaceStore subscribes
-  // Using requestAnimationFrame ensures we wait for:
-  // 1. React to process the workspace switch and update state
-  // 2. Effects to run (workspaceStore.syncWorkspaces in App.tsx)
-  // 3. WorkspaceStore to subscribe to the new workspace's IPC channel
-  const startMessage = options.startMessage;
-  const sendMessageOptions = options.sendMessageOptions;
-  if (startMessage && sendMessageOptions) {
-    requestAnimationFrame(() => {
-      client.workspace
-        .sendMessage({
-          workspaceId: result.metadata.id,
-          message: startMessage,
-          options: sendMessageOptions,
-        })
-        .catch(() => {
-          // Best-effort: the user can send the message manually if this fails.
-        });
-    });
-  }
-
-  return { success: true, workspaceInfo };
+  return { success: true, workspaceInfo: result.metadata };
 }
 
 export interface SlashCommandContext extends Omit<CommandHandlerContext, "workspaceId" | "api"> {
@@ -451,8 +421,6 @@ export async function processSlashCommand(
       case "command-invalid-args":
       case "unknown-command":
         return parsed.command;
-      case "fork-help":
-        return "fork";
       default:
         return null;
     }
@@ -612,14 +580,7 @@ async function handleForkCommand(
   parsed: Extract<ParsedCommand, { type: "fork" }>,
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
-  const {
-    api: client,
-    workspaceId,
-    sendMessageOptions,
-    setInput,
-    setSendingState,
-    setToast,
-  } = context;
+  const { api: client, workspaceId, setInput, setSendingState, setToast } = context;
 
   setInput(""); // Clear input immediately
   setSendingState(true);
@@ -634,8 +595,6 @@ async function handleForkCommand(
       client,
       sourceWorkspaceId: workspaceId,
       newName: parsed.newName,
-      startMessage: parsed.startMessage,
-      sendMessageOptions,
     });
 
     if (!forkResult.success) {
@@ -650,10 +609,11 @@ async function handleForkCommand(
       return { clearInput: false, toastShown: true };
     } else {
       trackCommandUsed("fork");
+      const forkedName = forkResult.workspaceInfo?.name ?? parsed.newName;
       setToast({
         id: Date.now().toString(),
         type: "success",
-        message: `Forked to workspace "${parsed.newName}"`,
+        message: forkedName ? `Forked to workspace "${forkedName}"` : "Forked workspace",
       });
       return { clearInput: true, toastShown: true };
     }

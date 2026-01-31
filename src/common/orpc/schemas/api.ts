@@ -458,7 +458,7 @@ export const workspace = {
     output: ResultSchema(z.void(), z.string()),
   },
   fork: {
-    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
+    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string().optional() }),
     output: z.discriminatedUnion("success", [
       z.object({
         success: z.literal(true),

@@ -171,20 +171,18 @@ describe("commandParser", () => {
       expectParse("/fork feature-branch", {
         type: "fork",
         newName: "feature-branch",
-        startMessage: undefined,
       });
     });
 
-    it("should parse /fork command with start message", () => {
+    it("should ignore extra content after name (legacy continue message)", () => {
       expectParse("/fork feature-branch let's go", {
         type: "fork",
         newName: "feature-branch",
-        startMessage: "let's go",
       });
     });
 
-    it("should show /fork help when missing args", () => {
-      expectParse("/fork", { type: "fork-help" });
+    it("should parse /fork without a name", () => {
+      expectParse("/fork", { type: "fork", newName: undefined });
     });
   });
 });
