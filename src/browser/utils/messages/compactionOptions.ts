@@ -6,7 +6,6 @@
  */
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { toGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
@@ -29,8 +28,7 @@ export function applyCompactionOverrides(
   baseOptions: SendMessageOptions,
   compactData: CompactionRequestData
 ): SendMessageOptions {
-  // Apply gateway transformation - compactData.model is raw, baseOptions.model is already transformed.
-  const compactionModel = compactData.model ? toGatewayModel(compactData.model) : baseOptions.model;
+  const compactionModel = compactData.model ?? baseOptions.model;
 
   const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
   const preferredThinking = agentAiDefaults.compact?.thinkingLevel;

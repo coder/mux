@@ -479,15 +479,16 @@ export class AgentSession {
     assert(typeof message === "string", "sendMessage requires a string message");
     const trimmedMessage = message.trim();
     const fileParts = options?.fileParts;
+    const editMessageId = options?.editMessageId;
 
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
     let preservedEditFileParts: MuxFilePart[] | undefined;
-    if (options?.editMessageId && fileParts === undefined) {
+    if (editMessageId && fileParts === undefined) {
       const historyResult = await this.historyService.getHistory(this.workspaceId);
       if (historyResult.success) {
         const targetMessage: MuxMessage | undefined = historyResult.data.find(
-          (msg) => msg.id === options.editMessageId
+          (msg) => msg.id === editMessageId
         );
         const fileParts = targetMessage?.parts.filter(
           (part): part is MuxFilePart => part.type === "file"
@@ -508,7 +509,7 @@ export class AgentSession {
       );
     }
 
-    if (options?.editMessageId) {
+    if (editMessageId) {
       // Interrupt an existing stream or compaction, if active
       if (this.aiService.isStreaming(this.workspaceId)) {
         // MUST use abandonPartial=true to prevent handleAbort from performing partial compaction
@@ -521,11 +522,11 @@ export class AgentSession {
 
       // Find the truncation target: the edited message or any immediately-preceding snapshots.
       // (snapshots are persisted immediately before their corresponding user message)
-      let truncateTargetId = options.editMessageId;
+      let truncateTargetId = editMessageId;
       const historyResult = await this.historyService.getHistory(this.workspaceId);
       if (historyResult.success) {
         const messages = historyResult.data;
-        const editIndex = messages.findIndex((m) => m.id === options.editMessageId);
+        const editIndex = messages.findIndex((m) => m.id === editMessageId);
         if (editIndex > 0) {
           // Walk backwards over contiguous synthetic snapshots so we don't orphan them.
           for (let i = editIndex - 1; i >= 0; i--) {
@@ -553,7 +554,7 @@ export class AgentSession {
           // shows it as editable). Treat as a no-op truncation so the user can recover.
           log.warn("editMessageId not found in history; proceeding without truncation", {
             workspaceId: this.workspaceId,
-            editMessageId: options.editMessageId,
+            editMessageId,
             error: truncateResult.error,
           });
         } else {
@@ -607,6 +608,20 @@ export class AgentSession {
         createUnknownSendMessageError("No model specified. Please select a model using /model.")
       );
     }
+
+    const rawModelString = options.model.trim();
+    const rawSystem1Model = options.system1Model?.trim();
+
+    options = this.normalizeGatewaySendOptions(options);
+
+    // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
+    // honor the opt-in even before muxGatewayModels has synchronized.
+    const modelForStream = rawModelString.startsWith("mux-gateway:")
+      ? rawModelString
+      : options.model;
+    const optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
+      ? { ...options, system1Model: rawSystem1Model }
+      : options;
 
     // Defense-in-depth: reject PDFs for models we know don't support them.
     // (Frontend should also block this, but it's easy to bypass via IPC / older clients.)
@@ -759,7 +774,7 @@ export class AgentSession {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned. This keeps streamStarting=true
       // for the entire duration of streaming, allowing follow-up messages to be queued.
-      const result = await this.streamWithHistory(options.model, options);
+      const result = await this.streamWithHistory(modelForStream, optionsForStream);
       return result;
     } finally {
       this.streamStarting = false;
@@ -773,6 +788,19 @@ export class AgentSession {
     const { model } = options;
     assert(typeof model === "string" && model.trim().length > 0, "resumeStream requires a model");
 
+    const rawModelString = options.model.trim();
+    const rawSystem1Model = options.system1Model?.trim();
+    const normalizedOptions = this.normalizeGatewaySendOptions(options);
+
+    // Preserve explicit mux-gateway prefixes from legacy clients so backend routing can
+    // honor the opt-in even before muxGatewayModels has synchronized.
+    const modelForStream = rawModelString.startsWith("mux-gateway:")
+      ? rawModelString
+      : normalizedOptions.model;
+    const optionsForStream = rawSystem1Model?.startsWith("mux-gateway:")
+      ? { ...normalizedOptions, system1Model: rawSystem1Model }
+      : normalizedOptions;
+
     // Guard against auto-retry starting a second stream while the initial send is
     // still waiting for init hooks to complete.
     if (this.streamStarting || this.aiService.isStreaming(this.workspaceId)) {
@@ -783,11 +811,25 @@ export class AgentSession {
     try {
       // Must await here so the finally block runs after streaming completes,
       // not immediately when the Promise is returned.
-      const result = await this.streamWithHistory(model, options);
+      const result = await this.streamWithHistory(modelForStream, optionsForStream);
       return result;
     } finally {
       this.streamStarting = false;
     }
+  }
+
+  private normalizeGatewaySendOptions(options: SendMessageOptions): SendMessageOptions {
+    // Keep persisted model IDs canonical; gateway routing is now backend-authoritative (issue #1769).
+    const normalizedModel = normalizeGatewayModel(options.model.trim());
+    const system1Model = options.system1Model?.trim();
+    const normalizedSystem1Model =
+      system1Model && system1Model.length > 0 ? normalizeGatewayModel(system1Model) : undefined;
+
+    return {
+      ...options,
+      model: normalizedModel,
+      system1Model: normalizedSystem1Model,
+    };
   }
 
   async interruptStream(options?: {

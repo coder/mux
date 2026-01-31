@@ -33,6 +33,7 @@ import { AgentIdSchema } from "@/common/orpc/schemas";
 import {
   PROVIDER_REGISTRY,
   PROVIDER_DEFINITIONS,
+  MUX_GATEWAY_SUPPORTED_PROVIDERS,
   type ProviderName,
 } from "@/common/constants/providers";
 
@@ -1125,6 +1126,55 @@ export class AIService extends EventEmitter {
     }
   }
 
+  private resolveGatewayModelString(
+    modelString: string,
+    modelKey?: string,
+    explicitlyRequestedGateway = false
+  ): string {
+    // Backend-authoritative routing avoids frontend localStorage races (issue #1769).
+    const canonicalModelString = normalizeGatewayModel(modelString);
+    const normalizedModelKey = modelKey ? normalizeGatewayModel(modelKey) : canonicalModelString;
+    const [providerName, modelId] = parseModelString(canonicalModelString);
+
+    if (!providerName || !modelId) {
+      return canonicalModelString;
+    }
+
+    if (providerName === "mux-gateway" || !(providerName in PROVIDER_REGISTRY)) {
+      return canonicalModelString;
+    }
+
+    const typedProvider = providerName as ProviderName;
+    if (!MUX_GATEWAY_SUPPORTED_PROVIDERS.has(typedProvider)) {
+      return canonicalModelString;
+    }
+
+    const config = this.config.loadConfigOrDefault();
+    const gatewayEnabled = config.muxGatewayEnabled !== false;
+    const gatewayModels = config.muxGatewayModels ?? [];
+    // Legacy clients may still send mux-gateway model IDs before the backend config
+    // has synchronized their allowlist, so honor an explicit mux-gateway prefix as
+    // an implicit opt-in to avoid first-message API key failures.
+    const isGatewayModelEnabled =
+      explicitlyRequestedGateway ||
+      gatewayModels.includes(canonicalModelString) ||
+      gatewayModels.includes(normalizedModelKey);
+
+    if (!gatewayEnabled || !isGatewayModelEnabled) {
+      return canonicalModelString;
+    }
+
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    const gatewayConfig = providersConfig["mux-gateway"] ?? {};
+    const gatewayConfigured = resolveProviderCredentials("mux-gateway", gatewayConfig).isConfigured;
+
+    if (!gatewayConfigured) {
+      return canonicalModelString;
+    }
+
+    return `mux-gateway:${providerName}/${modelId}`;
+  }
+
   /**
    * Stream a message conversation to the AI model
    * @param messages Array of conversation messages
@@ -1210,25 +1260,32 @@ export class AIService extends EventEmitter {
 
       // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
       // Similar to how OpenAI handles reasoning vs non-reasoning models
-      let effectiveModelString = modelString;
-      const [providerName] = parseModelString(modelString);
-      const normalizedModelString = normalizeGatewayModel(modelString);
-      const [normalizedProviderName, normalizedModelId] = parseModelString(normalizedModelString);
-      const isMuxGatewayModel = providerName === "mux-gateway";
-      if (normalizedProviderName === "xai" && normalizedModelId === "grok-4-1-fast") {
+      const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
+      const canonicalModelString = normalizeGatewayModel(modelString);
+      let effectiveModelString = canonicalModelString;
+      const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
+      if (canonicalProviderName === "xai" && canonicalModelId === "grok-4-1-fast") {
         // xAI Grok only supports full reasoning (no medium/low)
         // Map to appropriate variant based on thinking level
         const variant =
           effectiveThinkingLevel !== "off"
             ? "grok-4-1-fast-reasoning"
             : "grok-4-1-fast-non-reasoning";
-        effectiveModelString = isMuxGatewayModel ? `mux-gateway:xai/${variant}` : `xai:${variant}`;
+        effectiveModelString = `xai:${variant}`;
         log.debug("Mapping xAI Grok model to variant", {
           original: modelString,
           effective: effectiveModelString,
           thinkingLevel: effectiveThinkingLevel,
         });
       }
+
+      effectiveModelString = this.resolveGatewayModelString(
+        effectiveModelString,
+        canonicalModelString,
+        explicitlyRequestedGateway
+      );
+
+      const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
 
       // Create model instance with early API key validation
       const modelResult = await this.createModel(effectiveModelString, effectiveMuxProviderOptions);
@@ -1241,7 +1298,7 @@ export class AIService extends EventEmitter {
 
       // Normalize provider for provider-specific handling (Mux Gateway models should behave
       // like their underlying provider for message transforms and compliance checks).
-      const providerForMessages = normalizedProviderName;
+      const providerForMessages = canonicalProviderName;
 
       // Tool names are needed for the mode transition sentinel injection.
       // Compute them once we know the effective agent + tool policy.
@@ -2057,7 +2114,8 @@ export class AIService extends EventEmitter {
       const assistantMessageId = createAssistantMessageId();
       const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
         timestamp: Date.now(),
-        model: modelString,
+        model: canonicalModelString,
+        routedThroughGateway,
         systemMessageTokens,
         agentId: effectiveAgentId,
       });
@@ -2088,7 +2146,8 @@ export class AIService extends EventEmitter {
           metadata: {
             historySequence,
             timestamp: Date.now(),
-            model: modelString,
+            model: canonicalModelString,
+            routedThroughGateway,
             systemMessageTokens,
             agentId: effectiveAgentId,
             partial: true,
@@ -2104,7 +2163,8 @@ export class AIService extends EventEmitter {
           type: "stream-start",
           workspaceId,
           messageId: assistantMessageId,
-          model: modelString,
+          model: canonicalModelString,
+          routedThroughGateway,
           historySequence,
           startTime: Date.now(),
           agentId: effectiveAgentId,
@@ -2127,7 +2187,8 @@ export class AIService extends EventEmitter {
       if (simulateToolPolicyNoop) {
         const noopMessage = createMuxMessage(assistantMessageId, "assistant", "", {
           timestamp: Date.now(),
-          model: modelString,
+          model: canonicalModelString,
+          routedThroughGateway,
           systemMessageTokens,
           agentId: effectiveAgentId,
           toolPolicy: effectiveToolPolicy,
@@ -2144,7 +2205,8 @@ export class AIService extends EventEmitter {
           type: "stream-start",
           workspaceId,
           messageId: assistantMessageId,
-          model: modelString,
+          model: canonicalModelString,
+          routedThroughGateway,
           historySequence,
           startTime: Date.now(),
           agentId: effectiveAgentId,
@@ -2178,7 +2240,8 @@ export class AIService extends EventEmitter {
           workspaceId,
           messageId: assistantMessageId,
           metadata: {
-            model: modelString,
+            model: canonicalModelString,
+            routedThroughGateway,
             systemMessageTokens,
           },
           parts,
@@ -2262,7 +2325,7 @@ export class AIService extends EventEmitter {
         workspaceId,
         messageId: assistantMessageId,
         model: modelString,
-        providerName,
+        providerName: canonicalProviderName,
         thinkingLevel: effectiveThinkingLevel,
         mode: effectiveMode,
         agentId: effectiveAgentId,
@@ -2329,8 +2392,11 @@ export class AIService extends EventEmitter {
               const bashOutputExecuteFn = getExecuteFnForTool(baseBashOutputTool);
               const taskAwaitExecuteFn = getExecuteFnForTool(baseTaskAwaitTool);
 
-              const system1ModelString =
-                typeof system1Model === "string" ? system1Model.trim() : "";
+              const rawSystem1Model = typeof system1Model === "string" ? system1Model.trim() : "";
+              const system1ModelString = rawSystem1Model
+                ? normalizeGatewayModel(rawSystem1Model)
+                : "";
+              const system1ExplicitGateway = rawSystem1Model.startsWith("mux-gateway:");
               const effectiveSystem1ModelStringForThinking = system1ModelString || modelString;
               const effectiveSystem1ThinkingLevel = enforceThinkingPolicy(
                 effectiveSystem1ModelStringForThinking,
@@ -2344,7 +2410,7 @@ export class AIService extends EventEmitter {
                 { modelString: string; model: LanguageModel } | undefined
               > => {
                 if (!system1ModelString) {
-                  return { modelString, model: modelResult.data };
+                  return { modelString: effectiveModelString, model: modelResult.data };
                 }
 
                 if (cachedSystem1Model) {
@@ -2354,8 +2420,13 @@ export class AIService extends EventEmitter {
                   return undefined;
                 }
 
-                const created = await this.createModel(
+                const resolvedSystem1ModelString = this.resolveGatewayModelString(
                   system1ModelString,
+                  undefined,
+                  system1ExplicitGateway
+                );
+                const created = await this.createModel(
+                  resolvedSystem1ModelString,
                   effectiveMuxProviderOptions
                 );
                 if (!created.success) {
@@ -2368,7 +2439,10 @@ export class AIService extends EventEmitter {
                   return undefined;
                 }
 
-                cachedSystem1Model = { modelString: system1ModelString, model: created.data };
+                cachedSystem1Model = {
+                  modelString: resolvedSystem1ModelString,
+                  model: created.data,
+                };
                 return cachedSystem1Model;
               };
 
@@ -2926,6 +3000,7 @@ export class AIService extends EventEmitter {
           timestamp: Date.now(),
           agentId: effectiveAgentId,
           mode: effectiveMode,
+          routedThroughGateway,
         },
         providerOptions,
         maxOutputTokens,

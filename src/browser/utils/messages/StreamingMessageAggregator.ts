@@ -98,6 +98,7 @@ interface StreamingContext {
   isCompacting: boolean;
   hasCompactionContinue: boolean;
   model: string;
+  routedThroughGateway?: boolean;
 
   /** Timestamp of first content token (text or reasoning delta) - backend Date.now() */
   serverFirstTokenTime: number | null;
@@ -1196,6 +1197,7 @@ export class StreamingMessageAggregator {
       isCompacting,
       hasCompactionContinue,
       model: data.model,
+      routedThroughGateway: data.routedThroughGateway,
       serverFirstTokenTime: null,
       toolExecutionMs: 0,
       pendingToolStarts: new Map(),
@@ -1211,6 +1213,7 @@ export class StreamingMessageAggregator {
       historySequence: data.historySequence,
       timestamp: Date.now(),
       model: data.model,
+      routedThroughGateway: data.routedThroughGateway,
       mode: data.mode,
     });
 
@@ -2032,6 +2035,7 @@ export class StreamingMessageAggregator {
             isCompacted: !!message.metadata?.compacted,
             isIdleCompacted: message.metadata?.compacted === "idle",
             model: message.metadata?.model,
+            routedThroughGateway: message.metadata?.routedThroughGateway,
             mode: message.metadata?.mode,
             agentId: message.metadata?.agentId ?? message.metadata?.mode,
             timestamp: part.timestamp ?? baseTimestamp,
@@ -2119,6 +2123,7 @@ export class StreamingMessageAggregator {
           errorType: message.metadata.errorType ?? "unknown",
           historySequence,
           model: message.metadata.model,
+          routedThroughGateway: message.metadata?.routedThroughGateway,
           timestamp: baseTimestamp,
         });
       }

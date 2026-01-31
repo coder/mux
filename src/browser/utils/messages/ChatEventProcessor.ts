@@ -173,6 +173,7 @@ export function createChatEventProcessor(): ChatEventProcessor {
         historySequence: start.metadata?.historySequence ?? start.historySequence,
         timestamp: start.metadata?.timestamp ?? start.timestamp,
         model: start.metadata?.model ?? start.model,
+        routedThroughGateway: start.metadata?.routedThroughGateway ?? start.routedThroughGateway,
         muxMetadata: start.metadata?.muxMetadata,
         partial: true,
       });
@@ -217,6 +218,10 @@ export function createChatEventProcessor(): ChatEventProcessor {
         partial: false,
         timestamp: metadata.timestamp ?? message.metadata?.timestamp,
         model: metadata.model ?? message.metadata?.model ?? event.metadata.model,
+        routedThroughGateway:
+          metadata.routedThroughGateway ??
+          message.metadata?.routedThroughGateway ??
+          event.metadata.routedThroughGateway,
         usage: metadata.usage ?? message.metadata?.usage,
         providerMetadata: metadata.providerMetadata ?? message.metadata?.providerMetadata,
         systemMessageTokens: metadata.systemMessageTokens ?? message.metadata?.systemMessageTokens,

@@ -876,9 +876,9 @@ export const ModeHelpTooltip: AppStory = {
 /**
  * Model selector pretty display with mux-gateway enabled.
  *
- * Regression test: when gateway is enabled, `useSendMessageOptions().model` becomes
- * `mux-gateway:provider/model`, but the UI should still display the canonical
- * provider:model form (e.g. GPT-4o, not \"Openai/gpt 4o\").
+ * Regression test: when gateway is enabled, routing happens in the backend,
+ * but the UI should still display the canonical provider:model form
+ * (e.g. GPT-4o, not \"Openai/gpt 4o\").
  */
 export const ModelSelectorPrettyWithGateway: AppStory = {
   render: () => (
@@ -887,7 +887,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
         const workspaceId = "ws-gateway-model";
         const baseModel = "openai:gpt-4o";
 
-        // Ensure the gateway transform actually kicks in (so the regression would reproduce).
+        // Ensure the gateway indicator is active (so the regression would reproduce).
         updatePersistedState(getModelKey(workspaceId), baseModel);
         updatePersistedState("gateway-enabled", true);
         updatePersistedState("gateway-available", true);
