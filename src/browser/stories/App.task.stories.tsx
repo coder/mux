@@ -390,14 +390,17 @@ export const TaskTranscriptViewer: AppStory = {
     const dialog = await body.findByRole("dialog");
     const dialogCanvas = within(dialog);
 
-    await dialogCanvas.findByText(/here's what happens during cleanup/i);
-
     // Wait for the loading indicator to disappear (ensures the transcript was loaded).
-    await waitFor(() => {
-      if (dialogCanvas.queryByText(/loading transcript/i)) {
-        throw new Error("Transcript still loading");
-      }
-    });
+    await waitFor(
+      () => {
+        if (dialogCanvas.queryByText(/loading transcript/i)) {
+          throw new Error("Transcript still loading");
+        }
+      },
+      { timeout: 5_000 }
+    );
+
+    await dialogCanvas.findByText(/summarize the workspace cleanup flow/i);
   },
 };
 
