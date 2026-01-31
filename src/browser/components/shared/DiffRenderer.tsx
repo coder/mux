@@ -5,6 +5,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
@@ -274,7 +275,7 @@ const DiffIndicator: React.FC<DiffIndicatorProps> = ({
   <span
     data-diff-indicator={true}
     data-line-index={lineIndex}
-    className={cn("text-center select-none", isInteractive && "cursor-pointer")}
+    className={cn("relative text-center select-none", isInteractive && "cursor-pointer")}
     style={{ background, color: getIndicatorColor(type) }}
   >
     {getIndicatorChar(type)}
@@ -1190,28 +1191,20 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
     // Perf: Large diffs can have hundreds/thousands of lines. Avoid mounting O(lines)
     // tooltip/icon trees and avoid per-line closures by using:
-    // - a single overlay "add review" button that is positioned on hover
+    // - a single portalled "add review" button rendered into the hovered indicator cell
     // - event delegation on the diff grid via data-line-index
     const gridRef = React.useRef<HTMLDivElement>(null);
-    const reviewButtonRef = React.useRef<HTMLButtonElement>(null);
     const lastHoverLineIndexRef = React.useRef<number | null>(null);
     const lastDragLineIndexRef = React.useRef<number | null>(null);
+    const lastPointerPositionRef = React.useRef<{ x: number; y: number } | null>(null);
+
+    const [hoveredIndicatorEl, setHoveredIndicatorEl] = React.useState<HTMLElement | null>(null);
+    const [hoveredLineIndex, setHoveredLineIndex] = React.useState<number | null>(null);
 
     const hideReviewButton = React.useCallback(() => {
-      const el = reviewButtonRef.current;
-      if (!el) return;
-
       lastHoverLineIndexRef.current = null;
-      delete el.dataset.lineIndex;
-
-      // A hidden-but-transformed absolutely-positioned element can still affect
-      // scroll extents in some layouts. Ensure it's fully removed from layout.
-      el.style.display = "none";
-      el.style.opacity = "0";
-      el.style.pointerEvents = "none";
-      el.style.transform = "";
-      el.style.width = "";
-      el.style.height = "";
+      setHoveredIndicatorEl(null);
+      setHoveredLineIndex(null);
     }, []);
 
     const getClosestHTMLElement = (
@@ -1240,31 +1233,14 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       return Number.isFinite(idx) ? idx : null;
     };
 
-    const showReviewButtonForIndicator = (indicatorEl: HTMLElement, lineIndex: number) => {
-      const gridEl = gridRef.current;
-      const buttonEl = reviewButtonRef.current;
-      if (!gridEl || !buttonEl) return;
-
-      const gridRect = gridEl.getBoundingClientRect();
-      const indicatorRect = indicatorEl.getBoundingClientRect();
-
-      const x = indicatorRect.left - gridRect.left;
-      const y = indicatorRect.top - gridRect.top;
-
-      // Keep hidden buttons out of layout to avoid accidental scroll extents.
-      buttonEl.style.display = "flex";
-      buttonEl.style.opacity = "1";
-      buttonEl.style.pointerEvents = "auto";
-
-      buttonEl.dataset.lineIndex = String(lineIndex);
-      buttonEl.style.transform = `translate(${x}px, ${y}px)`;
-      buttonEl.style.width = `${indicatorRect.width}px`;
-      buttonEl.style.height = `${indicatorRect.height}px`;
-    };
-
     const handleGridMouseDown: React.MouseEventHandler<HTMLDivElement> = (e) => {
       if (!onReviewNote) return;
       if (e.button !== 0) return;
+
+      // Clicking the hover comment button should not start a selection.
+      if (getClosestHTMLElement(e.target, "[data-review-comment-button]")) {
+        return;
+      }
 
       const indicatorEl = getClosestHTMLElement(e.target, "[data-diff-indicator]");
       if (!indicatorEl) return;
@@ -1276,21 +1252,14 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       e.preventDefault();
       e.stopPropagation();
 
-      const isReviewButton = Boolean(
-        getClosestHTMLElement(e.target, "[data-review-comment-button]")
-      );
-
-      // If we're clicking the overlay comment button, keep it mounted/interactive
-      // long enough for the click to fire.
-      if (!isReviewButton) {
-        hideReviewButton();
-      }
-
+      hideReviewButton();
       startDragSelection(lineIndex, e.shiftKey);
     };
 
     const handleGridMouseOver: React.MouseEventHandler<HTMLDivElement> = (e) => {
       if (!onReviewNote) return;
+
+      lastPointerPositionRef.current = { x: e.clientX, y: e.clientY };
 
       const indicatorEl = getClosestHTMLElement(e.target, "[data-diff-indicator]");
       if (!indicatorEl) {
@@ -1328,9 +1297,83 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       if (lastHoverLineIndexRef.current === lineIndex) return;
       lastHoverLineIndexRef.current = lineIndex;
 
-      showReviewButtonForIndicator(indicatorEl, lineIndex);
+      setHoveredIndicatorEl(indicatorEl);
+      setHoveredLineIndex(lineIndex);
     };
 
+    const handleGridMouseMove: React.MouseEventHandler<HTMLDivElement> = (e) => {
+      if (!onReviewNote) return;
+      lastPointerPositionRef.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const handleGridMouseLeave: React.MouseEventHandler<HTMLDivElement> = () => {
+      lastPointerPositionRef.current = null;
+      hideReviewButton();
+    };
+
+    React.useEffect(() => {
+      // While selecting/composing, keep the hover button hidden and clear stale hover state
+      // so it doesn't reappear unexpectedly after cancel/submit.
+      if (selection || isDragging) {
+        hideReviewButton();
+      }
+    }, [hideReviewButton, isDragging, selection]);
+
+    React.useEffect(() => {
+      if (!onReviewNote) return;
+
+      let raf: number | null = null;
+
+      const updateHoverUnderPointer = () => {
+        raf = null;
+
+        // Only show while not selecting/composing.
+        if (selection || isDragging) return;
+
+        const pos = lastPointerPositionRef.current;
+        const gridEl = gridRef.current;
+        if (!pos || !gridEl) return;
+
+        const elUnderPointer = document.elementFromPoint(pos.x, pos.y);
+        if (!elUnderPointer || !gridEl.contains(elUnderPointer)) {
+          hideReviewButton();
+          return;
+        }
+
+        const indicatorEl = elUnderPointer.closest<HTMLElement>("[data-diff-indicator]");
+        if (!indicatorEl) {
+          hideReviewButton();
+          return;
+        }
+
+        const rawLineIndex = indicatorEl.dataset.lineIndex;
+        const lineIndex = rawLineIndex ? Number(rawLineIndex) : null;
+        if (lineIndex === null || !Number.isFinite(lineIndex)) {
+          hideReviewButton();
+          return;
+        }
+
+        if (lastHoverLineIndexRef.current === lineIndex) return;
+        lastHoverLineIndexRef.current = lineIndex;
+
+        setHoveredIndicatorEl(indicatorEl);
+        setHoveredLineIndex(lineIndex);
+      };
+
+      const handleScroll = () => {
+        if (raf !== null) return;
+        raf = window.requestAnimationFrame(updateHoverUnderPointer);
+      };
+
+      // Capture phase is important: scroll doesn't bubble, but it is captured.
+      window.addEventListener("scroll", handleScroll, true);
+      return () => {
+        window.removeEventListener("scroll", handleScroll, true);
+        if (raf !== null) {
+          window.cancelAnimationFrame(raf);
+        }
+      };
+    }, [hideReviewButton, isDragging, onReviewNote, selection]);
     React.useEffect(() => {
       if (!selection) return;
 
@@ -1361,7 +1404,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         contentProps={{
           onMouseDown: handleGridMouseDown,
           onMouseOver: handleGridMouseOver,
-          onMouseLeave: hideReviewButton,
+          onMouseMove: handleGridMouseMove,
+          onMouseLeave: handleGridMouseLeave,
         }}
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
@@ -1443,27 +1487,29 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           );
         })}
 
-        {onReviewNote && (
-          <button
-            ref={reviewButtonRef}
-            type="button"
-            data-review-comment-button={true}
-            data-diff-indicator={true}
-            style={{ display: "none", opacity: 0, pointerEvents: "none" }}
-            className="absolute top-0 left-0 z-10 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 transition-opacity hover:text-[var(--color-review-accent)] active:scale-90"
-            title={"Add review comment\n(Shift-click or drag to select range)"}
-            aria-label="Add review comment"
-            tabIndex={-1}
-            onClick={(e) => {
-              e.stopPropagation();
-              const idx = Number(e.currentTarget.dataset.lineIndex);
-              if (!Number.isFinite(idx)) return;
-              handleCommentButtonClick(idx, e.shiftKey);
-            }}
-          >
-            <MessageSquare className="size-3" />
-          </button>
-        )}
+        {onReviewNote &&
+          !selection &&
+          !isDragging &&
+          hoveredIndicatorEl &&
+          hoveredLineIndex !== null &&
+          createPortal(
+            <button
+              type="button"
+              data-review-comment-button={true}
+              className="absolute inset-0 z-10 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 hover:text-[var(--color-review-accent)] active:scale-90"
+              style={{ background: "inherit" }}
+              title={"Add review comment\n(Shift-click or drag to select range)"}
+              aria-label="Add review comment"
+              tabIndex={-1}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCommentButtonClick(hoveredLineIndex, e.shiftKey);
+              }}
+            >
+              <MessageSquare className="size-3" />
+            </button>,
+            hoveredIndicatorEl
+          )}
       </DiffContainer>
     );
   }
