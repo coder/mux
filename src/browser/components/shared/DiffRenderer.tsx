@@ -1165,10 +1165,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const handleSubmitNote = (data: ReviewNoteData) => {
       if (!onReviewNote) return;
       onReviewNote(data);
+      hideReviewButton();
       setSelection(null);
     };
 
     const handleCancelNote = () => {
+      hideReviewButton();
       setSelection(null);
     };
 
@@ -1195,34 +1197,39 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const lastHoverLineIndexRef = React.useRef<number | null>(null);
     const lastDragLineIndexRef = React.useRef<number | null>(null);
 
-    const hideReviewButton = () => {
+    const hideReviewButton = React.useCallback(() => {
       const el = reviewButtonRef.current;
       if (!el) return;
 
       lastHoverLineIndexRef.current = null;
-      delete el.dataset.visible;
       delete el.dataset.lineIndex;
 
       // A hidden-but-transformed absolutely-positioned element can still affect
       // scroll extents in some layouts. Ensure it's fully removed from layout.
       el.style.display = "none";
+      el.style.opacity = "0";
+      el.style.pointerEvents = "none";
       el.style.transform = "";
       el.style.width = "";
       el.style.height = "";
-    };
+    }, []);
 
     const getClosestHTMLElement = (
       target: EventTarget | null,
       selector: string
     ): HTMLElement | null => {
-      // `e.target` can be a Text node when hovering the +/- character.
+      // React `e.target` can be a Text node (the +/- character), and `instanceof Element`
+      // can be unreliable across realms in Electron. Prefer nodeType-based checks.
+      if (!target || typeof target !== "object") return null;
+
+      const nodeType = (target as Partial<Node>).nodeType;
+      if (typeof nodeType !== "number") return null;
+
       const startEl =
-        target instanceof Element ? target : ((target as Node | null)?.parentElement ?? null);
+        nodeType === 1 ? (target as unknown as Element) : (target as Node).parentElement;
 
-      if (!startEl) return null;
-
-      const el = startEl.closest(selector);
-      return el instanceof HTMLElement ? el : null;
+      const el = startEl?.closest(selector);
+      return el ? (el as HTMLElement) : null;
     };
 
     const getLineIndexFromElement = (el: HTMLElement | null): number | null => {
@@ -1246,12 +1253,13 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
 
       // Keep hidden buttons out of layout to avoid accidental scroll extents.
       buttonEl.style.display = "flex";
+      buttonEl.style.opacity = "1";
+      buttonEl.style.pointerEvents = "auto";
 
       buttonEl.dataset.lineIndex = String(lineIndex);
       buttonEl.style.transform = `translate(${x}px, ${y}px)`;
       buttonEl.style.width = `${indicatorRect.width}px`;
       buttonEl.style.height = `${indicatorRect.height}px`;
-      buttonEl.dataset.visible = "true";
     };
 
     const handleGridMouseDown: React.MouseEventHandler<HTMLDivElement> = (e) => {
@@ -1324,6 +1332,25 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
       showReviewButtonForIndicator(indicatorEl, lineIndex);
     };
 
+    React.useEffect(() => {
+      if (!selection) return;
+
+      const handleKeyDown = (e: KeyboardEvent) => {
+        const isEscape = e.key === "Escape" || e.keyCode === 27;
+        if (!isEscape) return;
+
+        // While composing a review note, Escape should cancel the composition.
+        // Use capture to beat global window listeners (e.g. stream interrupt).
+        e.preventDefault();
+        e.stopPropagation();
+
+        hideReviewButton();
+        setSelection(null);
+      };
+
+      window.addEventListener("keydown", handleKeyDown, true);
+      return () => window.removeEventListener("keydown", handleKeyDown, true);
+    }, [hideReviewButton, selection]);
     return (
       <DiffContainer
         fontSize={fontSize}
@@ -1424,8 +1451,8 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             type="button"
             data-review-comment-button={true}
             data-diff-indicator={true}
-            style={{ display: "none" }}
-            className="pointer-events-none absolute top-0 left-0 z-10 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity hover:text-[var(--color-review-accent)] active:scale-90 data-[visible=true]:pointer-events-auto data-[visible=true]:opacity-100"
+            style={{ display: "none", opacity: 0, pointerEvents: "none" }}
+            className="absolute top-0 left-0 z-10 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 transition-opacity hover:text-[var(--color-review-accent)] active:scale-90"
             title={"Add review comment\n(Shift-click or drag to select range)"}
             aria-label="Add review comment"
             tabIndex={-1}
