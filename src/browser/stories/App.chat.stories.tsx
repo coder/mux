@@ -1513,6 +1513,30 @@ graph TD
 };
 
 /**
+ * Mobile viewport version of ProposePlan.
+ *
+ * Verifies that on narrow screens the primary plan actions (Implement / Start Orchestrator)
+ * render as shortcut icons in the left action row (instead of right-aligned buttons).
+ */
+export const ProposePlanMobile: AppStory = {
+  ...ProposePlan,
+  parameters: {
+    ...ProposePlan.parameters,
+    viewport: { defaultViewport: "mobile1" },
+    chromatic: {
+      viewports: [375],
+    },
+    docs: {
+      description: {
+        story:
+          "Renders ProposePlan at an iPhone-sized viewport to verify that Implement / Start Orchestrator " +
+          "appear as shortcut icons in the left action row (preventing right-side overflow on small screens).",
+      },
+    },
+  },
+};
+
+/**
  * Story showing a propose_plan with a code block containing long horizontal content.
  * Tests that code blocks wrap correctly instead of overflowing the container.
  */

@@ -136,6 +136,14 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
   const [isStartingOrchestrator, setIsStartingOrchestrator] = useState(false);
   const [isImplementing, setIsImplementing] = useState(false);
   const [implementReplacesChatHistory, setImplementReplacesChatHistory] = useState(false);
+
+  // On small screens, render the primary plan actions (Implement / Start Orchestrator)
+  // as shortcut icons alongside the other action buttons to avoid right-side overflow.
+  const [isNarrowScreen, setIsNarrowScreen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= 768;
+  });
+
   const isStartingOrchestratorRef = useRef(false);
   const isImplementingRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -168,6 +176,17 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
     return () => {
       isMountedRef.current = false;
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleResize = () => {
+      setIsNarrowScreen(window.innerWidth <= 768);
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   useEffect(() => {
@@ -620,6 +639,14 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
           {actionButtons.map((button, index) => (
             <IconActionButton key={index} button={button} />
           ))}
+
+          {isNarrowScreen && (implementButton ?? orchestratorButton) && (
+            <>
+              {implementButton && <IconActionButton button={implementButton} />}
+              {orchestratorButton && <IconActionButton button={orchestratorButton} />}
+            </>
+          )}
+
           {/* Edit button rendered with ref for error popover positioning */}
           {editButton && (
             <div ref={editButtonRef}>
@@ -628,7 +655,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
           )}
         </div>
 
-        {(implementButton ?? orchestratorButton) && (
+        {!isNarrowScreen && (implementButton ?? orchestratorButton) && (
           <div className="ml-auto flex items-center gap-1">
             {implementButton && (
               <Tooltip>
