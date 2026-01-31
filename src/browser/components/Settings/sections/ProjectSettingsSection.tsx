@@ -184,50 +184,21 @@ interface MCPOAuthAuthStatus {
   updatedAtMs?: number;
 }
 
-const RemoteMCPOAuthSection: React.FC<{
+function useMCPOAuthDesktopLogin(input: {
+  api: ReturnType<typeof useAPI>["api"];
+  isDesktop: boolean;
   projectPath: string;
   serverName: string;
-  transport: Exclude<MCPServerTransport, "stdio">;
-  url: string;
-}> = ({ projectPath, serverName, transport, url }) => {
-  const { api } = useAPI();
-  const isDesktop = !!window.api;
-
-  const [authStatus, setAuthStatus] = useState<MCPOAuthAuthStatus | null>(null);
-  const [authStatusLoading, setAuthStatusLoading] = useState(false);
-  const [authStatusError, setAuthStatusError] = useState<string | null>(null);
-
-  const [loginStatus, setLoginStatus] = useState<MCPOAuthLoginStatus>("idle");
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [logoutInProgress, setLogoutInProgress] = useState(false);
-
+  onSuccess?: () => void | Promise<void>;
+}) {
+  const { api, isDesktop, projectPath, serverName, onSuccess } = input;
   const loginAttemptRef = useRef(0);
   const [desktopFlowId, setDesktopFlowId] = useState<string | null>(null);
 
-  const refreshAuthStatus = useCallback(async () => {
-    if (!api) {
-      setAuthStatus(null);
-      setAuthStatusError(null);
-      return;
-    }
+  const [loginStatus, setLoginStatus] = useState<MCPOAuthLoginStatus>("idle");
+  const [loginError, setLoginError] = useState<string | null>(null);
 
-    setAuthStatusLoading(true);
-    setAuthStatusError(null);
-
-    try {
-      const status = await api.projects.mcpOauth.getAuthStatus({ projectPath, serverName });
-      setAuthStatus(status);
-    } catch (err) {
-      setAuthStatus(null);
-      setAuthStatusError(err instanceof Error ? err.message : "Failed to load OAuth status");
-    } finally {
-      setAuthStatusLoading(false);
-    }
-  }, [api, projectPath, serverName]);
-
-  useEffect(() => {
-    void refreshAuthStatus();
-  }, [refreshAuthStatus, transport, url]);
+  const loginInProgress = loginStatus === "starting" || loginStatus === "waiting";
 
   const cancelLogin = useCallback(() => {
     loginAttemptRef.current++;
@@ -240,28 +211,6 @@ const RemoteMCPOAuthSection: React.FC<{
     setLoginStatus("idle");
     setLoginError(null);
   }, [api, desktopFlowId, isDesktop]);
-
-  const isLoggedIn = (authStatus?.isLoggedIn ?? false) || loginStatus === "success";
-  const loginInProgress = loginStatus === "starting" || loginStatus === "waiting";
-
-  const authStatusText = authStatusLoading
-    ? "Checking..."
-    : isLoggedIn
-      ? "Logged in"
-      : "Not logged in";
-
-  const updatedAtText = authStatus?.updatedAtMs
-    ? ` (${formatRelativeTime(authStatus.updatedAtMs)})`
-    : "";
-
-  const loginButtonLabel =
-    loginStatus === "error"
-      ? "Try again"
-      : loginInProgress
-        ? "Waiting for login..."
-        : isLoggedIn
-          ? "Re-login via OAuth"
-          : "Login via OAuth";
 
   const startLogin = useCallback(async () => {
     const attempt = ++loginAttemptRef.current;
@@ -279,6 +228,12 @@ const RemoteMCPOAuthSection: React.FC<{
       if (!api) {
         setLoginStatus("error");
         setLoginError("Mux API not connected.");
+        return;
+      }
+
+      if (!serverName.trim()) {
+        setLoginStatus("error");
+        setLoginError("Server name is required to start OAuth login.");
         return;
       }
 
@@ -317,7 +272,7 @@ const RemoteMCPOAuthSection: React.FC<{
 
       if (waitResult.success) {
         setLoginStatus("success");
-        await refreshAuthStatus();
+        await onSuccess?.();
         return;
       }
 
@@ -332,35 +287,194 @@ const RemoteMCPOAuthSection: React.FC<{
       setLoginStatus("error");
       setLoginError(message);
     }
-  }, [api, isDesktop, projectPath, serverName, refreshAuthStatus]);
+  }, [api, isDesktop, onSuccess, projectPath, serverName]);
 
-  const logout = useCallback(async () => {
+  return {
+    loginStatus,
+    loginError,
+    loginInProgress,
+    startLogin,
+    cancelLogin,
+  };
+}
+
+const MCPOAuthRequiredCallout: React.FC<{
+  projectPath: string;
+  serverName: string;
+  disabledReason?: string;
+  onLoginSuccess?: () => void | Promise<void>;
+}> = ({ projectPath, serverName, disabledReason, onLoginSuccess }) => {
+  const { api } = useAPI();
+  const isDesktop = !!window.api;
+
+  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } =
+    useMCPOAuthDesktopLogin({
+      api,
+      isDesktop,
+      projectPath,
+      serverName,
+      onSuccess: onLoginSuccess,
+    });
+
+  const disabledTitle =
+    disabledReason ??
+    (!isDesktop
+      ? "OAuth login is only available in the desktop app"
+      : !api
+        ? "Mux API not connected"
+        : undefined);
+
+  const loginDisabled = Boolean(disabledReason) || !isDesktop || !api || loginInProgress;
+
+  return (
+    <div className="bg-warning/10 border-warning/30 text-warning rounded-md border px-3 py-2 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-medium">This server requires OAuth.</p>
+          {disabledReason && <p className="text-muted mt-0.5">{disabledReason}</p>}
+
+          {loginStatus === "waiting" && (
+            <p className="text-muted mt-0.5">
+              Finish the login flow in your browser, then return here.
+            </p>
+          )}
+
+          {loginStatus === "success" && (
+            <p className="text-muted mt-0.5">Logged in. Try testing the server again.</p>
+          )}
+
+          {loginStatus === "error" && loginError && (
+            <p className="text-destructive mt-0.5">OAuth error: {loginError}</p>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          <Button
+            size="sm"
+            onClick={() => {
+              void startLogin();
+            }}
+            disabled={loginDisabled}
+            title={disabledTitle}
+          >
+            {loginInProgress ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Waiting for login...
+              </>
+            ) : (
+              "Login via OAuth"
+            )}
+          </Button>
+
+          {loginStatus === "waiting" && (
+            <Button variant="secondary" size="sm" onClick={cancelLogin}>
+              Cancel
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RemoteMCPOAuthSection: React.FC<{
+  projectPath: string;
+  serverName: string;
+  transport: Exclude<MCPServerTransport, "stdio">;
+  url: string;
+  oauthRefreshNonce?: number;
+}> = ({ projectPath, serverName, transport, url, oauthRefreshNonce }) => {
+  const { api } = useAPI();
+  const isDesktop = !!window.api;
+
+  const [authStatus, setAuthStatus] = useState<MCPOAuthAuthStatus | null>(null);
+  const [authStatusLoading, setAuthStatusLoading] = useState(false);
+  const [authStatusError, setAuthStatusError] = useState<string | null>(null);
+
+  const [logoutInProgress, setLogoutInProgress] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  const refreshAuthStatus = useCallback(async () => {
     if (!api) {
-      setLoginStatus("error");
-      setLoginError("Mux API not connected.");
+      setAuthStatus(null);
+      setAuthStatusError(null);
       return;
     }
 
+    setAuthStatusLoading(true);
+    setAuthStatusError(null);
+
+    try {
+      const status = await api.projects.mcpOauth.getAuthStatus({ projectPath, serverName });
+      setAuthStatus(status);
+    } catch (err) {
+      setAuthStatus(null);
+      setAuthStatusError(err instanceof Error ? err.message : "Failed to load OAuth status");
+    } finally {
+      setAuthStatusLoading(false);
+    }
+  }, [api, projectPath, serverName]);
+
+  useEffect(() => {
+    void refreshAuthStatus();
+  }, [refreshAuthStatus, transport, url, oauthRefreshNonce]);
+
+  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } =
+    useMCPOAuthDesktopLogin({
+      api,
+      isDesktop,
+      projectPath,
+      serverName,
+      onSuccess: refreshAuthStatus,
+    });
+
+  const isLoggedIn = (authStatus?.isLoggedIn ?? false) || loginStatus === "success";
+
+  const authStatusText = authStatusLoading
+    ? "Checking..."
+    : isLoggedIn
+      ? "Logged in"
+      : "Not logged in";
+
+  const updatedAtText = authStatus?.updatedAtMs
+    ? ` (${formatRelativeTime(authStatus.updatedAtMs)})`
+    : "";
+
+  const loginButtonLabel =
+    loginStatus === "error"
+      ? "Try again"
+      : loginInProgress
+        ? "Waiting for login..."
+        : isLoggedIn
+          ? "Re-login via OAuth"
+          : "Login via OAuth";
+
+  const logout = useCallback(async () => {
+    if (!api) {
+      setLogoutError("Mux API not connected.");
+      return;
+    }
+
+    setLogoutError(null);
     cancelLogin();
     setLogoutInProgress(true);
 
     try {
       const result = await api.projects.mcpOauth.logout({ projectPath, serverName });
       if (!result.success) {
-        setLoginStatus("error");
-        setLoginError(result.error);
+        setLogoutError(result.error);
         return;
       }
 
       await refreshAuthStatus();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setLoginStatus("error");
-      setLoginError(message);
+      setLogoutError(message);
     } finally {
       setLogoutInProgress(false);
     }
-  }, [api, cancelLogin, projectPath, serverName, refreshAuthStatus]);
+  }, [api, cancelLogin, projectPath, refreshAuthStatus, serverName]);
 
   return (
     <div className="mt-2 space-y-2">
@@ -418,6 +532,8 @@ const RemoteMCPOAuthSection: React.FC<{
         {loginStatus === "error" && loginError && (
           <p className="text-destructive text-xs">OAuth error: {loginError}</p>
         )}
+
+        {logoutError && <p className="text-destructive text-xs">OAuth logout: {logoutError}</p>}
       </div>
     </div>
   );
@@ -450,6 +566,7 @@ export const ProjectSettingsSection: React.FC = () => {
     clearResult: clearTestResult,
   } = useMCPTestCache(selectedProject);
   const [testingServer, setTestingServer] = useState<string | null>(null);
+  const [mcpOauthRefreshNonce, setMcpOauthRefreshNonce] = useState(0);
 
   interface EditableServer {
     name: string;
@@ -701,14 +818,21 @@ export const ProjectSettingsSection: React.FC = () => {
 
   const handleAddServer = useCallback(async () => {
     if (!api || !selectedProject || !newServer.name.trim() || !newServer.value.trim()) return;
+
+    const serverName = newServer.name.trim();
+    const serverTransport = newServer.transport;
+    const serverValue = newServer.value.trim();
+    const serverHeadersRows = newServer.headersRows;
+    const existingTestResult = newTestResult;
+
     setAddingServer(true);
     setError(null);
 
     try {
       const { headers, validation } =
-        newServer.transport === "stdio"
+        serverTransport === "stdio"
           ? { headers: undefined, validation: { errors: [], warnings: [] } }
-          : mcpHeaderRowsToRecord(newServer.headersRows, {
+          : mcpHeaderRowsToRecord(serverHeadersRows, {
               knownSecretKeys: new Set(projectSecretKeys),
             });
 
@@ -718,26 +842,49 @@ export const ProjectSettingsSection: React.FC = () => {
 
       const result = await api.projects.mcp.add({
         projectPath: selectedProject,
-        name: newServer.name.trim(),
-        ...(newServer.transport === "stdio"
-          ? { transport: "stdio", command: newServer.value.trim() }
+        name: serverName,
+        ...(serverTransport === "stdio"
+          ? { transport: "stdio", command: serverValue }
           : {
-              transport: newServer.transport,
-              url: newServer.value.trim(),
+              transport: serverTransport,
+              url: serverValue,
               headers,
             }),
       });
 
       if (!result.success) {
         setError(result.error ?? "Failed to add MCP server");
-      } else {
-        // Cache the test result if we have one
-        if (newTestResult?.result.success) {
-          cacheTestResult(newServer.name.trim(), newTestResult.result);
+        return;
+      }
+
+      setNewServer({ name: "", transport: "stdio", value: "", headersRows: [] });
+      setNewTestResult(null);
+      await refresh();
+
+      // For stdio, avoid running arbitrary user-provided commands automatically.
+      if (serverTransport === "stdio") {
+        if (existingTestResult?.result.success) {
+          cacheTestResult(serverName, existingTestResult.result);
         }
-        setNewServer({ name: "", transport: "stdio", value: "", headersRows: [] });
-        setNewTestResult(null);
-        await refresh();
+        return;
+      }
+
+      // For remote servers, always run a test immediately after adding so OAuth-required servers can
+      // surface an OAuth callout without requiring a manual Test click.
+      setTestingServer(serverName);
+      try {
+        const testResult = await api.projects.mcp.test({
+          projectPath: selectedProject,
+          name: serverName,
+        });
+        cacheTestResult(serverName, testResult);
+      } catch (err) {
+        cacheTestResult(serverName, {
+          success: false,
+          error: err instanceof Error ? err.message : "Test failed",
+        });
+      } finally {
+        setTestingServer(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add MCP server");
@@ -969,6 +1116,7 @@ export const ProjectSettingsSection: React.FC = () => {
                               serverName={name}
                               transport={remoteEntry.transport}
                               url={remoteEntry.url}
+                              oauthRefreshNonce={mcpOauthRefreshNonce}
                             />
                           )}
                         </div>
@@ -1044,11 +1192,26 @@ export const ProjectSettingsSection: React.FC = () => {
                         </div>
                       </div>
                       {cached && !cached.result.success && !isEditing && (
-                        <div className="border-border-medium text-destructive border-t px-3 py-2 text-xs">
-                          <div className="flex items-start gap-1.5">
+                        <div className="border-border-medium border-t px-3 py-2 text-xs">
+                          <div className="text-destructive flex items-start gap-1.5">
                             <XCircle className="mt-0.5 h-3 w-3 shrink-0" />
                             <span>{cached.result.error}</span>
                           </div>
+
+                          {cached.result.oauthChallenge && (
+                            <div className="mt-2">
+                              <MCPOAuthRequiredCallout
+                                projectPath={selectedProject}
+                                serverName={name}
+                                disabledReason={
+                                  remoteEntry
+                                    ? undefined
+                                    : "OAuth login is only supported for remote (http/sse) MCP servers."
+                                }
+                                onLoginSuccess={() => setMcpOauthRefreshNonce((prev) => prev + 1)}
+                              />
+                            </div>
+                          )}
                         </div>
                       )}
                       {cached?.result.success && cached.result.tools.length > 0 && !isEditing && (
@@ -1189,6 +1352,34 @@ export const ProjectSettingsSection: React.FC = () => {
                   </div>
                 )}
 
+                {newTestResult &&
+                  !newTestResult.result.success &&
+                  newTestResult.result.oauthChallenge && (
+                    <div className="mt-2">
+                      <MCPOAuthRequiredCallout
+                        projectPath={selectedProject}
+                        serverName={newServer.name.trim()}
+                        disabledReason={(() => {
+                          const pendingName = newServer.name.trim();
+                          if (!pendingName) {
+                            return "Enter a server name, then add it to enable OAuth login.";
+                          }
+
+                          const existing = servers[pendingName];
+                          if (!existing) {
+                            return "Add this server first to enable OAuth login.";
+                          }
+
+                          if (existing.transport === "stdio") {
+                            return "OAuth login is only supported for remote (http/sse) MCP servers.";
+                          }
+
+                          return undefined;
+                        })()}
+                        onLoginSuccess={() => setMcpOauthRefreshNonce((prev) => prev + 1)}
+                      />
+                    </div>
+                  )}
                 <div className="flex gap-2 pt-1">
                   <Button
                     variant="outline"
