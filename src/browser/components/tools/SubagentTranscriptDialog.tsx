@@ -18,7 +18,7 @@ interface SubagentTranscriptDialogProps {
 
 export const SubagentTranscriptDialog: React.FC<SubagentTranscriptDialogProps> = (props) => (
   <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-    <DialogContent className="max-h-[80vh] max-w-5xl overflow-hidden">
+    <DialogContent className="flex max-h-[80vh] min-h-0 max-w-5xl flex-col overflow-hidden">
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2">
           <span>Transcript</span>
@@ -98,8 +98,9 @@ const SubagentTranscriptViewer: React.FC<{
     }
 
     // Use a dedicated aggregator instance so transcript rendering matches the main chat UI.
-    // We do NOT pass workspaceId here: the transcript may refer to a cleaned-up subagent workspace,
-    // and we want MessageRenderer to stay read-only.
+    // We intentionally do not pass workspaceId to the aggregator: it persists some UI state to localStorage.
+    // We DO pass workspaceId to MessageRenderer so nested "View transcript" tool calls can resolve
+    // artifacts from the parent workspace that owns the transcript index (important after roll-up).
     const aggregator = new StreamingMessageAggregator(new Date().toISOString());
     aggregator.setShowAllMessages(true);
 
@@ -112,7 +113,7 @@ const SubagentTranscriptViewer: React.FC<{
   }, [messages]);
 
   return (
-    <div className="flex min-h-0 flex-col gap-2 overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
       {error && <ErrorBox>{error}</ErrorBox>}
 
       <div className="min-h-0 flex-1 overflow-y-auto rounded bg-[var(--color-bg-secondary)] p-3">
@@ -125,7 +126,7 @@ const SubagentTranscriptViewer: React.FC<{
           displayedMessages.length > 0 ? (
             <div className="flex flex-col gap-2">
               {displayedMessages.map((msg) => (
-                <MessageRenderer key={msg.id} message={msg} />
+                <MessageRenderer key={msg.id} message={msg} workspaceId={props.workspaceId} />
               ))}
             </div>
           ) : (

@@ -377,10 +377,13 @@ export const TaskTranscriptViewer: AppStory = {
     await waitForScrollStabilization(canvasElement);
 
     const canvas = within(canvasElement);
-    const viewTranscriptButton = await canvas.findByRole("button", {
+
+    // The app may render multiple task tool surfaces (e.g. desktop + mobile layouts).
+    // Be robust: click the first matching transcript button.
+    const viewTranscriptButtons = await canvas.findAllByRole("button", {
       name: /view transcript/i,
     });
-    await userEvent.click(viewTranscriptButton);
+    await userEvent.click(viewTranscriptButtons[0]);
 
     // Dialog content is portaled outside the canvasElement, but inside the iframe body.
     const body = within(canvasElement.ownerDocument.body);
