@@ -2000,6 +2000,10 @@ export class StreamManager extends EventEmitter {
     }
     if (APICallError.isInstance(error)) {
       if (error.statusCode === 401) return "authentication";
+      // 402 (Payment Required) is used by mux gateway for billing/credits issues
+      // (e.g. "Insufficient balance. Please add credits to continue.").
+      // Treat as non-retryable quota; 429 (rate_limit) covers RPM/time-based throttling.
+      if (error.statusCode === 402) return "quota";
       if (error.statusCode === 429) return "rate_limit";
       if (error.statusCode && error.statusCode >= 500) return "server_error";
 
@@ -2113,7 +2117,13 @@ export class StreamManager extends EventEmitter {
         message.includes("maximum")
       ) {
         return "context_exceeded";
-      } else if (message.includes("quota") || message.includes("limit")) {
+      } else if (
+        message.includes("quota") ||
+        message.includes("limit") ||
+        message.includes("insufficient balance") ||
+        message.includes("add credits") ||
+        message.includes("payment required")
+      ) {
         return "quota";
       } else if (message.includes("auth") || message.includes("key")) {
         return "authentication";

@@ -951,6 +951,33 @@ describe("StreamManager - categorizeError", () => {
 
     expect(categorizeMethod.call(streamManager, error)).toBe("model_not_found");
   });
+
+  test("classifies 402 payment required as quota (avoid auto-retry)", () => {
+    const mockHistoryService = createMockHistoryService();
+    const mockPartialService = createMockPartialService();
+    const streamManager = new StreamManager(mockHistoryService, mockPartialService);
+
+    const categorizeMethod = Reflect.get(streamManager, "categorizeError") as (
+      error: unknown
+    ) => unknown;
+    expect(typeof categorizeMethod).toBe("function");
+
+    const apiError = new APICallError({
+      message: "Insufficient balance. Please add credits to continue.",
+      url: "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai/language-model",
+      requestBodyValues: {},
+      statusCode: 402,
+      responseHeaders: {},
+      responseBody:
+        '{"error":{"message":"Insufficient balance. Please add credits to continue.","type":"invalid_request_error"}}',
+      isRetryable: false,
+      data: {
+        error: { message: "Insufficient balance. Please add credits to continue." },
+      },
+    });
+
+    expect(categorizeMethod.call(streamManager, apiError)).toBe("quota");
+  });
 });
 
 describe("StreamManager - ask_user_question Partial Persistence", () => {
