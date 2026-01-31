@@ -328,8 +328,6 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   status = "pending",
   taskReportLinking,
 }) => {
-  const { expanded, toggleExpanded } = useToolExpansion(false);
-
   const taskIds = args.task_ids;
   const timeoutSecs = args.timeout_secs;
   const results = result?.results ?? [];
@@ -345,6 +343,18 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   // Summary for header
   const completedCount = results.filter((r) => r.status === "completed").length;
   const totalCount = results.length;
+  const failedCount = results.filter(
+    (r) => r.status === "error" || r.status === "invalid_scope" || r.status === "not_found"
+  ).length;
+
+  // Keep task_await collapsed by default, but auto-expand when failures are present.
+  // This avoids hiding failures behind a "completed" badge in the header.
+  const shouldAutoExpand = failedCount > 0;
+  const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
+  const expanded = userExpandedChoice ?? shouldAutoExpand;
+  const toggleExpanded = () => setUserExpandedChoice(!expanded);
+
+  const effectiveStatus: ToolStatus = status === "completed" && failedCount > 0 ? "failed" : status;
 
   return (
     <ToolContainer expanded={expanded}>
@@ -357,7 +367,10 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             {completedCount}/{totalCount} completed
           </span>
         )}
-        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+        {failedCount > 0 && <span className="text-danger text-[10px]">{failedCount} failed</span>}
+        <StatusIndicator status={effectiveStatus}>
+          {getStatusDisplay(effectiveStatus)}
+        </StatusIndicator>
       </ToolHeader>
 
       {expanded && (
