@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { usePersistedState } from "./usePersistedState";
+import { readPersistedState, usePersistedState } from "./usePersistedState";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { getDefaultModel } from "./useModelsFromSettings";
 import {
@@ -11,6 +11,7 @@ import {
   RUNTIME_MODE,
   CODER_RUNTIME_PLACEHOLDER,
 } from "@/common/types/runtime";
+import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import {
   getAgentIdKey,
   getModelKey,
@@ -38,10 +39,61 @@ export interface DraftWorkspaceSettings {
    * Uses discriminated union so SSH has host, Docker has image, etc.
    */
   selectedRuntime: ParsedRuntime;
-  /** Persisted default runtime for this project (used to initialize selection) */
-  defaultRuntimeMode: RuntimeMode;
+  /** Persisted default runtime choice for this project (used to initialize selection) */
+  defaultRuntimeMode: RuntimeChoice;
   trunkBranch: string;
 }
+
+interface SshRuntimeConfig {
+  host: string;
+  coder?: CoderWorkspaceConfig;
+}
+
+interface SshRuntimeState {
+  host: string;
+  coderEnabled: boolean;
+  coderConfig: CoderWorkspaceConfig | null;
+}
+
+/** Stable fallback for Coder config to avoid new object on every render */
+const DEFAULT_CODER_CONFIG: CoderWorkspaceConfig = { existingWorkspace: false };
+
+const buildRuntimeForMode = (
+  mode: RuntimeMode,
+  sshConfig: SshRuntimeConfig,
+  dockerImage: string,
+  dockerShareCredentials: boolean,
+  devcontainerConfigPath: string,
+  devcontainerShareCredentials: boolean
+): ParsedRuntime => {
+  switch (mode) {
+    case RUNTIME_MODE.LOCAL:
+      return { mode: "local" };
+    case RUNTIME_MODE.SSH: {
+      // Use placeholder when Coder is enabled with no explicit SSH host
+      // This ensures the runtime string round-trips correctly for Coder-only users
+      const effectiveHost =
+        sshConfig.coder && !sshConfig.host.trim() ? CODER_RUNTIME_PLACEHOLDER : sshConfig.host;
+
+      return {
+        mode: "ssh",
+        host: effectiveHost,
+        coder: sshConfig.coder,
+      };
+    }
+    case RUNTIME_MODE.DOCKER:
+      return { mode: "docker", image: dockerImage, shareCredentials: dockerShareCredentials };
+    case RUNTIME_MODE.DEVCONTAINER:
+      return {
+        mode: "devcontainer",
+        configPath: devcontainerConfigPath,
+        shareCredentials: devcontainerShareCredentials,
+      };
+    case RUNTIME_MODE.WORKTREE:
+    default:
+      return { mode: "worktree" };
+  }
+};
 
 /**
  * Hook to manage all draft workspace settings with centralized persistence
@@ -58,10 +110,14 @@ export function useDraftWorkspaceSettings(
   recommendedTrunk: string | null
 ): {
   settings: DraftWorkspaceSettings;
+  /** Restores prior Coder selections when re-entering Coder mode. */
+  coderConfigFallback: CoderWorkspaceConfig;
+  /** Preserves the last SSH host when leaving Coder so the input stays populated. */
+  sshHostFallback: string;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
-  /** Set the default runtime mode for this project (persists via checkbox) */
-  setDefaultRuntimeMode: (mode: RuntimeMode) => void;
+  /** Set the default runtime choice for this project (persists via checkbox) */
+  setDefaultRuntimeChoice: (choice: RuntimeChoice) => void;
   setTrunkBranch: (branch: string) => void;
   getRuntimeString: () => string | undefined;
 } {
@@ -108,9 +164,13 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  // Generic reader for lastRuntimeConfigs fields
-  const readRuntimeConfig = <T>(mode: RuntimeMode, field: string, defaultValue: T): T => {
-    const modeConfig = lastRuntimeConfigs[mode];
+  const readRuntimeConfigFrom = <T>(
+    configs: LastRuntimeConfigs,
+    mode: RuntimeMode,
+    field: string,
+    defaultValue: T
+  ): T => {
+    const modeConfig = configs[mode];
     if (!modeConfig || typeof modeConfig !== "object" || Array.isArray(modeConfig)) {
       return defaultValue;
     }
@@ -129,13 +189,40 @@ export function useDraftWorkspaceSettings(
     return defaultValue;
   };
 
-  const lastSshHost = readRuntimeConfig(RUNTIME_MODE.SSH, "host", "");
-  const lastCoderEnabled = readRuntimeConfig(RUNTIME_MODE.SSH, "coderEnabled", false);
-  const lastCoderConfig = readRuntimeConfig<CoderWorkspaceConfig | null>(
-    RUNTIME_MODE.SSH,
-    "coderConfig",
-    null
-  );
+  // Generic reader for lastRuntimeConfigs fields
+  const readRuntimeConfig = <T>(mode: RuntimeMode, field: string, defaultValue: T): T => {
+    return readRuntimeConfigFrom(lastRuntimeConfigs, mode, field, defaultValue);
+  };
+
+  // Hide Coder-specific persistence fields behind helpers so callsites stay clean.
+  const readSshRuntimeState = (configs: LastRuntimeConfigs): SshRuntimeState => ({
+    host: readRuntimeConfigFrom(configs, RUNTIME_MODE.SSH, "host", ""),
+    coderEnabled: readRuntimeConfigFrom(configs, RUNTIME_MODE.SSH, "coderEnabled", false),
+    coderConfig: readRuntimeConfigFrom<CoderWorkspaceConfig | null>(
+      configs,
+      RUNTIME_MODE.SSH,
+      "coderConfig",
+      null
+    ),
+  });
+
+  const readSshRuntimeConfig = (configs: LastRuntimeConfigs): SshRuntimeConfig => {
+    const sshState = readSshRuntimeState(configs);
+
+    return {
+      host: sshState.host,
+      coder: sshState.coderEnabled && sshState.coderConfig ? sshState.coderConfig : undefined,
+    };
+  };
+
+  const lastSshState = readSshRuntimeState(lastRuntimeConfigs);
+
+  // Preserve the last SSH host when switching out of Coder so the input stays populated.
+  const sshHostFallback = lastSshState.host;
+
+  // Restore prior Coder selections when switching back into Coder mode.
+  const coderConfigFallback = lastSshState.coderConfig ?? DEFAULT_CODER_CONFIG;
+  const lastSsh = readSshRuntimeConfig(lastRuntimeConfigs);
   const lastDockerImage = readRuntimeConfig(RUNTIME_MODE.DOCKER, "image", "");
   const lastShareCredentials = readRuntimeConfig(RUNTIME_MODE.DOCKER, "shareCredentials", false);
   const lastDevcontainerConfigPath = readRuntimeConfig(RUNTIME_MODE.DEVCONTAINER, "configPath", "");
@@ -144,6 +231,14 @@ export function useDraftWorkspaceSettings(
     "shareCredentials",
     false
   );
+
+  const coderDefaultFromString =
+    parsedDefault?.mode === RUNTIME_MODE.SSH && parsedDefault.host === CODER_RUNTIME_PLACEHOLDER;
+  // Defaults must stay explicit and sticky; last-used SSH state should only seed inputs.
+  const defaultRuntimeChoice: RuntimeChoice =
+    defaultRuntimeMode === RUNTIME_MODE.SSH && coderDefaultFromString
+      ? "coder"
+      : defaultRuntimeMode;
 
   const setLastRuntimeConfig = useCallback(
     (mode: RuntimeMode, field: string, value: string | boolean | object | null) => {
@@ -160,12 +255,27 @@ export function useDraftWorkspaceSettings(
     [setLastRuntimeConfigs]
   );
 
+  // Persist SSH config while keeping the legacy field shape hidden from callsites.
+  const writeSshRuntimeConfig = useCallback(
+    (config: SshRuntimeConfig) => {
+      if (config.host.trim() && config.host !== CODER_RUNTIME_PLACEHOLDER) {
+        setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", config.host);
+      }
+      const coderEnabled = config.coder !== undefined;
+      setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderEnabled", coderEnabled);
+      if (config.coder) {
+        setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderConfig", config.coder);
+      }
+    },
+    [setLastRuntimeConfig]
+  );
+
   // If the default runtime string contains a host/image (e.g. older persisted values like "ssh devbox"),
   // prefer it as the initial remembered value.
   useEffect(() => {
     if (
       parsedDefault?.mode === RUNTIME_MODE.SSH &&
-      !lastSshHost.trim() &&
+      !lastSsh.host.trim() &&
       parsedDefault.host.trim()
     ) {
       setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", parsedDefault.host);
@@ -187,14 +297,19 @@ export function useDraftWorkspaceSettings(
   }, [
     projectPath,
     parsedDefault,
-    lastSshHost,
+    lastSsh.host,
     lastDockerImage,
     lastDevcontainerConfigPath,
     setLastRuntimeConfig,
   ]);
 
   const defaultSshHost =
-    parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSshHost;
+    parsedDefault?.mode === RUNTIME_MODE.SSH ? parsedDefault.host : lastSsh.host;
+
+  // When the persisted default says "Coder", reuse the saved config even if last-used SSH disabled it.
+  const defaultSshCoder = coderDefaultFromString
+    ? (lastSshState.coderConfig ?? DEFAULT_CODER_CONFIG)
+    : lastSsh.coder;
 
   const defaultDockerImage =
     parsedDefault?.mode === RUNTIME_MODE.DOCKER ? parsedDefault.image : lastDockerImage;
@@ -204,67 +319,24 @@ export function useDraftWorkspaceSettings(
       ? parsedDefault.configPath
       : lastDevcontainerConfigPath;
 
-  // Build ParsedRuntime from mode + stored host/image/shareCredentials/coder
-  // Defined as a function so it can be used in both useState init and useEffect
-  const buildRuntimeForMode = (
-    mode: RuntimeMode,
-    sshHost: string,
-    dockerImage: string,
-    dockerShareCredentials: boolean,
-    coderEnabled: boolean,
-    coderConfig: CoderWorkspaceConfig | null,
-    devcontainerConfigPath: string,
-    devcontainerShareCredentials: boolean
-  ): ParsedRuntime => {
-    switch (mode) {
-      case RUNTIME_MODE.LOCAL:
-        return { mode: "local" };
-      case RUNTIME_MODE.SSH: {
-        // Use placeholder when Coder is enabled with no explicit SSH host
-        // This ensures the runtime string round-trips correctly for Coder-only users
-        const effectiveHost =
-          coderEnabled && coderConfig && !sshHost.trim() ? CODER_RUNTIME_PLACEHOLDER : sshHost;
-
-        return {
-          mode: "ssh",
-          host: effectiveHost,
-          coder: coderEnabled && coderConfig ? coderConfig : undefined,
-        };
-      }
-      case RUNTIME_MODE.DOCKER:
-        return { mode: "docker", image: dockerImage, shareCredentials: dockerShareCredentials };
-      case RUNTIME_MODE.DEVCONTAINER:
-        return {
-          mode: "devcontainer",
-          configPath: devcontainerConfigPath,
-          shareCredentials: devcontainerShareCredentials,
-        };
-      case RUNTIME_MODE.WORKTREE:
-      default:
-        return { mode: "worktree" };
-    }
-  };
+  const defaultRuntime = buildRuntimeForMode(
+    defaultRuntimeMode,
+    { host: defaultSshHost, coder: defaultSshCoder },
+    defaultDockerImage,
+    lastShareCredentials,
+    defaultDevcontainerConfigPath,
+    lastDevcontainerShareCredentials
+  );
 
   // Currently selected runtime for this session (initialized from default)
   // Uses discriminated union: SSH has host, Docker has image
-  const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() =>
-    buildRuntimeForMode(
-      defaultRuntimeMode,
-      defaultSshHost,
-      defaultDockerImage,
-      lastShareCredentials,
-      lastCoderEnabled,
-      lastCoderConfig,
-      defaultDevcontainerConfigPath,
-      lastDevcontainerShareCredentials
-    )
-  );
+  const [selectedRuntime, setSelectedRuntimeState] = useState<ParsedRuntime>(() => defaultRuntime);
 
   const prevProjectPathRef = useRef<string | null>(null);
   const prevDefaultRuntimeModeRef = useRef<RuntimeMode | null>(null);
 
   // When switching projects or changing the persisted default mode, reset the selection.
-  // Importantly: do NOT reset selection when lastSshHost/lastDockerImage changes while typing.
+  // Importantly: do NOT reset selection when lastSsh.host/lastDockerImage changes while typing.
   useEffect(() => {
     const projectChanged = prevProjectPathRef.current !== projectPath;
     const defaultModeChanged = prevDefaultRuntimeModeRef.current !== defaultRuntimeMode;
@@ -273,11 +345,9 @@ export function useDraftWorkspaceSettings(
       setSelectedRuntimeState(
         buildRuntimeForMode(
           defaultRuntimeMode,
-          defaultSshHost,
+          { host: defaultSshHost, coder: defaultSshCoder },
           defaultDockerImage,
           lastShareCredentials,
-          lastCoderEnabled,
-          lastCoderConfig,
           defaultDevcontainerConfigPath,
           lastDevcontainerShareCredentials
         )
@@ -292,8 +362,7 @@ export function useDraftWorkspaceSettings(
     defaultSshHost,
     defaultDockerImage,
     lastShareCredentials,
-    lastCoderEnabled,
-    lastCoderConfig,
+    defaultSshCoder,
     defaultDevcontainerConfigPath,
     lastDevcontainerShareCredentials,
   ]);
@@ -306,14 +375,13 @@ export function useDraftWorkspaceSettings(
     const prevMode = prevSelectedRuntimeModeRef.current;
     if (prevMode !== null && prevMode !== selectedRuntime.mode) {
       if (selectedRuntime.mode === RUNTIME_MODE.SSH) {
-        const needsHostRestore = !selectedRuntime.host.trim() && lastSshHost.trim();
-        const needsCoderRestore =
-          selectedRuntime.coder === undefined && lastCoderEnabled && lastCoderConfig;
+        const needsHostRestore = !selectedRuntime.host.trim() && lastSsh.host.trim();
+        const needsCoderRestore = selectedRuntime.coder === undefined && lastSsh.coder != null;
         if (needsHostRestore || needsCoderRestore) {
           setSelectedRuntimeState({
             mode: RUNTIME_MODE.SSH,
-            host: needsHostRestore ? lastSshHost : selectedRuntime.host,
-            coder: needsCoderRestore ? lastCoderConfig : selectedRuntime.coder,
+            host: needsHostRestore ? lastSsh.host : selectedRuntime.host,
+            coder: needsCoderRestore ? lastSsh.coder : selectedRuntime.coder,
           });
         }
       }
@@ -350,11 +418,10 @@ export function useDraftWorkspaceSettings(
     prevSelectedRuntimeModeRef.current = selectedRuntime.mode;
   }, [
     selectedRuntime,
-    lastSshHost,
+    lastSsh.host,
     lastDockerImage,
     lastShareCredentials,
-    lastCoderEnabled,
-    lastCoderConfig,
+    lastSsh.coder,
     lastDevcontainerConfigPath,
     lastDevcontainerShareCredentials,
   ]);
@@ -373,16 +440,9 @@ export function useDraftWorkspaceSettings(
 
     // Persist host/image/coder so they're remembered when switching modes.
     // Avoid wiping the remembered value when the UI switches modes with an empty field.
+    // Avoid persisting the Coder placeholder as the remembered SSH host.
     if (runtime.mode === RUNTIME_MODE.SSH) {
-      if (runtime.host.trim()) {
-        setLastRuntimeConfig(RUNTIME_MODE.SSH, "host", runtime.host);
-      }
-      // Persist Coder enabled state and config
-      const coderEnabled = runtime.coder !== undefined;
-      setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderEnabled", coderEnabled);
-      if (runtime.coder) {
-        setLastRuntimeConfig(RUNTIME_MODE.SSH, "coderConfig", runtime.coder);
-      }
+      writeSshRuntimeConfig({ host: runtime.host, coder: runtime.coder });
     } else if (runtime.mode === RUNTIME_MODE.DOCKER) {
       if (runtime.image.trim()) {
         setLastRuntimeConfig(RUNTIME_MODE.DOCKER, "image", runtime.image);
@@ -404,15 +464,32 @@ export function useDraftWorkspaceSettings(
     }
   };
 
-  // Setter for default runtime mode (persists via checkbox in tooltip)
-  const setDefaultRuntimeMode = (newMode: RuntimeMode) => {
+  // Setter for default runtime choice (persists via checkbox in tooltip)
+  const setDefaultRuntimeChoice = (choice: RuntimeChoice) => {
+    // Defaults should only change when the checkbox is toggled, not when last-used SSH flips.
+    const freshRuntimeConfigs = readPersistedState<LastRuntimeConfigs>(
+      getLastRuntimeConfigKey(projectPath),
+      {}
+    );
+    const freshSshState = readSshRuntimeState(freshRuntimeConfigs);
+
+    const newMode = choice === "coder" ? RUNTIME_MODE.SSH : choice;
+    const sshConfig: SshRuntimeConfig =
+      choice === "coder"
+        ? {
+            host: CODER_RUNTIME_PLACEHOLDER,
+            coder: freshSshState.coderConfig ?? DEFAULT_CODER_CONFIG,
+          }
+        : {
+            host: freshSshState.host,
+            coder: undefined,
+          };
+
     const newRuntime = buildRuntimeForMode(
       newMode,
-      lastSshHost,
+      sshConfig,
       lastDockerImage,
       lastShareCredentials,
-      lastCoderEnabled,
-      lastCoderConfig,
       defaultDevcontainerConfigPath,
       lastDevcontainerShareCredentials
     );
@@ -433,11 +510,13 @@ export function useDraftWorkspaceSettings(
       thinkingLevel,
       agentId,
       selectedRuntime,
-      defaultRuntimeMode,
+      defaultRuntimeMode: defaultRuntimeChoice,
       trunkBranch,
     },
+    coderConfigFallback,
+    sshHostFallback,
     setSelectedRuntime,
-    setDefaultRuntimeMode,
+    setDefaultRuntimeChoice,
     setTrunkBranch,
     getRuntimeString,
   };

@@ -4,8 +4,9 @@ import { GlobalWindow } from "happy-dom";
 import React from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { ThinkingProvider } from "@/browser/contexts/ThinkingContext";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { getLastRuntimeConfigKey } from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getLastRuntimeConfigKey, getRuntimeKey } from "@/common/constants/storage";
+import { CODER_RUNTIME_PLACEHOLDER } from "@/common/types/runtime";
 import { useDraftWorkspaceSettings } from "./useDraftWorkspaceSettings";
 
 function createStubApiClient(): APIClient {
@@ -117,6 +118,129 @@ describe("useDraftWorkspaceSettings", () => {
         image: "ubuntu:22.04",
         shareCredentials: true,
       });
+    });
+  });
+
+  test("keeps Coder default even after plain SSH usage", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(getRuntimeKey(projectPath), `ssh ${CODER_RUNTIME_PLACEHOLDER}`);
+    updatePersistedState(getLastRuntimeConfigKey(projectPath), {
+      ssh: {
+        host: "dev@host",
+        coderEnabled: false,
+        coderConfig: { existingWorkspace: false },
+      },
+    });
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings.defaultRuntimeMode).toBe("coder");
+      expect(result.current.settings.selectedRuntime).toEqual({
+        mode: "ssh",
+        host: CODER_RUNTIME_PLACEHOLDER,
+        coder: { existingWorkspace: false },
+      });
+    });
+  });
+
+  test("persists Coder default string when toggling default", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(getLastRuntimeConfigKey(projectPath), {
+      ssh: {
+        host: "dev@host",
+        coderEnabled: false,
+        coderConfig: { existingWorkspace: false },
+      },
+    });
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    act(() => {
+      result.current.setDefaultRuntimeChoice("coder");
+    });
+
+    await waitFor(() => {
+      expect(result.current.settings.selectedRuntime).toEqual({
+        mode: "ssh",
+        host: CODER_RUNTIME_PLACEHOLDER,
+        coder: { existingWorkspace: false },
+      });
+    });
+
+    const defaultRuntimeString = readPersistedState<string | undefined>(
+      getRuntimeKey(projectPath),
+      undefined
+    );
+    expect(defaultRuntimeString).toBe(`ssh ${CODER_RUNTIME_PLACEHOLDER}`);
+  });
+
+  test("exposes persisted Coder config as fallback when re-selecting Coder", async () => {
+    const projectPath = "/tmp/project";
+    const savedCoderConfig = { existingWorkspace: true, workspaceName: "saved-workspace" };
+
+    updatePersistedState(getLastRuntimeConfigKey(projectPath), {
+      ssh: {
+        host: "dev@host",
+        coderEnabled: false,
+        coderConfig: savedCoderConfig,
+      },
+    });
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.coderConfigFallback).toEqual(savedCoderConfig);
+    });
+  });
+
+  test("exposes persisted SSH host as fallback when leaving Coder", async () => {
+    const projectPath = "/tmp/project";
+
+    updatePersistedState(getLastRuntimeConfigKey(projectPath), {
+      ssh: {
+        host: "dev@host",
+      },
+    });
+
+    const wrapper: React.FC<{ children: React.ReactNode }> = (props) => (
+      <APIProvider client={createStubApiClient()}>
+        <ThinkingProvider projectPath={projectPath}>{props.children}</ThinkingProvider>
+      </APIProvider>
+    );
+
+    const { result } = renderHook(() => useDraftWorkspaceSettings(projectPath, ["main"], "main"), {
+      wrapper,
+    });
+
+    await waitFor(() => {
+      expect(result.current.sshHostFallback).toBe("dev@host");
     });
   });
 });

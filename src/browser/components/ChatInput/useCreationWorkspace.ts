@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
+  CoderWorkspaceConfig,
   RuntimeConfig,
   RuntimeMode,
   ParsedRuntime,
   RuntimeAvailabilityStatus,
 } from "@/common/types/runtime";
+import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
@@ -142,11 +144,15 @@ interface UseCreationWorkspaceReturn {
   setTrunkBranch: (branch: string) => void;
   /** Currently selected runtime (discriminated union: SSH has host, Docker has image) */
   selectedRuntime: ParsedRuntime;
-  defaultRuntimeMode: RuntimeMode;
+  /** Fallback Coder config used when re-selecting Coder runtime. */
+  coderConfigFallback: CoderWorkspaceConfig;
+  /** Fallback SSH host used when leaving the Coder runtime. */
+  sshHostFallback: string;
+  defaultRuntimeMode: RuntimeChoice;
   /** Set the currently selected runtime (discriminated union) */
   setSelectedRuntime: (runtime: ParsedRuntime) => void;
-  /** Set the default runtime mode for this project (persists via checkbox) */
-  setDefaultRuntimeMode: (mode: RuntimeMode) => void;
+  /** Set the default runtime choice for this project (persists via checkbox) */
+  setDefaultRuntimeChoice: (choice: RuntimeChoice) => void;
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
   isSending: boolean;
@@ -217,8 +223,14 @@ export function useCreationWorkspace({
     useState<RuntimeAvailabilityState>({ status: "loading" });
 
   // Centralized draft workspace settings with automatic persistence
-  const { settings, setSelectedRuntime, setDefaultRuntimeMode, setTrunkBranch } =
-    useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
+  const {
+    settings,
+    coderConfigFallback,
+    sshHostFallback,
+    setSelectedRuntime,
+    setDefaultRuntimeChoice,
+    setTrunkBranch,
+  } = useDraftWorkspaceSettings(projectPath, branches, recommendedTrunk);
 
   // Persist draft workspace name generation state per draft (so multiple drafts don't share a
   // single auto-naming/manual-name state).
@@ -566,9 +578,11 @@ export function useCreationWorkspace({
     trunkBranch: settings.trunkBranch,
     setTrunkBranch,
     selectedRuntime: settings.selectedRuntime,
+    coderConfigFallback,
+    sshHostFallback,
     defaultRuntimeMode: settings.defaultRuntimeMode,
     setSelectedRuntime,
-    setDefaultRuntimeMode,
+    setDefaultRuntimeChoice,
     toast,
     setToast,
     isSending,

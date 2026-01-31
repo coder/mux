@@ -646,7 +646,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         !creationState.selectedRuntime.coder &&
         runtimePolicy.allowSshHost === false &&
         runtimePolicy.allowSshCoder
-        ? "Host SSH runtimes are disabled by policy. Enable “Use Coder Workspace”."
+        ? "Host SSH runtimes are disabled by policy. Select the Coder runtime instead."
         : "Selected runtime is disabled by policy."
       : null;
 
@@ -661,9 +661,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           trunkBranch: creationState.trunkBranch,
           onTrunkBranchChange: creationState.setTrunkBranch,
           selectedRuntime: creationState.selectedRuntime,
+          coderConfigFallback: creationState.coderConfigFallback,
+          sshHostFallback: creationState.sshHostFallback,
           defaultRuntimeMode: creationState.defaultRuntimeMode,
           onSelectedRuntimeChange: creationState.setSelectedRuntime,
-          onSetDefaultRuntime: creationState.setDefaultRuntimeMode,
+          onSetDefaultRuntime: creationState.setDefaultRuntimeChoice,
           disabled: isSendInFlight,
           projectPath: props.projectPath,
           projectName: props.projectName,
@@ -676,6 +678,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           allowSshHost: runtimePolicy.allowSshHost,
           allowSshCoder: runtimePolicy.allowSshCoder,
           runtimePolicyError: creationRuntimePolicyError,
+          coderInfo: coderState.coderInfo,
           runtimeFieldError,
           // Pass coderProps when CLI is available/outdated, Coder is enabled, or still checking (so "Checking…" UI renders)
           coderProps:
