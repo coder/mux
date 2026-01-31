@@ -226,9 +226,10 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
       ? "backgrounded"
       : status;
 
-  // Derive expansion: auto-expand for reports or errors, but respect user's explicit toggle
+  // Derive expansion: keep task cards collapsed by default (reports can be long),
+  // but auto-expand on error. Always respect the user's explicit toggle.
   const hasReport = typeof reportMarkdown === "string" && reportMarkdown.trim().length > 0;
-  const shouldAutoExpand = hasReport || !!errorResult;
+  const shouldAutoExpand = !!errorResult;
   const [userExpandedChoice, setUserExpandedChoice] = useState<boolean | null>(null);
   const expanded = userExpandedChoice ?? shouldAutoExpand;
   const toggleExpanded = () => setUserExpandedChoice(!expanded);
@@ -279,7 +280,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
             </div>
 
             {/* Report section */}
-            {reportMarkdown && (
+            {hasReport && reportMarkdown && (
               <div className="task-divider border-t pt-2">
                 <div className="text-muted mb-1 text-[10px] tracking-wide uppercase">Report</div>
                 <div
@@ -291,7 +292,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
             )}
 
             {/* Pending state */}
-            {effectiveStatus === "executing" && !reportMarkdown && (
+            {effectiveStatus === "executing" && !hasReport && (
               <div className="text-muted text-[11px] italic">
                 Task {isBackground ? "running in background" : "executing"}
                 <LoadingDots />
@@ -327,8 +328,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   status = "pending",
   taskReportLinking,
 }) => {
-  const hasResults = result?.results && result.results.length > 0;
-  const { expanded, toggleExpanded } = useToolExpansion(hasResults);
+  const { expanded, toggleExpanded } = useToolExpansion(false);
 
   const taskIds = args.task_ids;
   const timeoutSecs = args.timeout_secs;
@@ -507,8 +507,7 @@ export const TaskListToolCall: React.FC<TaskListToolCallProps> = ({
   status = "pending",
 }) => {
   const tasks = result?.tasks ?? [];
-  const hasTasks = tasks.length > 0;
-  const { expanded, toggleExpanded } = useToolExpansion(hasTasks);
+  const { expanded, toggleExpanded } = useToolExpansion(false);
 
   const statusFilter = args.statuses;
 

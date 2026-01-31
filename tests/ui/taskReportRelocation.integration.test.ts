@@ -128,12 +128,22 @@ describe("Task report relocation UI", () => {
       await waitForWorkspaceChatToRender(view.container);
 
       await waitFor(() => {
-        expect(view?.queryAllByText("item 1")).toHaveLength(1);
+        expect(view?.queryAllByText(/^task$/)).toHaveLength(1);
       });
 
       const taskToolName = view.getByText(/^task$/);
       const taskMessageBlock = taskToolName.closest('[data-testid="chat-message"]');
       expect(taskMessageBlock).toBeTruthy();
+
+      // Task tool cards should start collapsed by default.
+      expect(taskMessageBlock?.textContent).not.toContain("Hello from report");
+
+      taskToolName.click();
+
+      await waitFor(() => {
+        expect(view?.queryAllByText("item 1")).toHaveLength(1);
+      });
+
       expect(taskMessageBlock?.textContent).toContain("Hello from report");
       // Ensure markdown is actually rendered (not shown as raw "**bold**" syntax).
       expect(taskMessageBlock?.textContent).not.toContain("**report**");
@@ -150,7 +160,13 @@ describe("Task report relocation UI", () => {
       const awaitToolName = view.getByText("task_await");
       const awaitMessageBlock = awaitToolName.closest('[data-testid="chat-message"]');
       expect(awaitMessageBlock).toBeTruthy();
-      expect(awaitMessageBlock?.textContent).toContain("task-1");
+
+      awaitToolName.click();
+
+      await waitFor(() => {
+        expect(awaitMessageBlock?.textContent).toContain("task-1");
+      });
+
       expect(awaitMessageBlock?.textContent).toContain("completed");
       expect(awaitMessageBlock?.textContent).not.toContain("Hello from report");
       expect(awaitMessageBlock?.textContent).not.toContain("item 1");
