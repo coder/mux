@@ -184,6 +184,40 @@ interface MCPOAuthAuthStatus {
   updatedAtMs?: number;
 }
 
+type MCPOAuthAPI = NonNullable<ReturnType<typeof useAPI>["api"]>["projects"]["mcpOauth"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/**
+ * Defensive runtime guard: `projects.mcpOauth` may not exist when running against older backends
+ * or in non-desktop environments. Treat OAuth as unavailable instead of surfacing raw exceptions.
+ */
+function getMCPOAuthAPI(api: ReturnType<typeof useAPI>["api"]): MCPOAuthAPI | null {
+  if (!api) return null;
+
+  // Avoid direct property access since `api.projects.mcpOauth` may be missing at runtime.
+  const maybeOauth: unknown = Reflect.get(api.projects, "mcpOauth");
+  if (!isRecord(maybeOauth)) return null;
+
+  const requiredFns = [
+    "getAuthStatus",
+    "startDesktopFlow",
+    "waitForDesktopFlow",
+    "cancelDesktopFlow",
+    "logout",
+  ] as const;
+
+  for (const fn of requiredFns) {
+    if (typeof maybeOauth[fn] !== "function") {
+      return null;
+    }
+  }
+
+  return maybeOauth as unknown as MCPOAuthAPI;
+}
+
 function useMCPOAuthDesktopLogin(input: {
   api: ReturnType<typeof useAPI>["api"];
   isDesktop: boolean;
@@ -203,8 +237,9 @@ function useMCPOAuthDesktopLogin(input: {
   const cancelLogin = useCallback(() => {
     loginAttemptRef.current++;
 
-    if (isDesktop && api && desktopFlowId) {
-      void api.projects.mcpOauth.cancelDesktopFlow({ flowId: desktopFlowId });
+    const mcpOauthApi = getMCPOAuthAPI(api);
+    if (isDesktop && mcpOauthApi && desktopFlowId) {
+      void mcpOauthApi.cancelDesktopFlow({ flowId: desktopFlowId });
     }
 
     setDesktopFlowId(null);
@@ -237,12 +272,19 @@ function useMCPOAuthDesktopLogin(input: {
         return;
       }
 
+      const mcpOauthApi = getMCPOAuthAPI(api);
+      if (!mcpOauthApi) {
+        setLoginStatus("error");
+        setLoginError("OAuth is not available in this environment.");
+        return;
+      }
+
       setLoginStatus("starting");
-      const startResult = await api.projects.mcpOauth.startDesktopFlow({ projectPath, serverName });
+      const startResult = await mcpOauthApi.startDesktopFlow({ projectPath, serverName });
 
       if (attempt !== loginAttemptRef.current) {
         if (startResult.success) {
-          void api.projects.mcpOauth.cancelDesktopFlow({ flowId: startResult.data.flowId });
+          void mcpOauthApi.cancelDesktopFlow({ flowId: startResult.data.flowId });
         }
         return;
       }
@@ -264,7 +306,7 @@ function useMCPOAuthDesktopLogin(input: {
         return;
       }
 
-      const waitResult = await api.projects.mcpOauth.waitForDesktopFlow({ flowId });
+      const waitResult = await mcpOauthApi.waitForDesktopFlow({ flowId });
 
       if (attempt !== loginAttemptRef.current) {
         return;
@@ -396,8 +438,17 @@ const RemoteMCPOAuthSection: React.FC<{
   const [logoutError, setLogoutError] = useState<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
-    if (!api) {
+    if (!isDesktop) {
       setAuthStatus(null);
+      setAuthStatusLoading(false);
+      setAuthStatusError(null);
+      return;
+    }
+
+    const mcpOauthApi = getMCPOAuthAPI(api);
+    if (!mcpOauthApi) {
+      setAuthStatus(null);
+      setAuthStatusLoading(false);
       setAuthStatusError(null);
       return;
     }
@@ -406,7 +457,7 @@ const RemoteMCPOAuthSection: React.FC<{
     setAuthStatusError(null);
 
     try {
-      const status = await api.projects.mcpOauth.getAuthStatus({ projectPath, serverName });
+      const status = await mcpOauthApi.getAuthStatus({ projectPath, serverName });
       setAuthStatus(status);
     } catch (err) {
       setAuthStatus(null);
@@ -414,7 +465,7 @@ const RemoteMCPOAuthSection: React.FC<{
     } finally {
       setAuthStatusLoading(false);
     }
-  }, [api, projectPath, serverName]);
+  }, [api, isDesktop, projectPath, serverName]);
 
   useEffect(() => {
     void refreshAuthStatus();
@@ -429,30 +480,45 @@ const RemoteMCPOAuthSection: React.FC<{
       onSuccess: refreshAuthStatus,
     });
 
+  const mcpOauthApi = getMCPOAuthAPI(api);
+  const oauthAvailable = isDesktop && Boolean(mcpOauthApi);
+
   const isLoggedIn = (authStatus?.isLoggedIn ?? false) || loginStatus === "success";
 
-  const authStatusText = authStatusLoading
-    ? "Checking..."
-    : isLoggedIn
-      ? "Logged in"
-      : "Not logged in";
+  const oauthDebugErrors = [
+    authStatusError ? { label: "Status", message: authStatusError } : null,
+    loginStatus === "error" && loginError ? { label: "Login", message: loginError } : null,
+    logoutError ? { label: "Logout", message: logoutError } : null,
+  ].filter((entry): entry is { label: string; message: string } => entry !== null);
 
-  const updatedAtText = authStatus?.updatedAtMs
-    ? ` (${formatRelativeTime(authStatus.updatedAtMs)})`
-    : "";
-
-  const loginButtonLabel =
-    loginStatus === "error"
-      ? "Try again"
+  const authStatusText = !oauthAvailable
+    ? "Not available"
+    : authStatusLoading
+      ? "Checking..."
       : loginInProgress
-        ? "Waiting for login..."
-        : isLoggedIn
-          ? "Re-login via OAuth"
-          : "Login via OAuth";
+        ? "Waiting..."
+        : oauthDebugErrors.length > 0
+          ? "Error"
+          : isLoggedIn
+            ? "Logged in"
+            : "Not logged in";
+
+  const updatedAtText =
+    oauthAvailable && isLoggedIn && authStatus?.updatedAtMs
+      ? ` (${formatRelativeTime(authStatus.updatedAtMs)})`
+      : "";
+
+  const loginButtonLabel = loginStatus === "error" ? "Retry" : isLoggedIn ? "Re-login" : "Login";
 
   const logout = useCallback(async () => {
-    if (!api) {
-      setLogoutError("Mux API not connected.");
+    if (!isDesktop) {
+      setLogoutError("OAuth logout is only available in the desktop app.");
+      return;
+    }
+
+    const mcpOauthApi = getMCPOAuthAPI(api);
+    if (!mcpOauthApi) {
+      setLogoutError("OAuth is not available in this environment.");
       return;
     }
 
@@ -461,7 +527,7 @@ const RemoteMCPOAuthSection: React.FC<{
     setLogoutInProgress(true);
 
     try {
-      const result = await api.projects.mcpOauth.logout({ projectPath, serverName });
+      const result = await mcpOauthApi.logout({ projectPath, serverName });
       if (!result.success) {
         setLogoutError(result.error);
         return;
@@ -474,33 +540,56 @@ const RemoteMCPOAuthSection: React.FC<{
     } finally {
       setLogoutInProgress(false);
     }
-  }, [api, cancelLogin, projectPath, refreshAuthStatus, serverName]);
+  }, [api, cancelLogin, isDesktop, projectPath, refreshAuthStatus, serverName]);
 
   return (
-    <div className="mt-2 space-y-2">
-      <div>
-        <label className="text-foreground block text-xs font-medium">OAuth</label>
-        <span className="text-muted text-xs">
+    <div className="mt-1 flex items-center justify-between gap-2">
+      <div className="min-w-0 flex items-center gap-2 text-xs">
+        <span className="text-foreground font-medium">OAuth</span>
+        <span className="text-muted truncate">
           {authStatusText}
-          {isLoggedIn && updatedAtText}
+          {updatedAtText}
         </span>
+
+        {oauthDebugErrors.length > 0 && (
+          <details className="group inline-block">
+            <summary className="text-muted hover:text-foreground cursor-pointer list-none text-[11px] underline-offset-2 group-open:underline">
+              Details
+            </summary>
+            <div className="border-border-medium bg-background-secondary mt-1 space-y-1 rounded-md border px-2 py-1 text-xs">
+              {oauthDebugErrors.map((entry) => (
+                <div key={entry.label} className="text-destructive break-words">
+                  <span className="font-medium">{entry.label}:</span> {entry.message}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
       </div>
 
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
+      {oauthAvailable && (
+        <div className="flex shrink-0 items-center gap-1">
           <Button
+            variant="ghost"
             size="sm"
+            className="h-7 px-2"
             onClick={() => {
               void startLogin();
             }}
-            disabled={!isDesktop || !api || loginInProgress || logoutInProgress}
-            title={!isDesktop ? "OAuth login is only available in the desktop app" : undefined}
+            disabled={loginInProgress || logoutInProgress}
           >
-            {loginButtonLabel}
+            {loginInProgress ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {loginButtonLabel}
+              </>
+            ) : (
+              loginButtonLabel
+            )}
           </Button>
 
           {loginInProgress && (
-            <Button variant="secondary" size="sm" onClick={cancelLogin}>
+            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={cancelLogin}>
               Cancel
             </Button>
           )}
@@ -509,32 +598,17 @@ const RemoteMCPOAuthSection: React.FC<{
             <Button
               variant="ghost"
               size="sm"
+              className="h-7 px-2"
               onClick={() => {
                 void logout();
               }}
-              disabled={!api || loginInProgress || logoutInProgress}
+              disabled={loginInProgress || logoutInProgress}
             >
               {logoutInProgress ? "Logging out..." : "Logout"}
             </Button>
           )}
         </div>
-
-        {loginStatus === "waiting" && (
-          <p className="text-muted text-xs">
-            Finish the login flow in your browser, then return here.
-          </p>
-        )}
-
-        {authStatusError && (
-          <p className="text-destructive text-xs">OAuth status: {authStatusError}</p>
-        )}
-
-        {loginStatus === "error" && loginError && (
-          <p className="text-destructive text-xs">OAuth error: {loginError}</p>
-        )}
-
-        {logoutError && <p className="text-destructive text-xs">OAuth logout: {logoutError}</p>}
-      </div>
+      )}
     </div>
   );
 };
@@ -1050,7 +1124,7 @@ export const ProjectSettingsSection: React.FC = () => {
                       key={name}
                       className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
                     >
-                      <div className="flex items-start gap-3 px-3 py-2.5">
+                      <div className="flex items-start gap-3 px-3 py-2">
                         <Switch
                           checked={isEnabled}
                           onCheckedChange={(checked) => void handleToggleEnabled(name, checked)}
