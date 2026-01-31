@@ -85,6 +85,9 @@ export function useOptimisticBatchLRU<T>({
   const fetchBatchRef = React.useRef(fetchBatch);
   fetchBatchRef.current = fetchBatch;
 
+  // Prevent out-of-order fetches from overwriting newer results.
+  const requestIdRef = React.useRef(0);
+
   // We want to refetch when the *contents* of `keys` change, not merely when the
   // array identity changes.
   //
@@ -101,6 +104,8 @@ export function useOptimisticBatchLRU<T>({
 
   // Fetch function - reads keys from refs and writes through to the cache.
   const doFetch = React.useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+
     const currentKeys = keysRef.current;
     if (currentKeys.length === 0) {
       setStatus("loaded");
@@ -110,6 +115,7 @@ export function useOptimisticBatchLRU<T>({
     setStatus("loading");
     try {
       const freshData = await fetchBatchRef.current(currentKeys);
+      if (requestId !== requestIdRef.current) return;
 
       // Decide what to update. If the response doesn't contain a key at all, we
       // treat it as "no update" (keep cached value). If the response contains a
@@ -146,6 +152,7 @@ export function useOptimisticBatchLRU<T>({
 
       setStatus("loaded");
     } catch {
+      if (requestId !== requestIdRef.current) return;
       setStatus("error");
     }
   }, [cache]);
