@@ -63,17 +63,18 @@ EOF
 
 ### Handling Codex Comments
 
-Use these scripts to check and resolve Codex review comments:
+Use these scripts to check, resolve, and wait on Codex review comments:
 
 - `./scripts/check_codex_comments.sh <pr_number>` — Lists unresolved Codex comments (both regular comments and review threads). Outputs thread IDs needed for resolution.
 - `./scripts/resolve_pr_comment.sh <thread_id>` — Resolves a review thread by its ID (e.g., `PRRT_abc123`).
+- `./scripts/wait_pr_codex.sh <pr_number>` — Waits for Codex to respond to the latest `@codex review` request. When the PR looks good, Codex leaves an explicit approval comment (e.g., it will say `Didn't find any major issues`).
 
 When Codex leaves review comments, you **must** address them before the PR can merge:
 
 1. Push your fixes
 2. Resolve each review thread: `./scripts/resolve_pr_comment.sh <thread_id>`
 3. Comment `@codex review` to re-request review
-4. Re-run `./scripts/check_codex_comments.sh <pr_number>` to verify all comments resolved
+4. Run `./scripts/wait_pr_codex.sh <pr_number>` to wait for the next Codex response (either new comments to address, or an explicit approval comment)
 
 ## PR Title Conventions
 
