@@ -40,13 +40,14 @@ export function getStatusTooltip(options: {
   if (isStreaming && streamingModel) {
     return (
       <span>
-        <ModelDisplay modelString={streamingModel} showTooltip={false} /> is responding
+        <ModelDisplay modelString={streamingModel} showTooltip={false} />
+        {" - streaming..."}
       </span>
     );
   }
 
   if (isStreaming) {
-    return "Assistant is responding";
+    return "Assistant - streaming...";
   }
 
   // Only show unread if explicitly provided (sidebar only)

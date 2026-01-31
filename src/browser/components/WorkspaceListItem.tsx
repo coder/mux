@@ -4,6 +4,9 @@ import { cn } from "@/common/lib/utils";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
+import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { getModelKey } from "@/common/constants/storage";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect } from "react";
@@ -290,11 +293,17 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
-  const hasStatusText = Boolean(agentStatus ?? awaitingUserQuestion);
-  const hasSecondaryRow = !isCreating && (isArchiving === true || hasStatusText);
+
+  const [fallbackModel] = usePersistedState<string>(getModelKey(workspaceId), getDefaultModel(), {
+    listener: true,
+  });
+  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
+  const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
+  // Note: we intentionally render the secondary row even while the workspace is still
+  // "creating" so users can see early streaming/status information immediately.
+  const hasSecondaryRow = isArchiving === true || hasStatusText;
 
   const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
-  const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -484,7 +493,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (
-                <WorkspaceStatusIndicator workspaceId={workspaceId} />
+                <WorkspaceStatusIndicator workspaceId={workspaceId} fallbackModel={fallbackModel} />
               )}
             </div>
           )}
