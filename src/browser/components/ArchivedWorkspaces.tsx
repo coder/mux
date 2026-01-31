@@ -9,6 +9,7 @@ import { ChevronDown, ChevronRight, Loader2, Search, Trash2 } from "lucide-react
 import { ArchiveIcon, ArchiveRestoreIcon } from "./icons/ArchiveIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { RuntimeBadge } from "./RuntimeBadge";
+import { Skeleton } from "./ui/skeleton";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,8 @@ import {
   getTotalCost,
   formatCostWithDollar,
 } from "@/common/utils/tokens/usageAggregator";
+import { useOptimisticBatchLRU } from "@/browser/hooks/useOptimisticBatchLRU";
+import { sessionCostCache } from "@/browser/utils/sessionCostCache";
 
 type SessionUsageFile = z.infer<typeof SessionUsageFileSchema>;
 
@@ -108,18 +111,37 @@ function getSessionTotalCost(usage: SessionUsageFile | undefined): number | unde
   return getTotalCost(aggregated);
 }
 
-/** Cost badge component with size variants for different scopes */
+/** Cost badge component with size variants for different scopes.
+ * Shows a shimmer skeleton while loading to prevent layout flash. */
 const CostBadge: React.FC<{
   cost: number | undefined;
+  loading?: boolean;
   size?: "sm" | "md" | "lg";
   className?: string;
-}> = ({ cost, size = "md", className }) => {
-  if (cost === undefined) return null;
+}> = ({ cost, loading = false, size = "md", className }) => {
   const sizeStyles = {
     sm: "px-1 py-0.5 text-[10px]",
     md: "px-1.5 py-0.5 text-xs",
     lg: "px-2 py-0.5 text-sm",
   };
+  // Skeleton sizes that reserve the same space as a typical cost value (e.g., "$0.12")
+  const skeletonSizes = {
+    sm: "h-4 w-[5ch]",
+    md: "h-5 w-[6ch]",
+    lg: "h-6 w-[7ch]",
+  };
+
+  // Show skeleton while loading and no cached value available
+  if (cost === undefined) {
+    if (!loading) return null;
+    return (
+      <Skeleton
+        variant="shimmer"
+        className={cn(skeletonSizes[size], sizeStyles[size], className)}
+      />
+    );
+  }
+
   return (
     <span
       className={cn(
@@ -242,22 +264,33 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
     });
   };
 
-  // Cost data for workspaces
-  const [usageByWorkspace, setUsageByWorkspace] = React.useState<
-    Record<string, SessionUsageFile | undefined>
-  >({});
+  // Cost data with optimistic caching - shows cached costs immediately, fetches fresh in background
+  const workspaceIds = React.useMemo(() => workspaces.map((w) => w.id), [workspaces]);
 
-  // Fetch costs for all workspaces on mount or when workspaces change
-  React.useEffect(() => {
-    if (!api || workspaces.length === 0) return;
-    const workspaceIds = workspaces.map((w) => w.id);
-    api.workspace
-      .getSessionUsageBatch({ workspaceIds })
-      .then(setUsageByWorkspace)
-      .catch(() => {
-        // Silently fail - costs are optional
-      });
-  }, [api, workspaces]);
+  // Memoize fetchBatch so the hook doesn't refetch on every local state change.
+  const fetchWorkspaceCosts = React.useCallback(
+    async (ids: string[]) => {
+      if (!api) return {};
+
+      const usageData = await api.workspace.getSessionUsageBatch({ workspaceIds: ids });
+
+      // Compute costs from usage data and return as record
+      const costs: Record<string, number | undefined> = {};
+      for (const id of ids) {
+        costs[id] = getSessionTotalCost(usageData[id]);
+      }
+      return costs;
+    },
+    [api]
+  );
+
+  const { values: costsByWorkspace, status: costsStatus } = useOptimisticBatchLRU({
+    keys: workspaceIds,
+    cache: sessionCostCache,
+    skip: !api,
+    fetchBatch: fetchWorkspaceCosts,
+  });
+  const costsLoading = costsStatus === "idle" || costsStatus === "loading";
 
   // Filter workspaces by search query (frontend-only)
   const filteredWorkspaces = searchQuery.trim()
@@ -273,19 +306,19 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   const groupedWorkspaces = groupByTimePeriod(filteredWorkspaces);
   const flatWorkspaces = flattenGrouped(groupedWorkspaces);
 
-  // Calculate total cost and per-period costs
+  // Calculate total cost and per-period costs from cached/fetched values
   const totalCost = React.useMemo(() => {
     let sum = 0;
     let hasCost = false;
     for (const ws of workspaces) {
-      const cost = getSessionTotalCost(usageByWorkspace[ws.id]);
+      const cost = costsByWorkspace[ws.id];
       if (cost !== undefined) {
         sum += cost;
         hasCost = true;
       }
     }
     return hasCost ? sum : undefined;
-  }, [workspaces, usageByWorkspace]);
+  }, [workspaces, costsByWorkspace]);
 
   const periodCosts = React.useMemo(() => {
     const costs = new Map<string, number | undefined>();
@@ -293,7 +326,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       let sum = 0;
       let hasCost = false;
       for (const ws of periodWorkspaces) {
-        const cost = getSessionTotalCost(usageByWorkspace[ws.id]);
+        const cost = costsByWorkspace[ws.id];
         if (cost !== undefined) {
           sum += cost;
           hasCost = true;
@@ -302,7 +335,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
       costs.set(period, hasCost ? sum : undefined);
     }
     return costs;
-  }, [groupedWorkspaces, usageByWorkspace]);
+  }, [groupedWorkspaces, costsByWorkspace]);
 
   // workspaces prop should already be filtered to archived only
   if (workspaces.length === 0) {
@@ -548,7 +581,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
           <span className="text-foreground font-medium">
             Archived Workspaces ({workspaces.length})
           </span>
-          <CostBadge cost={totalCost} size="lg" />
+          <CostBadge cost={totalCost} loading={costsLoading} size="lg" />
           <span className="flex-1" />
           {isExpanded && hasSelection && (
             <div className="flex items-center gap-2">
@@ -655,7 +688,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                     {/* Period header */}
                     <div className="bg-bg-dark text-muted flex items-center gap-2 px-4 py-1.5 text-xs font-medium">
                       <span>{period}</span>
-                      <CostBadge cost={periodCosts.get(period)} />
+                      <CostBadge cost={periodCosts.get(period)} loading={costsLoading} />
                     </div>
                     {/* Workspaces in this period */}
                     {periodWorkspaces.map((workspace) => {
@@ -706,7 +739,8 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
                                 </span>
                               )}
                               <CostBadge
-                                cost={getSessionTotalCost(usageByWorkspace[workspace.id])}
+                                cost={costsByWorkspace[workspace.id]}
+                                loading={costsLoading}
                                 size="sm"
                               />
                             </div>
