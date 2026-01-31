@@ -41,6 +41,8 @@ macOS and Linux.
 
 ## Screenshots
 
+> These screenshots are generated from Storybook stories under **Docs/README Screenshots** (so they can be refreshed from a known, reproducible UI state).
+
 <div align="center">
   <p><em>Integrated code-review for faster iteration:</p>
   <img src="./docs/img/code-review.webp" alt="Screenshot of code review" />
