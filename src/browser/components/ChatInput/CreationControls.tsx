@@ -19,6 +19,7 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
+import { Skeleton } from "../ui/skeleton";
 import { DocsLink } from "../DocsLink";
 import { RUNTIME_UI, type RuntimeIconProps } from "@/browser/utils/runtimeUi";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
@@ -550,7 +551,7 @@ export function CreationControls(props: CreationControlsProps) {
           {showBranchLoadingPlaceholder && (
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground text-xs">from</span>
-              <div className="bg-bg-dark/50 h-7 w-24 animate-pulse rounded-md" />
+              <Skeleton className="h-7 w-24 rounded-md" />
             </div>
           )}
 
@@ -617,7 +618,7 @@ export function CreationControls(props: CreationControlsProps) {
               <label className="text-muted-foreground text-xs">Config</label>
               {devcontainerSelection.uiMode === "loading" ? (
                 // Skeleton placeholder while loading - matches dropdown dimensions
-                <div className="bg-bg-dark/50 h-6 w-[280px] animate-pulse rounded-md" />
+                <Skeleton className="h-6 w-[280px] rounded-md" />
               ) : devcontainerSelection.uiMode === "dropdown" ? (
                 <RadixSelect
                   value={devcontainerSelection.configPath}

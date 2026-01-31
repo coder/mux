@@ -32,6 +32,7 @@ import {
   getProjectScopeId,
 } from "@/common/constants/storage";
 import { Button } from "@/browser/components/ui/button";
+import { Skeleton } from "@/browser/components/ui/skeleton";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {
@@ -314,7 +315,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       {providersLoading ? (
                         // Skeleton placeholder matching ConfiguredProvidersBar height
                         <div className="flex items-center justify-center gap-2 py-1.5">
-                          <div className="bg-bg-dark/50 h-7 w-32 animate-pulse rounded" />
+                          <Skeleton className="h-7 w-32" />
                         </div>
                       ) : (
                         hasProviders &&
