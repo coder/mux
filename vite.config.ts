@@ -89,16 +89,18 @@ const reactCompilerConfig = {
 // Babel plugins configuration (shared between dev and production)
 const babelPlugins = [["babel-plugin-react-compiler", reactCompilerConfig]];
 
-// Base plugins for both dev and production
-const basePlugins = [
-  svgr(),
-  react({
-    babel: {
-      plugins: babelPlugins,
-    },
-  }),
-  tailwindcss(),
-];
+function makeBasePlugins(options: { fastRefresh?: boolean } = {}) {
+  return [
+    svgr(),
+    react({
+      fastRefresh: options.fastRefresh,
+      babel: {
+        plugins: babelPlugins,
+      },
+    }),
+    tailwindcss(),
+  ];
+}
 
 export default defineConfig(({ mode }) => {
   const isProfiling = mode === "profiling";
@@ -109,13 +111,29 @@ export default defineConfig(({ mode }) => {
     aliasMap["scheduler/tracing"] = "scheduler/tracing-profiling";
   }
 
+  const isFast = mode === "fast";
+  const isDevLike = mode === "development" || isFast;
+
+  // "fast" mode is an opt-in dev workflow intended for perf profiling.
+  // It trades dev-time warnings/ergonomics (StrictMode, React Refresh, jsxDEV)
+  // for a renderer that is closer to production.
+  const define: Record<string, string> = {
+    ...(isProfiling ? { __PROFILE__: "true" } : {}),
+    ...(isFast ? { "process.env.NODE_ENV": '"production"' } : {}),
+  };
+
+  const plugins = isDevLike
+    ? [...makeBasePlugins({ fastRefresh: isFast ? false : undefined }), topLevelAwait()]
+    : makeBasePlugins();
+
   return {
     // This prevents mermaid initialization errors in production while allowing dev to work
-    plugins: mode === "development" ? [...basePlugins, topLevelAwait()] : basePlugins,
+    plugins,
     resolve: {
       alias: aliasMap,
     },
-    ...(isProfiling ? { define: { __PROFILE__: "true" } } : {}),
+    ...(Object.keys(define).length ? { define } : {}),
+    ...(isFast ? { esbuild: { jsxDev: false } } : {}),
     base: "./",
     build: {
       outDir: "dist",

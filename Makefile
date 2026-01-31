@@ -146,12 +146,27 @@ dev: node_modules/.installed build-main ## Start development server (Vite + node
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"vite"
+dev-fast: node_modules/.installed build-main ## Start dev mode with a perf-focused renderer (no StrictMode / less dev overhead)
+		@echo "Starting dev-fast mode (renderer closer to production; fewer dev checks)..."
+		@NODE_OPTIONS="--max-old-space-size=4096" \
+			npm x concurrently -k --raw \
+			"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json --ignore dist --ignore node_modules --exec node scripts/build-main-watch.js" \
+			'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
+			"VITE_MUX_FAST_DEV=1 vite --mode fast"
+
 else
 dev: node_modules/.installed build-main build-preload ## Start development server (Vite + tsgo watcher for 10x faster type checking)
 	@bun x concurrently -k \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
 		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"vite"
+dev-fast: node_modules/.installed build-main build-preload ## Start dev mode with a perf-focused renderer (no StrictMode / less dev overhead)
+	@echo "Starting dev-fast mode (renderer closer to production; fewer dev checks)..."
+	@VITE_MUX_FAST_DEV=1 bun x concurrently -k \
+		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
+		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
+		"vite --mode fast"
+
 endif
 
 ifeq ($(OS),Windows_NT)
