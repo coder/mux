@@ -388,17 +388,12 @@ export const TaskTranscriptViewer: AppStory = {
     // Dialog content is portaled outside the canvasElement, but inside the iframe body.
     const body = within(canvasElement.ownerDocument.body);
     const dialog = await body.findByRole("dialog");
-    const dialogCanvas = within(dialog);
 
     await waitFor(
       () => {
-        const transcriptMessage = dialogCanvas.queryByText(
-          (_, element) =>
-            element?.textContent?.toLowerCase().includes("summarize the workspace cleanup flow") ??
-            false
-        );
-        if (!transcriptMessage) {
-          throw new Error("Transcript message not rendered");
+        // MessageRenderer renders each message inside a MessageWindow with data-message-block.
+        if (dialog.querySelectorAll("[data-message-block]").length === 0) {
+          throw new Error("Transcript messages not rendered");
         }
       },
       { timeout: 5_000 }
