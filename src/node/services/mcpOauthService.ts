@@ -7,9 +7,11 @@ import { auth, type OAuthClientProvider } from "@ai-sdk/mcp";
 import type { Config } from "@/node/config";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { WindowService } from "@/node/services/windowService";
+import type { TelemetryService } from "@/node/services/telemetryService";
 import { log } from "@/node/services/log";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
+import { roundToBase2 } from "@/common/telemetry/utils";
 import type {
   MCPOAuthAuthStatus,
   MCPOAuthClientInformation,
@@ -47,6 +49,8 @@ interface DesktopFlow {
   projectPath: string;
   serverName: string;
   serverUrl: string;
+  transport: "http" | "sse" | "auto";
+  startedAtMs: number;
 
   /**
    * OAuth client information registered for this specific flow.
@@ -296,6 +300,11 @@ export class McpOauthService {
   private store: McpOauthStoreFileV1 | null = null;
 
   private readonly desktopFlows = new Map<string, DesktopFlow>();
+  private telemetryService?: TelemetryService;
+
+  setTelemetryService(telemetryService: TelemetryService): void {
+    this.telemetryService = telemetryService;
+  }
 
   constructor(
     private readonly config: Config,
@@ -470,10 +479,20 @@ export class McpOauthService {
       }
 
       const state = url.searchParams.get("state");
-      if (!state || state !== flowId) {
+      if (state !== flowId) {
         res.statusCode = 400;
         res.setHeader("Content-Type", "text/html");
         res.end("<h1>Invalid OAuth state</h1>");
+
+        // Strict state validation: if we receive an OAuth callback that doesn't
+        // match the active flow state, fail the flow rather than waiting for a timeout.
+        //
+        // Note: We only fail once the flow has an authorizeUrl to avoid cancelling
+        // due to unrelated localhost probes against the ephemeral loopback port.
+        const flow = this.desktopFlows.get(flowId);
+        if (flow && flow.authorizeUrl && !flow.settled) {
+          void this.finishDesktopFlow(flowId, Err("Invalid OAuth state"));
+        }
         return;
       }
 
@@ -503,6 +522,7 @@ export class McpOauthService {
 
     const address = serverListener.address();
     if (!address || typeof address === "string") {
+      await closeServer(serverListener).catch(() => undefined);
       return Err("Failed to determine OAuth callback listener port");
     }
 
@@ -517,6 +537,8 @@ export class McpOauthService {
       projectPath: projectKey,
       serverName: input.serverName,
       serverUrl: normalizedServerUrl,
+      transport: server.transport,
+      startedAtMs: Date.now(),
       clientInformation: null,
       authorizeUrl: "",
       redirectUri,
@@ -533,6 +555,17 @@ export class McpOauthService {
       settled: false,
     };
 
+    this.desktopFlows.set(flowId, flow);
+
+    this.captureTelemetry({
+      event: "mcp_oauth_flow_started",
+      properties: {
+        transport: flow.transport,
+        has_scope_hint: Boolean(flow.scope),
+        has_resource_metadata_hint: Boolean(flow.resourceMetadataUrl),
+      },
+    });
+
     try {
       // Force a user-interactive flow by not exposing existing tokens.
       const provider = this.createDesktopFlowProvider(flow);
@@ -544,14 +577,11 @@ export class McpOauthService {
       });
 
       if (result !== "REDIRECT" || !flow.authorizeUrl) {
-        // If auth() completes without redirecting the user, we must ensure
-        // we tear down the loopback listener and timeout, since this flow
-        // was never inserted into `desktopFlows`.
+        // If auth() completes without redirecting the user, treat it as a failure
+        // and tear down the loopback listener.
         await this.finishDesktopFlow(flowId, Err("Failed to start OAuth authorization"));
         return Err("Failed to start OAuth authorization");
       }
-
-      this.desktopFlows.set(flowId, flow);
 
       log.debug("[MCP OAuth] Desktop flow started", {
         flowId,
@@ -562,8 +592,7 @@ export class McpOauthService {
       return Ok({ flowId, authorizeUrl: flow.authorizeUrl, redirectUri });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // Ensure listener is cleaned up if auth setup fails.
-      await closeServer(serverListener).catch(() => undefined);
+      await this.finishDesktopFlow(flowId, Err(message));
       return Err(message);
     }
   }
@@ -605,6 +634,39 @@ export class McpOauthService {
 
     log.debug("[MCP OAuth] Desktop flow cancelled", { flowId });
     await this.finishDesktopFlow(flowId, Err("OAuth flow cancelled"));
+  }
+
+  private captureTelemetry(payload: Parameters<TelemetryService["capture"]>[0]): void {
+    try {
+      this.telemetryService?.capture(payload);
+    } catch (error) {
+      // Telemetry must never block or crash OAuth flows.
+      log.debug("[MCP OAuth] Failed to capture telemetry", { error });
+    }
+  }
+
+  private getOAuthFlowErrorCategory(
+    error: string
+  ): "timeout" | "cancelled" | "state_mismatch" | "provider_error" | "unknown" {
+    const lower = error.toLowerCase();
+
+    if (lower.includes("timed out")) {
+      return "timeout";
+    }
+
+    if (lower.includes("cancelled")) {
+      return "cancelled";
+    }
+
+    if (lower.includes("invalid oauth state")) {
+      return "state_mismatch";
+    }
+
+    if (lower.includes("oauth")) {
+      return "provider_error";
+    }
+
+    return "unknown";
   }
 
   private createDesktopFlowProvider(flow: DesktopFlow): OAuthClientProvider {
@@ -841,6 +903,35 @@ export class McpOauthService {
     flow.settled = true;
     clearTimeout(flow.timeout);
 
+    const durationMs = Math.max(0, Date.now() - flow.startedAtMs);
+    const durationMsB2 = roundToBase2(durationMs);
+    const hasScopeHint = Boolean(flow.scope);
+    const hasResourceMetadataHint = Boolean(flow.resourceMetadataUrl);
+
+    if (result.success) {
+      this.captureTelemetry({
+        event: "mcp_oauth_flow_completed",
+        properties: {
+          transport: flow.transport,
+          duration_ms_b2: durationMsB2,
+          has_scope_hint: hasScopeHint,
+          has_resource_metadata_hint: hasResourceMetadataHint,
+        },
+      });
+    } else {
+      const errorCategory = this.getOAuthFlowErrorCategory(result.error);
+      this.captureTelemetry({
+        event: "mcp_oauth_flow_failed",
+        properties: {
+          transport: flow.transport,
+          duration_ms_b2: durationMsB2,
+          has_scope_hint: hasScopeHint,
+          has_resource_metadata_hint: hasResourceMetadataHint,
+          error_category: errorCategory,
+        },
+      });
+    }
+
     try {
       flow.resolveResult(result);
 
@@ -1004,7 +1095,7 @@ export class McpOauthService {
       if (!parsed) {
         log.warn("[MCP OAuth] Invalid store file; resetting", { filePath: this.storeFilePath });
         this.store = createEmptyStore();
-        await this.persistStoreLocked(this.store);
+        await this.persistStoreBestEffortLocked(this.store);
         return this.store;
       }
 
@@ -1018,8 +1109,19 @@ export class McpOauthService {
 
       log.warn("[MCP OAuth] Failed to read store file; resetting", { error });
       this.store = createEmptyStore();
-      await this.persistStoreLocked(this.store);
+      await this.persistStoreBestEffortLocked(this.store);
       return this.store;
+    }
+  }
+
+  private async persistStoreBestEffortLocked(store: McpOauthStoreFileV1): Promise<void> {
+    try {
+      await this.persistStoreLocked(store);
+    } catch (error) {
+      // Store read/repair must never crash the app at startup.
+      log.warn("[MCP OAuth] Failed to persist store file; continuing with in-memory state", {
+        error,
+      });
     }
   }
 
