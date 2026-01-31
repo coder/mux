@@ -210,6 +210,14 @@ function coerceNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function hasAncestorWorkspaceId(
+  entry: { ancestorWorkspaceIds?: unknown } | null | undefined,
+  ancestorWorkspaceId: string
+): boolean {
+  const ids = entry?.ancestorWorkspaceIds;
+  return Array.isArray(ids) && ids.includes(ancestorWorkspaceId);
+}
+
 function isSuccessfulToolResult(value: unknown): boolean {
   return (
     typeof value === "object" &&
@@ -1347,7 +1355,7 @@ export class TaskService {
       }
 
       const cached = this.completedReportsByTaskId.get(taskId);
-      if (cached?.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+      if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
         result.push(taskId);
         continue;
       }
@@ -1364,7 +1372,7 @@ export class TaskService {
     for (const taskId of maybePersisted) {
       const entry = persisted.artifactsByChildTaskId[taskId];
       if (!entry) continue;
-      if (entry.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+      if (hasAncestorWorkspaceId(entry, ancestorWorkspaceId)) {
         result.push(taskId);
       }
     }
@@ -1409,14 +1417,14 @@ export class TaskService {
     // The task workspace may have been removed after it reported (cleanup/restart). Preserve scope
     // checks by consulting persisted report artifacts in the ancestor session dir.
     const cached = this.completedReportsByTaskId.get(taskId);
-    if (cached?.ancestorWorkspaceIds.includes(ancestorWorkspaceId)) {
+    if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
       return true;
     }
 
     const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
     const persisted = await readSubagentReportArtifactsFile(sessionDir);
     const entry = persisted.artifactsByChildTaskId[taskId];
-    return entry?.ancestorWorkspaceIds.includes(ancestorWorkspaceId) ?? false;
+    return hasAncestorWorkspaceId(entry, ancestorWorkspaceId);
   }
 
   private isDescendantAgentTaskUsingParentById(

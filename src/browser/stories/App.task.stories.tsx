@@ -349,6 +349,7 @@ export const TaskTranscriptViewer: AppStory = {
         ];
 
         return setupSimpleChatStory({
+          workspaceId: "ws-task-transcript-viewer",
           messages: [
             createUserMessage("u1", "Show me the completed task transcript", {
               historySequence: 1,
