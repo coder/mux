@@ -2276,11 +2276,10 @@ export class WorkspaceService extends EventEmitter {
           timeout: 10,
         });
 
-        try {
-          await execStream.stdin.close();
-        } catch {
-          // Ignore stdin-close errors (e.g. already closed).
-        }
+        // close() can hang over SSH; abort() is immediate.
+        execStream.stdin.abort().catch(() => {
+          /* ignore */ return;
+        });
 
         await execStream.exitCode.catch(() => {
           // Best-effort: ignore failures.

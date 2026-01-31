@@ -403,7 +403,10 @@ export abstract class RemoteRuntime implements Runtime {
       timeout: 10,
     });
 
-    await stream.stdin.close();
+    // close() can hang over SSH; abort() is immediate.
+    stream.stdin.abort().catch(() => {
+      /* ignore */ return;
+    });
 
     const [stdout, stderr, exitCode] = await Promise.all([
       streamToString(stream.stdout),

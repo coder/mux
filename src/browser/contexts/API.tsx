@@ -20,6 +20,66 @@ type APIClient = ReturnType<typeof createClient>;
 
 export type { APIClient };
 
+// Some UI features (e.g. PR status detection) call `workspace.executeBash` and then show a
+// "loading" state until the promise settles.
+//
+// For SSH runtimes, some low-level IO operations can hang indefinitely, which would otherwise
+// leave the UI stuck "loading" forever.
+//
+// We add a wall-time guard at the API boundary so callers always eventually get a response and
+// can clear UI state + retry later.
+const WRAPPED_EXECUTE_BASH = new WeakSet<APIClient>();
+
+export function computeExecuteBashWallTimeoutMs(timeoutSecs: number | undefined): number {
+  const resolvedTimeoutSecs =
+    typeof timeoutSecs === "number" && Number.isFinite(timeoutSecs) && timeoutSecs > 0
+      ? timeoutSecs
+      : undefined;
+  const requestedMs = (resolvedTimeoutSecs ?? 120) * 1000;
+
+  // Allow extra slack for init/transport overhead, but keep it bounded.
+  // For tiny timeout_secs (tests), scale slack with the request so the wall timeout stays predictable.
+  const slackMs = Math.min(30_000, requestedMs);
+  return requestedMs + slackMs;
+}
+
+export function wrapExecuteBashWithWallTimeout(client: APIClient): APIClient {
+  if (WRAPPED_EXECUTE_BASH.has(client)) return client;
+  WRAPPED_EXECUTE_BASH.add(client);
+
+  type ExecuteBashFn = APIClient["workspace"]["executeBash"];
+  type ExecuteBashInput = Parameters<ExecuteBashFn>[0];
+  type ExecuteBashOutput = Awaited<ReturnType<ExecuteBashFn>>;
+
+  const original = client.workspace.executeBash.bind(client.workspace);
+
+  client.workspace.executeBash = async (input: ExecuteBashInput): Promise<ExecuteBashOutput> => {
+    const wallTimeoutMs = computeExecuteBashWallTimeoutMs(input.options?.timeout_secs);
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<ExecuteBashOutput>((resolve) => {
+      timeoutId = setTimeout(() => {
+        resolve({ success: false, error: `executeBash wall-timeout after ${wallTimeoutMs}ms` });
+      }, wallTimeoutMs);
+    });
+
+    // ORPC calls should not throw, but if we get a transport-level exception we still want to
+    // resolve to an error result and avoid unhandled rejections.
+    const originalPromise = original(input).catch((err: unknown): ExecuteBashOutput => {
+      const error = err instanceof Error ? err.message : String(err);
+      return { success: false, error };
+    });
+
+    try {
+      return await Promise.race([originalPromise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
+
+  return client;
+}
+
 // Discriminated union for type-safe state handling
 export type APIState =
   | { status: "connecting"; api: null; error: null }
@@ -92,7 +152,7 @@ function createElectronClient(): { client: APIClient; cleanup: () => void } {
   clientPort.start();
 
   return {
-    client: createClient(link),
+    client: wrapExecuteBashWithWallTimeout(createClient(link)),
     cleanup: () => clientPort.close(),
   };
 }
@@ -116,7 +176,7 @@ function createBrowserClient(
   const link = new WebSocketLink({ websocket: ws });
 
   return {
-    client: createClient(link),
+    client: wrapExecuteBashWithWallTimeout(createClient(link)),
     cleanup: () => closeWebSocketSafely(ws),
     ws,
   };
@@ -126,8 +186,9 @@ export const APIProvider = (props: APIProviderProps) => {
   // If client is provided externally, start in connected state immediately
   const [state, setState] = useState<ConnectionState>(() => {
     if (props.client) {
-      window.__ORPC_CLIENT__ = props.client;
-      return { status: "connected", client: props.client, cleanup: () => undefined };
+      const client = wrapExecuteBashWithWallTimeout(props.client);
+      window.__ORPC_CLIENT__ = client;
+      return { status: "connected", client, cleanup: () => undefined };
     }
     return { status: "connecting" };
   });
@@ -170,9 +231,10 @@ export const APIProvider = (props: APIProviderProps) => {
       cleanupRef.current = null;
 
       if (props.client) {
-        window.__ORPC_CLIENT__ = props.client;
+        const client = wrapExecuteBashWithWallTimeout(props.client);
+        window.__ORPC_CLIENT__ = client;
         cleanupRef.current = null;
-        setState({ status: "connected", client: props.client, cleanup: () => undefined });
+        setState({ status: "connected", client, cleanup: () => undefined });
         return;
       }
 

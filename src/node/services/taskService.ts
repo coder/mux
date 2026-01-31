@@ -2563,7 +2563,10 @@ export class TaskService {
         `git format-patch --stdout --binary ${baseCommitSha}..${headCommitSha}`,
         { cwd: workspacePath, timeout: 120 }
       );
-      await formatPatchStream.stdin.close();
+      // close() can hang over SSH; abort() is immediate.
+      formatPatchStream.stdin.abort().catch(() => {
+        /* ignore */ return;
+      });
 
       const stderrPromise = streamToString(formatPatchStream.stderr);
       const writePromise = writeReadableStreamToLocalFile(formatPatchStream.stdout, patchPath);

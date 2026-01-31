@@ -340,7 +340,11 @@ export class PRStatusStore {
 
   private shouldFetchWorkspace(entry: WorkspacePRCacheEntry | undefined, now: number): boolean {
     if (!entry) return true;
-    if (entry.loading) return false;
+
+    // Hydration sets { loading: true, fetchedAt: 0 } so we can show cached PR status immediately.
+    // That "loading" state is a UI hint, not proof that a refresh is in-flight.
+    // Only block refreshes when a real request has started (detectWorkspacePR sets fetchedAt).
+    if (entry.loading && entry.fetchedAt !== 0) return false;
 
     if (entry.error) {
       return now - entry.fetchedAt > ERROR_RETRY_DELAY_MS;

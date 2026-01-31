@@ -50,8 +50,10 @@ export async function execBuffered(
       throw err;
     }
   } else {
-    // Close stdin immediately if no input
-    await stream.stdin.close();
+    // close() can hang over SSH; abort() is immediate.
+    stream.stdin.abort().catch(() => {
+      /* ignore */ return;
+    });
   }
 
   // Read stdout and stderr concurrently
