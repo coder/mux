@@ -675,9 +675,9 @@ export class AgentSession {
     // so subsequent turns don't re-read (which would change the prompt prefix if files changed).
     // File changes after this point are surfaced via <system-file-update> diffs instead.
     const snapshotResult = await this.materializeFileAtMentionsSnapshot(trimmedMessage);
-    let skillSnapshotResult: { snapshotMessage: MuxMessage } | null = null;
+    let skillSnapshotResult: { snapshotMessages: MuxMessage[] } | null = null;
     try {
-      skillSnapshotResult = await this.materializeAgentSkillSnapshot(
+      skillSnapshotResult = await this.materializeAgentSkillSnapshots(
         typedMuxMetadata,
         options?.disableWorkspaceAgents
       );
@@ -699,13 +699,15 @@ export class AgentSession {
       }
     }
 
-    if (skillSnapshotResult?.snapshotMessage) {
-      const skillSnapshotAppendResult = await this.historyService.appendToHistory(
-        this.workspaceId,
-        skillSnapshotResult.snapshotMessage
-      );
-      if (!skillSnapshotAppendResult.success) {
-        return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+    if (skillSnapshotResult?.snapshotMessages && skillSnapshotResult.snapshotMessages.length > 0) {
+      for (const snapshotMessage of skillSnapshotResult.snapshotMessages) {
+        const skillSnapshotAppendResult = await this.historyService.appendToHistory(
+          this.workspaceId,
+          snapshotMessage
+        );
+        if (!skillSnapshotAppendResult.success) {
+          return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
+        }
       }
     }
 
@@ -728,8 +730,10 @@ export class AgentSession {
       this.emitChatEvent({ ...snapshotResult.snapshotMessage, type: "message" });
     }
 
-    if (skillSnapshotResult?.snapshotMessage) {
-      this.emitChatEvent({ ...skillSnapshotResult.snapshotMessage, type: "message" });
+    if (skillSnapshotResult?.snapshotMessages && skillSnapshotResult.snapshotMessages.length > 0) {
+      for (const snapshotMessage of skillSnapshotResult.snapshotMessages) {
+        this.emitChatEvent({ ...snapshotMessage, type: "message" });
+      }
     }
 
     // Add type: "message" for discriminated union (createMuxMessage doesn't add it)
@@ -1765,11 +1769,14 @@ export class AgentSession {
     return { snapshotMessage, materializedTokens: tokens };
   }
 
-  private async materializeAgentSkillSnapshot(
+  private async materializeAgentSkillSnapshots(
     muxMetadata: MuxFrontendMetadata | undefined,
     disableWorkspaceAgents: boolean | undefined
-  ): Promise<{ snapshotMessage: MuxMessage } | null> {
-    if (!muxMetadata || muxMetadata.type !== "agent-skill") {
+  ): Promise<{ snapshotMessages: MuxMessage[] } | null> {
+    if (
+      !muxMetadata ||
+      (muxMetadata.type !== "agent-skill" && muxMetadata.type !== "agent-skill-set")
+    ) {
       return null;
     }
 
@@ -1778,9 +1785,13 @@ export class AgentSession {
       return null;
     }
 
-    const parsedName = SkillNameSchema.safeParse(muxMetadata.skillName);
-    if (!parsedName.success) {
-      throw new Error(`Invalid agent skill name: ${muxMetadata.skillName}`);
+    const requestedSkills =
+      muxMetadata.type === "agent-skill"
+        ? [{ skillName: muxMetadata.skillName, scope: muxMetadata.scope }]
+        : muxMetadata.skills;
+
+    if (requestedSkills.length === 0) {
+      return null;
     }
 
     const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
@@ -1805,47 +1816,70 @@ export class AgentSession {
     // the worktree so skill invocation uses the same precedence/discovery root as the UI.
     const skillDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
 
-    const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
-    const skill = resolved.package;
-
-    const body =
-      skill.body.length > MAX_AGENT_SKILL_SNAPSHOT_CHARS
-        ? `${skill.body.slice(0, MAX_AGENT_SKILL_SNAPSHOT_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_SNAPSHOT_CHARS} characters]`
-        : skill.body;
-
-    const snapshotText = `<agent-skill name="${skill.frontmatter.name}" scope="${skill.scope}">\n${body}\n</agent-skill>`;
-    const sha256 = createHash("sha256").update(snapshotText).digest("hex");
-
     // Dedupe: if we recently persisted the same snapshot, avoid inserting again.
+    // Use a window slightly larger than the single-skill case because a #skill message can
+    // materialize multiple snapshots at once.
     const historyResult = await this.historyService.getHistory(this.workspaceId);
+    const recentSnapshotShas = new Set<string>();
     if (historyResult.success) {
-      const recentMessages = historyResult.data.slice(Math.max(0, historyResult.data.length - 5));
-      const recentSnapshot = [...recentMessages]
-        .reverse()
-        .find((msg) => msg.metadata?.synthetic && msg.metadata?.agentSkillSnapshot);
-      const recentMeta = recentSnapshot?.metadata?.agentSkillSnapshot;
-
-      if (
-        recentMeta &&
-        recentMeta.skillName === skill.frontmatter.name &&
-        recentMeta.sha256 === sha256
-      ) {
-        return null;
+      const recentMessages = historyResult.data.slice(Math.max(0, historyResult.data.length - 10));
+      for (const msg of recentMessages) {
+        const meta = msg.metadata?.agentSkillSnapshot;
+        if (!msg.metadata?.synthetic || !meta) continue;
+        recentSnapshotShas.add(`${meta.skillName}:${meta.sha256}`);
       }
     }
 
-    const snapshotId = createAgentSkillSnapshotMessageId();
-    const snapshotMessage = createMuxMessage(snapshotId, "user", snapshotText, {
-      timestamp: Date.now(),
-      synthetic: true,
-      agentSkillSnapshot: {
-        skillName: skill.frontmatter.name,
-        scope: skill.scope,
-        sha256,
-      },
-    });
+    const snapshotMessages: MuxMessage[] = [];
+    const seenRequested = new Set<string>();
 
-    return { snapshotMessage };
+    for (const requested of requestedSkills) {
+      const requestKey = requested.skillName.toLowerCase();
+      if (seenRequested.has(requestKey)) {
+        continue;
+      }
+      seenRequested.add(requestKey);
+
+      const parsedName = SkillNameSchema.safeParse(requested.skillName);
+      if (!parsedName.success) {
+        throw new Error(`Invalid agent skill name: ${requested.skillName}`);
+      }
+
+      const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
+      const skill = resolved.package;
+
+      const body =
+        skill.body.length > MAX_AGENT_SKILL_SNAPSHOT_CHARS
+          ? `${skill.body.slice(0, MAX_AGENT_SKILL_SNAPSHOT_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_SNAPSHOT_CHARS} characters]`
+          : skill.body;
+
+      const snapshotText = `<agent-skill name="${skill.frontmatter.name}" scope="${skill.scope}">\n${body}\n</agent-skill>`;
+      const sha256 = createHash("sha256").update(snapshotText).digest("hex");
+
+      const dedupeKey = `${skill.frontmatter.name}:${sha256}`;
+      if (recentSnapshotShas.has(dedupeKey)) {
+        continue;
+      }
+
+      const snapshotId = createAgentSkillSnapshotMessageId();
+      const snapshotMessage = createMuxMessage(snapshotId, "user", snapshotText, {
+        timestamp: Date.now(),
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: skill.frontmatter.name,
+          scope: skill.scope,
+          sha256,
+        },
+      });
+
+      snapshotMessages.push(snapshotMessage);
+    }
+
+    if (snapshotMessages.length === 0) {
+      return null;
+    }
+
+    return { snapshotMessages };
   }
 
   /**
