@@ -376,18 +376,44 @@ export const TaskTranscriptViewer: AppStory = {
   play: async ({ canvasElement }) => {
     await waitForScrollStabilization(canvasElement);
 
+    const taskId = "task-transcript-001";
     const canvas = within(canvasElement);
 
-    // The app may render multiple task tool surfaces (e.g. desktop + mobile layouts).
-    // Be robust: click the first matching transcript button.
-    const viewTranscriptButtons = await canvas.findAllByRole("button", {
-      name: /view transcript/i,
-    });
-    await userEvent.click(viewTranscriptButtons[0]);
+    // Find the transcript button associated with our specific task.
+    // The app may render multiple tasks (and multiple "View transcript" buttons).
+    const taskIdButton = await canvas.findByRole("button", { name: taskId });
+
+    let viewTranscriptButton: HTMLElement | null = null;
+    let searchNode: HTMLElement | null = taskIdButton;
+
+    while (searchNode) {
+      const candidate = within(searchNode).queryByRole("button", {
+        name: /view transcript/i,
+      });
+      if (candidate) {
+        viewTranscriptButton = candidate;
+        break;
+      }
+      searchNode = searchNode.parentElement;
+    }
+
+    if (!viewTranscriptButton) {
+      throw new Error(`View transcript button not found for task ${taskId}`);
+    }
+
+    await userEvent.click(viewTranscriptButton);
 
     // Dialog content is portaled outside the canvasElement, but inside the iframe body.
-    const body = within(canvasElement.ownerDocument.body);
-    const dialog = await body.findByRole("dialog");
+    const dialog = await waitFor(() => {
+      const dialogs = Array.from(
+        canvasElement.ownerDocument.body.querySelectorAll('[role="dialog"]')
+      );
+      const match = dialogs.find((el) => el.textContent?.includes(taskId));
+      if (!match) {
+        throw new Error("Transcript dialog not found");
+      }
+      return match;
+    });
 
     await waitFor(
       () => {
