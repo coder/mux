@@ -9,6 +9,9 @@
  * Uses play functions to navigate to settings and interact with the UI.
  */
 
+import React from "react";
+import type { MCPServerInfo } from "@/common/types/mcp";
+import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
 import type { Secret } from "@/common/types/secrets";
 import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
@@ -61,7 +64,9 @@ const POSTHOG_TOOLS = [
 
 interface MCPStoryOptions {
   /** MCP servers configured at project level */
-  servers?: Record<string, { command: string; disabled: boolean; toolAllowlist?: string[] }>;
+  servers?: Record<string, MCPServerInfo>;
+  /** Optional mock OAuth auth status per server name (serverName -> status) */
+  mcpOauthAuthStatus?: Map<string, MCPOAuthAuthStatus>;
   /** Workspace-level MCP overrides */
   workspaceOverrides?: {
     disabledServers?: string[];
@@ -107,10 +112,7 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
   }
 
   // Build mock data
-  const mcpServers = new Map<
-    string,
-    Record<string, { command: string; disabled: boolean; toolAllowlist?: string[] }>
-  >();
+  const mcpServers = new Map<string, Record<string, MCPServerInfo>>();
   if (options.servers) {
     mcpServers.set(projectPath, options.servers);
   }
@@ -145,6 +147,7 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
     mcpServers,
     mcpOverrides,
     mcpTestResults,
+    mcpOauthAuthStatus: options.mcpOauthAuthStatus,
   });
 }
 
@@ -190,6 +193,31 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   }
 }
 
+const withDesktopWindowApi = [
+  (Story: React.FC) => {
+    // Save and restore window.api to prevent leaking to other stories
+    const originalApiRef = React.useRef(window.api);
+    window.api = {
+      platform: "darwin",
+      versions: {
+        node: "20.0.0",
+        chrome: "120.0.0",
+        electron: "28.0.0",
+      },
+      isRosetta: false,
+    };
+
+    // Cleanup on unmount
+    React.useEffect(() => {
+      const savedApi = originalApiRef.current;
+      return () => {
+        window.api = savedApi;
+      };
+    }, []);
+
+    return <Story />;
+  },
+];
 // ═══════════════════════════════════════════════════════════════════════════════
 // PROJECT SETTINGS STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -278,9 +306,13 @@ export const ProjectSettingsWithServers: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: false },
-            filesystem: { command: "npx -y @anthropics/filesystem-server /tmp", disabled: false },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: false },
+            filesystem: {
+              transport: "stdio",
+              command: "npx -y @anthropics/filesystem-server /tmp",
+              disabled: false,
+            },
           },
           testResults: {
             mux: MOCK_TOOLS,
@@ -310,9 +342,13 @@ export const ProjectSettingsMixedState: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: true },
-            filesystem: { command: "npx -y @anthropics/filesystem-server /tmp", disabled: false },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: true },
+            filesystem: {
+              transport: "stdio",
+              command: "npx -y @anthropics/filesystem-server /tmp",
+              disabled: false,
+            },
           },
           testResults: {
             mux: MOCK_TOOLS,
@@ -343,6 +379,7 @@ export const ProjectSettingsWithToolAllowlist: AppStory = {
         setupMCPStory({
           servers: {
             mux: {
+              transport: "stdio",
               command: "npx -y @anthropics/mux-server",
               disabled: false,
               toolAllowlist: ["file_read", "file_write", "bash"],
@@ -367,6 +404,88 @@ export const ProjectSettingsWithToolAllowlist: AppStory = {
   },
 };
 
+/** Project settings - remote MCP server row with OAuth available (not logged in) */
+export const ProjectSettingsOAuthNotLoggedIn: AppStory = {
+  decorators: withDesktopWindowApi,
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupMCPStory({
+          servers: {
+            "remote-oauth": {
+              transport: "http",
+              url: "https://example.com/mcp",
+              disabled: false,
+            },
+          },
+          mcpOauthAuthStatus: new Map<string, MCPOAuthAuthStatus>([
+            [
+              "remote-oauth",
+              {
+                serverUrl: "https://example.com/mcp",
+                isLoggedIn: false,
+                hasRefreshToken: false,
+              },
+            ],
+          ]),
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openProjectSettings(canvasElement);
+
+    const body = within(canvasElement.ownerDocument.body);
+    await body.findByText("remote-oauth");
+
+    // Wait for post-load OAuth status.
+    await body.findByText("Not logged in");
+    await body.findByRole("button", { name: /^Login$/i });
+  },
+};
+
+/** Project settings - remote MCP server row with OAuth available (logged in) */
+export const ProjectSettingsOAuthLoggedIn: AppStory = {
+  decorators: withDesktopWindowApi,
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupMCPStory({
+          servers: {
+            "remote-oauth": {
+              transport: "http",
+              url: "https://example.com/mcp",
+              disabled: false,
+            },
+          },
+          mcpOauthAuthStatus: new Map<string, MCPOAuthAuthStatus>([
+            [
+              "remote-oauth",
+              {
+                serverUrl: "https://example.com/mcp",
+                isLoggedIn: true,
+                hasRefreshToken: true,
+                updatedAtMs: Date.now() - 60_000,
+              },
+            ],
+          ]),
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openProjectSettings(canvasElement);
+
+    const body = within(canvasElement.ownerDocument.body);
+    await body.findByText("remote-oauth");
+
+    // Wait for post-load OAuth status.
+    await body.findByText(/Logged in \(1 minute ago\)/i);
+    await body.findByRole("button", { name: /Re-login/i });
+    await body.findByRole("button", { name: /^Logout$/i });
+  },
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // WORKSPACE MCP MODAL STORIES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -378,8 +497,8 @@ export const WorkspaceMCPNoOverrides: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: false },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: false },
           },
           testResults: {
             mux: MOCK_TOOLS,
@@ -408,8 +527,8 @@ export const WorkspaceMCPProjectDisabledServer: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: true },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: true },
           },
           testResults: {
             mux: MOCK_TOOLS,
@@ -438,8 +557,8 @@ export const WorkspaceMCPEnabledOverride: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: true },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: true },
           },
           workspaceOverrides: {
             enabledServers: ["posthog"],
@@ -473,8 +592,8 @@ export const WorkspaceMCPDisabledOverride: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: false },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: false },
           },
           workspaceOverrides: {
             disabledServers: ["posthog"],
@@ -506,7 +625,7 @@ export const WorkspaceMCPWithToolAllowlist: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            posthog: { command: "npx -y posthog-mcp-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: false },
           },
           workspaceOverrides: {
             toolAllowlist: {
@@ -543,7 +662,7 @@ export const ToolSelectorInteraction: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
           },
           testResults: {
             mux: MOCK_TOOLS,
@@ -581,8 +700,8 @@ export const ToggleServerEnabled: AppStory = {
       setup={() =>
         setupMCPStory({
           servers: {
-            mux: { command: "npx -y @anthropics/mux-server", disabled: false },
-            posthog: { command: "npx -y posthog-mcp-server", disabled: false },
+            mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+            posthog: { transport: "stdio", command: "npx -y posthog-mcp-server", disabled: false },
           },
           testResults: {
             mux: MOCK_TOOLS,

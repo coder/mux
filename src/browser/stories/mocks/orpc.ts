@@ -25,6 +25,8 @@ import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
+import type { MCPServerInfo } from "@/common/types/mcp";
+import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
 import type { ChatStats } from "@/common/types/chatStats";
 import {
   MUX_HELP_CHAT_AGENT_ID,
@@ -131,10 +133,9 @@ export interface MockORPCClientOptions {
     { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
   >;
   /** MCP server configuration per project */
-  mcpServers?: Map<
-    string,
-    Record<string, { command: string; disabled: boolean; toolAllowlist?: string[] }>
-  >;
+  mcpServers?: Map<string, Record<string, MCPServerInfo>>;
+  /** Optional OAuth auth status per MCP server name (serverName -> status) */
+  mcpOauthAuthStatus?: Map<string, MCPOAuthAuthStatus>;
   /** MCP workspace overrides per workspace */
   mcpOverrides?: Map<
     string,
@@ -197,10 +198,7 @@ interface MockBackgroundProcess {
   exitCode?: number;
 }
 
-type MockMcpServers = Record<
-  string,
-  { command: string; disabled: boolean; toolAllowlist?: string[] }
->;
+type MockMcpServers = Record<string, MCPServerInfo>;
 
 interface MockMcpOverrides {
   disabledServers?: string[];
@@ -249,6 +247,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     mcpServers = new Map<string, MockMcpServers>(),
     mcpOverrides = new Map<string, MockMcpOverrides>(),
     mcpTestResults = new Map<string, MockMcpTestResult>(),
+    mcpOauthAuthStatus = new Map<string, MCPOAuthAuthStatus>(),
     taskSettings: initialTaskSettings,
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
@@ -380,6 +379,36 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     usageHistory: [],
   };
 
+  // MCP OAuth mock state (used by Settings → MCP OAuth UI)
+  let mcpOauthFlowCounter = 0;
+  const mcpOauthFlows = new Map<string, { projectPath: string; serverName: string }>();
+
+  const getMcpServerUrl = (projectPath: string, serverName: string): string | undefined => {
+    const server = mcpServers.get(projectPath)?.[serverName];
+    if (!server || server.transport === "stdio") {
+      return undefined;
+    }
+    return server.url;
+  };
+
+  const getMcpOauthStatus = (projectPath: string, serverName: string): MCPOAuthAuthStatus => {
+    const serverUrl = getMcpServerUrl(projectPath, serverName);
+    const status = mcpOauthAuthStatus.get(serverName);
+
+    if (status) {
+      return {
+        ...status,
+        // Prefer the stored serverUrl, but fall back to current config (helps stories stay minimal).
+        serverUrl: status.serverUrl ?? serverUrl,
+      };
+    }
+
+    return {
+      serverUrl,
+      isLoggedIn: false,
+      hasRefreshToken: false,
+    };
+  };
   // Cast to ORPCClient - TypeScript can't fully validate the proxy structure
   return {
     tokenizer: {
@@ -615,6 +644,59 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         },
         setEnabled: () => Promise.resolve({ success: true, data: undefined }),
         setToolAllowlist: () => Promise.resolve({ success: true, data: undefined }),
+      },
+      mcpOauth: {
+        getAuthStatus: (input: { projectPath: string; serverName: string }) =>
+          Promise.resolve(getMcpOauthStatus(input.projectPath, input.serverName)),
+        startDesktopFlow: (input: { projectPath: string; serverName: string }) => {
+          mcpOauthFlowCounter += 1;
+          const flowId = `mock-mcp-oauth-flow-${mcpOauthFlowCounter}`;
+
+          mcpOauthFlows.set(flowId, {
+            projectPath: input.projectPath,
+            serverName: input.serverName,
+          });
+
+          return Promise.resolve({
+            success: true,
+            data: {
+              flowId,
+              authorizeUrl: `https://example.com/oauth/authorize?flowId=${encodeURIComponent(flowId)}`,
+              redirectUri: "mux://oauth/callback",
+            },
+          });
+        },
+        waitForDesktopFlow: (input: { flowId: string; timeoutMs?: number }) => {
+          const flow = mcpOauthFlows.get(input.flowId);
+          if (!flow) {
+            return Promise.resolve({ success: false as const, error: "OAuth flow not found." });
+          }
+
+          mcpOauthFlows.delete(input.flowId);
+
+          mcpOauthAuthStatus.set(flow.serverName, {
+            serverUrl: getMcpServerUrl(flow.projectPath, flow.serverName),
+            isLoggedIn: true,
+            hasRefreshToken: true,
+            updatedAtMs: Date.now(),
+          });
+
+          return Promise.resolve({ success: true as const, data: undefined });
+        },
+        cancelDesktopFlow: (input: { flowId: string }) => {
+          mcpOauthFlows.delete(input.flowId);
+          return Promise.resolve(undefined);
+        },
+        logout: (input: { projectPath: string; serverName: string }) => {
+          mcpOauthAuthStatus.set(input.serverName, {
+            serverUrl: getMcpServerUrl(input.projectPath, input.serverName),
+            isLoggedIn: false,
+            hasRefreshToken: false,
+            updatedAtMs: Date.now(),
+          });
+
+          return Promise.resolve({ success: true as const, data: undefined });
+        },
       },
       idleCompaction: {
         get: (input: { projectPath: string }) =>
