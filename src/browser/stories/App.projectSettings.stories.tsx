@@ -481,6 +481,10 @@ export const ProjectSettingsOAuthLoggedIn: AppStory = {
 
     // Wait for post-load OAuth status.
     await body.findByText(/Logged in \(1 minute ago\)/i);
+
+    // Actions are grouped under a compact kebab menu.
+    const moreActionsButton = await body.findByRole("button", { name: "⋮" });
+    await userEvent.click(moreActionsButton);
     await body.findByRole("button", { name: /Re-login/i });
     await body.findByRole("button", { name: /^Logout$/i });
   },

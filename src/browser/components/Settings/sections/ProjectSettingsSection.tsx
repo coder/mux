@@ -14,6 +14,7 @@ import {
   Pencil,
   Check,
   X,
+  LogIn,
   ChevronDown,
   ChevronRight,
 } from "lucide-react";
@@ -38,6 +39,7 @@ import {
   type MCPHeaderRow,
 } from "@/browser/utils/mcpHeaders";
 import { ToolSelector } from "@/browser/components/ToolSelector";
+import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
 
 /** Component for managing tool allowlist for a single MCP server */
 const ToolAllowlistSection: React.FC<{
@@ -508,7 +510,8 @@ const RemoteMCPOAuthSection: React.FC<{
       ? ` (${formatRelativeTime(authStatus.updatedAtMs)})`
       : "";
 
-  const loginButtonLabel = loginStatus === "error" ? "Retry" : isLoggedIn ? "Re-login" : "Login";
+  const loginButtonLabel = loginStatus === "error" ? "Retry" : "Login";
+  const reloginMenuLabel = loginStatus === "error" ? "Retry login" : "Re-login";
 
   const logout = useCallback(async () => {
     if (!isDesktop) {
@@ -569,42 +572,54 @@ const RemoteMCPOAuthSection: React.FC<{
 
       {oauthAvailable && (
         <div className="flex shrink-0 items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2"
-            onClick={() => {
-              void startLogin();
-            }}
-            disabled={loginInProgress || logoutInProgress}
-          >
-            {loginInProgress ? (
-              <>
+          {loginInProgress ? (
+            <>
+              <Button variant="outline" size="sm" className="h-7 px-2" disabled>
                 <Loader2 className="h-3 w-3 animate-spin" />
-                {loginButtonLabel}
-              </>
-            ) : (
-              loginButtonLabel
-            )}
-          </Button>
+                {isLoggedIn ? "Re-login" : "Login"}
+              </Button>
 
-          {loginInProgress && (
-            <Button variant="ghost" size="sm" className="h-7 px-2" onClick={cancelLogin}>
-              Cancel
-            </Button>
-          )}
-
-          {isLoggedIn && (
+              <Button variant="ghost" size="sm" className="h-7 px-2" onClick={cancelLogin}>
+                Cancel
+              </Button>
+            </>
+          ) : isLoggedIn ? (
+            <>
+              {logoutInProgress && <Loader2 className="text-muted h-3 w-3 animate-spin" />}
+              <KebabMenu
+                className="h-7 w-7 px-0 text-xs"
+                items={
+                  [
+                    {
+                      label: reloginMenuLabel,
+                      onClick: () => {
+                        void startLogin();
+                      },
+                      disabled: logoutInProgress,
+                    },
+                    {
+                      label: logoutInProgress ? "Logging out..." : "Logout",
+                      onClick: () => {
+                        void logout();
+                      },
+                      disabled: logoutInProgress,
+                    },
+                  ] satisfies KebabMenuItem[]
+                }
+              />
+            </>
+          ) : (
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
               className="h-7 px-2"
               onClick={() => {
-                void logout();
+                void startLogin();
               }}
-              disabled={loginInProgress || logoutInProgress}
+              disabled={logoutInProgress}
             >
-              {logoutInProgress ? "Logging out..." : "Logout"}
+              <LogIn />
+              {loginButtonLabel}
             </Button>
           )}
         </div>
