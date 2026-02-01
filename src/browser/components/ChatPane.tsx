@@ -54,7 +54,6 @@ import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "../hooks/useAutoCompactionSettings";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
 import { useForceCompaction } from "@/browser/hooks/useForceCompaction";
-import { useIdleCompactionHandler } from "@/browser/hooks/useIdleCompactionHandler";
 import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useAPI } from "@/browser/contexts/API";
 import { useReviews } from "@/browser/hooks/useReviews";
@@ -247,9 +246,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     onTrigger: handleForceCompaction,
   });
 
-  // Idle compaction - trigger compaction when backend signals workspace has been idle
-  useIdleCompactionHandler({ api });
-
   // Vim mode state - needed for keybind selection (Ctrl+C in vim, Esc otherwise)
   const [vimEnabled] = usePersistedState<boolean>(VIM_ENABLED_KEY, false, { listener: true });
 
@@ -280,31 +276,16 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   // ChatInput API for focus management
   const chatInputAPI = useRef<ChatInputAPI | null>(null);
-  const chatInputWorkspaceIdRef = useRef(workspaceId);
-  const previousWorkspaceIdRef = useRef(workspaceId);
 
-  // Reset per-workspace UI state now that AIView stays mounted across workspace switches.
+  // ChatPane is keyed by workspaceId (WorkspaceShell), so per-workspace UI state naturally
+  // resets on workspace switches. Clear background errors so they don't leak across workspaces.
   useEffect(() => {
-    if (previousWorkspaceIdRef.current === workspaceId) {
-      return;
-    }
-
-    previousWorkspaceIdRef.current = workspaceId;
-    setEditingMessage(undefined);
-    setExpandedBashGroups(new Set());
-    if (chatInputWorkspaceIdRef.current !== workspaceId) {
-      chatInputAPI.current = null;
-    }
-    setAutoScroll(true);
     clearBackgroundBashError();
-  }, [workspaceId, setAutoScroll, clearBackgroundBashError, setEditingMessage]);
-  const handleChatInputReady = useCallback(
-    (api: ChatInputAPI) => {
-      chatInputAPI.current = api;
-      chatInputWorkspaceIdRef.current = workspaceId;
-    },
-    [workspaceId]
-  );
+  }, [clearBackgroundBashError]);
+
+  const handleChatInputReady = useCallback((api: ChatInputAPI) => {
+    chatInputAPI.current = api;
+  }, []);
 
   // Handler for review notes from Code Review tab - adds review (starts attached)
   // Depend only on addReview (not whole reviews object) to keep callback stable
@@ -343,14 +324,17 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     const queuedMessage = workspaceState?.queuedMessage;
     if (!queuedMessage) return;
 
+    const inputApi = chatInputAPI.current;
+    if (!inputApi) return;
+
     await api?.workspace.clearQueue({ workspaceId });
-    chatInputAPI.current?.restoreText(queuedMessage.content);
+    inputApi.restoreText(queuedMessage.content);
 
     // Restore images if present
     if (queuedMessage.fileParts && queuedMessage.fileParts.length > 0) {
-      chatInputAPI.current?.restoreAttachments(queuedMessage.fileParts);
+      inputApi.restoreAttachments(queuedMessage.fileParts);
     }
-  }, [api, workspaceId, workspaceState?.queuedMessage, chatInputAPI]);
+  }, [api, workspaceId, workspaceState?.queuedMessage]);
 
   // Handler for sending queued message immediately (interrupt + send)
   const handleSendQueuedImmediately = useCallback(async () => {
