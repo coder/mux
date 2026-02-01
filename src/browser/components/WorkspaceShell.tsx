@@ -112,7 +112,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     >
       {/* Keyed by workspaceId to prevent cross-workspace message-list flashes. */}
       <ChatPane
-        key={props.workspaceId}
+        key={`chat-${props.workspaceId}`}
         workspaceId={props.workspaceId}
         workspaceState={workspaceState}
         projectPath={props.projectPath}
