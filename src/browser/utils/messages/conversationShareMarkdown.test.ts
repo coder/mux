@@ -59,6 +59,24 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).not.toContain('"exitCode": 0');
   });
 
+  test("summarizes file_read tool calls", () => {
+    const fileReadTool = {
+      type: "dynamic-tool" as const,
+      toolCallId: "call-1",
+      toolName: "file_read",
+      input: { file_path: "src/node/orpc/router.ts", offset: 1, limit: 40 },
+      state: "output-available" as const,
+      output: { success: true, content: "" },
+    } as unknown as MuxToolPart;
+
+    const muxMessages = [createMuxMessage("a1", "assistant", "", undefined, [fileReadTool])];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("Reading a file src/node/orpc/router.ts");
+    expect(md).not.toContain("<summary>Tool: file_read");
+    expect(md).not.toContain('"file_path": "src/node/orpc/router.ts"');
+  });
   test("includes file edit previews", () => {
     const diff = [
       "Index: src/foo.ts",
@@ -90,9 +108,11 @@ describe("buildConversationShareMarkdown", () => {
 
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
 
-    expect(md).toContain("<summary>Tool: file_edit_replace_string (output-available)</summary>");
-    expect(md).toContain('"file_path": "src/foo.ts"');
-    expect(md).toContain("**Preview**");
+    expect(md).not.toContain(
+      "<summary>Tool: file_edit_replace_string (output-available)</summary>"
+    );
+    expect(md).not.toContain("**Input**");
+    expect(md).not.toContain('"file_path": "src/foo.ts"');
     expect(md).toContain("```diff");
     expect(md).toContain("+new");
   });
@@ -136,7 +156,7 @@ describe("buildConversationShareMarkdown", () => {
     expect(summary.filesModifiedCount).toBe(1);
     expect(summary.loc).toEqual({ added: 1, removed: 1 });
   });
-  test("includes reasoning parts with a summary header", () => {
+  test("includes reasoning parts inline (not collapsible)", () => {
     const muxMessages = [
       createMuxMessage("a1", "assistant", "Answer", undefined, [
         { type: "reasoning" as const, text: "Secret reasoning" },
@@ -146,8 +166,9 @@ describe("buildConversationShareMarkdown", () => {
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
 
     expect(md).toContain("Answer");
-    expect(md).toContain("<summary>Secret reasoning</summary>");
-    expect(md).not.toContain("<summary>Reasoning</summary>");
+    expect(md).toContain("Secret reasoning");
+    expect(md).not.toContain("<details>");
+    expect(md).not.toContain("<summary>");
   });
 
   test("concatenates streaming reasoning parts (no per-word <details>)", () => {
@@ -160,8 +181,9 @@ describe("buildConversationShareMarkdown", () => {
 
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
 
-    expect(md).toContain("<summary>Inspecting repository structure</summary>");
-    expect(md).not.toContain("<summary>Inspect</summary>");
+    expect(md).toContain("Inspecting repository structure");
+    expect(md).not.toContain("<details>");
+    expect(md).not.toContain("<summary>");
   });
   test("filters synthetic messages by default", () => {
     const muxMessages = [

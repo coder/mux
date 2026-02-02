@@ -255,27 +255,15 @@ function buildUserMessageBubble(options: { content: string; timestampMs: number 
 }
 
 function buildReasoningBlock(content: string): string | null {
+  // mux.md doesn't render our <details> blocks particularly well for reasoning (and reasoning
+  // often streams as many tiny chunks). For conversation shares, keep this inline.
   const trimmedEnd = content.trimEnd();
-  const trimmed = trimmedEnd.trim();
-  if (trimmed.length === 0) {
+  if (trimmedEnd.trim().length === 0) {
     return null;
   }
 
-  const summaryLine = (trimmed.split(/\r?\n/)[0] ?? "").trim();
-  const hasAdditionalLines = /[\r\n]/.test(trimmed);
-  const summary = hasAdditionalLines ? `${summaryLine} ...` : summaryLine;
-
   const { text } = truncateText(trimmedEnd, MAX_TOOL_BLOCK_CHARS);
-
-  const lines: string[] = [];
-  lines.push("<details>");
-  lines.push(`<summary>${escapeHtml(summary)}</summary>`);
-  lines.push("");
-  lines.push(text.trimEnd());
-  lines.push("");
-  lines.push("</details>");
-
-  return lines.join("\n");
+  return text.trimEnd();
 }
 
 export function buildConversationShareMarkdown(options: {
@@ -404,27 +392,40 @@ export function buildConversationShareMarkdown(options: {
         flushPendingText();
         flushPendingReasoning();
 
-        let preview: { label: string; language: string; content: string } | undefined;
-        if (
-          FILE_EDIT_TOOL_NAMES.has(part.toolName) &&
-          part.state === "output-available" &&
-          "output" in part
-        ) {
-          const output = part.output;
-          if (isRecord(output) && output.success === true) {
-            const diff = getFileEditDiff(output);
-            if (diff) {
-              preview = { label: "Preview", language: "diff", content: diff };
-            }
-          }
+        // File reads are noisy in a transcript; summarize them.
+        if (part.toolName === "file_read") {
+          const filePath = getFilePathFromToolInput(part.input);
+          assistantBlocks.push(filePath ? `Reading a file ${filePath}` : "Reading a file");
+          continue;
         }
 
+        // For file edits, only include the diff preview (input is typically very noisy).
+        if (FILE_EDIT_TOOL_NAMES.has(part.toolName)) {
+          let diff: string | null = null;
+          if (part.state === "output-available" && "output" in part) {
+            const output = part.output;
+            if (isRecord(output) && output.success === true) {
+              diff = getFileEditDiff(output);
+            }
+          }
+
+          if (diff) {
+            const { text } = truncateText(diff, MAX_TOOL_BLOCK_CHARS);
+            assistantBlocks.push(buildCodeBlock({ language: "diff", content: text }).trimEnd());
+          } else {
+            const filePath = getFilePathFromToolInput(part.input);
+            assistantBlocks.push(filePath ? `Editing a file ${filePath}` : "Editing a file");
+          }
+
+          continue;
+        }
+
+        // Default: keep tool input, omit output.
         assistantBlocks.push(
           buildToolBlock({
             toolName: part.toolName,
             state: part.state,
             input: part.input,
-            preview,
           })
         );
         continue;
