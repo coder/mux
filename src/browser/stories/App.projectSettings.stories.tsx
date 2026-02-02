@@ -175,19 +175,19 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
 
   await waitForChatMessagesLoaded(storyRoot);
 
-  await waitFor(() => expect(canvas.queryByTestId("workspace-header")).not.toBeNull(), {
-    timeout: 10000,
-  });
+  await canvas.findByTestId("workspace-header", {}, { timeout: 10000 });
 
   // Click the MCP server button in the header
   const mcpButton = await canvas.findByTestId("workspace-mcp-button", {}, { timeout: 10000 });
   await waitFor(() => expect(mcpButton).toBeEnabled(), { timeout: 10000 });
   await userEvent.click(mcpButton);
 
-  // Wait for modal content (role lookup can be flaky with portal rendering).
-  await waitFor(() => expect(body.queryByTestId("workspace-mcp-modal")).not.toBeNull(), {
-    timeout: 10000,
-  });
+  // Wait on the dialog role/title so the modal doesn't need story-only markup.
+  await waitFor(
+    () =>
+      expect(body.queryByRole("dialog", { name: /workspace mcp configuration/i })).not.toBeNull(),
+    { timeout: 10000 }
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
