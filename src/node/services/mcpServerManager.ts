@@ -1,4 +1,4 @@
-import { experimental_createMCPClient } from "@ai-sdk/mcp";
+import { experimental_createMCPClient, type OAuthClientProvider } from "@ai-sdk/mcp";
 import type { Tool } from "ai";
 import { log } from "@/node/services/log";
 import { MCPStdioTransport } from "@/node/services/mcpStdioTransport";
@@ -284,7 +284,12 @@ export type { MCPTestResult } from "@/common/types/mcp";
 async function runServerTest(
   server:
     | { transport: "stdio"; command: string }
-    | { transport: "http" | "sse" | "auto"; url: string; headers?: ResolvedHeaders },
+    | {
+        transport: "http" | "sse" | "auto";
+        url: string;
+        headers?: ResolvedHeaders;
+        authProvider?: OAuthClientProvider;
+      },
   projectPath: string,
   logContext: string
 ): Promise<MCPTestResult> {
@@ -312,12 +317,17 @@ async function runServerTest(
       } else {
         log.debug(`[MCP] Testing ${logContext}`, { transport: server.transport });
 
+        const transportBase = {
+          url: server.url,
+          headers: server.headers,
+          ...(server.authProvider ? { authProvider: server.authProvider } : {}),
+        };
+
         const tryHttp = async () =>
           experimental_createMCPClient({
             transport: {
               type: "http",
-              url: server.url,
-              headers: server.headers,
+              ...transportBase,
             },
           });
 
@@ -325,8 +335,7 @@ async function runServerTest(
           experimental_createMCPClient({
             transport: {
               type: "sse",
-              url: server.url,
-              headers: server.headers,
+              ...transportBase,
             },
           });
 
@@ -982,8 +991,20 @@ export class MCPServerManager {
 
       try {
         const resolved = resolveHeaders(server.headers, projectSecrets);
+
+        const authProvider = await this.mcpOauthService?.getAuthProviderForServer({
+          projectPath,
+          serverName: name,
+          serverUrl: server.url,
+        });
+
         return runServerTest(
-          { transport: server.transport, url: server.url, headers: resolved.headers },
+          {
+            transport: server.transport,
+            url: server.url,
+            headers: resolved.headers,
+            ...(authProvider ? { authProvider } : {}),
+          },
           projectPath,
           `server "${name}"`
         );
