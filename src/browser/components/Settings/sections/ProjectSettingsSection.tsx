@@ -463,9 +463,7 @@ const MCPOAuthRequiredCallout: React.FC<{
             </p>
           )}
 
-          {loginStatus === "success" && (
-            <p className="text-muted mt-0.5">Logged in. Try testing the server again.</p>
-          )}
+          {loginStatus === "success" && <p className="text-muted mt-0.5">Logged in.</p>}
 
           {loginStatus === "error" && loginError && (
             <p className="text-destructive mt-0.5">OAuth error: {loginError}</p>
@@ -1372,7 +1370,10 @@ export const ProjectSettingsSection: React.FC = () => {
                                     ? undefined
                                     : "OAuth login is only supported for remote (http/sse) MCP servers."
                                 }
-                                onLoginSuccess={() => setMcpOauthRefreshNonce((prev) => prev + 1)}
+                                onLoginSuccess={async () => {
+                                  setMcpOauthRefreshNonce((prev) => prev + 1);
+                                  await handleTest(name);
+                                }}
                               />
                             </div>
                           )}
@@ -1561,7 +1562,10 @@ export const ProjectSettingsSection: React.FC = () => {
 
                           return undefined;
                         })()}
-                        onLoginSuccess={() => setMcpOauthRefreshNonce((prev) => prev + 1)}
+                        onLoginSuccess={async () => {
+                          setMcpOauthRefreshNonce((prev) => prev + 1);
+                          await handleTestNewServer();
+                        }}
                       />
                     </div>
                   )}
