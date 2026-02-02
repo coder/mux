@@ -16,6 +16,7 @@ import {
   STABLE_TIMESTAMP,
   createUserMessage,
   createAssistantMessage,
+  createBashTool,
   createPendingTool,
   createStaticChatHandler,
   createTaskTool,
@@ -28,6 +29,7 @@ import {
   createWorkspace,
   groupWorkspacesByProject,
 } from "./mockFactory";
+import type { MuxMessage } from "@/common/types/message";
 import { userEvent, waitFor, within } from "@storybook/test";
 
 export default {
@@ -315,6 +317,144 @@ Found **47 test files** across the project:
         }
       });
     }
+  },
+};
+
+/**
+ * Completed task with an archived transcript.
+ *
+ * Verifies the transcript viewer dialog renders messages loaded via workspace.getSubagentTranscript.
+ */
+export const TaskTranscriptViewer: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const taskId = "task-transcript-001";
+
+        const transcriptMessages: MuxMessage[] = [
+          createUserMessage("tu1", "Summarize the workspace cleanup flow.", {
+            historySequence: 1,
+          }),
+          createAssistantMessage("ta1", "Here's what happens during cleanup:", {
+            historySequence: 2,
+            toolCalls: [
+              createBashTool(
+                "tcb1",
+                "ls -la",
+                "total 0\n-rw-r--r-- 1 user group 0 Jan 1 00:00 chat.jsonl",
+                0
+              ),
+            ],
+          }),
+        ];
+
+        return setupSimpleChatStory({
+          workspaceId: "ws-task-transcript-viewer",
+          messages: [
+            createUserMessage("u1", "Show me the completed task transcript", {
+              historySequence: 1,
+            }),
+            createAssistantMessage("a1", "Here's the task result:", {
+              historySequence: 2,
+              toolCalls: [
+                createCompletedTaskTool("tc1", {
+                  subagent_type: "explore",
+                  prompt: "Investigate the workspace cleanup flow",
+                  title: "Cleanup investigation",
+                  taskId,
+                  reportMarkdown:
+                    "Report is trimmed for brevity. Click **View transcript** to inspect the full chat.",
+                  reportTitle: "Cleanup investigation",
+                }),
+              ],
+            }),
+          ],
+          subagentTranscripts: new Map([
+            [
+              taskId,
+              {
+                messages: transcriptMessages,
+                model: "openai:gpt-4o-mini",
+                thinkingLevel: "medium",
+              },
+            ],
+          ]),
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+
+    const taskId = "task-transcript-001";
+    const canvas = within(canvasElement);
+
+    // TaskToolCall cards are collapsed by default. The task id + "View transcript" button
+    // only render once the tool card is expanded.
+    const taskToolPrompt = "Investigate the workspace cleanup flow";
+    const promptPreview = canvas.getByText(taskToolPrompt);
+    const toolContainer = promptPreview.parentElement;
+    if (!(toolContainer instanceof HTMLElement)) {
+      throw new Error("Task tool container not found");
+    }
+
+    await userEvent.click(within(toolContainer).getByText("task", { selector: "span" }));
+
+    // Find the transcript button associated with our specific task.
+    // The app may render multiple tasks (and multiple "View transcript" buttons).
+    const taskIdButton = await waitFor(
+      () => {
+        const button = canvas.queryByRole("button", { name: taskId });
+        if (!button) {
+          throw new Error(`Task id button not rendered yet: ${taskId}`);
+        }
+        return button;
+      },
+      { timeout: 5_000 }
+    );
+
+    let viewTranscriptButton: HTMLElement | null = null;
+    let searchNode: HTMLElement | null = taskIdButton;
+
+    while (searchNode) {
+      const candidate = within(searchNode).queryByRole("button", {
+        name: /view transcript/i,
+      });
+      if (candidate) {
+        viewTranscriptButton = candidate;
+        break;
+      }
+      searchNode = searchNode.parentElement;
+    }
+
+    if (!viewTranscriptButton) {
+      throw new Error(`View transcript button not found for task ${taskId}`);
+    }
+
+    await userEvent.click(viewTranscriptButton);
+
+    // Dialog content is portaled outside the canvasElement, but inside the iframe body.
+    const dialog = await waitFor(() => {
+      const dialogs = Array.from(
+        canvasElement.ownerDocument.body.querySelectorAll('[role="dialog"]')
+      );
+      const match = dialogs.find((el) => el.textContent?.includes(taskId));
+      if (!match) {
+        throw new Error("Transcript dialog not found");
+      }
+      return match;
+    });
+
+    await waitFor(
+      () => {
+        // MessageRenderer renders each message inside a MessageWindow with data-message-block.
+        if (dialog.querySelectorAll("[data-message-block]").length === 0) {
+          const debugText = dialog.textContent?.trim().slice(0, 200) ?? "<no text>";
+          throw new Error(`Transcript messages not rendered. Dialog text: ${debugText}`);
+        }
+      },
+      { timeout: 5_000 }
+    );
   },
 };
 

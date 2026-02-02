@@ -11,6 +11,7 @@ import {
   getSubagentGitPatchMboxPath,
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
+import { upsertSubagentReportArtifact } from "@/node/services/subagentReportArtifacts";
 import { TaskService } from "@/node/services/taskService";
 import type { WorkspaceForkParams } from "@/node/runtime/Runtime";
 import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
@@ -1262,7 +1263,7 @@ describe("TaskService", () => {
     expect(report.reportMarkdown).toBe("ok");
   });
 
-  test("waitForAgentReport returns cached report even after workspace is removed", async () => {
+  test("waitForAgentReport returns persisted report after workspace is removed", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1293,19 +1294,28 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    const report = await taskService.waitForAgentReport(childId, { timeoutMs: 10 });
+    const report = await taskService.waitForAgentReport(childId, {
+      timeoutMs: 10,
+      requestingWorkspaceId: parentId,
+    });
     expect(report.reportMarkdown).toBe("ok");
     expect(report.title).toBe("t");
   });
 
-  test("isDescendantAgentTask consults cached ancestry after workspace is removed", async () => {
+  test("isDescendantAgentTask consults persisted ancestry after workspace is removed", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1336,18 +1346,24 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    expect(taskService.isDescendantAgentTask(parentId, childId)).toBe(true);
-    expect(taskService.isDescendantAgentTask("other-parent", childId)).toBe(false);
+    expect(await taskService.isDescendantAgentTask(parentId, childId)).toBe(true);
+    expect(await taskService.isDescendantAgentTask("other-parent", childId)).toBe(false);
   });
 
-  test("filterDescendantAgentTaskIds consults completed-report cache after cleanup", async () => {
+  test("filterDescendantAgentTaskIds consults persisted ancestry after cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1378,18 +1394,24 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    expect(taskService.filterDescendantAgentTaskIds(parentId, [childId])).toEqual([childId]);
-    expect(taskService.filterDescendantAgentTaskIds("other-parent", [childId])).toEqual([]);
+    expect(await taskService.filterDescendantAgentTaskIds(parentId, [childId])).toEqual([childId]);
+    expect(await taskService.filterDescendantAgentTaskIds("other-parent", [childId])).toEqual([]);
   });
 
-  test("waitForAgentReport cache is cleared by TTL cleanup", async () => {
+  test("waitForAgentReport falls back to persisted report after cache is cleared", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -1420,26 +1442,30 @@ describe("TaskService", () => {
 
     const { taskService } = createTaskServiceHarness(config);
 
-    const internal = taskService as unknown as {
-      resolveWaiters: (taskId: string, report: { reportMarkdown: string; title?: string }) => void;
-      cleanupExpiredCompletedReports: (nowMs: number) => void;
-    };
-    internal.resolveWaiters(childId, { reportMarkdown: "ok", title: "t" });
+    await upsertSubagentReportArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: config.getSessionDir(parentId),
+      childTaskId: childId,
+      parentWorkspaceId: parentId,
+      ancestorWorkspaceIds: [parentId],
+      reportMarkdown: "ok",
+      title: "t",
+      nowMs: Date.now(),
+    });
 
     await config.removeWorkspace(childId);
 
-    internal.cleanupExpiredCompletedReports(Date.now() + 2 * 60 * 60 * 1000);
+    // Simulate process restart / eviction.
+    (
+      taskService as unknown as { completedReportsByTaskId: Map<string, unknown> }
+    ).completedReportsByTaskId.clear();
 
-    let caught: unknown = null;
-    try {
-      await taskService.waitForAgentReport(childId, { timeoutMs: 10 });
-    } catch (error: unknown) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    if (caught instanceof Error) {
-      expect(caught.message).toMatch(/not found/i);
-    }
+    const report = await taskService.waitForAgentReport(childId, {
+      timeoutMs: 10,
+      requestingWorkspaceId: parentId,
+    });
+    expect(report.reportMarkdown).toBe("ok");
+    expect(report.title).toBe("t");
   });
 
   test("does not request agent_report on stream end while task has active descendants", async () => {
@@ -1667,7 +1693,7 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const { aiService } = createAIServiceMocks(config);
+    const { aiService, stopStream } = createAIServiceMocks(config);
     const { workspaceService, resumeStream, remove, emit } = createWorkspaceServiceMocks();
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
@@ -1692,11 +1718,33 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
+    // Seed child history with the initial prompt + assistant placeholder so committing the final
+    // partial updates the existing assistant message (matching real streaming behavior).
+    const childPrompt = createMuxMessage("user-child-prompt", "user", "do the thing", {
+      timestamp: Date.now(),
+    });
+    const appendChildPrompt = await historyService.appendToHistory(childId, childPrompt);
+    expect(appendChildPrompt.success).toBe(true);
+
+    const childAssistantPlaceholder = createMuxMessage("assistant-child-partial", "assistant", "", {
+      timestamp: Date.now(),
+    });
+    const appendChildPlaceholder = await historyService.appendToHistory(
+      childId,
+      childAssistantPlaceholder
+    );
+    expect(appendChildPlaceholder.success).toBe(true);
+
+    const childHistorySequence = childAssistantPlaceholder.metadata?.historySequence;
+    if (typeof childHistorySequence !== "number") {
+      throw new Error("Expected child historySequence to be a number");
+    }
+
     const childPartial = createMuxMessage(
       "assistant-child-partial",
       "assistant",
       "",
-      { timestamp: Date.now() },
+      { timestamp: Date.now(), historySequence: childHistorySequence },
       [
         {
           type: "dynamic-tool",
@@ -1731,6 +1779,47 @@ describe("TaskService", () => {
       result: { success: true },
       timestamp: Date.now(),
     });
+
+    expect(stopStream).toHaveBeenCalledWith(
+      childId,
+      expect.objectContaining({ abandonPartial: false })
+    );
+
+    const childHistory = await historyService.getHistory(childId);
+    expect(childHistory.success).toBe(true);
+    if (childHistory.success) {
+      // Ensure the in-flight assistant message (tool calls + agent_report) was committed to history
+      // before workspace cleanup archives the transcript.
+      expect(childHistory.data.length).toBeGreaterThan(1);
+
+      const assistantMsg =
+        childHistory.data.find((m) => m.id === "assistant-child-partial") ?? null;
+      expect(assistantMsg).not.toBeNull();
+      if (assistantMsg) {
+        const toolPart = assistantMsg.parts.find(
+          (p) =>
+            p &&
+            typeof p === "object" &&
+            "type" in p &&
+            (p as { type?: unknown }).type === "dynamic-tool" &&
+            "toolName" in p &&
+            (p as { toolName?: unknown }).toolName === "agent_report"
+        ) as unknown as
+          | {
+              toolName: string;
+              state: string;
+              input?: unknown;
+            }
+          | undefined;
+
+        expect(toolPart?.toolName).toBe("agent_report");
+        expect(toolPart?.state).toBe("output-available");
+        expect(JSON.stringify(toolPart?.input)).toContain("Hello from child");
+      }
+    }
+
+    const updatedChildPartial = await partialService.readPartial(childId);
+    expect(updatedChildPartial).toBeNull();
 
     const parentHistory = await historyService.getHistory(parentId);
     expect(parentHistory.success).toBe(true);
@@ -1855,7 +1944,7 @@ describe("TaskService", () => {
       "assistant-child-partial",
       "assistant",
       "",
-      { timestamp: Date.now() },
+      { timestamp: Date.now(), historySequence: 0 },
       [
         {
           type: "dynamic-tool",
@@ -2011,7 +2100,7 @@ describe("TaskService", () => {
       "assistant-child-partial",
       "assistant",
       "",
-      { timestamp: Date.now() },
+      { timestamp: Date.now(), historySequence: 0 },
       [
         {
           type: "dynamic-tool",

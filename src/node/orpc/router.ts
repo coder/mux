@@ -44,6 +44,18 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import assert from "node:assert/strict";
+import * as fsPromises from "fs/promises";
+import * as path from "node:path";
+
+import type { MuxMessage } from "@/common/types/message";
+import { coerceThinkingLevel } from "@/common/types/thinking";
+import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { log } from "@/node/services/log";
+import {
+  readSubagentTranscriptArtifactsFile,
+  type SubagentTranscriptArtifactIndexEntry,
+} from "@/node/services/subagentTranscriptArtifacts";
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -84,6 +96,171 @@ async function resolveAgentDiscoveryContext(
     { projectPath: input.projectPath! }
   );
   return { runtime, discoveryPath: input.projectPath! };
+}
+
+function isErrnoWithCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
+function isPathInsideDir(dirPath: string, filePath: string): boolean {
+  const resolvedDir = path.resolve(dirPath);
+  const resolvedFile = path.resolve(filePath);
+  const relative = path.relative(resolvedDir, resolvedFile);
+
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  // Older history may have createdAt serialized as a string; coerce back to Date for ORPC.
+  const obj = value as { createdAt?: unknown };
+  if (typeof obj.createdAt === "string") {
+    const parsed = new Date(obj.createdAt);
+    if (Number.isFinite(parsed.getTime())) {
+      obj.createdAt = parsed;
+    } else {
+      delete obj.createdAt;
+    }
+  }
+
+  return normalizeLegacyMuxMetadata(value as MuxMessage);
+}
+
+async function readChatJsonlAllowMissing(params: {
+  chatPath: string;
+  logLabel: string;
+}): Promise<MuxMessage[] | null> {
+  try {
+    const data = await fsPromises.readFile(params.chatPath, "utf-8");
+    const lines = data.split("\n").filter((line) => line.trim());
+    const messages: MuxMessage[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        const parsed = JSON.parse(lines[i]) as unknown;
+        const message = normalizeMuxMessageFromDisk(parsed);
+        if (message) {
+          messages.push(message);
+        }
+      } catch (parseError) {
+        log.warn(
+          `Skipping malformed JSON at line ${i + 1} in ${params.logLabel}:`,
+          parseError instanceof Error ? parseError.message : String(parseError),
+          "\nLine content:",
+          lines[i].substring(0, 100) + (lines[i].length > 100 ? "..." : "")
+        );
+      }
+    }
+
+    return messages;
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function readPartialJsonBestEffort(partialPath: string): Promise<MuxMessage | null> {
+  try {
+    const raw = await fsPromises.readFile(partialPath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    return normalizeMuxMessageFromDisk(parsed);
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return null;
+    }
+
+    // Never fail transcript viewing because partial.json is corrupted.
+    log.warn("Failed to read partial.json for transcript", {
+      partialPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function mergePartialIntoHistory(messages: MuxMessage[], partial: MuxMessage | null): MuxMessage[] {
+  if (!partial) {
+    return messages;
+  }
+
+  const partialSeq = partial.metadata?.historySequence;
+  if (partialSeq === undefined) {
+    return [...messages, partial];
+  }
+
+  const existingIndex = messages.findIndex((m) => m.metadata?.historySequence === partialSeq);
+  if (existingIndex >= 0) {
+    const existing = messages[existingIndex];
+    const shouldReplace = (partial.parts?.length ?? 0) > (existing.parts?.length ?? 0);
+    if (!shouldReplace) {
+      return messages;
+    }
+
+    const next = [...messages];
+    next[existingIndex] = partial;
+    return next;
+  }
+
+  // Insert by historySequence to keep ordering stable.
+  const insertIndex = messages.findIndex((m) => {
+    const seq = m.metadata?.historySequence;
+    return typeof seq === "number" && seq > partialSeq;
+  });
+
+  if (insertIndex < 0) {
+    return [...messages, partial];
+  }
+
+  const next = [...messages];
+  next.splice(insertIndex, 0, partial);
+  return next;
+}
+
+async function findSubagentTranscriptEntryByScanningSessions(params: {
+  sessionsDir: string;
+  taskId: string;
+}): Promise<{ workspaceId: string; entry: SubagentTranscriptArtifactIndexEntry } | null> {
+  let best: { workspaceId: string; entry: SubagentTranscriptArtifactIndexEntry } | null = null;
+
+  let dirents: Array<{ name: string; isDirectory: () => boolean }> = [];
+  try {
+    dirents = await fsPromises.readdir(params.sessionsDir, { withFileTypes: true });
+  } catch (error: unknown) {
+    if (isErrnoWithCode(error, "ENOENT")) {
+      return null;
+    }
+    throw error;
+  }
+
+  for (const dirent of dirents) {
+    if (!dirent.isDirectory()) {
+      continue;
+    }
+
+    const workspaceId = dirent.name;
+    if (!workspaceId) {
+      continue;
+    }
+
+    const sessionDir = path.join(params.sessionsDir, workspaceId);
+    const artifacts = await readSubagentTranscriptArtifactsFile(sessionDir);
+    const entry = artifacts.artifactsByChildTaskId[params.taskId];
+    if (!entry) {
+      continue;
+    }
+
+    if (!best || entry.updatedAtMs > best.entry.updatedAtMs) {
+      best = { workspaceId, entry };
+    }
+  }
+
+  return best;
 }
 
 export const router = (authToken?: string) => {
@@ -1523,6 +1700,180 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.getFullReplay.output)
         .handler(async ({ context, input }) => {
           return context.workspaceService.getFullReplay(input.workspaceId);
+        }),
+      getSubagentTranscript: t
+        .input(schemas.workspace.getSubagentTranscript.input)
+        .output(schemas.workspace.getSubagentTranscript.output)
+        .handler(async ({ context, input }) => {
+          const taskId = input.taskId.trim();
+          assert(taskId.length > 0, "workspace.getSubagentTranscript: taskId must be non-empty");
+
+          const requestingWorkspaceIdTrimmed = input.workspaceId?.trim();
+          const requestingWorkspaceId =
+            requestingWorkspaceIdTrimmed && requestingWorkspaceIdTrimmed.length > 0
+              ? requestingWorkspaceIdTrimmed
+              : null;
+
+          const tryLoadFromWorkspace = async (
+            workspaceId: string
+          ): Promise<{
+            workspaceId: string;
+            entry: SubagentTranscriptArtifactIndexEntry;
+          } | null> => {
+            const sessionDir = context.config.getSessionDir(workspaceId);
+            const artifacts = await readSubagentTranscriptArtifactsFile(sessionDir);
+            const entry = artifacts.artifactsByChildTaskId[taskId] ?? null;
+            return entry ? { workspaceId, entry } : null;
+          };
+
+          const tryLoadFromDescendantWorkspaces = async (
+            ancestorWorkspaceId: string
+          ): Promise<{
+            workspaceId: string;
+            entry: SubagentTranscriptArtifactIndexEntry;
+          } | null> => {
+            // If a grandchild task has already been cleaned up, its transcript is archived into the
+            // immediate parent workspace's session dir. Until that parent workspace is cleaned up and
+            // its artifacts are rolled up, the requesting workspace won't have the transcript index.
+            const descendants = context.taskService.listDescendantAgentTasks(ancestorWorkspaceId);
+
+            // Prefer shallower tasks first so we find the owning parent quickly.
+            descendants.sort((a, b) => a.depth - b.depth);
+
+            for (const descendant of descendants) {
+              const loaded = await tryLoadFromWorkspace(descendant.taskId);
+              if (loaded) return loaded;
+            }
+
+            return null;
+          };
+
+          // Auth: allow if the task is a descendant OR if we have an on-disk transcript artifact entry.
+          // The descendant check is best-effort: if it throws (corrupt config), we fall back to the
+          // artifact existence check to keep the UI usable.
+          let isDescendant = false;
+          if (requestingWorkspaceId) {
+            try {
+              isDescendant = await context.taskService.isDescendantAgentTask(
+                requestingWorkspaceId,
+                taskId
+              );
+            } catch (error: unknown) {
+              log.warn("workspace.getSubagentTranscript: descendant check failed", {
+                requestingWorkspaceId,
+                taskId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
+          const readTranscriptFromPaths = async (params: {
+            workspaceId: string;
+            chatPath?: string;
+            partialPath?: string;
+            logLabel: string;
+          }): Promise<MuxMessage[]> => {
+            const workspaceSessionDir = context.config.getSessionDir(params.workspaceId);
+
+            // Defense-in-depth: refuse path traversal from a corrupted index file.
+            if (params.chatPath && !isPathInsideDir(workspaceSessionDir, params.chatPath)) {
+              throw new Error("Refusing to read transcript outside workspace session dir");
+            }
+            if (params.partialPath && !isPathInsideDir(workspaceSessionDir, params.partialPath)) {
+              throw new Error("Refusing to read partial outside workspace session dir");
+            }
+
+            const partial = params.partialPath
+              ? await readPartialJsonBestEffort(params.partialPath)
+              : null;
+            const messages = params.chatPath
+              ? await readChatJsonlAllowMissing({
+                  chatPath: params.chatPath,
+                  logLabel: params.logLabel,
+                })
+              : null;
+
+            // If we only archived partial.json (e.g. interrupted stream), still allow viewing.
+            if (!messages && !partial) {
+              throw new Error(`Transcript not found (missing ${params.logLabel})`);
+            }
+
+            return mergePartialIntoHistory(messages ?? [], partial);
+          };
+
+          let resolved: {
+            workspaceId: string;
+            entry: SubagentTranscriptArtifactIndexEntry;
+          } | null = null;
+          let hasArtifactInRequestingTree = false;
+
+          if (requestingWorkspaceId !== null) {
+            resolved = await tryLoadFromWorkspace(requestingWorkspaceId);
+            if (resolved) {
+              hasArtifactInRequestingTree = true;
+            } else {
+              resolved = await tryLoadFromDescendantWorkspaces(requestingWorkspaceId);
+              hasArtifactInRequestingTree = resolved !== null;
+            }
+          } else {
+            resolved = await findSubagentTranscriptEntryByScanningSessions({
+              sessionsDir: context.config.sessionsDir,
+              taskId,
+            });
+          }
+
+          // If the transcript hasn't been archived yet (common while patch artifacts are pending),
+          // fall back to reading from the task's live session dir while it still exists.
+          if (!resolved) {
+            if (requestingWorkspaceId && isDescendant) {
+              const taskSessionDir = context.config.getSessionDir(taskId);
+              const messages = await readTranscriptFromPaths({
+                workspaceId: taskId,
+                chatPath: path.join(taskSessionDir, "chat.jsonl"),
+                partialPath: path.join(taskSessionDir, "partial.json"),
+                logLabel: `${taskId}/chat.jsonl`,
+              });
+
+              const metaResult = await context.aiService.getWorkspaceMetadata(taskId);
+              const model =
+                metaResult.success &&
+                typeof metaResult.data.taskModelString === "string" &&
+                metaResult.data.taskModelString.trim().length > 0
+                  ? metaResult.data.taskModelString.trim()
+                  : undefined;
+              const thinkingLevel = metaResult.success
+                ? coerceThinkingLevel(metaResult.data.taskThinkingLevel)
+                : undefined;
+
+              return { messages, model, thinkingLevel };
+            }
+
+            // Helpful error message for UI.
+            throw new Error(
+              requestingWorkspaceId
+                ? `No transcript found for task ${taskId} in workspace ${requestingWorkspaceId}`
+                : `No transcript found for task ${taskId}`
+            );
+          }
+
+          if (requestingWorkspaceId && !isDescendant && !hasArtifactInRequestingTree) {
+            throw new Error("Task is not a descendant of this workspace");
+          }
+
+          const messages = await readTranscriptFromPaths({
+            workspaceId: resolved.workspaceId,
+            chatPath: resolved.entry.chatPath,
+            partialPath: resolved.entry.partialPath,
+            logLabel: `${resolved.workspaceId}/subagent-transcripts/${taskId}/chat.jsonl`,
+          });
+
+          const model =
+            typeof resolved.entry.model === "string" && resolved.entry.model.trim().length > 0
+              ? resolved.entry.model.trim()
+              : undefined;
+          const thinkingLevel = coerceThinkingLevel(resolved.entry.thinkingLevel);
+
+          return { messages, model, thinkingLevel };
         }),
       executeBash: t
         .input(schemas.workspace.executeBash.input)

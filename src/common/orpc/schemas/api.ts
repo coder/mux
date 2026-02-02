@@ -550,6 +550,25 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: z.array(WorkspaceChatMessageSchema),
   },
+  /**
+   * Load an archived subagent transcript (chat.jsonl + optional partial.json) from this workspace's
+   * session dir.
+   */
+  getSubagentTranscript: {
+    input: z.object({
+      /** Workspace that owns the transcript artifact index (usually the current workspace). */
+      workspaceId: z.string().optional(),
+      /** Child task/workspace id whose transcript should be loaded. */
+      taskId: z.string(),
+    }),
+    output: z.object({
+      messages: z.array(MuxMessageSchema),
+      /** Task-level model string used when running the sub-agent (optional for legacy entries). */
+      model: z.string().optional(),
+      /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
+      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+    }),
+  },
   executeBash: {
     input: z.object({
       workspaceId: z.string(),

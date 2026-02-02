@@ -39,15 +39,15 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
       if (!requestedIds && config.backgroundProcessManager) {
         const processes = await config.backgroundProcessManager.list();
-        const bashTaskIds = processes
-          .filter((proc) => {
-            if (proc.status !== "running") return false;
-            return (
-              proc.workspaceId === workspaceId ||
-              taskService.isDescendantAgentTask(workspaceId, proc.workspaceId)
-            );
-          })
-          .map((proc) => toBashTaskId(proc.id));
+        const bashTaskIds: string[] = [];
+        for (const proc of processes) {
+          if (proc.status !== "running") continue;
+          const inScope =
+            proc.workspaceId === workspaceId ||
+            (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
+          if (!inScope) continue;
+          bashTaskIds.push(toBashTaskId(proc.id));
+        }
 
         candidateTaskIds = [...candidateTaskIds, ...bashTaskIds];
       }
@@ -60,7 +60,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           filterDescendantAgentTaskIds?: (
             ancestorWorkspaceId: string,
             taskIds: string[]
-          ) => string[];
+          ) => Promise<string[]>;
         }
       ).filterDescendantAgentTaskIds;
 
@@ -71,11 +71,19 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         if (!config.workspaceSessionDir) return null;
         return await readSubagentGitPatchArtifact(config.workspaceSessionDir, childTaskId);
       };
-      const descendantAgentTaskIdSet = new Set(
+
+      const descendantAgentTaskIds =
         typeof bulkFilter === "function"
-          ? bulkFilter.call(taskService, workspaceId, agentTaskIds)
-          : agentTaskIds.filter((taskId) => taskService.isDescendantAgentTask(workspaceId, taskId))
-      );
+          ? await bulkFilter.call(taskService, workspaceId, agentTaskIds)
+          : (
+              await Promise.all(
+                agentTaskIds.map(async (taskId) =>
+                  (await taskService.isDescendantAgentTask(workspaceId, taskId)) ? taskId : null
+                )
+              )
+            ).filter((taskId): taskId is string => typeof taskId === "string");
+
+      const descendantAgentTaskIdSet = new Set(descendantAgentTaskIds);
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
@@ -100,7 +108,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
             const inScope =
               proc.workspaceId === workspaceId ||
-              taskService.isDescendantAgentTask(workspaceId, proc.workspaceId);
+              (await taskService.isDescendantAgentTask(workspaceId, proc.workspaceId));
             if (!inScope) {
               return { status: "invalid_scope" as const, taskId };
             }
