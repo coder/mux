@@ -465,6 +465,9 @@ export class AIService extends EventEmitter {
     { abortController: AbortController; startTime: number; syntheticMessageId: string }
   >();
 
+  // Avoid spamming warning messages when MCP servers repeatedly fail to start.
+  private readonly lastMcpWarningByWorkspace = new Map<string, { key: string; warnedAt: number }>();
+
   // Debug: captured LLM request payloads for last send per workspace
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
   private taskService?: TaskService;
@@ -1123,6 +1126,69 @@ export class AIService extends EventEmitter {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return Err({ type: "unknown", raw: `Failed to create model: ${errorMessage}` });
     }
+  }
+
+  private async maybeEmitMcpWarningMessage(options: {
+    workspaceId: string;
+    serverErrors: Record<string, string>;
+    abortSignal: AbortSignal;
+  }): Promise<void> {
+    const { workspaceId, serverErrors, abortSignal } = options;
+
+    const entries = Object.entries(serverErrors);
+    if (entries.length === 0) {
+      this.lastMcpWarningByWorkspace.delete(workspaceId);
+      return;
+    }
+
+    if (abortSignal.aborted) {
+      return;
+    }
+
+    // Normalize to a stable key for dedupe (sorted server names + single-line errors).
+    const normalized = entries
+      .map(([name, error]) => {
+        const singleLine = error.replace(/\s+/g, " ").trim();
+        const truncated = singleLine.length > 200 ? `${singleLine.slice(0, 200)}…` : singleLine;
+        return { name, error: truncated };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const key = JSON.stringify(normalized);
+
+    const now = Date.now();
+    const existing = this.lastMcpWarningByWorkspace.get(workspaceId);
+    const COOLDOWN_MS = 5 * 60 * 1000;
+    if (existing?.key === key && now - existing.warnedAt < COOLDOWN_MS) {
+      return;
+    }
+
+    const lines = normalized.map((e) => `- ${e.name}: ${e.error}`).join("\n");
+    const warningText =
+      `Some MCP servers failed to start, so their tools will be unavailable:\n\n${lines}\n\n` +
+      `You can test and edit MCP servers in Settings → Projects.`;
+
+    const warningMessageId = createAssistantMessageId();
+    const warningMessage = createMuxMessage(warningMessageId, "assistant", warningText, {
+      timestamp: now,
+      synthetic: true,
+    });
+
+    const appendResult = await this.historyService.appendToHistory(workspaceId, warningMessage);
+    if (!appendResult.success) {
+      log.debug("[MCP] Failed to append warning message to history", {
+        workspaceId,
+        error: appendResult.error,
+      });
+      return;
+    }
+
+    this.emit("mcp-warning", {
+      workspaceId,
+      message: { ...warningMessage, type: "message" as const },
+    });
+
+    this.lastMcpWarningByWorkspace.set(workspaceId, { key, warnedAt: now });
   }
 
   /**
@@ -1843,6 +1909,7 @@ export class AIService extends EventEmitter {
 
       let mcpTools: Record<string, Tool> | undefined;
       let mcpStats: MCPWorkspaceStats | undefined;
+      let mcpServerErrors: Record<string, string> = {};
       let mcpSetupDurationMs = 0;
 
       if (this.mcpServerManager && workspaceId !== MUX_HELP_CHAT_WORKSPACE_ID) {
@@ -1859,11 +1926,24 @@ export class AIService extends EventEmitter {
 
           mcpTools = result.tools;
           mcpStats = result.stats;
+          mcpServerErrors = result.serverErrors;
         } catch (error) {
-          workspaceLog.error("Failed to start MCP servers", { error });
+          const message = error instanceof Error ? error.message : String(error);
+          workspaceLog.error("Failed to start MCP servers", { error: message });
+          mcpServerErrors = { mcp: message };
         } finally {
           mcpSetupDurationMs = Date.now() - start;
         }
+      }
+
+      try {
+        await this.maybeEmitMcpWarningMessage({
+          workspaceId,
+          serverErrors: mcpServerErrors,
+          abortSignal: combinedAbortSignal,
+        });
+      } catch (error) {
+        workspaceLog.debug("Failed to emit MCP warning message", { error });
       }
 
       const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);

@@ -1280,6 +1280,24 @@ export class AgentSession {
     });
     forward("runtime-status", (payload) => this.emitChatEvent(payload));
 
+    const mcpWarningHandler = (...args: unknown[]) => {
+      const [raw] = args;
+      if (
+        typeof raw !== "object" ||
+        raw === null ||
+        !("workspaceId" in raw) ||
+        (raw as { workspaceId: unknown }).workspaceId !== this.workspaceId
+      ) {
+        return;
+      }
+
+      const payload = raw as { workspaceId: string; message: WorkspaceChatMessage };
+      this.emitChatEvent(payload.message);
+    };
+
+    this.aiListeners.push({ event: "mcp-warning", handler: mcpWarningHandler });
+    this.aiService.on("mcp-warning", mcpWarningHandler as never);
+
     forward("stream-end", async (payload) => {
       this.activeCompactionRequest = undefined;
       const handled = await this.compactionHandler.handleCompletion(payload as StreamEndEvent);

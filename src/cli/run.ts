@@ -448,7 +448,7 @@ async function main(): Promise<number> {
   }
 
   // Initialize MCP support
-  const mcpConfigService = new MCPConfigService();
+  const mcpConfigService = new MCPConfigService(config);
   const inlineServers: Record<string, string> = {};
   for (const entry of opts.mcp) {
     inlineServers[entry.name] = entry.command;

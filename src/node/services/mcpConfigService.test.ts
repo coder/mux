@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { Config } from "@/node/config";
 import { MCPConfigService } from "./mcpConfigService";
 import { MCPServerManager } from "./mcpServerManager";
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
@@ -13,7 +14,7 @@ describe("MCP server disable filtering", () => {
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-test-"));
-    configService = new MCPConfigService();
+    configService = new MCPConfigService(new Config(tempDir));
     serverManager = new MCPServerManager(configService);
   });
 
@@ -58,7 +59,7 @@ describe("Workspace MCP overrides filtering", () => {
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-test-"));
-    configService = new MCPConfigService();
+    configService = new MCPConfigService(new Config(tempDir));
     serverManager = new MCPServerManager(configService);
 
     // Set up multiple servers for testing

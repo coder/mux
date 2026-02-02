@@ -81,3 +81,44 @@ export interface WorkspaceMCPOverrides {
    */
   toolAllowlist?: Record<string, string[]>;
 }
+
+// ---------------------------------------------------------------------------
+// Global MCP config + runtime status (issue #2060)
+// ---------------------------------------------------------------------------
+
+export type MCPServerOrigin = "global" | "project" | "inline";
+
+export interface MCPServerWithOrigin {
+  info: MCPServerInfo;
+  origin: MCPServerOrigin;
+}
+
+export interface MCPConfigParseError {
+  message: string;
+  offset: number;
+  length: number;
+}
+
+export interface MCPConfigValidationError {
+  message: string;
+  serverName?: string;
+}
+
+export interface MCPConfigDiagnostics {
+  filePath: string;
+  parseErrors: MCPConfigParseError[];
+  validationErrors: MCPConfigValidationError[];
+}
+
+export type MCPServerRuntimeState = "not_started" | "starting" | "running" | "failed" | "stopped";
+
+export interface MCPServerRuntimeStatus {
+  state: MCPServerRuntimeState;
+  toolCount?: number;
+  resolvedTransport?: "stdio" | "http" | "sse";
+  autoFallbackUsed?: boolean;
+  lastStartedAt?: number;
+  lastStoppedAt?: number;
+  lastError?: string;
+  lastErrorAt?: number;
+}
