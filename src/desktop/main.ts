@@ -864,10 +864,12 @@ if (gotTheLock) {
   });
 
   app.on("activate", () => {
-    // Skip splash on reactivation - services already loaded, window creation is fast
-    // Guard: services must be loaded (prevents race if activate fires during startup)
-    if (app.isReady() && mainWindow === null && services) {
-      createWindow();
+    // Skip splash on reactivation - services already loaded, window creation is fast.
+    // Clicking the Dock icon should also re-open the existing window if it was
+    // hidden by close-to-tray.
+    // Guard: services must be loaded (prevents race if activate fires during startup).
+    if (app.isReady() && services) {
+      openMuxFromTray();
     }
   });
 }
