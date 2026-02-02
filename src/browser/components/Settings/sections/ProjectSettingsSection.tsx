@@ -1139,14 +1139,14 @@ export const ProjectSettingsSection: React.FC = () => {
                       key={name}
                       className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
                     >
-                      <div className="flex items-start gap-3 px-3 py-2">
+                      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 px-3 py-2">
                         <Switch
                           checked={isEnabled}
                           onCheckedChange={(checked) => void handleToggleEnabled(name, checked)}
                           title={isEnabled ? "Disable server" : "Enable server"}
                           className="mt-0.5 shrink-0"
                         />
-                        <div className={cn("min-w-0 flex-1", !isEnabled && "opacity-50")}>
+                        <div className={cn("min-w-0", !isEnabled && "opacity-50")}>
                           <div className="flex items-center gap-2">
                             <span className="text-foreground text-sm font-medium">{name}</span>
                             {cached?.result.success && !isEditing && isEnabled && (
@@ -1197,16 +1197,6 @@ export const ProjectSettingsSection: React.FC = () => {
                             <p className="text-muted mt-0.5 font-mono text-xs break-all">
                               {serverDisplayValue(entry)}
                             </p>
-                          )}
-
-                          {!isEditing && remoteEntry && (
-                            <RemoteMCPOAuthSection
-                              projectPath={selectedProject}
-                              serverName={name}
-                              transport={remoteEntry.transport}
-                              url={remoteEntry.url}
-                              oauthRefreshNonce={mcpOauthRefreshNonce}
-                            />
                           )}
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
@@ -1279,6 +1269,22 @@ export const ProjectSettingsSection: React.FC = () => {
                             </>
                           )}
                         </div>
+                        {!isEditing && remoteEntry && (
+                          <div
+                            className={cn(
+                              "col-start-2 col-span-2 min-w-0",
+                              !isEnabled && "opacity-50"
+                            )}
+                          >
+                            <RemoteMCPOAuthSection
+                              projectPath={selectedProject}
+                              serverName={name}
+                              transport={remoteEntry.transport}
+                              url={remoteEntry.url}
+                              oauthRefreshNonce={mcpOauthRefreshNonce}
+                            />
+                          </div>
+                        )}
                       </div>
                       {cached && !cached.result.success && !isEditing && (
                         <div className="border-border-medium border-t px-3 py-2 text-xs">
