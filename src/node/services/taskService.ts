@@ -2212,9 +2212,13 @@ export class TaskService {
       // `agent_report` is terminal. Stop the child stream immediately to prevent any further token
       // usage and to ensure parallelism accounting never "frees" a slot while the stream is still
       // active (Claude/Anthropic can emit tool calls before the final assistant block completes).
+      //
+      // Important: Do NOT abandon the partial assistant message here. The in-flight assistant block
+      // contains the tool calls (including the agent_report tool call) that should be archived into
+      // chat.jsonl for transcript viewing after workspace cleanup.
       try {
         const stopResult = await this.aiService.stopStream(childWorkspaceId, {
-          abandonPartial: true,
+          abandonPartial: false,
         });
         if (!stopResult.success) {
           log.debug("Failed to stop task stream after agent_report", {
@@ -2224,6 +2228,24 @@ export class TaskService {
         }
       } catch (error: unknown) {
         log.debug("Failed to stop task stream after agent_report (threw)", {
+          workspaceId: childWorkspaceId,
+          error,
+        });
+      }
+
+      // stopStream() forwards stream-abort asynchronously (after partial cleanup). Workspace cleanup
+      // may archive/delete session files immediately after this method returns, so commit the partial
+      // synchronously here (best-effort) to ensure tool calls are present in the archived transcript.
+      try {
+        const commitResult = await this.partialService.commitToHistory(childWorkspaceId);
+        if (!commitResult.success) {
+          log.error("Failed to commit final partial to history after agent_report", {
+            workspaceId: childWorkspaceId,
+            error: commitResult.error,
+          });
+        }
+      } catch (error: unknown) {
+        log.error("Failed to commit final partial to history after agent_report (threw)", {
           workspaceId: childWorkspaceId,
           error,
         });

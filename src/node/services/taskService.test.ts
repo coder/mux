@@ -1693,7 +1693,7 @@ describe("TaskService", () => {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
     });
 
-    const { aiService } = createAIServiceMocks(config);
+    const { aiService, stopStream } = createAIServiceMocks(config);
     const { workspaceService, resumeStream, remove, emit } = createWorkspaceServiceMocks();
     const { historyService, partialService, taskService } = createTaskServiceHarness(config, {
       aiService,
@@ -1718,11 +1718,33 @@ describe("TaskService", () => {
     const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
     expect(writeParentPartial.success).toBe(true);
 
+    // Seed child history with the initial prompt + assistant placeholder so committing the final
+    // partial updates the existing assistant message (matching real streaming behavior).
+    const childPrompt = createMuxMessage("user-child-prompt", "user", "do the thing", {
+      timestamp: Date.now(),
+    });
+    const appendChildPrompt = await historyService.appendToHistory(childId, childPrompt);
+    expect(appendChildPrompt.success).toBe(true);
+
+    const childAssistantPlaceholder = createMuxMessage("assistant-child-partial", "assistant", "", {
+      timestamp: Date.now(),
+    });
+    const appendChildPlaceholder = await historyService.appendToHistory(
+      childId,
+      childAssistantPlaceholder
+    );
+    expect(appendChildPlaceholder.success).toBe(true);
+
+    const childHistorySequence = childAssistantPlaceholder.metadata?.historySequence;
+    if (typeof childHistorySequence !== "number") {
+      throw new Error("Expected child historySequence to be a number");
+    }
+
     const childPartial = createMuxMessage(
       "assistant-child-partial",
       "assistant",
       "",
-      { timestamp: Date.now() },
+      { timestamp: Date.now(), historySequence: childHistorySequence },
       [
         {
           type: "dynamic-tool",
@@ -1757,6 +1779,47 @@ describe("TaskService", () => {
       result: { success: true },
       timestamp: Date.now(),
     });
+
+    expect(stopStream).toHaveBeenCalledWith(
+      childId,
+      expect.objectContaining({ abandonPartial: false })
+    );
+
+    const childHistory = await historyService.getHistory(childId);
+    expect(childHistory.success).toBe(true);
+    if (childHistory.success) {
+      // Ensure the in-flight assistant message (tool calls + agent_report) was committed to history
+      // before workspace cleanup archives the transcript.
+      expect(childHistory.data.length).toBeGreaterThan(1);
+
+      const assistantMsg =
+        childHistory.data.find((m) => m.id === "assistant-child-partial") ?? null;
+      expect(assistantMsg).not.toBeNull();
+      if (assistantMsg) {
+        const toolPart = assistantMsg.parts.find(
+          (p) =>
+            p &&
+            typeof p === "object" &&
+            "type" in p &&
+            (p as { type?: unknown }).type === "dynamic-tool" &&
+            "toolName" in p &&
+            (p as { toolName?: unknown }).toolName === "agent_report"
+        ) as unknown as
+          | {
+              toolName: string;
+              state: string;
+              input?: unknown;
+            }
+          | undefined;
+
+        expect(toolPart?.toolName).toBe("agent_report");
+        expect(toolPart?.state).toBe("output-available");
+        expect(JSON.stringify(toolPart?.input)).toContain("Hello from child");
+      }
+    }
+
+    const updatedChildPartial = await partialService.readPartial(childId);
+    expect(updatedChildPartial).toBeNull();
 
     const parentHistory = await historyService.getHistory(parentId);
     expect(parentHistory.success).toBe(true);
@@ -1881,7 +1944,7 @@ describe("TaskService", () => {
       "assistant-child-partial",
       "assistant",
       "",
-      { timestamp: Date.now() },
+      { timestamp: Date.now(), historySequence: 0 },
       [
         {
           type: "dynamic-tool",
@@ -2037,7 +2100,7 @@ describe("TaskService", () => {
       "assistant-child-partial",
       "assistant",
       "",
-      { timestamp: Date.now() },
+      { timestamp: Date.now(), historySequence: 0 },
       [
         {
           type: "dynamic-tool",
