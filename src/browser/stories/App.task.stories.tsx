@@ -602,7 +602,10 @@ export const TaskApplyGitPatchStates: AppStory = {
                   three_way: true,
                   output: {
                     success: true,
-                    appliedCommitCount: 2,
+                    appliedCommits: [
+                      { subject: "feat: add Apply Patch tool UI" },
+                      { subject: "fix: render applied commit list" },
+                    ],
                     dryRun: true,
                     note: "Dry run succeeded; no commits were applied.",
                   },
@@ -612,7 +615,16 @@ export const TaskApplyGitPatchStates: AppStory = {
                   three_way: true,
                   output: {
                     success: true,
-                    appliedCommitCount: 2,
+                    appliedCommits: [
+                      {
+                        sha: "0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6",
+                        subject: "feat: add Apply Patch tool UI",
+                      },
+                      {
+                        sha: "d7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9",
+                        subject: "fix: render applied commit list",
+                      },
+                    ],
                     headCommitSha: "d7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9",
                   },
                 }),

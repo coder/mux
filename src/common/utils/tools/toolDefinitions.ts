@@ -361,12 +361,21 @@ export const TaskApplyGitPatchToolArgsSchema = z
   })
   .strict();
 
+const TaskApplyGitPatchAppliedCommitSchema = z
+  .object({
+    // Commit subject line (always stable, even across dry-run vs real apply)
+    subject: z.string().min(1),
+    // Optional SHA (omitted for dry-run because the commit IDs may differ when applied for real)
+    sha: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const TaskApplyGitPatchToolResultSchema = z.union([
   z
     .object({
       success: z.literal(true),
       taskId: z.string(),
-      appliedCommitCount: z.number().int().nonnegative(),
+      appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema),
       headCommitSha: z.string().optional(),
       dryRun: z.boolean().optional(),
       note: z.string().optional(),

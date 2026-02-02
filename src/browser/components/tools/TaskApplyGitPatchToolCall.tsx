@@ -34,11 +34,51 @@ function formatShortSha(sha: string): string {
   return sha.length > 8 ? sha.slice(0, 7) : sha;
 }
 
+interface AppliedCommit {
+  subject: string;
+  sha?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readAppliedCommits(result: unknown): AppliedCommit[] | undefined {
+  if (!isRecord(result)) return undefined;
+
+  const value = (result as { appliedCommits?: unknown }).appliedCommits;
+  if (!Array.isArray(value)) return undefined;
+
+  const commits: AppliedCommit[] = [];
+  for (const commit of value) {
+    if (!isRecord(commit)) continue;
+
+    const subject = (commit as { subject?: unknown }).subject;
+    if (typeof subject !== "string" || subject.length === 0) continue;
+
+    const sha = (commit as { sha?: unknown }).sha;
+    commits.push({
+      subject,
+      sha: typeof sha === "string" && sha.length > 0 ? sha : undefined,
+    });
+  }
+
+  return commits;
+}
+
+function readLegacyAppliedCommitCount(result: unknown): number | undefined {
+  if (!isRecord(result)) return undefined;
+
+  const value = (result as { appliedCommitCount?: unknown }).appliedCommitCount;
+  return typeof value === "number" ? value : undefined;
+}
+
 const CopyableCode: React.FC<{
   value: string;
+  displayValue?: string;
   tooltipLabel: string;
   className?: string;
-}> = ({ value, tooltipLabel, className }) => {
+}> = ({ value, displayValue, tooltipLabel, className }) => {
   const { copied, copyToClipboard } = useCopyToClipboard();
 
   return (
@@ -52,7 +92,7 @@ const CopyableCode: React.FC<{
           )}
           onClick={() => void copyToClipboard(value)}
         >
-          {value}
+          {displayValue ?? value}
         </button>
       </TooltipTrigger>
       <TooltipContent>{copied ? "Copied" : tooltipLabel}</TooltipContent>
@@ -84,6 +124,16 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
 
   const isDryRun = Boolean(successResult?.dryRun) || args.dry_run === true;
 
+  // Result schema guarantees appliedCommits, but older persisted history might only have
+  // appliedCommitCount. Be defensive and support both.
+  const appliedCommits = successResult ? readAppliedCommits(successResult) : undefined;
+  const legacyAppliedCommitCount = successResult
+    ? readLegacyAppliedCommitCount(successResult)
+    : undefined;
+  const appliedCommitCount = appliedCommits
+    ? appliedCommits.length
+    : (legacyAppliedCommitCount ?? 0);
+
   const errorPreview =
     typeof errorResult?.error === "string" ? errorResult.error.split("\n")[0]?.trim() : undefined;
 
@@ -106,7 +156,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
         {isDryRun && <span className="text-backgrounded text-[10px] font-medium">dry-run</span>}
         {successResult && (
           <span className="text-secondary ml-2 text-[10px] whitespace-nowrap">
-            {formatCommitCount(successResult.appliedCommitCount)}
+            {formatCommitCount(appliedCommitCount)}
           </span>
         )}
         {successResult?.headCommitSha && (
@@ -177,7 +227,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                       {isDryRun ? "Would apply" : "Applied"}:
                     </span>
                     <span className="text-text font-mono">
-                      {formatCommitCount(successResult.appliedCommitCount)}
+                      {formatCommitCount(appliedCommitCount)}
                     </span>
                   </div>
                   {successResult.headCommitSha && (
@@ -185,6 +235,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                       <span className="text-secondary shrink-0 font-medium">HEAD:</span>
                       <CopyableCode
                         value={successResult.headCommitSha}
+                        displayValue={formatShortSha(successResult.headCommitSha)}
                         tooltipLabel="Copy HEAD SHA"
                       />
                     </div>
@@ -192,6 +243,34 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                 </div>
               </DetailSection>
 
+              {appliedCommits && appliedCommits.length > 0 && (
+                <DetailSection>
+                  <DetailLabel>Commits</DetailLabel>
+                  <div className="bg-code-bg flex flex-col gap-1 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
+                    {appliedCommits.map((commit, index) => (
+                      <div
+                        // SHA is intentionally optional (dry-run results omit it).
+                        key={`${commit.sha ?? index}-${commit.subject}`}
+                        className="flex min-w-0 items-start gap-2"
+                      >
+                        {commit.sha ? (
+                          <CopyableCode
+                            value={commit.sha}
+                            displayValue={formatShortSha(commit.sha)}
+                            tooltipLabel="Copy commit SHA"
+                            className="shrink-0"
+                          />
+                        ) : (
+                          <span className="text-secondary shrink-0 font-mono text-[11px]">
+                            {index + 1}.
+                          </span>
+                        )}
+                        <span className="text-text min-w-0 break-words">{commit.subject}</span>
+                      </div>
+                    ))}
+                  </div>
+                </DetailSection>
+              )}
               {successResult.note && (
                 <DetailSection>
                   <DetailLabel>Note</DetailLabel>

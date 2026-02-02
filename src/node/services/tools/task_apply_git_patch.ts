@@ -64,6 +64,98 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
   }
 
+  async function tryRevParseHead(params: { cwd: string }): Promise<string | undefined> {
+    try {
+      const headResult = await execBuffered(config.runtime, "git rev-parse HEAD", {
+        cwd: params.cwd,
+        timeout: 10,
+      });
+      if (headResult.exitCode !== 0) {
+        return undefined;
+      }
+      const sha = headResult.stdout.trim();
+      return sha.length > 0 ? sha : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function getAppliedCommits(params: {
+    cwd: string;
+    beforeHeadSha: string | undefined;
+    commitCountHint: number | undefined;
+    includeSha: boolean;
+  }): Promise<Array<{ sha?: string; subject: string }>> {
+    const format = "%H%x00%s";
+
+    async function tryGitLog(args: {
+      cmd: string;
+      includeSha: boolean;
+    }): Promise<Array<{ sha?: string; subject: string }> | undefined> {
+      try {
+        const result = await execBuffered(config.runtime, args.cmd, {
+          cwd: params.cwd,
+          timeout: 30,
+        });
+        if (result.exitCode !== 0) {
+          log.debug("task_apply_git_patch: git log failed", {
+            cwd: params.cwd,
+            exitCode: result.exitCode,
+            stderr: result.stderr.trim(),
+            stdout: result.stdout.trim(),
+          });
+          return undefined;
+        }
+
+        const lines = result.stdout
+          .split("\n")
+          .map((line) => line.replace(/\r$/, ""))
+          .filter((line) => line.length > 0);
+
+        const commits: Array<{ sha?: string; subject: string }> = [];
+        for (const line of lines) {
+          const nulIndex = line.indexOf("\u0000");
+          if (nulIndex === -1) {
+            // Defensive: unexpected formatting; treat as a subject-only line.
+            commits.push({ subject: line });
+            continue;
+          }
+
+          const sha = line.slice(0, nulIndex);
+          const subject = line.slice(nulIndex + 1);
+          if (subject.length === 0) continue;
+
+          if (args.includeSha && sha.length > 0) {
+            commits.push({ sha, subject });
+          } else {
+            commits.push({ subject });
+          }
+        }
+
+        return commits;
+      } catch (error) {
+        log.debug("task_apply_git_patch: git log threw", { cwd: params.cwd, error });
+        return undefined;
+      }
+    }
+
+    // Best option: log the exact range of new commits.
+    if (params.beforeHeadSha) {
+      const rangeCmd = `git log --reverse --format=${format} ${params.beforeHeadSha}..HEAD`;
+      const commits = await tryGitLog({ cmd: rangeCmd, includeSha: params.includeSha });
+      if (commits) return commits;
+    }
+
+    // Fallback: best-effort last-N commits.
+    if (typeof params.commitCountHint === "number" && params.commitCountHint > 0) {
+      const countCmd = `git log -n ${params.commitCountHint} --reverse --format=${format} HEAD`;
+      const commits = await tryGitLog({ cmd: countCmd, includeSha: params.includeSha });
+      if (commits) return commits;
+    }
+
+    return [];
+  }
+
   return tool({
     description: TOOL_DEFINITIONS.task_apply_git_patch.description,
     inputSchema: TOOL_DEFINITIONS.task_apply_git_patch.schema,
@@ -318,6 +410,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         }
 
         try {
+          const beforeHeadSha = await tryRevParseHead({ cwd: dryRunWorktreePath });
+
           const amCmd = `git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
           const amResult = await execBuffered(config.runtime, amCmd, {
             cwd: dryRunWorktreePath,
@@ -349,12 +443,19 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
             );
           }
 
+          const appliedCommits = await getAppliedCommits({
+            cwd: dryRunWorktreePath,
+            beforeHeadSha,
+            commitCountHint: artifact.commitCount,
+            includeSha: false,
+          });
+
           return parseToolResult(
             TaskApplyGitPatchToolResultSchema,
             {
               success: true as const,
               taskId,
-              appliedCommitCount: artifact.commitCount ?? 0,
+              appliedCommits,
               dryRun: true,
               note: mergeNotes(patchPathNote, "Dry run succeeded; no commits were applied."),
             },
@@ -441,6 +542,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         }
       }
 
+      const beforeHeadSha = await tryRevParseHead({ cwd: config.cwd });
+
       const amCmd = `git am ${flags.join(" ")} ${shellQuote(remotePatchPath)}`.trim();
       const amResult = await execBuffered(config.runtime, amCmd, { cwd: config.cwd, timeout: 300 });
 
@@ -469,19 +572,14 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         );
       }
 
-      let headCommitSha: string | undefined;
-      try {
-        const headResult = await execBuffered(config.runtime, "git rev-parse HEAD", {
-          cwd: config.cwd,
-          timeout: 10,
-        });
-        if (headResult.exitCode === 0) {
-          const sha = headResult.stdout.trim();
-          if (sha.length > 0) headCommitSha = sha;
-        }
-      } catch {
-        // ignore
-      }
+      const headCommitSha = await tryRevParseHead({ cwd: config.cwd });
+
+      const appliedCommits = await getAppliedCommits({
+        cwd: config.cwd,
+        beforeHeadSha,
+        commitCountHint: artifact.commitCount,
+        includeSha: true,
+      });
 
       if (!dryRun) {
         await markSubagentGitPatchArtifactApplied({
@@ -497,13 +595,9 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         {
           success: true as const,
           taskId,
-          appliedCommitCount: artifact.commitCount ?? 0,
+          appliedCommits,
           headCommitSha,
-          dryRun: dryRun ? true : undefined,
-          note: mergeNotes(
-            patchPathNote,
-            dryRun ? "Dry run succeeded; no commits were applied." : undefined
-          ),
+          note: mergeNotes(patchPathNote),
         },
         "task_apply_git_patch"
       );
