@@ -355,6 +355,8 @@ export function buildConversationShareMarkdown(options: {
     // NOTE: Real MuxMessage history often contains many sequential "text" parts (streaming deltas).
     // We want to preserve the exact text without inserting extra whitespace between chunks.
     let pendingText = "";
+    let pendingReasoning = "";
+
     const flushPendingText = () => {
       if (pendingText.trim().length === 0) {
         pendingText = "";
@@ -365,23 +367,33 @@ export function buildConversationShareMarkdown(options: {
       pendingText = "";
     };
 
+    const flushPendingReasoning = () => {
+      const reasoningBlock = buildReasoningBlock(pendingReasoning);
+      if (reasoningBlock) {
+        assistantBlocks.push(reasoningBlock);
+      }
+      pendingReasoning = "";
+    };
+
     for (const part of message.parts) {
       if (part.type === "text") {
+        // Reasoning can also stream in many small chunks; when we switch back to text, flush it.
+        flushPendingReasoning();
         pendingText += part.text;
         continue;
       }
 
       if (part.type === "reasoning") {
+        // Preserve full reasoning by concatenating streaming deltas (otherwise we render one
+        // <details> block per chunk, which displays as a giant list of single words).
         flushPendingText();
-        const reasoningBlock = buildReasoningBlock(part.text);
-        if (reasoningBlock) {
-          assistantBlocks.push(reasoningBlock);
-        }
+        pendingReasoning += part.text;
         continue;
       }
 
       if (part.type === "file") {
         flushPendingText();
+        flushPendingReasoning();
         assistantBlocks.push(
           buildFilePlaceholder({ filename: part.filename, mediaType: part.mediaType })
         );
@@ -390,6 +402,7 @@ export function buildConversationShareMarkdown(options: {
 
       if (part.type === "dynamic-tool") {
         flushPendingText();
+        flushPendingReasoning();
 
         let preview: { label: string; language: string; content: string } | undefined;
         if (
@@ -419,6 +432,7 @@ export function buildConversationShareMarkdown(options: {
     }
 
     flushPendingText();
+    flushPendingReasoning();
 
     const assistantContent = assistantBlocks.join("\n\n").trimEnd();
     if (assistantContent.trim().length > 0) {

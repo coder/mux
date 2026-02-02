@@ -149,6 +149,20 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).toContain("<summary>Secret reasoning</summary>");
     expect(md).not.toContain("<summary>Reasoning</summary>");
   });
+
+  test("concatenates streaming reasoning parts (no per-word <details>)", () => {
+    const muxMessages = [
+      createMuxMessage("a1", "assistant", "", undefined, [
+        { type: "reasoning" as const, text: "Inspect" },
+        { type: "reasoning" as const, text: "ing repository structure" },
+      ]),
+    ];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("<summary>Inspecting repository structure</summary>");
+    expect(md).not.toContain("<summary>Inspect</summary>");
+  });
   test("filters synthetic messages by default", () => {
     const muxMessages = [
       createMuxMessage("u1", "user", "Visible"),
