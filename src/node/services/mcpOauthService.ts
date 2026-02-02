@@ -50,7 +50,23 @@ interface OAuthFlowBase {
   flowId: string;
   projectPath: string;
   serverName: string;
-  serverUrl: string;
+
+  /**
+   * The configured MCP server URL (hash stripped), used for OAuth discovery/authorization.
+   *
+   * Important: Do NOT normalize trailing slashes here. Some servers rely on a trailing
+   * slash (e.g. /mcp/) so relative OAuth discovery URLs resolve under that base path.
+   */
+  serverUrlForDiscovery: string;
+
+  /**
+   * Normalized MCP server URL used only for credential keying and comparison.
+   *
+   * We treat /foo and /foo/ as equivalent for stored credentials, so we strip a
+   * non-root trailing slash.
+   */
+  serverUrlForStoreKey: string;
+
   transport: "http" | "sse" | "auto";
   startedAtMs: number;
 
@@ -109,6 +125,12 @@ function normalizeProjectPathKey(projectPath: string): string {
   return stripTrailingSlashes(projectPath);
 }
 
+/**
+ * Normalizes an MCP server URL only for keying/comparing stored credentials.
+ *
+ * Important: This MUST NOT be used for OAuth discovery/authorization requests.
+ * Removing a trailing slash changes how relative URLs resolve (e.g. /mcp vs /mcp/).
+ */
 function normalizeServerUrlForComparison(serverUrl: string): string | null {
   try {
     const url = new URL(serverUrl);
@@ -120,6 +142,28 @@ function normalizeServerUrlForComparison(serverUrl: string): string | null {
     if (url.pathname.endsWith("/") && url.pathname !== "/") {
       url.pathname = url.pathname.slice(0, -1);
     }
+
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sanitizes an MCP server URL for network requests.
+ *
+ * This intentionally does not normalize the pathname; we only strip the hash.
+ */
+function sanitizeServerUrlForRequest(serverUrl: string): string | null {
+  try {
+    const url = new URL(serverUrl);
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+
+    // Avoid accidental mismatch from an irrelevant hash.
+    url.hash = "";
 
     return url.toString();
   } catch {
@@ -159,8 +203,8 @@ export function parseBearerWwwAuthenticate(header: string): BearerChallenge | nu
 }
 
 async function probeServerForBearerChallenge(serverUrl: string): Promise<BearerChallenge | null> {
-  const normalizedUrl = normalizeServerUrlForComparison(serverUrl);
-  if (!normalizedUrl) {
+  const requestUrl = sanitizeServerUrlForRequest(serverUrl);
+  if (!requestUrl) {
     return null;
   }
 
@@ -173,7 +217,7 @@ async function probeServerForBearerChallenge(serverUrl: string): Promise<BearerC
   const timeout = setTimeout(() => abortController.abort(), 5_000);
 
   try {
-    const response = await fetch(normalizedUrl, {
+    const response = await fetch(requestUrl, {
       method: "GET",
       headers: {
         Accept: "text/event-stream",
@@ -469,7 +513,16 @@ export class McpOauthService {
     projectPath: string;
     serverName: string;
     pendingServer?: MCPOAuthPendingServerConfig;
-  }): Promise<Result<{ serverUrl: string; transport: "http" | "sse" | "auto" }, string>> {
+  }): Promise<
+    Result<
+      {
+        serverUrlForDiscovery: string;
+        serverUrlForStoreKey: string;
+        transport: "http" | "sse" | "auto";
+      },
+      string
+    >
+  > {
     if (input.pendingServer) {
       // Defensive: pendingServer comes from user input (add-server form), so validate.
       const transport = input.pendingServer.transport;
@@ -477,12 +530,17 @@ export class McpOauthService {
         return Err("OAuth is only supported for remote (http/sse) MCP servers");
       }
 
-      const normalizedServerUrl = normalizeServerUrlForComparison(input.pendingServer.url);
-      if (!normalizedServerUrl) {
+      const serverUrlForDiscovery = sanitizeServerUrlForRequest(input.pendingServer.url);
+      if (!serverUrlForDiscovery) {
         return Err("Invalid MCP server URL");
       }
 
-      return Ok({ serverUrl: normalizedServerUrl, transport });
+      const serverUrlForStoreKey = normalizeServerUrlForComparison(serverUrlForDiscovery);
+      if (!serverUrlForStoreKey) {
+        return Err("Invalid MCP server URL");
+      }
+
+      return Ok({ serverUrlForDiscovery, serverUrlForStoreKey, transport });
     }
 
     const servers = await this.mcpConfigService.listServers(input.projectPath);
@@ -495,12 +553,17 @@ export class McpOauthService {
       return Err("OAuth is only supported for remote (http/sse) MCP servers");
     }
 
-    const normalizedServerUrl = normalizeServerUrlForComparison(server.url);
-    if (!normalizedServerUrl) {
+    const serverUrlForDiscovery = sanitizeServerUrlForRequest(server.url);
+    if (!serverUrlForDiscovery) {
       return Err("Invalid MCP server URL");
     }
 
-    return Ok({ serverUrl: normalizedServerUrl, transport: server.transport });
+    const serverUrlForStoreKey = normalizeServerUrlForComparison(serverUrlForDiscovery);
+    if (!serverUrlForStoreKey) {
+      return Err("Invalid MCP server URL");
+    }
+
+    return Ok({ serverUrlForDiscovery, serverUrlForStoreKey, transport: server.transport });
   }
 
   async startDesktopFlow(input: {
@@ -513,7 +576,8 @@ export class McpOauthService {
       return Err(serverConfig.error);
     }
 
-    const normalizedServerUrl = serverConfig.data.serverUrl;
+    const serverUrlForDiscovery = serverConfig.data.serverUrlForDiscovery;
+    const serverUrlForStoreKey = serverConfig.data.serverUrlForStoreKey;
     const transport = serverConfig.data.transport;
 
     const projectKey = normalizeProjectPathKey(input.projectPath);
@@ -556,7 +620,6 @@ export class McpOauthService {
 
       void this.handleDesktopCallback({
         flowId,
-        serverUrl: normalizedServerUrl,
         code,
         error,
         errorDescription,
@@ -584,13 +647,14 @@ export class McpOauthService {
 
     // Best-effort probe for OAuth hints (scope/resource_metadata). If it fails,
     // @ai-sdk/mcp can still fall back to well-known discovery.
-    const challenge = await probeServerForBearerChallenge(normalizedServerUrl);
+    const challenge = await probeServerForBearerChallenge(serverUrlForDiscovery);
 
     const flow: DesktopFlow = {
       flowId,
       projectPath: projectKey,
       serverName: input.serverName,
-      serverUrl: normalizedServerUrl,
+      serverUrlForDiscovery,
+      serverUrlForStoreKey,
       transport,
       startedAtMs: Date.now(),
       clientInformation: null,
@@ -625,7 +689,7 @@ export class McpOauthService {
       const provider = this.createFlowProvider(flow);
 
       const result = await auth(provider, {
-        serverUrl: normalizedServerUrl,
+        serverUrl: serverUrlForDiscovery,
         scope: flow.scope,
         resourceMetadataUrl: flow.resourceMetadataUrl,
       });
@@ -701,7 +765,8 @@ export class McpOauthService {
       return Err(serverConfig.error);
     }
 
-    const normalizedServerUrl = serverConfig.data.serverUrl;
+    const serverUrlForDiscovery = serverConfig.data.serverUrlForDiscovery;
+    const serverUrlForStoreKey = serverConfig.data.serverUrlForStoreKey;
     const transport = serverConfig.data.transport;
 
     let redirectUri: URL;
@@ -723,13 +788,14 @@ export class McpOauthService {
 
     // Best-effort probe for OAuth hints (scope/resource_metadata). If it fails,
     // @ai-sdk/mcp can still fall back to well-known discovery.
-    const challenge = await probeServerForBearerChallenge(normalizedServerUrl);
+    const challenge = await probeServerForBearerChallenge(serverUrlForDiscovery);
 
     const flow: ServerFlow = {
       flowId,
       projectPath: projectKey,
       serverName: input.serverName,
-      serverUrl: normalizedServerUrl,
+      serverUrlForDiscovery,
+      serverUrlForStoreKey,
       transport,
       startedAtMs: Date.now(),
       clientInformation: null,
@@ -763,7 +829,7 @@ export class McpOauthService {
       const provider = this.createFlowProvider(flow);
 
       const result = await auth(provider, {
-        serverUrl: normalizedServerUrl,
+        serverUrl: serverUrlForDiscovery,
         scope: flow.scope,
         resourceMetadataUrl: flow.resourceMetadataUrl,
       });
@@ -899,7 +965,7 @@ export class McpOauthService {
         await this.saveTokens({
           projectKey: flow.projectPath,
           serverName: flow.serverName,
-          serverUrl: flow.serverUrl,
+          serverUrl: flow.serverUrlForStoreKey,
           tokens: tokens as unknown as MCPOAuthTokens,
         });
       },
@@ -950,7 +1016,7 @@ export class McpOauthService {
         await this.saveClientInformation({
           projectKey: flow.projectPath,
           serverName: flow.serverName,
-          serverUrl: flow.serverUrl,
+          serverUrl: flow.serverUrlForStoreKey,
           clientInformation: next,
         });
       },
@@ -1033,7 +1099,6 @@ export class McpOauthService {
 
   private async handleDesktopCallback(input: {
     flowId: string;
-    serverUrl: string;
     code: string | null;
     error: string | null;
     errorDescription?: string;
@@ -1101,7 +1166,7 @@ export class McpOauthService {
       const provider = this.createFlowProvider(flow);
 
       const result = await auth(provider, {
-        serverUrl: flow.serverUrl,
+        serverUrl: flow.serverUrlForDiscovery,
         authorizationCode: input.code,
         scope: flow.scope,
         resourceMetadataUrl: flow.resourceMetadataUrl,

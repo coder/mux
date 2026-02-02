@@ -307,4 +307,129 @@ describe("McpOauthService.startDesktopFlow", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  test("preserves trailing slashes for OAuth discovery under a base path", async () => {
+    let baseUrl = "";
+    let resourceMetadataUrl = "";
+    let authorizationServerBaseUrl = "";
+    const seenPaths: string[] = [];
+
+    const server = createServer((req, res) => {
+      void (async () => {
+        const pathname = (req.url ?? "/").split("?")[0];
+        seenPaths.push(pathname);
+
+        if (pathname === "/.well-known/oauth-authorization-server") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              issuer: authorizationServerBaseUrl,
+              authorization_endpoint: `${authorizationServerBaseUrl}authorize`,
+              token_endpoint: `${authorizationServerBaseUrl}token`,
+              registration_endpoint: `${authorizationServerBaseUrl}register`,
+              response_types_supported: ["code"],
+              code_challenge_methods_supported: ["S256"],
+            })
+          );
+          return;
+        }
+
+        if (pathname === "/register") {
+          let raw = "";
+          for await (const chunk of req) {
+            raw += Buffer.from(chunk as Uint8Array).toString("utf-8");
+          }
+
+          const clientMetadata = JSON.parse(raw) as Record<string, unknown>;
+
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              ...clientMetadata,
+              client_id: "test-client-id",
+            })
+          );
+          return;
+        }
+
+        if (pathname === "/mcp/.well-known/oauth-protected-resource") {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              resource: baseUrl,
+              authorization_servers: [authorizationServerBaseUrl],
+            })
+          );
+          return;
+        }
+
+        if (pathname === "/mcp/") {
+          // Default: act like an MCP server requiring OAuth.
+          res.statusCode = 401;
+          res.setHeader(
+            "WWW-Authenticate",
+            `Bearer scope="mcp.read" resource_metadata="${resourceMetadataUrl}"`
+          );
+          res.end("Unauthorized");
+          return;
+        }
+
+        // Anything outside of the configured /mcp/ base path should not be used.
+        res.statusCode = 404;
+        res.end("Not found");
+      })();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind OAuth test server");
+      }
+
+      authorizationServerBaseUrl = `http://127.0.0.1:${address.port}/`;
+      baseUrl = `${authorizationServerBaseUrl}mcp/`;
+      resourceMetadataUrl = `${baseUrl}.well-known/oauth-protected-resource`;
+
+      const serverName = "oauth-server-trailing-slash";
+
+      const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+        transport: "http",
+        url: baseUrl,
+      });
+      expect(addResult).toEqual({ success: true, data: undefined });
+
+      const startResult = await service.startDesktopFlow({ projectPath, serverName });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) {
+        throw new Error(startResult.error);
+      }
+
+      const authorizeUrl = new URL(startResult.data.authorizeUrl);
+      expect(authorizeUrl.searchParams.get("resource")).toBe(baseUrl);
+
+      // Ensure we hit the configured /mcp/ path (trailing slash required) and its resource_metadata.
+      expect(seenPaths).toContain("/mcp/");
+      expect(seenPaths).toContain("/mcp/.well-known/oauth-protected-resource");
+
+      // Stored credentials should continue to use a normalized URL for keying.
+      const storeRaw = await fs.readFile(getStoreFilePath(muxHome), "utf-8");
+      expect(JSON.parse(storeRaw)).toMatchObject({
+        version: 1,
+        entries: {
+          [projectPath]: {
+            [serverName]: {
+              serverUrl: baseUrl.slice(0, -1),
+            },
+          },
+        },
+      });
+
+      // Clean up the loopback listener (no callback will occur during this test).
+      await service.cancelDesktopFlow(startResult.data.flowId);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
 });
