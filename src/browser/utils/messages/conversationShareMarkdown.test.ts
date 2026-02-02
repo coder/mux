@@ -77,6 +77,65 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).not.toContain("<summary>Tool: file_read");
     expect(md).not.toContain('"file_path": "src/node/orpc/router.ts"');
   });
+
+  test("renders task tool calls as an expandable prompt", () => {
+    const taskTool = {
+      type: "dynamic-tool" as const,
+      toolCallId: "call-1",
+      toolName: "task",
+      input: {
+        agentId: "explore",
+        prompt: "**Task:** Find the MCP name field.\n\n**Deliverable:** Notes",
+        title: "Explore MCP name field in settings",
+        run_in_background: true,
+      },
+      state: "output-available" as const,
+      output: { status: "queued", taskId: "t1" },
+    } as unknown as MuxToolPart;
+
+    const muxMessages = [createMuxMessage("a1", "assistant", "", undefined, [taskTool])];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("<details>");
+    expect(md).toContain("Started background task - Explore MCP name field in settings");
+    expect(md).toContain("**Agent:** `explore`");
+    expect(md).toContain("**Task:** Find the MCP name field.");
+    expect(md).not.toContain('"prompt"');
+    expect(md).not.toContain('"title"');
+  });
+
+  test("renders todo_write tool calls as a checkbox list", () => {
+    const todoWriteTool = {
+      type: "dynamic-tool" as const,
+      toolCallId: "call-1",
+      toolName: "todo_write",
+      input: {
+        todos: [
+          {
+            content: "Reading current MCP server validation implementation",
+            status: "in_progress",
+          },
+          { content: "Add uniqueness validation for server name", status: "pending" },
+          { content: "Test the validation", status: "completed" },
+        ],
+      },
+      state: "output-available" as const,
+      output: { success: true },
+    } as unknown as MuxToolPart;
+
+    const muxMessages = [createMuxMessage("a1", "assistant", "", undefined, [todoWriteTool])];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("To do:");
+    expect(md).toContain(
+      "- [ ] Reading current MCP server validation implementation _(in progress)_"
+    );
+    expect(md).toContain("- [ ] Add uniqueness validation for server name");
+    expect(md).toContain("- [x] Test the validation");
+    expect(md).not.toContain('"todos"');
+  });
   test("includes file edit previews", () => {
     const diff = [
       "Index: src/foo.ts",
@@ -108,13 +167,16 @@ describe("buildConversationShareMarkdown", () => {
 
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
 
-    expect(md).not.toContain(
-      "<summary>Tool: file_edit_replace_string (output-available)</summary>"
-    );
-    expect(md).not.toContain("**Input**");
-    expect(md).not.toContain('"file_path": "src/foo.ts"');
-    expect(md).toContain("```diff");
-    expect(md).toContain("+new");
+    // File edit previews should be readable excerpts (not raw unified diffs).
+    expect(md).toContain("Edited src/foo.ts");
+    expect(md).toContain("```text");
+    expect(md).toContain("1 | new");
+    expect(md).not.toContain("Index:");
+    expect(md).not.toContain("@@");
+    expect(md).not.toContain("+++ ");
+    expect(md).not.toContain("--- ");
+    expect(md).not.toContain("+new");
+    expect(md).not.toContain("-old");
   });
 
   test("buildConversationShareConvoSummary counts prompts and file edits", () => {

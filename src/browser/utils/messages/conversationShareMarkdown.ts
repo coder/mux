@@ -207,6 +207,203 @@ function buildShellCommand(script: string): string {
   return `\`${trimmed}\``;
 }
 
+const UNIFIED_DIFF_HUNK_HEADER_REGEX = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+interface LineNumberedExcerptLine {
+  lineNumber: number | null;
+  content: string;
+}
+
+function buildLineNumberedExcerptFromUnifiedDiff(diff: string): string | null {
+  const excerpt: LineNumberedExcerptLine[] = [];
+  const lines = diff.split(/\r?\n/);
+
+  let newLineNumber: number | null = null;
+  let sawHunkHeader = false;
+
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      const match = UNIFIED_DIFF_HUNK_HEADER_REGEX.exec(line);
+      if (!match) {
+        newLineNumber = null;
+        continue;
+      }
+
+      const nextNewStart = parseInt(match[3], 10);
+      if (Number.isFinite(nextNewStart)) {
+        if (sawHunkHeader && excerpt.length > 0) {
+          excerpt.push({ lineNumber: null, content: "" });
+        }
+
+        sawHunkHeader = true;
+        newLineNumber = nextNewStart;
+      }
+
+      continue;
+    }
+
+    // Skip diff preambles and anything outside hunks.
+    if (!sawHunkHeader || newLineNumber === null) {
+      continue;
+    }
+
+    // Common unified-diff headers from our file_edit tools.
+    if (line.startsWith("Index:")) continue;
+    if (line.startsWith("diff --git ")) continue;
+    if (line.startsWith("====")) continue;
+    if (line.startsWith("---")) continue;
+    if (line.startsWith("+++")) continue;
+    if (line.startsWith("\\ No newline at end of file")) continue;
+
+    if (line.startsWith("+")) {
+      excerpt.push({ lineNumber: newLineNumber, content: line.slice(1) });
+      newLineNumber++;
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      excerpt.push({ lineNumber: newLineNumber, content: line.slice(1) });
+      newLineNumber++;
+      continue;
+    }
+
+    if (line.startsWith("-")) {
+      // Removed lines don't exist in the new file, so we omit them from the excerpt.
+      continue;
+    }
+
+    if (line.length === 0) {
+      excerpt.push({ lineNumber: newLineNumber, content: "" });
+      newLineNumber++;
+      continue;
+    }
+
+    // Fallback: keep unexpected lines to avoid silently dropping content.
+    excerpt.push({ lineNumber: newLineNumber, content: line });
+    newLineNumber++;
+  }
+
+  if (excerpt.length === 0) {
+    return null;
+  }
+
+  const numericLineNumbers = excerpt.flatMap((l) => (l.lineNumber === null ? [] : [l.lineNumber]));
+  const maxLineNumber = numericLineNumbers.length > 0 ? Math.max(...numericLineNumbers) : 1;
+  const width = String(maxLineNumber).length;
+
+  return excerpt
+    .map((l) => {
+      const prefix =
+        l.lineNumber === null ? " ".repeat(width) : String(l.lineNumber).padStart(width);
+      return `${prefix} | ${l.content}`;
+    })
+    .join("\n")
+    .trimEnd();
+}
+
+function buildFileEditPreview(options: { diff: string; filePath: string | null }): string | null {
+  const excerpt = buildLineNumberedExcerptFromUnifiedDiff(options.diff);
+  if (!excerpt) {
+    return null;
+  }
+
+  const header = options.filePath ? `Edited ${options.filePath}` : "Edited a file";
+  const { text } = truncateText(excerpt, MAX_TOOL_BLOCK_CHARS);
+  return [header, buildCodeBlock({ language: "text", content: text }).trimEnd()].join("\n");
+}
+
+function buildTaskToolBlockFromInput(input: unknown): string | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  const title = typeof input.title === "string" ? input.title.trim() : null;
+  const prompt = typeof input.prompt === "string" ? input.prompt : null;
+  const runInBackground =
+    typeof input.run_in_background === "boolean" ? input.run_in_background : null;
+
+  const agentId =
+    typeof input.agentId === "string"
+      ? input.agentId
+      : typeof input.subagent_type === "string"
+        ? input.subagent_type
+        : null;
+
+  if (!title && (!prompt || prompt.trim().length === 0)) {
+    return null;
+  }
+
+  const taskKind = runInBackground ? "background task" : "task";
+  const displayTitle = title && title.length > 0 ? title : "(untitled)";
+
+  // task prompts can be long; hide them behind a toggle.
+  const lines: string[] = [];
+  lines.push("<details>");
+  lines.push(`<summary>${escapeHtml(`Started ${taskKind} - ${displayTitle}`)}</summary>`);
+  lines.push("");
+
+  if (agentId && agentId.trim().length > 0) {
+    lines.push(`**Agent:** \`${agentId.trim()}\``);
+    lines.push("");
+  }
+
+  if (prompt && prompt.trim().length > 0) {
+    const { text } = truncateText(prompt.trimEnd(), MAX_TOOL_BLOCK_CHARS);
+    lines.push(text.trimEnd());
+  } else {
+    lines.push("_No prompt provided._");
+  }
+
+  lines.push("</details>");
+  return lines.join("\n");
+}
+
+function buildTodoWriteToolBlockFromInput(input: unknown): string | null {
+  if (!isRecord(input) || !Array.isArray(input.todos)) {
+    return null;
+  }
+
+  const todos: Array<{ content: string; status: string }> = [];
+  for (const rawTodo of input.todos) {
+    if (!isRecord(rawTodo) || typeof rawTodo.content !== "string") {
+      continue;
+    }
+
+    const status = typeof rawTodo.status === "string" ? rawTodo.status : "pending";
+    todos.push({ content: rawTodo.content, status });
+  }
+
+  if (todos.length === 0) {
+    return null;
+  }
+
+  const lines: string[] = [];
+  lines.push("To do:");
+
+  for (const todo of todos) {
+    switch (todo.status) {
+      case "completed": {
+        lines.push(`- [x] ${todo.content}`);
+        break;
+      }
+      case "in_progress": {
+        lines.push(`- [ ] ${todo.content} _(in progress)_`);
+        break;
+      }
+      case "pending": {
+        lines.push(`- [ ] ${todo.content}`);
+        break;
+      }
+      default: {
+        lines.push(`- [ ] ${todo.content} _(status: ${todo.status})_`);
+        break;
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function buildToolBlock(options: {
   toolName: string;
   state: "input-available" | "output-available";
@@ -464,7 +661,31 @@ export function buildConversationShareMarkdown(options: {
           continue;
         }
 
-        // For file edits, only include the diff preview (input is typically very noisy).
+        if (part.toolName === "task") {
+          assistantBlocks.push(
+            buildTaskToolBlockFromInput(part.input) ??
+              buildToolBlock({
+                toolName: part.toolName,
+                state: part.state,
+                input: part.input,
+              })
+          );
+          continue;
+        }
+
+        if (part.toolName === "todo_write") {
+          assistantBlocks.push(
+            buildTodoWriteToolBlockFromInput(part.input) ??
+              buildToolBlock({
+                toolName: part.toolName,
+                state: part.state,
+                input: part.input,
+              })
+          );
+          continue;
+        }
+
+        // For file edits, only include a small excerpt preview (input is typically very noisy).
         if (FILE_EDIT_TOOL_NAMES.has(part.toolName)) {
           let diff: string | null = null;
           if (part.state === "output-available" && "output" in part) {
@@ -474,11 +695,18 @@ export function buildConversationShareMarkdown(options: {
             }
           }
 
+          const filePath = getFilePathFromToolInput(part.input);
+
           if (diff) {
-            const { text } = truncateText(diff, MAX_TOOL_BLOCK_CHARS);
-            assistantBlocks.push(buildCodeBlock({ language: "diff", content: text }).trimEnd());
+            const preview = buildFileEditPreview({ diff, filePath });
+            if (preview) {
+              assistantBlocks.push(preview);
+            } else {
+              // Fallback: still include the raw diff, but truncate it aggressively.
+              const { text } = truncateText(diff, MAX_TOOL_BLOCK_CHARS);
+              assistantBlocks.push(buildCodeBlock({ language: "diff", content: text }).trimEnd());
+            }
           } else {
-            const filePath = getFilePathFromToolInput(part.input);
             assistantBlocks.push(filePath ? `Editing a file ${filePath}` : "Editing a file");
           }
 
