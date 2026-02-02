@@ -22,7 +22,8 @@ import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
-const COMPLETED_DESKTOP_FLOW_TTL_MS = 60 * 1000;
+const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
+const COMPLETED_FLOW_TTL_MS = 60 * 1000;
 const STORE_FILE_NAME = "mcp-oauth.json";
 
 interface McpOauthStoreFileV1 {
@@ -44,7 +45,7 @@ export interface BearerChallenge {
   resourceMetadataUrl?: URL;
 }
 
-interface DesktopFlow {
+interface OAuthFlowBase {
   flowId: string;
   projectPath: string;
   serverName: string;
@@ -55,8 +56,8 @@ interface DesktopFlow {
   /**
    * OAuth client information registered for this specific flow.
    *
-   * Loopback redirect ports are typically ephemeral, so we keep the per-flow
-   * client_id in memory for the subsequent authorization code exchange.
+   * We keep the per-flow client_id in memory for the subsequent authorization
+   * code exchange.
    */
   clientInformation: MCPOAuthClientInformation | null;
 
@@ -70,7 +71,6 @@ interface DesktopFlow {
   /** PKCE verifier for this flow (set by @ai-sdk/mcp auth()). */
   codeVerifier: string | null;
 
-  server: http.Server;
   timeout: ReturnType<typeof setTimeout>;
   cleanupTimeout: ReturnType<typeof setTimeout> | null;
 
@@ -78,6 +78,12 @@ interface DesktopFlow {
   resolveResult: (result: Result<void, string>) => void;
   settled: boolean;
 }
+
+interface DesktopFlow extends OAuthFlowBase {
+  server: http.Server;
+}
+
+type ServerFlow = OAuthFlowBase;
 
 function closeServer(server: http.Server): Promise<void> {
   return new Promise((resolve) => {
@@ -300,6 +306,7 @@ export class McpOauthService {
   private store: McpOauthStoreFileV1 | null = null;
 
   private readonly desktopFlows = new Map<string, DesktopFlow>();
+  private readonly serverFlows = new Map<string, ServerFlow>();
   private telemetryService?: TelemetryService;
 
   setTelemetryService(telemetryService: TelemetryService): void {
@@ -315,8 +322,14 @@ export class McpOauthService {
   }
 
   async dispose(): Promise<void> {
-    const flowIds = [...this.desktopFlows.keys()];
-    await Promise.all(flowIds.map((id) => this.finishDesktopFlow(id, Err("App shutting down"))));
+    // Best-effort: cancel all in-flight flows.
+    const desktopFlowIds = [...this.desktopFlows.keys()];
+    const serverFlowIds = [...this.serverFlows.keys()];
+
+    await Promise.all([
+      ...desktopFlowIds.map((id) => this.finishDesktopFlow(id, Err("App shutting down"))),
+      ...serverFlowIds.map((id) => this.finishServerFlow(id, Err("App shutting down"))),
+    ]);
 
     for (const flow of this.desktopFlows.values()) {
       clearTimeout(flow.timeout);
@@ -325,7 +338,15 @@ export class McpOauthService {
       }
     }
 
+    for (const flow of this.serverFlows.values()) {
+      clearTimeout(flow.timeout);
+      if (flow.cleanupTimeout !== null) {
+        clearTimeout(flow.cleanupTimeout);
+      }
+    }
+
     this.desktopFlows.clear();
+    this.serverFlows.clear();
   }
 
   async getAuthStatus(projectPath: string, serverName: string): Promise<MCPOAuthAuthStatus> {
@@ -568,7 +589,7 @@ export class McpOauthService {
 
     try {
       // Force a user-interactive flow by not exposing existing tokens.
-      const provider = this.createDesktopFlowProvider(flow);
+      const provider = this.createFlowProvider(flow);
 
       const result = await auth(provider, {
         serverUrl: normalizedServerUrl,
@@ -636,6 +657,181 @@ export class McpOauthService {
     await this.finishDesktopFlow(flowId, Err("OAuth flow cancelled"));
   }
 
+  async startServerFlow(input: {
+    projectPath: string;
+    serverName: string;
+    redirectUri: string;
+  }): Promise<Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>> {
+    const servers = await this.mcpConfigService.listServers(input.projectPath);
+    const server = servers[input.serverName];
+    if (!server) {
+      return Err("MCP server not found");
+    }
+
+    if (server.transport === "stdio") {
+      return Err("OAuth is only supported for remote (http/sse) MCP servers");
+    }
+
+    const normalizedServerUrl = normalizeServerUrlForComparison(server.url);
+    if (!normalizedServerUrl) {
+      return Err("Invalid MCP server URL");
+    }
+
+    let redirectUri: URL;
+    try {
+      redirectUri = new URL(input.redirectUri);
+    } catch {
+      return Err("Invalid OAuth redirect URI");
+    }
+
+    if (redirectUri.protocol !== "http:" && redirectUri.protocol !== "https:") {
+      return Err("OAuth redirect URI must be http(s)");
+    }
+
+    const projectKey = normalizeProjectPathKey(input.projectPath);
+
+    const flowId = crypto.randomUUID();
+    const { promise: resultPromise, resolve: resolveResult } =
+      createDeferred<Result<void, string>>();
+
+    // Best-effort probe for OAuth hints (scope/resource_metadata). If it fails,
+    // @ai-sdk/mcp can still fall back to well-known discovery.
+    const challenge = await probeServerForBearerChallenge(normalizedServerUrl);
+
+    const flow: ServerFlow = {
+      flowId,
+      projectPath: projectKey,
+      serverName: input.serverName,
+      serverUrl: normalizedServerUrl,
+      transport: server.transport,
+      startedAtMs: Date.now(),
+      clientInformation: null,
+      authorizeUrl: "",
+      redirectUri: redirectUri.toString(),
+      scope: challenge?.scope,
+      resourceMetadataUrl: challenge?.resourceMetadataUrl,
+      codeVerifier: null,
+      timeout: setTimeout(() => {
+        void this.finishServerFlow(flowId, Err("Timed out waiting for OAuth callback"));
+      }, DEFAULT_SERVER_TIMEOUT_MS),
+      cleanupTimeout: null,
+      resultPromise,
+      resolveResult,
+      settled: false,
+    };
+
+    this.serverFlows.set(flowId, flow);
+
+    this.captureTelemetry({
+      event: "mcp_oauth_flow_started",
+      properties: {
+        transport: flow.transport,
+        has_scope_hint: Boolean(flow.scope),
+        has_resource_metadata_hint: Boolean(flow.resourceMetadataUrl),
+      },
+    });
+
+    try {
+      // Force a user-interactive flow by not exposing existing tokens.
+      const provider = this.createFlowProvider(flow);
+
+      const result = await auth(provider, {
+        serverUrl: normalizedServerUrl,
+        scope: flow.scope,
+        resourceMetadataUrl: flow.resourceMetadataUrl,
+      });
+
+      if (result !== "REDIRECT" || !flow.authorizeUrl) {
+        await this.finishServerFlow(flowId, Err("Failed to start OAuth authorization"));
+        return Err("Failed to start OAuth authorization");
+      }
+
+      log.debug("[MCP OAuth] Server flow started", {
+        flowId,
+        projectPath: projectKey,
+        serverName: input.serverName,
+      });
+
+      return Ok({ flowId, authorizeUrl: flow.authorizeUrl, redirectUri: flow.redirectUri });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.finishServerFlow(flowId, Err(message));
+      return Err(message);
+    }
+  }
+
+  async waitForServerFlow(
+    flowId: string,
+    opts?: { timeoutMs?: number }
+  ): Promise<Result<void, string>> {
+    const flow = this.serverFlows.get(flowId);
+    if (!flow) {
+      return Err("OAuth flow not found");
+    }
+
+    const timeoutMs = opts?.timeoutMs ?? DEFAULT_SERVER_TIMEOUT_MS;
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<Result<void, string>>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        resolve(Err("Timed out waiting for OAuth callback"));
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([flow.resultPromise, timeoutPromise]);
+
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
+
+    if (!result.success) {
+      void this.finishServerFlow(flowId, result);
+    }
+
+    return result;
+  }
+
+  async cancelServerFlow(flowId: string): Promise<void> {
+    const flow = this.serverFlows.get(flowId);
+    if (!flow) return;
+
+    log.debug("[MCP OAuth] Server flow cancelled", { flowId });
+    await this.finishServerFlow(flowId, Err("OAuth flow cancelled"));
+  }
+
+  async handleServerCallbackAndExchange(input: {
+    state: string | null;
+    code: string | null;
+    error: string | null;
+    errorDescription?: string;
+  }): Promise<Result<void, string>> {
+    const state = input.state;
+    if (!state) {
+      return Err("Missing OAuth state");
+    }
+
+    const flow = this.serverFlows.get(state);
+    if (!flow) {
+      return Err("Unknown OAuth state");
+    }
+
+    if (flow.settled) {
+      return Err("OAuth flow already completed");
+    }
+
+    log.debug("[MCP OAuth] Server callback received", { flowId: state });
+
+    const result = await this.exchangeAuthorizationCode(flow, {
+      code: input.code,
+      error: input.error,
+      errorDescription: input.errorDescription,
+    });
+
+    await this.finishServerFlow(state, result);
+
+    return result;
+  }
+
   private captureTelemetry(payload: Parameters<TelemetryService["capture"]>[0]): void {
     try {
       this.telemetryService?.capture(payload);
@@ -669,7 +865,7 @@ export class McpOauthService {
     return "unknown";
   }
 
-  private createDesktopFlowProvider(flow: DesktopFlow): OAuthClientProvider {
+  private createFlowProvider(flow: OAuthFlowBase): OAuthClientProvider {
     return {
       tokens: () => Promise.resolve(undefined),
       saveTokens: async (tokens) => {
@@ -715,8 +911,9 @@ export class McpOauthService {
         };
       },
       clientInformation: () => {
-        // We intentionally re-register the OAuth client per desktop flow because
-        // loopback redirect ports are typically ephemeral.
+        // We intentionally register an OAuth client per interactive flow because the
+        // redirect URI may vary between environments (desktop loopback ports, proxied
+        // server origins, etc.).
         return Promise.resolve(flow.clientInformation ?? undefined);
       },
       saveClientInformation: async (clientInformation) => {
@@ -859,7 +1056,7 @@ export class McpOauthService {
   }
 
   private async exchangeAuthorizationCode(
-    flow: DesktopFlow,
+    flow: OAuthFlowBase,
     input: { code: string | null; error: string | null; errorDescription?: string }
   ): Promise<Result<void, string>> {
     if (input.error) {
@@ -874,7 +1071,7 @@ export class McpOauthService {
     }
 
     try {
-      const provider = this.createDesktopFlowProvider(flow);
+      const provider = this.createFlowProvider(flow);
 
       const result = await auth(provider, {
         serverUrl: flow.serverUrl,
@@ -944,8 +1141,60 @@ export class McpOauthService {
       }
       flow.cleanupTimeout = setTimeout(() => {
         this.desktopFlows.delete(flowId);
-      }, COMPLETED_DESKTOP_FLOW_TTL_MS);
+      }, COMPLETED_FLOW_TTL_MS);
     }
+  }
+
+  private finishServerFlow(flowId: string, result: Result<void, string>): Promise<void> {
+    const flow = this.serverFlows.get(flowId);
+    if (!flow || flow.settled) {
+      return Promise.resolve();
+    }
+
+    flow.settled = true;
+    clearTimeout(flow.timeout);
+
+    const durationMs = Math.max(0, Date.now() - flow.startedAtMs);
+    const durationMsB2 = roundToBase2(durationMs);
+    const hasScopeHint = Boolean(flow.scope);
+    const hasResourceMetadataHint = Boolean(flow.resourceMetadataUrl);
+
+    if (result.success) {
+      this.captureTelemetry({
+        event: "mcp_oauth_flow_completed",
+        properties: {
+          transport: flow.transport,
+          duration_ms_b2: durationMsB2,
+          has_scope_hint: hasScopeHint,
+          has_resource_metadata_hint: hasResourceMetadataHint,
+        },
+      });
+    } else {
+      const errorCategory = this.getOAuthFlowErrorCategory(result.error);
+      this.captureTelemetry({
+        event: "mcp_oauth_flow_failed",
+        properties: {
+          transport: flow.transport,
+          duration_ms_b2: durationMsB2,
+          has_scope_hint: hasScopeHint,
+          has_resource_metadata_hint: hasResourceMetadataHint,
+          error_category: errorCategory,
+        },
+      });
+    }
+
+    try {
+      flow.resolveResult(result);
+    } finally {
+      if (flow.cleanupTimeout !== null) {
+        clearTimeout(flow.cleanupTimeout);
+      }
+      flow.cleanupTimeout = setTimeout(() => {
+        this.serverFlows.delete(flowId);
+      }, COMPLETED_FLOW_TTL_MS);
+    }
+
+    return Promise.resolve();
   }
 
   private async getValidStoredCredentials(input: {

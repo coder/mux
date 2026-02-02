@@ -330,6 +330,123 @@ export async function createOrpcServer({
     res.send(html);
   });
 
+  // --- MCP OAuth (unauthenticated redirect callback) ---
+  // The OAuth provider cannot attach a mux Bearer token during redirects.
+  app.get("/auth/mcp-oauth/callback", async (req, res) => {
+    const state = typeof req.query.state === "string" ? req.query.state : null;
+    const code = typeof req.query.code === "string" ? req.query.code : null;
+    const error = typeof req.query.error === "string" ? req.query.error : null;
+    const errorDescription =
+      typeof req.query.error_description === "string" ? req.query.error_description : undefined;
+
+    const result = await context.mcpOauthService.handleServerCallbackAndExchange({
+      state,
+      code,
+      error,
+      errorDescription,
+    });
+
+    const payload = {
+      type: "mcp-oauth",
+      state,
+      ok: result.success,
+      error: result.success ? null : result.error,
+    };
+
+    const payloadJson = escapeJsonForHtmlScript(payload);
+
+    const title = result.success ? "Login complete" : "Login failed";
+    const description = result.success
+      ? "You can return to Mux. You may now close this tab."
+      : payload.error
+        ? escapeHtml(payload.error)
+        : "An unknown error occurred.";
+
+    const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0e0e0e" />
+    <title>${title}</title>
+    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <div class="container">
+          <div class="header-title">mux</div>
+        </div>
+      </header>
+
+      <main class="site-main">
+        <div class="container">
+          <div class="content-surface">
+            <h1>${title}</h1>
+            <p>${description}</p>
+            ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
+            <p><a class="btn primary" href="/">Return to Mux</a></p>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script>
+      (() => {
+        const payload = ${payloadJson};
+        const ok = payload.ok === true;
+
+        try {
+          if (window.opener && typeof window.opener.postMessage === "function") {
+            window.opener.postMessage(payload, "*");
+          }
+        } catch {
+          // Ignore postMessage failures.
+        }
+
+        if (!ok) {
+          return;
+        }
+
+        try {
+          if (window.opener && typeof window.opener.focus === "function") {
+            window.opener.focus();
+          }
+        } catch {
+          // Ignore focus failures.
+        }
+
+        try {
+          window.close();
+        } catch {
+          // Ignore close failures.
+        }
+
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch {
+            // Ignore close failures.
+          }
+        }, 50);
+
+        setTimeout(() => {
+          try {
+            window.location.replace("/");
+          } catch {
+            // Ignore navigation failures.
+          }
+        }, 150);
+      })();
+    </script>
+  </body>
+</html>`;
+
+    res.status(result.success ? 200 : 400);
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  });
   const orpcRouter = existingRouter ?? router(authToken);
 
   // OpenAPI generator for spec endpoint

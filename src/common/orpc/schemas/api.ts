@@ -312,6 +312,35 @@ export const projects = {
       input: z.object({ flowId: z.string() }).strict(),
       output: z.void(),
     },
+    startServerFlow: {
+      input: z
+        .object({
+          projectPath: z.string(),
+          serverName: z.string(),
+        })
+        .strict(),
+      output: ResultSchema(
+        z.object({
+          flowId: z.string(),
+          authorizeUrl: z.string(),
+          redirectUri: z.string(),
+        }),
+        z.string()
+      ),
+    },
+    waitForServerFlow: {
+      input: z
+        .object({
+          flowId: z.string(),
+          timeoutMs: z.number().int().positive().optional(),
+        })
+        .strict(),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    cancelServerFlow: {
+      input: z.object({ flowId: z.string() }).strict(),
+      output: z.void(),
+    },
     getAuthStatus: {
       input: z
         .object({
