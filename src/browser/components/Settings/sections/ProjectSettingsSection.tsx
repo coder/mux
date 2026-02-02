@@ -190,7 +190,12 @@ interface MCPOAuthAuthStatus {
 type MCPOAuthAPI = NonNullable<ReturnType<typeof useAPI>["api"]>["projects"]["mcpOauth"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  // In dev-server (browser) mode, the ORPC client can surface namespaces/procedures as Proxy
+  // functions (callable objects). Treat functions as record-like so runtime guards don't
+  // incorrectly report "OAuth is not available".
+  if (value === null) return false;
+  const type = typeof value;
+  return type === "object" || type === "function";
 }
 
 /**
