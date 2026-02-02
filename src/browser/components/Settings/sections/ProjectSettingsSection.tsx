@@ -368,14 +368,15 @@ function useMCPOAuthLogin(input: {
 
       // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
       // In browser mode, this opens a new tab/window.
-      const popup = window.open(authorizeUrl, "_blank", "noopener");
-
-      if (!isDesktop && popup === null) {
-        setLoginStatus("error");
-        setLoginError("If your browser blocked the popup, allow popups and try again.");
-        setFlowId(null);
-        void mcpOauthApi.cancelServerFlow({ flowId: nextFlowId });
-        return;
+      //
+      // NOTE: In some browsers (especially when using `noopener`), `window.open()` may return null even when
+      // the tab opens successfully. Do not treat a null return value as a failure signal; keep the OAuth flow
+      // alive and show guidance to the user while we wait.
+      try {
+        window.open(authorizeUrl, "_blank", "noopener");
+      } catch {
+        // Popups can be blocked or restricted by the browser. The user can cancel and retry after allowing
+        // popups; we intentionally do not auto-cancel the server flow here.
       }
 
       if (attempt !== loginAttemptRef.current) {
@@ -466,9 +467,17 @@ const MCPOAuthRequiredCallout: React.FC<{
           {disabledReason && <p className="text-muted mt-0.5">{disabledReason}</p>}
 
           {loginStatus === "waiting" && (
-            <p className="text-muted mt-0.5">
-              Finish the login flow in your browser, then return here.
-            </p>
+            <>
+              <p className="text-muted mt-0.5">
+                Finish the login flow in your browser, then return here.
+              </p>
+              {!isDesktop && (
+                <p className="text-muted mt-0.5">
+                  If a new tab didn&apos;t open, your browser may have blocked the popup. Allow
+                  popups and try again.
+                </p>
+              )}
+            </>
           )}
 
           {loginStatus === "success" && <p className="text-muted mt-0.5">Logged in.</p>}
