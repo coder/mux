@@ -258,7 +258,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
     const triggerClassName = isBoxVariant
       ? cn("border-border-medium h-9 flex-1 min-w-0 rounded border", className)
-      : "w-[160px] bg-background rounded-sm text-[11px]";
+      : "w-32 bg-background rounded-sm text-[11px]";
 
     const hasValue = value.trim().length > 0;
     const selectedProvider = hasValue ? getModelProvider(value) : "";
@@ -325,7 +325,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               type="button"
               className={cn(
                 triggerClassName,
-                "text-foreground hover:bg-hover flex cursor-pointer justify-between px-2 transition-colors duration-300"
+                "text-foreground hover:bg-hover flex cursor-pointer items-center justify-between gap-1 px-1.5 py-0.5 transition-colors duration-300"
               )}
               role="combobox"
               aria-expanded={isOpen}
@@ -352,7 +352,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
         {isOpen && (
           <div className="bg-dark border-border absolute bottom-full left-0 z-[1020] mb-1 w-82 overflow-hidden rounded-md border shadow-md">
             {/* Search input */}
-            <div className="border-border border-b px-2 py-1.5">
+            <div className="border-border border-b px-2 py-1">
               <input
                 ref={inputRef}
                 type="text"
@@ -376,7 +376,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     data-highlighted={index === highlightedIndex}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     className={cn(
-                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-xs cursor-pointer",
+                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
                       index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
                       hiddenSet.has(model) && "opacity-50"
                     )}
@@ -502,7 +502,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
             {/* Footer actions (last row in dropdown) */}
             {(hiddenModels.length > 0 || onOpenSettings) && (
-              <div className="border-border flex flex-col gap-1 border-t px-2 py-1.5">
+              <div className="border-border flex flex-col gap-1 border-t px-2 py-1">
                 {hiddenModels.length > 0 && (
                   <button
                     type="button"

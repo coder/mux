@@ -1,28 +1,22 @@
-import React, { useId } from "react";
+import React from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { cn } from "@/common/lib/utils";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
-// Glow is applied via CSS using color-mix with the theme color
 const BASE_THINKING_LEVELS: ThinkingLevel[] = THINKING_LEVELS.filter((level) => level !== "xhigh");
 
-const GLOW_INTENSITIES: Record<number, { track: string; thumb: string }> = {
-  0: { track: "none", thumb: "none" },
-  1: {
-    track: "0 0 6px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
-    thumb: "0 0 4px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
-  },
-  2: {
-    track: "0 0 6px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
-    thumb: "0 0 4px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
-  },
-  3: {
-    track: "0 0 6px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
-    thumb: "0 0 4px 1px color-mix(in srgb, var(--color-thinking-mode) 30%, transparent)",
-  },
+// Display labels (shortened for space)
+const DISPLAY_LABELS: Record<ThinkingLevel, string> = {
+  off: "OFF",
+  low: "LOW",
+  medium: "MED",
+  high: "HIGH",
+  xhigh: "MAX",
 };
 
 // Text styling based on level (n: 0-3)
@@ -32,8 +26,6 @@ const getTextStyle = (n: number): React.CSSProperties => {
     return {
       color: "var(--color-text-secondary)",
       fontWeight: 400,
-      textShadow: "none",
-      fontSize: "10px",
     };
   }
 
@@ -44,20 +36,6 @@ const getTextStyle = (n: number): React.CSSProperties => {
   return {
     color: n === 1 ? "var(--color-thinking-mode-light)" : "var(--color-thinking-mode)",
     fontWeight,
-    textShadow: "none",
-    fontSize: "10px",
-  };
-};
-
-const getSliderStyles = (value: number, isHover = false) => {
-  const effectiveValue = isHover ? Math.min(value + 1, 3) : value;
-  // Use CSS variable for thumb color when active
-  const thumbBg = value === 0 ? "var(--color-text-secondary)" : "var(--color-thinking-mode)";
-
-  return {
-    trackShadow: GLOW_INTENSITIES[effectiveValue].track,
-    thumbShadow: GLOW_INTENSITIES[effectiveValue].thumb,
-    thumbBg,
   };
 };
 
@@ -67,34 +45,55 @@ interface ThinkingControlProps {
 
 export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelString }) => {
   const [thinkingLevel, setThinkingLevel] = useThinkingLevel();
-  const [isHovering, setIsHovering] = React.useState(false);
-  const sliderId = useId();
   const allowed = getThinkingPolicyForModel(modelString);
   const effectiveThinkingLevel = enforceThinkingPolicy(modelString, thinkingLevel);
 
+  // Map current level to index within the *allowed* subset
+  const currentIndex = allowed.indexOf(effectiveThinkingLevel);
+
+  // Map levels to visual intensity indices (0-3) so colors stay consistent
+  const visualValue = (() => {
+    const idx = BASE_THINKING_LEVELS.indexOf(effectiveThinkingLevel);
+    if (idx >= 0) return idx;
+    return BASE_THINKING_LEVELS.length - 1; // clamp extras (e.g., xhigh) to strongest
+  })();
+
+  const textStyle = getTextStyle(visualValue);
+
+  const canGoLeft = currentIndex > 0;
+  const canGoRight = currentIndex < allowed.length - 1;
+
+  const goLeft = () => {
+    if (canGoLeft) {
+      setThinkingLevel(allowed[currentIndex - 1]);
+    }
+  };
+
+  const goRight = () => {
+    if (canGoRight) {
+      setThinkingLevel(allowed[currentIndex + 1]);
+    }
+  };
+
+  const displayLabel = DISPLAY_LABELS[effectiveThinkingLevel];
+
+  // Single-option policy: render non-interactive badge
   if (allowed.length <= 1) {
-    // Render non-interactive badge for single-option policies with explanatory tooltip
-    // or if no options are available (shouldn't happen given policy types)
     const fixedLevel = allowed[0] || "off";
-    // Calculate style based on "standard" levels for consistency
     const standardIndex = BASE_THINKING_LEVELS.indexOf(fixedLevel);
     const value = standardIndex === -1 ? 0 : standardIndex;
-
-    const formattedLevel = fixedLevel === "off" ? "Off" : fixedLevel;
-    const tooltipMessage = `Model ${modelString} locks thinking at ${formattedLevel.toUpperCase()} to match its capabilities.`;
-    const textStyle = getTextStyle(value);
+    const tooltipMessage = `Model ${modelString} locks thinking at ${DISPLAY_LABELS[fixedLevel]} to match its capabilities.`;
 
     return (
       <Tooltip>
         <TooltipTrigger asChild>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center">
             <span
-              className="min-w-11 uppercase transition-all duration-200 select-none"
-              style={textStyle}
-              aria-live="polite"
+              className="w-[4ch] text-center text-[11px] select-none"
+              style={getTextStyle(value)}
               aria-label={`Thinking level fixed to ${fixedLevel}`}
             >
-              {fixedLevel}
+              {DISPLAY_LABELS[fixedLevel]}
             </span>
           </div>
         </TooltipTrigger>
@@ -103,97 +102,45 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
     );
   }
 
-  // Map current level to index within the *allowed* subset
-  const currentIndex = allowed.indexOf(effectiveThinkingLevel);
-  const sliderValue = currentIndex === -1 ? 0 : currentIndex;
-  const maxSteps = allowed.length - 1;
-
-  // Map levels to visual intensity indices (0-3) so colors/glow stay consistent
-  // Levels outside the base 4 (e.g., xhigh) map to the strongest intensity
-  const baseVisualOrder = BASE_THINKING_LEVELS;
-  const visualValue = (() => {
-    const idx = baseVisualOrder.indexOf(effectiveThinkingLevel);
-    if (idx >= 0) return idx;
-    return baseVisualOrder.length - 1; // clamp extras (e.g., xhigh) to strongest glow
-  })();
-
-  const sliderStyles = getSliderStyles(visualValue, isHovering);
-  const textStyle = getTextStyle(visualValue);
-
-  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const index = parseInt(e.target.value, 10);
-
-    // Guard against programmatic value updates (e.g., when a model change clamps
-    // the effective thinking level). In those cases the slider's controlled value
-    // already matches the event value, and we should not overwrite the user's
-    // preferred level.
-    if (index === sliderValue) {
-      return;
-    }
-
-    const newLevel = allowed[index];
-    if (newLevel) {
-      handleThinkingLevelChange(newLevel);
-    }
-  };
-
-  const handleThinkingLevelChange = (newLevel: ThinkingLevel) => {
-    setThinkingLevel(newLevel);
-  };
-
-  // Cycle through allowed thinking levels
-  const cycleThinkingLevel = () => {
-    const nextIndex = (currentIndex + 1) % allowed.length;
-    handleThinkingLevelChange(allowed[nextIndex]);
-  };
-
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="flex items-center gap-2">
-          {/*
-            Remount on model changes so range clamping doesn't emit an onChange
-            that overwrites the user's preferred thinking level.
-          */}
-          <input
-            key={modelString}
-            type="range"
-            min="0"
-            max={maxSteps}
-            step="1"
-            value={sliderValue}
-            onChange={handleSliderChange}
-            onMouseEnter={() => setIsHovering(true)}
-            onMouseLeave={() => setIsHovering(false)}
-            id={sliderId}
-            role="slider"
-            aria-valuemin={0}
-            aria-valuemax={maxSteps}
-            aria-valuenow={sliderValue}
-            aria-valuetext={effectiveThinkingLevel}
-            aria-label="Thinking level"
-            className="thinking-slider"
-            style={
-              {
-                "--track-shadow": sliderStyles.trackShadow,
-                "--thumb-shadow": sliderStyles.thumbShadow,
-                "--thumb-bg": sliderStyles.thumbBg,
-              } as React.CSSProperties
-            }
-          />
+        <div className="flex items-center">
           <button
             type="button"
-            onClick={cycleThinkingLevel}
-            className="flex cursor-pointer items-center border-none bg-transparent p-0"
-            aria-label={`Thinking level: ${effectiveThinkingLevel}. Click to cycle.`}
+            onClick={goLeft}
+            disabled={!canGoLeft}
+            className={cn(
+              "flex h-4 w-4 items-center justify-center rounded-sm transition-colors",
+              canGoLeft
+                ? "text-muted hover:bg-hover hover:text-foreground cursor-pointer"
+                : "text-muted/30 cursor-default"
+            )}
+            aria-label="Decrease thinking level"
           >
-            <span
-              className="min-w-11 uppercase transition-all duration-200 select-none"
-              style={textStyle}
-              aria-live="polite"
-            >
-              {effectiveThinkingLevel}
-            </span>
+            <ChevronLeft className="h-3 w-3" />
+          </button>
+          <span
+            className="w-[4ch] text-center text-[11px] transition-all duration-200 select-none"
+            style={textStyle}
+            aria-live="polite"
+            aria-label={`Thinking level: ${effectiveThinkingLevel}`}
+          >
+            {displayLabel}
+          </span>
+          <button
+            type="button"
+            onClick={goRight}
+            disabled={!canGoRight}
+            className={cn(
+              "flex h-4 w-4 items-center justify-center rounded-sm transition-colors",
+              canGoRight
+                ? "text-muted hover:bg-hover hover:text-foreground cursor-pointer"
+                : "text-muted/30 cursor-default"
+            )}
+            aria-label="Increase thinking level"
+          >
+            <ChevronRight className="h-3 w-3" />
           </button>
         </div>
       </TooltipTrigger>
