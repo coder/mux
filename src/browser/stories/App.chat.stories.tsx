@@ -988,22 +988,9 @@ export const ModelSelectorDropdownOpen: AppStory = {
     // Click to open the selector (enters editing mode, shows dropdown)
     await userEvent.click(modelSelector);
 
-    // Wait for the dropdown to appear - it has the class pattern "overflow-y-auto" and "min-w-80"
-    await waitFor(
-      () => {
-        const dropdown = canvasElement.querySelector(
-          ".min-w-80.overflow-y-auto, .overflow-y-auto.min-w-80"
-        );
-        if (!dropdown) {
-          // Alternative: look for the dropdown by structure
-          const dropdownAlt = canvasElement.querySelector(
-            '[class*="overflow-y-auto"][class*="min-w-80"]'
-          );
-          if (!dropdownAlt) throw new Error("Model selector dropdown not found");
-        }
-      },
-      { timeout: 3000 }
-    );
+    // Wait for the dropdown to appear. The dropdown is rendered inline (not via Radix Portal),
+    // so the search input is a reliable signal that it opened.
+    await canvas.findByPlaceholderText(/Search \[provider:model-name\]/i, {}, { timeout: 3000 });
 
     // Double RAF for visual stability after dropdown renders
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
