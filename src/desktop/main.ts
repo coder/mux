@@ -28,9 +28,12 @@ import {
   BrowserWindow,
   ipcMain as electronIpcMain,
   Menu,
-  shell,
+  Tray,
   dialog,
+  nativeImage,
+  nativeTheme,
   screen,
+  shell,
 } from "electron";
 
 // Increase renderer V8 heap limit from default ~4GB to 8GB.
@@ -156,6 +159,7 @@ if (!gotTheLock) {
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
 
 /**
  * Format timestamp as HH:MM:SS.mmm for readable logging
@@ -241,6 +245,111 @@ function createMenu() {
 
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
+}
+
+/**
+ * System tray (Windows/Linux) / menu bar (macOS) icon.
+ *
+ * - macOS: use a template image (always the black asset) so the system
+ *   automatically adapts to light/dark menu bar appearances.
+ * - Windows/Linux: switch between black/white assets based on the OS theme.
+ *
+ * Tray icon assets are expected in the built dist root (copied from /public),
+ * alongside splash.html.
+ */
+function getTrayIconPath(): string {
+  if (process.platform === "darwin") {
+    return path.join(__dirname, "../tray-icon-black.png");
+  }
+
+  const fileName = nativeTheme.shouldUseDarkColors ? "tray-icon-white.png" : "tray-icon-black.png";
+  return path.join(__dirname, `../${fileName}`);
+}
+
+function loadTrayIconImage() {
+  const iconPath = getTrayIconPath();
+  const image = nativeImage.createFromPath(iconPath);
+
+  if (image.isEmpty()) {
+    console.warn(`[${timestamp()}] [tray] Tray icon missing or unreadable: ${iconPath}`);
+    return null;
+  }
+
+  if (process.platform === "darwin") {
+    image.setTemplateImage(true);
+  }
+
+  return image;
+}
+
+function openMuxFromTray() {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  // On macOS the app stays open after all windows are closed; recreate the window.
+  if (process.platform === "darwin") {
+    if (!services) {
+      console.warn(`[${timestamp()}] [tray] Cannot open mux (services not loaded yet)`);
+      return;
+    }
+
+    createWindow();
+  }
+}
+
+function updateTrayIcon() {
+  if (!tray) return;
+
+  const image = loadTrayIconImage();
+  if (!image) {
+    return;
+  }
+
+  tray.setImage(image);
+}
+
+function createTray() {
+  if (tray) return;
+
+  const image = loadTrayIconImage();
+  if (!image) {
+    console.warn(`[${timestamp()}] [tray] Skipping tray creation (icon unavailable)`);
+    return;
+  }
+
+  try {
+    tray = new Tray(image);
+  } catch (error) {
+    console.warn(`[${timestamp()}] [tray] Failed to create tray:`, error);
+    tray = null;
+    return;
+  }
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: "Open mux",
+      click: () => {
+        openMuxFromTray();
+      },
+    },
+    {
+      label: "Exit",
+      click: () => {
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(menu);
+
+  // Best-effort: update tray icon when OS appearance changes.
+  nativeTheme.on("updated", () => {
+    updateTrayIcon();
+  });
 }
 
 /**
@@ -674,6 +783,7 @@ if (gotTheLock) {
       }
       await loadServices();
       createWindow();
+      createTray();
       // Note: splash closes in ready-to-show event handler
 
       // Tokenizer modules load in background after did-finish-load event (see createWindow())
