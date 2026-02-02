@@ -37,6 +37,8 @@ interface UseResizableSidebarOptions {
   minWidth: number;
   /** Maximum allowed width (enforced during drag) */
   maxWidth: number;
+  /** Optional dynamic max width resolver (e.g., based on viewport size) */
+  getMaxWidthPx?: () => number;
   /** localStorage key for persisting width across sessions */
   storageKey: string;
   /** Which side of the viewport the sidebar is on. Impacts drag direction. */
@@ -59,24 +61,38 @@ export function useResizableSidebar({
   defaultWidth,
   minWidth,
   maxWidth,
+  getMaxWidthPx,
   storageKey,
   side = "right",
 }: UseResizableSidebarOptions): UseResizableSidebarResult {
   // Load persisted width from localStorage on mount
   // Always load persisted value regardless of enabled flag to maintain size across workspace switches
   const [width, setWidth] = useState<number>(() => {
+    const resolvedMaxWidth = (() => {
+      if (typeof getMaxWidthPx === "function") {
+        const candidate = getMaxWidthPx();
+        if (typeof candidate === "number" && Number.isFinite(candidate)) {
+          return Math.min(maxWidth, candidate);
+        }
+      }
+      return maxWidth;
+    })();
+
+    const effectiveMaxWidth = Math.max(minWidth, resolvedMaxWidth);
+
     try {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         const parsed = parseInt(stored, 10);
-        if (!isNaN(parsed) && parsed >= minWidth && parsed <= maxWidth) {
+        if (!isNaN(parsed) && parsed >= minWidth && parsed <= effectiveMaxWidth) {
           return parsed;
         }
       }
     } catch {
       // Ignore storage errors (private browsing, quota exceeded, etc.)
     }
-    return defaultWidth;
+
+    return Math.max(minWidth, Math.min(effectiveMaxWidth, defaultWidth));
   });
 
   const [isResizing, setIsResizing] = useState(false);
@@ -84,6 +100,20 @@ export function useResizableSidebar({
   // Refs to track drag state without causing re-renders
   const startXRef = useRef<number>(0); // Mouse X position when drag started
   const startWidthRef = useRef<number>(0); // Sidebar width when drag started
+
+  const getMaxWidthPxRef = useRef(getMaxWidthPx);
+  useEffect(() => {
+    getMaxWidthPxRef.current = getMaxWidthPx;
+  }, [getMaxWidthPx]);
+
+  const resolveMaxWidthPx = useCallback(() => {
+    const candidate = getMaxWidthPxRef.current?.();
+    const resolved =
+      typeof candidate === "number" && Number.isFinite(candidate)
+        ? Math.min(maxWidth, candidate)
+        : maxWidth;
+    return Math.max(minWidth, resolved);
+  }, [maxWidth, minWidth]);
 
   // Persist width changes to localStorage
   useEffect(() => {
@@ -110,7 +140,8 @@ export function useResizableSidebar({
         return;
       }
 
-      const clamped = Math.max(minWidth, Math.min(maxWidth, parsed));
+      const maxWidthPx = resolveMaxWidthPx();
+      const clamped = Math.max(minWidth, Math.min(maxWidthPx, parsed));
       setWidth((prev) => (prev === clamped ? prev : clamped));
     };
 
@@ -128,7 +159,27 @@ export function useResizableSidebar({
       window.removeEventListener(eventName, handleExternalUpdate as EventListener);
       window.removeEventListener("storage", handleStorage);
     };
-  }, [storageKey, minWidth, maxWidth, isResizing]);
+  }, [storageKey, minWidth, maxWidth, isResizing, resolveMaxWidthPx]);
+
+  // Keep current width within bounds when the viewport changes.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (isResizing) return;
+
+    const handleResize = () => {
+      const maxWidthPx = resolveMaxWidthPx();
+      setWidth((prev) => {
+        const clamped = Math.max(minWidth, Math.min(maxWidthPx, prev));
+        return prev === clamped ? prev : clamped;
+      });
+    };
+
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [isResizing, minWidth, resolveMaxWidthPx]);
 
   /**
    * Handle mouse movement during drag.
@@ -144,11 +195,13 @@ export function useResizableSidebar({
 
       const deltaX =
         side === "right" ? startXRef.current - e.clientX : e.clientX - startXRef.current;
-      const newWidth = Math.max(minWidth, Math.min(maxWidth, startWidthRef.current + deltaX));
+
+      const maxWidthPx = resolveMaxWidthPx();
+      const newWidth = Math.max(minWidth, Math.min(maxWidthPx, startWidthRef.current + deltaX));
 
       setWidth(newWidth);
     },
-    [isResizing, minWidth, maxWidth, side]
+    [isResizing, minWidth, side, resolveMaxWidthPx]
   );
 
   /**

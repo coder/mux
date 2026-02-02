@@ -129,6 +129,23 @@ function AppInner() {
     defaultWidth: 288,
     minWidth: 200,
     maxWidth: 600,
+    // Keep enough room for the main content so you can't drag-resize the left sidebar
+    // to a point where the chat pane becomes unusably narrow.
+    getMaxWidthPx: () => {
+      // Match LeftSidebar's mobile overlay gate. In that mode we don't want viewport-based clamping
+      // because the sidebar width is controlled by CSS and shouldn't rewrite the user's desktop
+      // width preference.
+      const isMobileTouch =
+        typeof window !== "undefined" &&
+        window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+      if (isMobileTouch) {
+        return Number.POSITIVE_INFINITY;
+      }
+
+      const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 1200;
+      // ChatPane uses tailwind `min-w-96`.
+      return viewportWidth - 384;
+    },
     storageKey: LEFT_SIDEBAR_WIDTH_KEY,
     side: "left",
   });
