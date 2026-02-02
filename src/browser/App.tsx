@@ -33,6 +33,7 @@ import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sour
 
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { isWorkspaceForkSwitchEvent } from "./utils/workspaceEvents";
 import {
   getAgentIdKey,
@@ -156,7 +157,15 @@ function AppInner() {
   useEffect(() => {
     document.documentElement.dataset.leftSidebarCollapsed = String(sidebarCollapsed);
   }, [sidebarCollapsed]);
-  const defaultProjectPath = getFirstProjectPath(projects);
+  const muxChatProjectPath =
+    workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID)?.projectPath ??
+    (selectedWorkspace?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
+      ? selectedWorkspace.projectPath
+      : null);
+
+  const defaultProjectPath = getFirstProjectPath(projects, {
+    excludeProjectPath: muxChatProjectPath,
+  });
   const creationProjectPath =
     !selectedWorkspace && !currentWorkspaceId
       ? (pendingNewWorkspaceProject ?? defaultProjectPath)
@@ -168,10 +177,14 @@ function AppInner() {
   const startWorkspaceCreation = useStartWorkspaceCreation({
     projects,
     createWorkspaceDraft,
+    muxChatProjectPath,
   });
   // Refs for async subscription callbacks (avoid stale closures)
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
+
+  const muxChatProjectPathRef = useRef(muxChatProjectPath);
+  muxChatProjectPathRef.current = muxChatProjectPath;
 
   const projectsLoadingRef = useRef(projectsLoading);
   projectsLoadingRef.current = projectsLoading;
@@ -710,10 +723,17 @@ function AppInner() {
             continue;
           }
 
+          const selectedProjectPath =
+            selectedWorkspaceRef.current?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
+              ? null
+              : selectedWorkspaceRef.current?.projectPath;
+
           const projectPath =
-            selectedWorkspaceRef.current?.projectPath ??
+            selectedProjectPath ??
             pendingNewWorkspaceProjectRef.current ??
-            getFirstProjectPath(projectsRef.current);
+            getFirstProjectPath(projectsRef.current, {
+              excludeProjectPath: muxChatProjectPathRef.current,
+            });
 
           if (!projectPath) {
             console.warn("No projects available for workspace creation");
@@ -739,10 +759,17 @@ function AppInner() {
 
     pendingStartNewAgentCountRef.current = 0;
 
+    const selectedProjectPath =
+      selectedWorkspaceRef.current?.workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
+        ? null
+        : selectedWorkspaceRef.current?.projectPath;
+
     const projectPath =
-      selectedWorkspaceRef.current?.projectPath ??
+      selectedProjectPath ??
       pendingNewWorkspaceProjectRef.current ??
-      getFirstProjectPath(projects);
+      getFirstProjectPath(projects, {
+        excludeProjectPath: muxChatProjectPathRef.current,
+      });
 
     if (!projectPath) {
       console.warn("No projects available for workspace creation");

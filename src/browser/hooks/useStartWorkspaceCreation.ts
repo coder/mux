@@ -14,9 +14,18 @@ import {
 export type StartWorkspaceCreationDetail =
   CustomEventPayloads[typeof CUSTOM_EVENTS.START_WORKSPACE_CREATION];
 
-export function getFirstProjectPath(projects: Map<string, ProjectConfig>): string | null {
-  const iterator = projects.keys().next();
-  return iterator.done ? null : iterator.value;
+export function getFirstProjectPath(
+  projects: Map<string, ProjectConfig>,
+  options?: { excludeProjectPath?: string | null }
+): string | null {
+  const excludeProjectPath = options?.excludeProjectPath ?? null;
+  for (const projectPath of projects.keys()) {
+    if (excludeProjectPath && projectPath === excludeProjectPath) {
+      continue;
+    }
+    return projectPath;
+  }
+  return null;
 }
 
 type PersistFn = typeof updatePersistedState;
@@ -66,26 +75,34 @@ export function persistWorkspaceCreationPrefill(
 interface UseStartWorkspaceCreationOptions {
   projects: Map<string, ProjectConfig>;
   createWorkspaceDraft: (projectPath: string) => string;
+  /** Workspace creation is disallowed in the Chat with Mux system project. */
+  muxChatProjectPath?: string | null;
 }
 
 function resolveProjectPath(
   projects: Map<string, ProjectConfig>,
-  requestedPath: string
+  requestedPath: string,
+  muxChatProjectPath: string | null
 ): string | null {
-  if (projects.has(requestedPath)) {
+  if (requestedPath !== muxChatProjectPath && projects.has(requestedPath)) {
     return requestedPath;
   }
 
-  return getFirstProjectPath(projects);
+  return getFirstProjectPath(projects, { excludeProjectPath: muxChatProjectPath });
 }
 
 export function useStartWorkspaceCreation({
   projects,
   createWorkspaceDraft,
+  muxChatProjectPath,
 }: UseStartWorkspaceCreationOptions) {
   const startWorkspaceCreation = useCallback(
     (projectPath: string, detail?: StartWorkspaceCreationDetail) => {
-      const resolvedProjectPath = resolveProjectPath(projects, projectPath);
+      const resolvedProjectPath = resolveProjectPath(
+        projects,
+        projectPath,
+        muxChatProjectPath ?? null
+      );
 
       if (!resolvedProjectPath) {
         console.warn("No projects available for workspace creation");
@@ -95,7 +112,7 @@ export function useStartWorkspaceCreation({
       const draftId = createWorkspaceDraft(resolvedProjectPath);
       persistWorkspaceCreationPrefill(resolvedProjectPath, detail, { draftId });
     },
-    [projects, createWorkspaceDraft]
+    [projects, createWorkspaceDraft, muxChatProjectPath]
   );
 
   useEffect(() => {

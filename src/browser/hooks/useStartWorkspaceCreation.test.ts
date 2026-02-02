@@ -112,6 +112,7 @@ describe("getFirstProjectPath", () => {
     projects.set("/tmp/b", { path: "/tmp/b", workspaces: [] } as ProjectConfig);
 
     expect(getFirstProjectPath(projects)).toBe("/tmp/a");
+    expect(getFirstProjectPath(projects, { excludeProjectPath: "/tmp/a" })).toBe("/tmp/b");
   });
 });
 
@@ -150,6 +151,37 @@ describe("useStartWorkspaceCreation", () => {
     expect(readPersistedState(getInputKey(getDraftScopeId(projectPath, draftId)), "")).toBe(
       "Ship it"
     );
+
     expect(readPersistedState(getInputKey(getPendingScopeId(projectPath)), "")).toBe("");
+  });
+
+  test("skips Chat with Mux system project when starting creation", () => {
+    const muxChatProjectPath = "/tmp/system/Mux";
+    const projectPath = "/tmp/project";
+    const draftId = "draft_123";
+
+    const projects = new Map<string, ProjectConfig>();
+    projects.set(muxChatProjectPath, { path: muxChatProjectPath, workspaces: [] } as ProjectConfig);
+    projects.set(projectPath, { path: projectPath, workspaces: [] } as ProjectConfig);
+
+    const createWorkspaceDraft = mock(() => draftId);
+
+    const { result } = renderHook(() =>
+      useStartWorkspaceCreation({ projects, createWorkspaceDraft, muxChatProjectPath })
+    );
+
+    act(() => {
+      result.current(muxChatProjectPath, {
+        projectPath: muxChatProjectPath,
+        startMessage: "Ship it",
+      });
+    });
+
+    expect(createWorkspaceDraft).toHaveBeenCalledTimes(1);
+    expect(createWorkspaceDraft).toHaveBeenCalledWith(projectPath);
+
+    expect(readPersistedState(getInputKey(getDraftScopeId(projectPath, draftId)), "")).toBe(
+      "Ship it"
+    );
   });
 });
