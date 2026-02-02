@@ -969,12 +969,13 @@ export class MCPServerManager {
       return !this.policyService?.isEnforced() || this.policyService.isMcpTransportAllowed(t);
     };
     const { projectPath, name, command, transport, url, headers, projectSecrets } = options;
+    const trimmedName = name?.trim();
 
-    if (name?.trim()) {
+    if (trimmedName && !command?.trim() && !url?.trim()) {
       const servers = await this.configService.listServers(projectPath);
-      const server = servers[name];
+      const server = servers[trimmedName];
       if (!server) {
-        return { success: false, error: `Server "${name}" not found in configuration` };
+        return { success: false, error: `Server "${trimmedName}" not found in configuration` };
       }
 
       if (!isTransportAllowed(server.transport)) {
@@ -985,7 +986,7 @@ export class MCPServerManager {
         return runServerTest(
           { transport: "stdio", command: server.command },
           projectPath,
-          `server "${name}"`
+          `server "${trimmedName}"`
         );
       }
 
@@ -994,7 +995,7 @@ export class MCPServerManager {
 
         const authProvider = await this.mcpOauthService?.getAuthProviderForServer({
           projectPath,
-          serverName: name,
+          serverName: trimmedName,
           serverUrl: server.url,
         });
 
@@ -1006,7 +1007,7 @@ export class MCPServerManager {
             ...(authProvider ? { authProvider } : {}),
           },
           projectPath,
-          `server "${name}"`
+          `server "${trimmedName}"`
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1022,6 +1023,8 @@ export class MCPServerManager {
     }
 
     if (url?.trim()) {
+      const serverUrl = url.trim();
+
       if (transport !== "http" && transport !== "sse" && transport !== "auto") {
         return { success: false, error: "transport must be http|sse|auto when testing by url" };
       }
@@ -1032,7 +1035,24 @@ export class MCPServerManager {
 
       try {
         const resolved = resolveHeaders(headers, projectSecrets);
-        return runServerTest({ transport, url, headers: resolved.headers }, projectPath, "url");
+
+        const authProvider = trimmedName
+          ? await this.mcpOauthService?.getAuthProviderForServer({
+              projectPath,
+              serverName: trimmedName,
+              serverUrl,
+            })
+          : undefined;
+        return runServerTest(
+          {
+            transport,
+            url: serverUrl,
+            headers: resolved.headers,
+            ...(authProvider ? { authProvider } : {}),
+          },
+          projectPath,
+          trimmedName ? `server "${trimmedName}" (url)` : "url"
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return { success: false, error: message };

@@ -368,7 +368,15 @@ function useMCPOAuthLogin(input: {
 
       // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
       // In browser mode, this opens a new tab/window.
-      window.open(authorizeUrl, "_blank", "noopener");
+      const popup = window.open(authorizeUrl, "_blank", "noopener");
+
+      if (!isDesktop && popup === null) {
+        setLoginStatus("error");
+        setLoginError("If your browser blocked the popup, allow popups and try again.");
+        setFlowId(null);
+        void mcpOauthApi.cancelServerFlow({ flowId: nextFlowId });
+        return;
+      }
 
       if (attempt !== loginAttemptRef.current) {
         return;
@@ -943,11 +951,14 @@ export const ProjectSettingsSection: React.FC = () => {
         throw new Error(validation.errors[0]);
       }
 
+      const pendingName = newServer.name.trim();
+
       const result = await api.projects.mcp.test({
         projectPath: selectedProject,
         ...(newServer.transport === "stdio"
           ? { command: newServer.value.trim() }
           : {
+              ...(pendingName ? { name: pendingName } : {}),
               transport: newServer.transport,
               url: newServer.value.trim(),
               headers,
@@ -966,6 +977,7 @@ export const ProjectSettingsSection: React.FC = () => {
   }, [
     api,
     selectedProject,
+    newServer.name,
     newServer.transport,
     newServer.value,
     newServer.headersRows,
