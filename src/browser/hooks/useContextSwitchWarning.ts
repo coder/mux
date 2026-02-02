@@ -66,6 +66,21 @@ export function useContextSwitchWarning(
 
   const prevCheckOptionsRef = useRef(checkOptions);
   const prevWarningPreviousModelRef = useRef<string | null>(null);
+  const prevWorkspaceIdRef = useRef(workspaceId);
+
+  // ChatPane stays mounted across workspace switches, so reset per-workspace state when
+  // the workspace changes to avoid carrying the previous model into the next workspace.
+  if (prevWorkspaceIdRef.current !== workspaceId) {
+    prevWorkspaceIdRef.current = workspaceId;
+    prevPendingModelRef.current = null;
+    prevTokensRef.current = 0;
+    prevUse1MRef.current = use1M;
+    prevCheckOptionsRef.current = checkOptions;
+    prevWarningPreviousModelRef.current = null;
+    if (warning) {
+      setWarning(null);
+    }
+  }
 
   const getCurrentTokens = useCallback(() => {
     const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
