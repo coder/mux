@@ -17,6 +17,7 @@ import {
   type ToolStatus,
 } from "./shared/toolUtils";
 import { MarkdownRenderer } from "../Messages/MarkdownRenderer";
+import { useOptionalMessageListContext } from "../Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import {
@@ -24,6 +25,8 @@ import {
   toWorkspaceSelection,
 } from "@/browser/contexts/WorkspaceContext";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { useBackgroundProcesses } from "@/browser/stores/BackgroundBashStore";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
   TaskToolArgs,
   TaskToolResult,
@@ -171,6 +174,105 @@ const TaskId: React.FC<{ id: string; className?: string }> = ({ id, className })
     </Tooltip>
   );
 };
+
+interface TaskRowProps {
+  taskId: string;
+  status: string;
+  agentType?: string;
+  title?: string;
+  depth?: number;
+  className?: string;
+}
+
+const TaskRow: React.FC<TaskRowProps> = (props) => (
+  <div
+    className={cn("bg-code-bg flex flex-wrap items-center gap-2 rounded-sm p-2", props.className)}
+  >
+    <TaskId id={props.taskId} />
+    <TaskStatusBadge status={props.status} />
+    {props.agentType && <AgentTypeBadge type={props.agentType} />}
+    {props.title && (
+      <span className="text-foreground max-w-[200px] truncate text-[11px]">{props.title}</span>
+    )}
+    {typeof props.depth === "number" && props.depth > 0 && (
+      <span className="text-muted text-[10px]">depth: {props.depth}</span>
+    )}
+  </div>
+);
+
+const MAX_TASK_DEPTH_TRAVERSAL = 50;
+
+function computeWorkspaceDepthFromRoot(
+  rootWorkspaceId: string,
+  leafWorkspaceId: string,
+  workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata>
+): number | undefined {
+  // Not a descendant task (or no nesting to measure).
+  if (rootWorkspaceId === leafWorkspaceId) {
+    return 0;
+  }
+
+  const visited = new Set<string>();
+  let depth = 0;
+  let currentId: string | undefined = leafWorkspaceId;
+
+  // DEFENSIVE: Guard against cycles or corrupted metadata.
+  while (depth < MAX_TASK_DEPTH_TRAVERSAL) {
+    if (!currentId) {
+      return undefined;
+    }
+
+    if (visited.has(currentId)) {
+      return undefined;
+    }
+
+    visited.add(currentId);
+
+    const metadata = workspaceMetadata.get(currentId);
+    const parentId = metadata?.parentWorkspaceId;
+
+    if (typeof parentId !== "string" || parentId.trim().length === 0) {
+      return undefined;
+    }
+
+    depth += 1;
+
+    if (parentId === rootWorkspaceId) {
+      return depth;
+    }
+
+    currentId = parentId;
+  }
+
+  return undefined;
+}
+
+function toTaskStatusFromBackgroundProcessStatus(
+  status: "running" | "exited" | "killed" | "failed"
+): string {
+  switch (status) {
+    case "running":
+      return "running";
+    case "exited":
+      return "completed";
+    case "killed":
+      return "terminated";
+    case "failed":
+      return "error";
+    default:
+      return String(status);
+  }
+}
+
+function fromBashTaskId(taskId: string): string | null {
+  const prefix = "bash:";
+  if (!taskId.startsWith(prefix)) {
+    return null;
+  }
+
+  const processId = taskId.slice(prefix.length).trim();
+  return processId.length > 0 ? processId : null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TASK TOOL CALL (spawn sub-agent)
@@ -347,6 +449,50 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     (r) => r.status === "error" || r.status === "invalid_scope" || r.status === "not_found"
   ).length;
 
+  const workspaceContext = useOptionalWorkspaceContext();
+  const messageListContext = useOptionalMessageListContext();
+  const workspaceId = messageListContext?.workspaceId;
+  const backgroundProcesses = useBackgroundProcesses(workspaceId);
+
+  const awaitedRows: TaskRowProps[] = [];
+  if (status === "executing" && results.length === 0 && Array.isArray(taskIds)) {
+    const workspaceMetadata = workspaceContext?.workspaceMetadata;
+
+    for (const taskId of taskIds) {
+      const processId = fromBashTaskId(taskId);
+      if (processId) {
+        const proc = backgroundProcesses.find((entry) => entry.id === processId);
+        awaitedRows.push({
+          taskId,
+          status: proc ? toTaskStatusFromBackgroundProcessStatus(proc.status) : "waiting",
+          title: proc?.displayName ?? proc?.id,
+          depth: 1,
+        });
+        continue;
+      }
+
+      const metadata = workspaceMetadata?.get(taskId);
+      if (!metadata) {
+        awaitedRows.push({ taskId, status: "waiting" });
+        continue;
+      }
+
+      const agentType = (metadata.agentId ?? metadata.agentType)?.trim();
+      const title = metadata.title?.trim().length ? metadata.title : metadata.name;
+
+      awaitedRows.push({
+        taskId,
+        status: metadata.taskStatus ?? "waiting",
+        agentType: agentType && agentType.length > 0 ? agentType : undefined,
+        title,
+        depth:
+          workspaceId && workspaceMetadata
+            ? computeWorkspaceDepthFromRoot(workspaceId, taskId, workspaceMetadata)
+            : undefined,
+      });
+    }
+  }
+
   // Keep task_await collapsed by default, but auto-expand when failures are present.
   // This avoids hiding failures behind a "completed" badge in the header.
   const shouldAutoExpand = failedCount > 0;
@@ -400,9 +546,14 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
                 ))}
               </div>
             ) : status === "executing" ? (
-              <div className="text-muted text-[11px] italic">
-                Waiting for tasks to complete
-                <LoadingDots />
+              <div className="space-y-2">
+                {awaitedRows.map((row) => (
+                  <TaskRow key={row.taskId} {...row} />
+                ))}
+                <div className="text-muted text-[11px] italic">
+                  Waiting for tasks to complete
+                  <LoadingDots />
+                </div>
               </div>
             ) : (
               <div className="text-muted text-[11px] italic">No tasks specified</div>
@@ -568,15 +719,13 @@ export const TaskListToolCall: React.FC<TaskListToolCallProps> = ({
 const TaskListItem: React.FC<{
   task: TaskListToolSuccessResult["tasks"][number];
 }> = ({ task }) => (
-  <div className="bg-code-bg flex flex-wrap items-center gap-2 rounded-sm p-2">
-    <TaskId id={task.taskId} />
-    <TaskStatusBadge status={task.status} />
-    {task.agentType && <AgentTypeBadge type={task.agentType} />}
-    {task.title && (
-      <span className="text-foreground max-w-[200px] truncate text-[11px]">{task.title}</span>
-    )}
-    {task.depth > 0 && <span className="text-muted text-[10px]">depth: {task.depth}</span>}
-  </div>
+  <TaskRow
+    taskId={task.taskId}
+    status={task.status}
+    agentType={task.agentType}
+    title={task.title}
+    depth={task.depth}
+  />
 );
 
 // ═══════════════════════════════════════════════════════════════════════════════

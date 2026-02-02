@@ -4,12 +4,20 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import { setupSimpleChatStory } from "./storyHelpers";
+import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import {
+  collapseRightSidebar,
+  createOnChatAdapter,
+  selectWorkspace,
+  setupSimpleChatStory,
+} from "./storyHelpers";
 import { waitForScrollStabilization } from "./storyPlayHelpers";
 import {
+  STABLE_TIMESTAMP,
   createUserMessage,
   createAssistantMessage,
   createPendingTool,
+  createStaticChatHandler,
   createTaskTool,
   createCompletedTaskTool,
   createFailedTaskTool,
@@ -17,8 +25,10 @@ import {
   createTaskAwaitTool,
   createTaskListTool,
   createTaskTerminateTool,
+  createWorkspace,
+  groupWorkspacesByProject,
 } from "./mockFactory";
-import { userEvent, waitFor } from "@storybook/test";
+import { userEvent, waitFor, within } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -138,6 +148,107 @@ Key patterns:
         }
       });
     }
+  },
+};
+
+/**
+ * task_await executing state: show the awaited task IDs while waiting for completion.
+ *
+ * Chromatic note: this story expands the tool card so the awaited-task preview is visible.
+ */
+export const TaskAwaitExecuting: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-main";
+        const projectName = "my-app";
+
+        const mainWorkspace = createWorkspace({
+          id: workspaceId,
+          name: "feature",
+          projectName,
+        });
+
+        const taskFrontend = {
+          ...createWorkspace({
+            id: "task-fe-001",
+            name: "task-fe-001",
+            projectName,
+          }),
+          parentWorkspaceId: workspaceId,
+          agentType: "explore",
+          taskStatus: "running" as const,
+          title: "Frontend analysis",
+        };
+
+        const taskBackend = {
+          ...createWorkspace({
+            id: "task-be-002",
+            name: "task-be-002",
+            projectName,
+          }),
+          parentWorkspaceId: workspaceId,
+          agentType: "exec",
+          taskStatus: "queued" as const,
+          title: "Backend linting",
+        };
+
+        const workspaces = [mainWorkspace, taskFrontend, taskBackend];
+
+        // Select the main chat workspace.
+        selectWorkspace(mainWorkspace);
+        collapseRightSidebar();
+
+        const messages = [
+          createUserMessage("u1", "Wait for all tasks to complete", { historySequence: 1 }),
+          createAssistantMessage("a1", "Waiting for tasks…", {
+            historySequence: 2,
+            toolCalls: [
+              createPendingTool("tc1", "task_await", {
+                task_ids: ["task-fe-001", "bash:proc-123", "task-be-002"],
+                timeout_secs: 30,
+              }),
+            ],
+          }),
+        ];
+
+        const chatHandlers = new Map([[workspaceId, createStaticChatHandler(messages)]]);
+
+        const backgroundProcesses = new Map([
+          [
+            workspaceId,
+            [
+              {
+                id: "proc-123",
+                pid: 123,
+                script: "sleep 10",
+                displayName: "Background bash",
+                startTime: STABLE_TIMESTAMP - 5000,
+                status: "running" as const,
+              },
+            ],
+          ],
+        ]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onChat: createOnChatAdapter(chatHandlers),
+          backgroundProcesses,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForScrollStabilization(canvasElement);
+
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    const toolTitle = await canvas.findByText("task_await", {}, { timeout: 8000 });
+    await userEvent.click(toolTitle);
+
+    await canvas.findByText("task-fe-001", {}, { timeout: 8000 });
   },
 };
 
