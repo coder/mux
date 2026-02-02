@@ -44,8 +44,11 @@ function getStatusColorClass(prLink: GitHubPRLinkWithStatus): string {
   if (mergeStateStatus === "BEHIND") return "text-warning";
 
   // Prefer check rollup when available; fall back to mergeStateStatus.
-  if (hasFailedChecks || mergeStateStatus === "UNSTABLE") return "text-danger-soft";
+  if (hasFailedChecks) return "text-danger-soft";
   if (hasPendingChecks) return "text-warning";
+  // GitHub marks UNSTABLE for non-passing states (including pending), so only treat it
+  // as failing when rollup doesn't already say pending/failed.
+  if (mergeStateStatus === "UNSTABLE") return "text-danger-soft";
 
   if (mergeStateStatus === "BLOCKED" || mergeStateStatus === "HAS_HOOKS") {
     return "text-warning";
@@ -93,11 +96,16 @@ function StatusIcon({ prLink }: { prLink: GitHubPRLinkWithStatus }) {
   }
 
   // Prefer check rollup when available; fall back to mergeStateStatus.
-  if (hasFailedChecks || mergeStateStatus === "UNSTABLE") {
+  if (hasFailedChecks) {
     return <X className="h-3 w-3" />;
   }
   if (hasPendingChecks || mergeStateStatus === "BLOCKED") {
     return <CircleDot className="h-3 w-3" />;
+  }
+  // GitHub marks UNSTABLE for non-passing states (including pending), so only treat it
+  // as failing when rollup doesn't already say pending/failed.
+  if (mergeStateStatus === "UNSTABLE") {
+    return <X className="h-3 w-3" />;
   }
 
   return <GitPullRequest className="h-3 w-3" />;
@@ -139,10 +147,13 @@ function getTooltipContent(prLink: GitHubPRLinkWithStatus): string {
       lines.push("Behind base branch");
     } else if (mergeStateStatus === "CLEAN") {
       lines.push("Ready to merge");
-    } else if (hasFailedChecks || mergeStateStatus === "UNSTABLE") {
+    } else if (hasFailedChecks) {
       lines.push("Checks failing");
     } else if (hasPendingChecks) {
       lines.push("Checks pending");
+    } else if (mergeStateStatus === "UNSTABLE") {
+      // GitHub marks UNSTABLE for non-passing states (including pending), so only fall back here.
+      lines.push("Checks failing");
     } else if (mergeStateStatus === "BLOCKED" || mergeStateStatus === "HAS_HOOKS") {
       lines.push("Merge blocked");
     } else {
