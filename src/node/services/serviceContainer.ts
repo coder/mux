@@ -120,7 +120,7 @@ export class ServiceContainer {
     this.projectService = new ProjectService(config);
     this.initStateManager = new InitStateManager(config);
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
-    this.mcpConfigService = new MCPConfigService();
+    this.mcpConfigService = new MCPConfigService(config);
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
     );

@@ -162,11 +162,11 @@ function buildMCPContext(mcpServers: MCPServerMap): string {
 
   return `
 <mcp>
-MCP (Model Context Protocol) servers provide additional tools. Configured in user's local project's .mux/mcp.jsonc:
+MCP (Model Context Protocol) servers provide additional tools. Configured in ~/.mux/mcp.jsonc (global) and/or your project's .mux/mcp.jsonc (project):
 
 ${serverList}
 
-Use /mcp add|edit|remove or Settings → Projects to manage servers.
+Use Settings → Projects to manage servers (global or project), or /mcp add|edit|remove for project config.
 </mcp>
 `;
 }

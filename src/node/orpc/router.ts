@@ -267,6 +267,295 @@ export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
 
   return t.router({
+    global: {
+      mcp: {
+        list: t
+          .input(schemas.global.mcp.list.input)
+          .output(schemas.global.mcp.list.output)
+          .handler(async ({ context }) => {
+            const servers = await context.mcpConfigService.listGlobalServers();
+
+            if (!context.policyService.isEnforced()) {
+              return servers;
+            }
+
+            const filtered: typeof servers = {};
+            for (const [name, info] of Object.entries(servers)) {
+              if (context.policyService.isMcpTransportAllowed(info.transport)) {
+                filtered[name] = info;
+              }
+            }
+
+            return filtered;
+          }),
+        getDiagnostics: t
+          .input(schemas.global.mcp.getDiagnostics.input)
+          .output(schemas.global.mcp.getDiagnostics.output)
+          .handler(async ({ context }) => {
+            return context.mcpConfigService.getGlobalConfigDiagnostics();
+          }),
+        add: t
+          .input(schemas.global.mcp.add.input)
+          .output(schemas.global.mcp.add.output)
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listGlobalServers();
+            const existingServer = existing[input.name];
+
+            const transport = input.transport ?? "stdio";
+            if (context.policyService.isEnforced()) {
+              if (!context.policyService.isMcpTransportAllowed(transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
+
+            const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
+            const usesSecretHeaders = Boolean(
+              input.headers &&
+              Object.values(input.headers).some(
+                (v) => typeof v === "object" && v !== null && "secret" in v
+              )
+            );
+
+            const action = (() => {
+              if (!existingServer) {
+                return "add";
+              }
+
+              if (
+                existingServer.transport !== "stdio" &&
+                transport !== "stdio" &&
+                existingServer.transport === transport &&
+                existingServer.url === input.url &&
+                JSON.stringify(existingServer.headers ?? {}) !== JSON.stringify(input.headers ?? {})
+              ) {
+                return "set_headers";
+              }
+
+              return "edit";
+            })();
+
+            const result = await context.mcpConfigService.addGlobalServer(input.name, {
+              transport,
+              command: input.command,
+              url: input.url,
+              headers: input.headers,
+            });
+
+            if (result.success) {
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action,
+                  transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
+        remove: t
+          .input(schemas.global.mcp.remove.input)
+          .output(schemas.global.mcp.remove.output)
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listGlobalServers();
+            const server = existing[input.name];
+
+            if (context.policyService.isEnforced() && server) {
+              if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
+
+            const result = await context.mcpConfigService.removeGlobalServer(input.name);
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: "remove",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
+        test: t
+          .input(schemas.global.mcp.test.input)
+          .output(schemas.global.mcp.test.output)
+          .handler(async ({ context, input }) => {
+            const start = Date.now();
+            const secrets = secretsToRecord(context.projectService.getSecrets(input.projectPath));
+
+            // Global MCP server tests are primarily used by Settings → Projects.
+            // When a name is provided, resolve it from the global config file (not the project file).
+            const resolvedInput =
+              input.name?.trim() && !input.command && !input.url
+                ? (await context.mcpConfigService.listGlobalServers())[input.name]
+                : undefined;
+
+            if (input.name?.trim() && !input.command && !input.url && !resolvedInput) {
+              return {
+                success: false,
+                error: `Server "${input.name}" not found in global configuration`,
+              };
+            }
+
+            const transport = resolvedInput
+              ? resolvedInput.transport
+              : input.command
+                ? "stdio"
+                : (input.transport ?? "auto");
+
+            if (context.policyService.isEnforced()) {
+              if (!context.policyService.isMcpTransportAllowed(transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
+
+            const result = resolvedInput
+              ? resolvedInput.transport === "stdio"
+                ? await context.mcpServerManager.test({
+                    projectPath: input.projectPath,
+                    command: resolvedInput.command,
+                    projectSecrets: secrets,
+                  })
+                : await context.mcpServerManager.test({
+                    projectPath: input.projectPath,
+                    transport: resolvedInput.transport,
+                    url: resolvedInput.url,
+                    headers: resolvedInput.headers,
+                    projectSecrets: secrets,
+                  })
+              : await context.mcpServerManager.test({
+                  projectPath: input.projectPath,
+                  command: input.command,
+                  transport: input.transport,
+                  url: input.url,
+                  headers: input.headers,
+                  projectSecrets: secrets,
+                });
+
+            const durationMs = Date.now() - start;
+
+            context.telemetryService.capture({
+              event: "mcp_server_tested",
+              properties: {
+                transport,
+                success: result.success,
+                duration_ms_b2: roundToBase2(durationMs),
+              },
+            });
+
+            return result;
+          }),
+        setEnabled: t
+          .input(schemas.global.mcp.setEnabled.input)
+          .output(schemas.global.mcp.setEnabled.output)
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listGlobalServers();
+            const server = existing[input.name];
+
+            if (context.policyService.isEnforced() && server) {
+              if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
+
+            const result = await context.mcpConfigService.setGlobalServerEnabled(
+              input.name,
+              input.enabled
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: input.enabled ? "enable" : "disable",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                },
+              });
+            }
+
+            return result;
+          }),
+        setToolAllowlist: t
+          .input(schemas.global.mcp.setToolAllowlist.input)
+          .output(schemas.global.mcp.setToolAllowlist.output)
+          .handler(async ({ context, input }) => {
+            const existing = await context.mcpConfigService.listGlobalServers();
+            const server = existing[input.name];
+
+            if (context.policyService.isEnforced() && server) {
+              if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+                return { success: false, error: "MCP transport is disabled by policy" };
+              }
+            }
+
+            const result = await context.mcpConfigService.setGlobalToolAllowlist(
+              input.name,
+              input.toolAllowlist
+            );
+
+            if (result.success && server) {
+              const hasHeaders =
+                server.transport !== "stdio" &&
+                Boolean(server.headers && Object.keys(server.headers).length > 0);
+              const usesSecretHeaders =
+                server.transport !== "stdio" &&
+                Boolean(
+                  server.headers &&
+                  Object.values(server.headers).some(
+                    (v) => typeof v === "object" && v !== null && "secret" in v
+                  )
+                );
+
+              context.telemetryService.capture({
+                event: "mcp_server_config_changed",
+                properties: {
+                  action: "set_tool_allowlist",
+                  transport: server.transport,
+                  has_headers: hasHeaders,
+                  uses_secret_headers: usesSecretHeaders,
+                  tool_allowlist_size_b2: roundToBase2(input.toolAllowlist.length),
+                },
+              });
+            }
+
+            return result;
+          }),
+      },
+    },
     tokenizer: {
       countTokens: t
         .input(schemas.tokenizer.countTokens.input)
@@ -1097,6 +1386,12 @@ export const router = (authToken?: string) => {
             }
 
             return filtered;
+          }),
+        getDiagnostics: t
+          .input(schemas.projects.mcp.getDiagnostics.input)
+          .output(schemas.projects.mcp.getDiagnostics.output)
+          .handler(async ({ context, input }) => {
+            return context.mcpConfigService.getProjectConfigDiagnostics(input.projectPath);
           }),
         add: t
           .input(schemas.projects.mcp.add.input)
@@ -2269,6 +2564,106 @@ export const router = (authToken?: string) => {
               const message = error instanceof Error ? error.message : String(error);
               return { success: false, error: message };
             }
+          }),
+        status: t
+          .input(schemas.workspace.mcp.status.input)
+          .output(schemas.workspace.mcp.status.output)
+          .handler(async ({ context, input }) => {
+            const policy = context.policyService.getEffectivePolicy();
+            const mcpDisabledByPolicy =
+              context.policyService.isEnforced() &&
+              policy?.mcp.allowUserDefined.stdio === false &&
+              policy.mcp.allowUserDefined.remote === false;
+
+            if (mcpDisabledByPolicy) {
+              return {
+                isLeased: context.mcpServerManager.isWorkspaceLeased(input.workspaceId),
+                servers: {},
+              };
+            }
+
+            const metadata = await context.workspaceService.getInfo(input.workspaceId);
+            if (!metadata) {
+              return { isLeased: false, servers: {} };
+            }
+
+            let overrides = {};
+            try {
+              overrides = await context.workspaceMcpOverridesService.getOverridesForWorkspace(
+                input.workspaceId
+              );
+            } catch {
+              // Defensive: overrides must never brick workspace UI.
+              overrides = {};
+            }
+
+            const servers = await context.mcpServerManager.getRuntimeStatusForWorkspace({
+              workspaceId: input.workspaceId,
+              projectPath: metadata.projectPath,
+              overrides,
+            });
+
+            return {
+              isLeased: context.mcpServerManager.isWorkspaceLeased(input.workspaceId),
+              servers,
+            };
+          }),
+        restart: t
+          .input(schemas.workspace.mcp.restart.input)
+          .output(schemas.workspace.mcp.restart.output)
+          .handler(async ({ context, input }) => {
+            const policy = context.policyService.getEffectivePolicy();
+            const mcpDisabledByPolicy =
+              context.policyService.isEnforced() &&
+              policy?.mcp.allowUserDefined.stdio === false &&
+              policy.mcp.allowUserDefined.remote === false;
+
+            if (mcpDisabledByPolicy) {
+              return { success: false, error: "MCP is disabled by policy" };
+            }
+
+            const metadata = await context.workspaceService.getInfo(input.workspaceId);
+            if (!metadata) {
+              return { success: false, error: `Workspace not found: ${input.workspaceId}` };
+            }
+
+            const runtime = createRuntimeForWorkspace(metadata);
+
+            // In-place workspaces (CLI/benchmarks) have projectPath === name.
+            const isInPlace = metadata.projectPath === metadata.name;
+            const workspacePath = isInPlace
+              ? metadata.projectPath
+              : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
+
+            let overrides = {};
+            try {
+              overrides = await context.workspaceMcpOverridesService.getOverridesForWorkspace(
+                input.workspaceId
+              );
+            } catch {
+              // Defensive: overrides must never brick workspace UI.
+              overrides = {};
+            }
+
+            const secrets = secretsToRecord(
+              context.projectService.getSecrets(metadata.projectPath)
+            );
+
+            const result = await context.mcpServerManager.restartServersForWorkspace({
+              workspaceId: input.workspaceId,
+              projectPath: metadata.projectPath,
+              runtime,
+              workspacePath,
+              overrides,
+              projectSecrets: secrets,
+              serverName: input.serverName,
+            });
+
+            if (!result.success) {
+              return { success: false, error: result.error };
+            }
+
+            return { success: true, data: undefined };
           }),
       },
     },

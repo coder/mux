@@ -6,6 +6,7 @@ import type {
   MCPHeaderValue,
   MCPServerInfo,
   MCPServerMap,
+  MCPServerRuntimeStatus,
   MCPServerTransport,
   MCPTestResult,
   WorkspaceMCPOverrides,
@@ -18,6 +19,7 @@ import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpR
 import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
 
 const TEST_TIMEOUT_MS = 10_000;
+const SERVER_START_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
 
@@ -133,6 +135,33 @@ function extractHttpStatusCode(error: unknown): number | null {
 function shouldAutoFallbackToSse(error: unknown): boolean {
   const status = extractHttpStatusCode(error);
   return status === 400 || status === 404 || status === 405;
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  options: { timeoutMs: number; label: string; onTimeout?: () => void }
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutHandle = setTimeout(() => {
+      try {
+        options.onTimeout?.();
+      } catch {
+        // ignore errors in timeout cleanup
+      }
+      reject(new Error(`${options.label} timed out after ${options.timeoutMs}ms`));
+    }, options.timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutHandle);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutHandle);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    );
+  });
 }
 
 export type { MCPTestResult } from "@/common/types/mcp";
@@ -278,11 +307,14 @@ export interface MCPWorkspaceStats {
 export interface MCPToolsForWorkspaceResult {
   tools: Record<string, Tool>;
   stats: MCPWorkspaceStats;
+  /** Startup / connection errors from the last attempt to start servers (name → error). */
+  serverErrors: Record<string, string>;
 }
 interface WorkspaceServers {
   configSignature: string;
   instances: Map<string, MCPServerInstance>;
   stats: MCPWorkspaceStats;
+  serverErrors: Record<string, string>;
   lastActivity: number;
 }
 
@@ -327,6 +359,10 @@ export class MCPServerManager {
 
   private getLeaseCount(workspaceId: string): number {
     return this.workspaceLeases.get(workspaceId) ?? 0;
+  }
+
+  isWorkspaceLeased(workspaceId: string): boolean {
+    return this.getLeaseCount(workspaceId) > 0;
   }
 
   /**
@@ -394,15 +430,27 @@ export class MCPServerManager {
    * Returns full MCPServerInfo to preserve disabled state.
    */
   private async getAllServers(projectPath: string): Promise<Record<string, MCPServerInfo>> {
-    const configServers = this.ignoreConfigFile
+    const globalServers = this.ignoreConfigFile ? {} : await this.configService.listGlobalServers();
+    const projectServers = this.ignoreConfigFile
       ? {}
       : await this.configService.listServers(projectPath);
+
+    if (!this.ignoreConfigFile) {
+      for (const name of Object.keys(globalServers)) {
+        if (projectServers[name]) {
+          log.debug("[MCP] Project MCP server overrides global config", { projectPath, name });
+        }
+      }
+    }
+
     // Inline servers override config file servers (always enabled)
     const inlineAsInfo: Record<string, MCPServerInfo> = {};
     for (const [name, command] of Object.entries(this.inlineServers)) {
       inlineAsInfo[name] = { transport: "stdio", command, disabled: false };
     }
-    return { ...configServers, ...inlineAsInfo };
+
+    // Precedence: global < project < inline
+    return { ...globalServers, ...projectServers, ...inlineAsInfo };
   }
 
   /**
@@ -421,6 +469,80 @@ export class MCPServerManager {
     const allServers = await this.getAllServers(projectPath);
     const enabled = this.applyServerOverrides(allServers, overrides);
     return this.filterServersByPolicy(enabled);
+  }
+
+  async getRuntimeStatusForWorkspace(options: {
+    workspaceId: string;
+    projectPath: string;
+    overrides?: WorkspaceMCPOverrides;
+  }): Promise<Record<string, MCPServerRuntimeStatus>> {
+    const { workspaceId, projectPath, overrides } = options;
+
+    const allServers = await this.getAllServers(projectPath);
+    const enabledServers = this.filterServersByPolicy(
+      this.applyServerOverrides(allServers, overrides)
+    );
+
+    const entry = this.workspaceServers.get(workspaceId);
+    const statuses: Record<string, MCPServerRuntimeStatus> = {};
+
+    for (const name of Object.keys(allServers).sort((a, b) => a.localeCompare(b))) {
+      const instance = entry?.instances.get(name);
+      if (instance) {
+        if (instance.isClosed) {
+          statuses[name] = {
+            state: "failed",
+            lastError: entry?.serverErrors[name] ?? "MCP client closed",
+          };
+          continue;
+        }
+
+        statuses[name] = {
+          state: "running",
+          toolCount: Object.keys(instance.tools).length,
+          resolvedTransport: instance.resolvedTransport,
+          autoFallbackUsed: instance.autoFallbackUsed,
+        };
+        continue;
+      }
+
+      const error = entry?.serverErrors[name];
+      if (error) {
+        statuses[name] = { state: "failed", lastError: error };
+        continue;
+      }
+
+      if (enabledServers[name]) {
+        statuses[name] = { state: "not_started" };
+      } else {
+        statuses[name] = { state: "stopped" };
+      }
+    }
+
+    // Defensive: if we have runtime state for servers that are no longer configured,
+    // still surface them so users can see why MCP tools are missing.
+    if (entry) {
+      for (const [name, error] of Object.entries(entry.serverErrors)) {
+        if (statuses[name]) {
+          continue;
+        }
+        statuses[name] = { state: "failed", lastError: error };
+      }
+
+      for (const [name, instance] of entry.instances) {
+        if (statuses[name]) {
+          continue;
+        }
+        statuses[name] = {
+          state: instance.isClosed ? "failed" : "running",
+          toolCount: Object.keys(instance.tools).length,
+          resolvedTransport: instance.resolvedTransport,
+          autoFallbackUsed: instance.autoFallbackUsed,
+        };
+      }
+    }
+
+    return statuses;
   }
 
   /**
@@ -540,6 +662,31 @@ export class MCPServerManager {
     return filtered;
   }
 
+  private computeConfigSignature(
+    servers: MCPServerMap,
+    projectSecrets: Record<string, string> | undefined
+  ): string {
+    const entries = Object.entries(servers).sort(([a], [b]) => a.localeCompare(b));
+
+    const signatureEntries: Record<string, unknown> = {};
+    for (const [name, info] of entries) {
+      if (info.transport === "stdio") {
+        signatureEntries[name] = { transport: "stdio", command: info.command };
+        continue;
+      }
+
+      try {
+        const { headers } = resolveHeaders(info.headers, projectSecrets);
+        signatureEntries[name] = { transport: info.transport, url: info.url, headers };
+      } catch {
+        // Missing secrets or invalid header config. Keep signature stable but avoid leaking details.
+        signatureEntries[name] = { transport: info.transport, url: info.url, headers: null };
+      }
+    }
+
+    return JSON.stringify(signatureEntries);
+  }
+
   async getToolsForWorkspace(options: {
     workspaceId: string;
     projectPath: string;
@@ -563,23 +710,7 @@ export class MCPServerManager {
 
     // Signature is based on *start config* only (not tool allowlists), so changing allowlists
     // does not force a server restart.
-    const signatureEntries: Record<string, unknown> = {};
-    for (const [name, info] of enabledEntries) {
-      if (info.transport === "stdio") {
-        signatureEntries[name] = { transport: "stdio", command: info.command };
-        continue;
-      }
-
-      try {
-        const { headers } = resolveHeaders(info.headers, projectSecrets);
-        signatureEntries[name] = { transport: info.transport, url: info.url, headers };
-      } catch {
-        // Missing secrets or invalid header config. Keep signature stable but avoid leaking details.
-        signatureEntries[name] = { transport: info.transport, url: info.url, headers: null };
-      }
-    }
-
-    const signature = JSON.stringify(signatureEntries);
+    const signature = this.computeConfigSignature(enabledServers, projectSecrets);
 
     const existing = this.workspaceServers.get(workspaceId);
     const leaseCount = this.getLeaseCount(workspaceId);
@@ -597,6 +728,7 @@ export class MCPServerManager {
       return {
         tools: this.collectTools(existing.instances, fullServerInfo, overrides),
         stats: existing.stats,
+        serverErrors: existing.serverErrors,
       };
     }
 
@@ -645,7 +777,11 @@ export class MCPServerManager {
           }
         }
 
-        const restartedInstances = await this.startServers(
+        for (const serverName of closedServerNames) {
+          delete existing.serverErrors[serverName];
+        }
+
+        const { instances: restartedInstances, errors: restartErrors } = await this.startServers(
           serversToRestart,
           runtime,
           workspacePath,
@@ -655,6 +791,10 @@ export class MCPServerManager {
 
         for (const [serverName, instance] of restartedInstances) {
           existing.instances.set(serverName, instance);
+        }
+
+        for (const [serverName, error] of Object.entries(restartErrors)) {
+          existing.serverErrors[serverName] = error;
         }
       }
 
@@ -672,6 +812,7 @@ export class MCPServerManager {
       return {
         tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
         stats: existing.stats,
+        serverErrors: existing.serverErrors,
       };
     }
 
@@ -689,7 +830,7 @@ export class MCPServerManager {
 
     await this.stopServers(workspaceId);
 
-    const instances = await this.startServers(
+    const { instances, errors: serverErrors } = await this.startServers(
       enabledServers,
       runtime,
       workspacePath,
@@ -732,13 +873,164 @@ export class MCPServerManager {
       configSignature: signature,
       instances,
       stats,
+      serverErrors,
       lastActivity: Date.now(),
     });
 
     return {
       tools: this.collectTools(instances, fullServerInfo, overrides),
       stats,
+      serverErrors,
     };
+  }
+
+  async restartServersForWorkspace(options: {
+    workspaceId: string;
+    projectPath: string;
+    runtime: Runtime;
+    workspacePath: string;
+    overrides?: WorkspaceMCPOverrides;
+    projectSecrets?: Record<string, string>;
+    serverName?: string;
+  }): Promise<{ success: true } | { success: false; error: string }> {
+    const {
+      workspaceId,
+      projectPath,
+      runtime,
+      workspacePath,
+      overrides,
+      projectSecrets,
+      serverName,
+    } = options;
+
+    if (this.isWorkspaceLeased(workspaceId)) {
+      return { success: false, error: "Cannot restart MCP servers while a stream is active" };
+    }
+
+    if (!serverName) {
+      await this.stopServers(workspaceId);
+
+      const result = await this.getToolsForWorkspace({
+        workspaceId,
+        projectPath,
+        runtime,
+        workspacePath,
+        overrides,
+        projectSecrets,
+      });
+
+      const failed = Object.keys(result.serverErrors);
+      if (failed.length > 0) {
+        return {
+          success: false,
+          error: `Some MCP servers failed to start: ${failed.sort().join(", ")}`,
+        };
+      }
+
+      return { success: true };
+    }
+
+    const fullServerInfo = await this.getAllServers(projectPath);
+    const enabledServers = this.filterServersByPolicy(
+      this.applyServerOverrides(fullServerInfo, overrides)
+    );
+
+    const serverInfo = enabledServers[serverName];
+    if (!serverInfo) {
+      return { success: false, error: `MCP server is disabled or not configured: ${serverName}` };
+    }
+
+    const signature = this.computeConfigSignature(enabledServers, projectSecrets);
+    const enabledServerCount = Object.keys(enabledServers).length;
+
+    const existing = this.workspaceServers.get(workspaceId);
+    if (existing?.configSignature !== signature) {
+      // If the workspace isn't currently running servers for this exact config, do a full restart.
+      await this.stopServers(workspaceId);
+      const result = await this.getToolsForWorkspace({
+        workspaceId,
+        projectPath,
+        runtime,
+        workspacePath,
+        overrides,
+        projectSecrets,
+      });
+
+      const error = result.serverErrors[serverName];
+      if (error) {
+        return { success: false, error };
+      }
+
+      return { success: true };
+    }
+
+    if (!existing) {
+      return { success: false, error: "MCP servers are not running for this workspace" };
+    }
+
+    const existingInstance = existing.instances.get(serverName);
+    if (existingInstance) {
+      existing.instances.delete(serverName);
+      try {
+        await existingInstance.close();
+      } catch (error) {
+        log.warn("Failed to stop MCP server", { workspaceId, name: serverName, error });
+      }
+    }
+
+    delete existing.serverErrors[serverName];
+
+    try {
+      const instance = await this.startSingleServer(
+        serverName,
+        serverInfo,
+        runtime,
+        workspacePath,
+        projectSecrets,
+        () => this.markActivity(workspaceId)
+      );
+      existing.instances.set(serverName, instance);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      existing.serverErrors[serverName] = message;
+      return { success: false, error: message };
+    } finally {
+      // Keep cached stats in sync so AIService telemetry and UI are accurate.
+      const resolvedTransports = new Set<ResolvedTransport>();
+      for (const instance of existing.instances.values()) {
+        resolvedTransports.add(instance.resolvedTransport);
+      }
+
+      const hasStdio = resolvedTransports.has("stdio");
+      const hasHttp = resolvedTransports.has("http");
+      const hasSse = resolvedTransports.has("sse");
+
+      const transportMode: MCPTransportMode =
+        existing.instances.size === 0
+          ? "none"
+          : resolvedTransports.size === 1 && hasStdio
+            ? "stdio_only"
+            : resolvedTransports.size === 1 && hasHttp
+              ? "http_only"
+              : resolvedTransports.size === 1 && hasSse
+                ? "sse_only"
+                : "mixed";
+
+      existing.stats = {
+        enabledServerCount: enabledServerCount,
+        startedServerCount: existing.instances.size,
+        failedServerCount: Math.max(0, enabledServerCount - existing.instances.size),
+        autoFallbackCount: [...existing.instances.values()].filter((i) => i.autoFallbackUsed)
+          .length,
+        hasStdio,
+        hasHttp,
+        hasSse,
+        transportMode,
+      };
+      existing.lastActivity = Date.now();
+    }
+
+    return { success: true };
   }
 
   async stopServers(workspaceId: string): Promise<void> {
@@ -924,30 +1216,44 @@ export class MCPServerManager {
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void
-  ): Promise<Map<string, MCPServerInstance>> {
-    const result = new Map<string, MCPServerInstance>();
+  ): Promise<{ instances: Map<string, MCPServerInstance>; errors: Record<string, string> }> {
+    const instances = new Map<string, MCPServerInstance>();
+    const errors: Record<string, string> = {};
     const entries = Object.entries(servers);
 
-    for (const [name, info] of entries) {
-      try {
-        const instance = await this.startSingleServer(
-          name,
-          info,
-          runtime,
-          workspacePath,
-          projectSecrets,
-          onActivity
-        );
-        if (instance) {
-          result.set(name, instance);
+    // Start servers in parallel so one hung/slow server doesn't delay all others.
+    // Individual server startup is protected by timeouts (see startSingleServer).
+    const results = await Promise.all(
+      entries.map(async ([name, info]) => {
+        try {
+          const instance = await this.startSingleServer(
+            name,
+            info,
+            runtime,
+            workspacePath,
+            projectSecrets,
+            onActivity
+          );
+
+          return { name, instance, success: true as const };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { name, error: message, success: false as const };
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        log.error("Failed to start MCP server", { name, error: message });
+      })
+    );
+
+    for (const item of results) {
+      if (item.success) {
+        instances.set(item.name, item.instance);
+        continue;
       }
+
+      errors[item.name] = item.error;
+      log.error("Failed to start MCP server", { name: item.name, error: item.error });
     }
 
-    return result;
+    return { instances, errors };
   }
 
   private async startSingleServer(
@@ -957,153 +1263,239 @@ export class MCPServerManager {
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void
-  ): Promise<MCPServerInstance | null> {
+  ): Promise<MCPServerInstance> {
     if (info.transport === "stdio") {
       log.debug("[MCP] Spawning stdio server", { name });
-      const execStream = await runtime.exec(info.command, {
-        cwd: workspacePath,
-        timeout: 60 * 60 * 24, // 24 hours
-      });
 
-      const transport = new MCPStdioTransport(execStream);
+      const execAbortController = new AbortController();
+      let transport: MCPStdioTransport | null = null;
+      let client: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
 
-      const instanceRef: { current: MCPServerInstance | null } = { current: null };
-      let transportClosed = false;
-      const markClosed = () => {
-        if (transportClosed) {
-          return;
-        }
-        transportClosed = true;
-        if (instanceRef.current) {
-          instanceRef.current.isClosed = true;
-        }
-      };
+      try {
+        const execStream = await withTimeout(
+          runtime.exec(info.command, {
+            cwd: workspacePath,
+            timeout: 60 * 60 * 24, // 24 hours
+            abortSignal: execAbortController.signal,
+          }),
+          {
+            timeoutMs: SERVER_START_TIMEOUT_MS,
+            label: `[MCP] Spawn stdio server "${name}"`,
+            onTimeout: () => execAbortController.abort(),
+          }
+        );
 
-      transport.onclose = markClosed;
+        transport = new MCPStdioTransport(execStream);
 
-      transport.onerror = (error) => {
-        log.error("[MCP] Transport error", { name, error });
-      };
+        const instanceRef: { current: MCPServerInstance | null } = { current: null };
+        let transportClosed = false;
+        const markClosed = () => {
+          if (transportClosed) {
+            return;
+          }
+          transportClosed = true;
+          if (instanceRef.current) {
+            instanceRef.current.isClosed = true;
+          }
+        };
 
-      await transport.start();
-      const client = await experimental_createMCPClient({ transport });
-      const rawTools = await client.tools();
-      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
+        transport.onclose = markClosed;
 
-      log.info("[MCP] Server ready", {
-        name,
-        transport: "stdio",
-        toolCount: Object.keys(tools).length,
-      });
+        transport.onerror = (error) => {
+          log.error("[MCP] Transport error", { name, error });
+        };
 
-      const instance: MCPServerInstance = {
-        name,
-        resolvedTransport: "stdio",
-        autoFallbackUsed: false,
-        tools,
-        isClosed: transportClosed,
-        close: async () => {
-          // Mark closed first to prevent any new tool calls from being treated as
-          // valid by higher-level caching logic.
-          markClosed();
+        await transport.start();
 
+        client = await withTimeout(experimental_createMCPClient({ transport }), {
+          timeoutMs: SERVER_START_TIMEOUT_MS,
+          label: `[MCP] Connect stdio server "${name}"`,
+          onTimeout: () => execAbortController.abort(),
+        });
+
+        const rawTools = await withTimeout(client.tools(), {
+          timeoutMs: SERVER_START_TIMEOUT_MS,
+          label: `[MCP] List tools for stdio server "${name}"`,
+          onTimeout: () => execAbortController.abort(),
+        });
+
+        const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
+
+        log.info("[MCP] Server ready", {
+          name,
+          transport: "stdio",
+          toolCount: Object.keys(tools).length,
+        });
+
+        const instance: MCPServerInstance = {
+          name,
+          resolvedTransport: "stdio",
+          autoFallbackUsed: false,
+          tools,
+          isClosed: transportClosed,
+          close: async () => {
+            // Mark closed first to prevent any new tool calls from being treated as
+            // valid by higher-level caching logic.
+            markClosed();
+
+            // Ensure the underlying process is terminated, even if stdin close doesn't.
+            execAbortController.abort();
+
+            try {
+              await client?.close();
+            } catch (error) {
+              log.debug("[MCP] Error closing client", { name, error });
+            }
+            try {
+              await transport?.close();
+            } catch (error) {
+              log.debug("[MCP] Error closing transport", { name, error });
+            }
+          },
+        };
+
+        instanceRef.current = instance;
+        return instance;
+      } catch (error) {
+        execAbortController.abort();
+
+        if (client) {
           try {
             await client.close();
-          } catch (error) {
-            log.debug("[MCP] Error closing client", { name, error });
+          } catch {
+            // ignore cleanup errors
           }
+        }
+
+        if (transport) {
           try {
             await transport.close();
-          } catch (error) {
-            log.debug("[MCP] Error closing transport", { name, error });
+          } catch {
+            // ignore cleanup errors
           }
-        },
-      };
+        }
 
-      instanceRef.current = instance;
-      return instance;
+        throw error;
+      }
     }
 
     const { headers } = resolveHeaders(info.headers, projectSecrets);
 
     const tryHttp = async () =>
-      experimental_createMCPClient({
-        transport: {
-          type: "http",
-          url: info.url,
-          headers,
-        },
-      });
+      withTimeout(
+        experimental_createMCPClient({
+          transport: {
+            type: "http",
+            url: info.url,
+            headers,
+          },
+        }),
+        {
+          timeoutMs: SERVER_START_TIMEOUT_MS,
+          label: `[MCP] Connect http server "${name}"`,
+        }
+      );
 
     const trySse = async () =>
-      experimental_createMCPClient({
-        transport: {
-          type: "sse",
-          url: info.url,
-          headers,
-        },
-      });
+      withTimeout(
+        experimental_createMCPClient({
+          transport: {
+            type: "sse",
+            url: info.url,
+            headers,
+          },
+        }),
+        {
+          timeoutMs: SERVER_START_TIMEOUT_MS,
+          label: `[MCP] Connect sse server "${name}"`,
+        }
+      );
 
-    let client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
+    let client: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
     let resolvedTransport: ResolvedTransport;
     let autoFallbackUsed = false;
 
-    if (info.transport === "http") {
-      resolvedTransport = "http";
-      client = await tryHttp();
-    } else if (info.transport === "sse") {
-      resolvedTransport = "sse";
-      client = await trySse();
-    } else {
-      // auto
-      try {
+    try {
+      if (info.transport === "http") {
         resolvedTransport = "http";
         client = await tryHttp();
-      } catch (error) {
-        if (!shouldAutoFallbackToSse(error)) {
-          throw error;
-        }
-        autoFallbackUsed = true;
+      } else if (info.transport === "sse") {
         resolvedTransport = "sse";
-        log.debug("[MCP] Auto-fallback http→sse", { name, status: extractHttpStatusCode(error) });
         client = await trySse();
-      }
-    }
-
-    let clientClosed = false;
-
-    const rawTools = await client.tools();
-    const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
-
-    log.info("[MCP] Server ready", {
-      name,
-      transport: resolvedTransport,
-      toolCount: Object.keys(tools).length,
-      autoFallbackUsed,
-    });
-
-    const instance: MCPServerInstance = {
-      name,
-      resolvedTransport,
-      autoFallbackUsed,
-      tools,
-      isClosed: clientClosed,
-      close: async () => {
-        // Mark closed first to prevent any new tool calls from being treated as
-        // valid by higher-level caching logic.
-        if (!clientClosed) {
-          clientClosed = true;
-          instance.isClosed = true;
+      } else {
+        // auto
+        try {
+          resolvedTransport = "http";
+          client = await tryHttp();
+        } catch (error) {
+          if (!shouldAutoFallbackToSse(error)) {
+            throw error;
+          }
+          autoFallbackUsed = true;
+          resolvedTransport = "sse";
+          log.debug("[MCP] Auto-fallback http→sse", {
+            name,
+            status: extractHttpStatusCode(error),
+          });
+          client = await trySse();
         }
+      }
 
+      if (!client) {
+        throw new Error("MCP client failed to initialize");
+      }
+
+      let clientClosed = false;
+
+      const rawTools = await withTimeout(client.tools(), {
+        timeoutMs: SERVER_START_TIMEOUT_MS,
+        label: `[MCP] List tools for server "${name}"`,
+        onTimeout: () => {
+          void client?.close();
+        },
+      });
+      const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
+
+      log.info("[MCP] Server ready", {
+        name,
+        transport: resolvedTransport,
+        toolCount: Object.keys(tools).length,
+        autoFallbackUsed,
+      });
+
+      const instance: MCPServerInstance = {
+        name,
+        resolvedTransport,
+        autoFallbackUsed,
+        tools,
+        isClosed: clientClosed,
+        close: async () => {
+          // Mark closed first to prevent any new tool calls from being treated as
+          // valid by higher-level caching logic.
+          if (!clientClosed) {
+            clientClosed = true;
+            instance.isClosed = true;
+          }
+
+          try {
+            await client?.close();
+          } catch (error) {
+            log.debug("[MCP] Error closing client", { name, error });
+          }
+        },
+      };
+
+      return instance;
+    } catch (error) {
+      if (client) {
         try {
           await client.close();
-        } catch (error) {
-          log.debug("[MCP] Error closing client", { name, error });
+        } catch {
+          // ignore cleanup errors
         }
-      },
-    };
+      }
 
-    return instance;
+      throw error;
+    }
   }
 }

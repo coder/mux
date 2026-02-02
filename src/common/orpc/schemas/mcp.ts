@@ -152,3 +152,102 @@ export const MCPTestResultSchema = z.discriminatedUnion("success", [
   z.object({ success: z.literal(true), tools: z.array(z.string()) }),
   z.object({ success: z.literal(false), error: z.string() }),
 ]);
+
+// ---------------------------------------------------------------------------
+// Global MCP config (~/.mux/mcp.jsonc)
+// ---------------------------------------------------------------------------
+
+export const MCPGlobalAddParamsSchema = z
+  .object({
+    name: z.string(),
+
+    // Backward-compatible: if transport omitted, interpret as stdio.
+    transport: MCPTransportSchema.optional(),
+
+    command: z.string().optional(),
+    url: z.string().optional(),
+    headers: MCPHeadersSchema.optional(),
+  })
+  .superRefine((input, ctx) => {
+    const transport = input.transport ?? "stdio";
+
+    if (transport === "stdio") {
+      if (!input.command?.trim()) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "command is required for stdio" });
+      }
+      return;
+    }
+
+    if (!input.url?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "url is required for http/sse/auto" });
+    }
+  });
+
+export const MCPGlobalRemoveParamsSchema = z.object({
+  name: z.string(),
+});
+
+export const MCPGlobalSetEnabledParamsSchema = z.object({
+  name: z.string(),
+  enabled: z.boolean(),
+});
+
+export const MCPGlobalSetToolAllowlistParamsSchema = z.object({
+  name: z.string(),
+  /** Tool names to allow. Empty array = no tools allowed. */
+  toolAllowlist: z.array(z.string()),
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics (parse + validation)
+// ---------------------------------------------------------------------------
+
+export const MCPConfigParseErrorSchema = z.object({
+  message: z.string(),
+  offset: z.number().int().nonnegative(),
+  length: z.number().int().nonnegative(),
+});
+
+export const MCPConfigValidationErrorSchema = z.object({
+  message: z.string(),
+  serverName: z.string().optional(),
+});
+
+export const MCPConfigDiagnosticsSchema = z.object({
+  filePath: z.string(),
+  parseErrors: z.array(MCPConfigParseErrorSchema),
+  validationErrors: z.array(MCPConfigValidationErrorSchema),
+});
+
+// ---------------------------------------------------------------------------
+// Runtime status + restart (issue #2060)
+// ---------------------------------------------------------------------------
+
+export const MCPServerRuntimeStateSchema = z.enum([
+  "not_started",
+  "starting",
+  "running",
+  "failed",
+  "stopped",
+]);
+
+export const MCPServerRuntimeStatusSchema = z.object({
+  state: MCPServerRuntimeStateSchema,
+  toolCount: z.number().int().nonnegative().optional(),
+  resolvedTransport: z.enum(["stdio", "http", "sse"]).optional(),
+  autoFallbackUsed: z.boolean().optional(),
+  lastStartedAt: z.number().int().optional(),
+  lastStoppedAt: z.number().int().optional(),
+  lastError: z.string().optional(),
+  lastErrorAt: z.number().int().optional(),
+});
+
+export const MCPWorkspaceMcpStatusSchema = z.object({
+  isLeased: z.boolean(),
+  servers: z.record(z.string(), MCPServerRuntimeStatusSchema),
+});
+
+export const MCPWorkspaceMcpRestartParamsSchema = z.object({
+  workspaceId: z.string(),
+  serverName: z.string().optional(),
+});

@@ -33,12 +33,19 @@ import {
 } from "./agentDefinition";
 import {
   MCPAddParamsSchema,
+  MCPConfigDiagnosticsSchema,
+  MCPGlobalAddParamsSchema,
+  MCPGlobalRemoveParamsSchema,
+  MCPGlobalSetEnabledParamsSchema,
+  MCPGlobalSetToolAllowlistParamsSchema,
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
   MCPSetEnabledParamsSchema,
   MCPSetToolAllowlistParamsSchema,
   MCPTestParamsSchema,
   MCPTestResultSchema,
+  MCPWorkspaceMcpRestartParamsSchema,
+  MCPWorkspaceMcpStatusSchema,
   WorkspaceMCPOverridesSchema,
 } from "./mcp";
 import { PolicyGetResponseSchema } from "./policy";
@@ -261,6 +268,10 @@ export const projects = {
       input: z.object({ projectPath: z.string() }),
       output: MCPServerMapSchema,
     },
+    getDiagnostics: {
+      input: z.object({ projectPath: z.string() }),
+      output: MCPConfigDiagnosticsSchema,
+    },
     add: {
       input: MCPAddParamsSchema,
       output: ResultSchema(z.void(), z.string()),
@@ -390,6 +401,40 @@ const DebugLlmRequestSnapshotSchema = z
       .optional(),
   })
   .strict();
+
+// Global (user-level) config
+export const global = {
+  mcp: {
+    list: {
+      input: z.void(),
+      output: MCPServerMapSchema,
+    },
+    getDiagnostics: {
+      input: z.void(),
+      output: MCPConfigDiagnosticsSchema,
+    },
+    add: {
+      input: MCPGlobalAddParamsSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
+    remove: {
+      input: MCPGlobalRemoveParamsSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
+    test: {
+      input: MCPTestParamsSchema,
+      output: MCPTestResultSchema,
+    },
+    setEnabled: {
+      input: MCPGlobalSetEnabledParamsSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
+    setToolAllowlist: {
+      input: MCPGlobalSetToolAllowlistParamsSchema,
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
+};
 
 export const workspace = {
   list: {
@@ -737,6 +782,14 @@ export const workspace = {
         workspaceId: z.string(),
         overrides: WorkspaceMCPOverridesSchema,
       }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+    status: {
+      input: z.object({ workspaceId: z.string() }),
+      output: MCPWorkspaceMcpStatusSchema,
+    },
+    restart: {
+      input: MCPWorkspaceMcpRestartParamsSchema,
       output: ResultSchema(z.void(), z.string()),
     },
   },

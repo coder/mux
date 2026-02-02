@@ -173,6 +173,7 @@ export {
   debug,
   features,
   general,
+  global,
   menu,
   agentSkills,
   agents,
