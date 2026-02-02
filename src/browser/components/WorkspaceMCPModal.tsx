@@ -12,7 +12,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  VisuallyHidden,
 } from "@/browser/components/ui/dialog";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
 import { ToolSelector } from "@/browser/components/ToolSelector";
@@ -266,11 +265,9 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
             <Server className="h-5 w-5" />
             Workspace MCP Configuration
           </DialogTitle>
-          <VisuallyHidden>
-            <DialogDescription>
-              Configure MCP servers and tools for this workspace.
-            </DialogDescription>
-          </VisuallyHidden>
+          <DialogDescription className="sr-only">
+            Configure MCP servers and tools for this workspace.
+          </DialogDescription>
         </DialogHeader>
 
         {loading ? (
