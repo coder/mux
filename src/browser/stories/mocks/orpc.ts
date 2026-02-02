@@ -22,6 +22,7 @@ import type {
   WorkspaceStatsSnapshot,
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
 import type { ChatStats } from "@/common/types/chatStats";
@@ -124,8 +125,11 @@ export interface MockORPCClientOptions {
   sessionUsage?: Map<string, MockSessionUsage>;
   /** Debug snapshot per workspace for the last LLM request modal */
   lastLlmRequestSnapshots?: Map<string, DebugLlmRequestSnapshot | null>;
-  /** Mock transcripts for workspace.getSubagentTranscript (taskId -> persisted messages). */
-  subagentTranscripts?: Map<string, MuxMessage[]>;
+  /** Mock transcripts for workspace.getSubagentTranscript (taskId -> persisted transcript response). */
+  subagentTranscripts?: Map<
+    string,
+    { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
+  >;
   /** MCP server configuration per project */
   mcpServers?: Map<
     string,
@@ -235,7 +239,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     backgroundProcesses = new Map<string, MockBackgroundProcess[]>(),
     sessionUsage = new Map<string, MockSessionUsage>(),
     lastLlmRequestSnapshots = new Map<string, DebugLlmRequestSnapshot | null>(),
-    subagentTranscripts = new Map<string, MuxMessage[]>(),
+    subagentTranscripts = new Map<
+      string,
+      { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
+    >(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     statsTabVariant = "control",
     projectSecrets = new Map<string, Secret[]>(),
@@ -672,7 +679,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           data: lastLlmRequestSnapshots.get(input.workspaceId) ?? null,
         }),
       getSubagentTranscript: (input: { workspaceId?: string; taskId: string }) =>
-        Promise.resolve(subagentTranscripts.get(input.taskId) ?? []),
+        Promise.resolve(subagentTranscripts.get(input.taskId) ?? { messages: [] }),
       executeBash: async (input: { workspaceId: string; script: string }) => {
         if (executeBash) {
           const result = await executeBash(input.workspaceId, input.script);

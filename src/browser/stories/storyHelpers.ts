@@ -14,6 +14,7 @@ import type {
   WorkspaceStatsSnapshot,
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   SELECTED_WORKSPACE_KEY,
@@ -355,8 +356,11 @@ export interface SimpleChatSetupOptions {
   /** Session usage data for Costs tab */
   statsTabEnabled?: boolean;
   sessionUsage?: MockSessionUsage;
-  /** Mock transcripts for workspace.getSubagentTranscript (taskId -> persisted messages). */
-  subagentTranscripts?: Map<string, MuxMessage[]>;
+  /** Mock transcripts for workspace.getSubagentTranscript (taskId -> persisted transcript response). */
+  subagentTranscripts?: Map<
+    string,
+    { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
+  >;
   /** Optional custom chat handler for emitting additional events (e.g., queued-message-changed) */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => void;
   /** Idle compaction hours for context meter (null = disabled) */

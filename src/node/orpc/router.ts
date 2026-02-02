@@ -49,6 +49,7 @@ import * as fsPromises from "fs/promises";
 import * as path from "node:path";
 
 import type { MuxMessage } from "@/common/types/message";
+import { coerceThinkingLevel } from "@/common/types/thinking";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
 import {
@@ -1826,12 +1827,25 @@ export const router = (authToken?: string) => {
           if (!resolved) {
             if (requestingWorkspaceId && isDescendant) {
               const taskSessionDir = context.config.getSessionDir(taskId);
-              return readTranscriptFromPaths({
+              const messages = await readTranscriptFromPaths({
                 workspaceId: taskId,
                 chatPath: path.join(taskSessionDir, "chat.jsonl"),
                 partialPath: path.join(taskSessionDir, "partial.json"),
                 logLabel: `${taskId}/chat.jsonl`,
               });
+
+              const metaResult = await context.aiService.getWorkspaceMetadata(taskId);
+              const model =
+                metaResult.success &&
+                typeof metaResult.data.taskModelString === "string" &&
+                metaResult.data.taskModelString.trim().length > 0
+                  ? metaResult.data.taskModelString.trim()
+                  : undefined;
+              const thinkingLevel = metaResult.success
+                ? coerceThinkingLevel(metaResult.data.taskThinkingLevel)
+                : undefined;
+
+              return { messages, model, thinkingLevel };
             }
 
             // Helpful error message for UI.
@@ -1846,12 +1860,20 @@ export const router = (authToken?: string) => {
             throw new Error("Task is not a descendant of this workspace");
           }
 
-          return readTranscriptFromPaths({
+          const messages = await readTranscriptFromPaths({
             workspaceId: resolved.workspaceId,
             chatPath: resolved.entry.chatPath,
             partialPath: resolved.entry.partialPath,
             logLabel: `${resolved.workspaceId}/subagent-transcripts/${taskId}/chat.jsonl`,
           });
+
+          const model =
+            typeof resolved.entry.model === "string" && resolved.entry.model.trim().length > 0
+              ? resolved.entry.model.trim()
+              : undefined;
+          const thinkingLevel = coerceThinkingLevel(resolved.entry.thinkingLevel);
+
+          return { messages, model, thinkingLevel };
         }),
       executeBash: t
         .input(schemas.workspace.executeBash.input)

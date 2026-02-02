@@ -561,7 +561,13 @@ export const workspace = {
       /** Child task/workspace id whose transcript should be loaded. */
       taskId: z.string(),
     }),
-    output: z.array(MuxMessageSchema),
+    output: z.object({
+      messages: z.array(MuxMessageSchema),
+      /** Task-level model string used when running the sub-agent (optional for legacy entries). */
+      model: z.string().optional(),
+      /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
+      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+    }),
   },
   executeBash: {
     input: z.object({

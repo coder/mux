@@ -369,7 +369,16 @@ export const TaskTranscriptViewer: AppStory = {
               ],
             }),
           ],
-          subagentTranscripts: new Map([[taskId, transcriptMessages]]),
+          subagentTranscripts: new Map([
+            [
+              taskId,
+              {
+                messages: transcriptMessages,
+                model: "openai:gpt-4o-mini",
+                thinkingLevel: "medium",
+              },
+            ],
+          ]),
         });
       }}
     />

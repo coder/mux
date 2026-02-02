@@ -3,6 +3,8 @@ import * as path from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+
 import { log } from "@/node/services/log";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 
@@ -17,6 +19,10 @@ export interface SubagentReportArtifactIndexEntry {
   parentWorkspaceId: string;
   createdAtMs: number;
   updatedAtMs: number;
+  /** Task-level model string used when running the sub-agent (optional for legacy entries). */
+  model?: string;
+  /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
+  thinkingLevel?: ThinkingLevel;
   title?: string;
   /** Full ancestor chain (parent first). Used for descendant scope checks after cleanup. */
   ancestorWorkspaceIds: string[];
@@ -122,6 +128,8 @@ export async function readSubagentReportArtifact(
       parentWorkspaceId?: unknown;
       createdAtMs?: unknown;
       updatedAtMs?: unknown;
+      model?: unknown;
+      thinkingLevel?: unknown;
       title?: unknown;
       ancestorWorkspaceIds?: unknown;
       reportMarkdown?: unknown;
@@ -134,10 +142,19 @@ export async function readSubagentReportArtifact(
 
     const title = typeof obj.title === "string" ? obj.title : undefined;
 
+    const model =
+      typeof obj.model === "string" && obj.model.trim().length > 0 ? obj.model.trim() : undefined;
+    const thinkingLevel = coerceThinkingLevel(obj.thinkingLevel);
+
     if (meta) {
       // Trust the index file for metadata (versioned), but allow per-task file to override title.
       return {
         ...meta,
+        model:
+          typeof meta.model === "string" && meta.model.trim().length > 0
+            ? meta.model.trim()
+            : undefined,
+        thinkingLevel: coerceThinkingLevel(meta.thinkingLevel),
         title: title ?? meta.title,
         reportMarkdown,
       };
@@ -161,6 +178,8 @@ export async function readSubagentReportArtifact(
       parentWorkspaceId,
       createdAtMs,
       updatedAtMs,
+      model,
+      thinkingLevel,
       title,
       ancestorWorkspaceIds,
       reportMarkdown,
@@ -204,6 +223,10 @@ export async function upsertSubagentReportArtifact(params: {
   parentWorkspaceId: string;
   ancestorWorkspaceIds: string[];
   reportMarkdown: string;
+  /** Task-level model string used when running the sub-agent (optional for legacy entries). */
+  model?: string;
+  /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
+  thinkingLevel?: ThinkingLevel;
   title?: string;
   nowMs?: number;
 }): Promise<SubagentReportArtifactIndexEntry> {
@@ -211,6 +234,12 @@ export async function upsertSubagentReportArtifact(params: {
 
   await workspaceFileLocks.withLock(params.workspaceId, async () => {
     const nowMs = params.nowMs ?? Date.now();
+
+    const model =
+      typeof params.model === "string" && params.model.trim().length > 0
+        ? params.model.trim()
+        : undefined;
+    const thinkingLevel = coerceThinkingLevel(params.thinkingLevel);
 
     const file = await readSubagentReportArtifactsFile(params.workspaceSessionDir);
     const existing = file.artifactsByChildTaskId[params.childTaskId] ?? null;
@@ -231,6 +260,8 @@ export async function upsertSubagentReportArtifact(params: {
             parentWorkspaceId: params.parentWorkspaceId,
             createdAtMs,
             updatedAtMs: nowMs,
+            model,
+            thinkingLevel,
             title: params.title,
             ancestorWorkspaceIds: params.ancestorWorkspaceIds,
             reportMarkdown: params.reportMarkdown,
@@ -253,6 +284,8 @@ export async function upsertSubagentReportArtifact(params: {
       parentWorkspaceId: params.parentWorkspaceId,
       createdAtMs,
       updatedAtMs: nowMs,
+      model,
+      thinkingLevel,
       title: params.title,
       ancestorWorkspaceIds: params.ancestorWorkspaceIds,
     };

@@ -3,6 +3,8 @@ import * as path from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
+import type { ThinkingLevel } from "@/common/types/thinking";
+
 import { log } from "@/node/services/log";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 
@@ -17,6 +19,10 @@ export interface SubagentTranscriptArtifactIndexEntry {
   parentWorkspaceId: string;
   createdAtMs: number;
   updatedAtMs: number;
+  /** Task-level model string used when running the sub-agent (optional for legacy entries). */
+  model?: string;
+  /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
+  thinkingLevel?: ThinkingLevel;
   /** Absolute path to the archived chat.jsonl file on disk (if present). */
   chatPath?: string;
   /** Absolute path to the archived partial.json file on disk (if present). */

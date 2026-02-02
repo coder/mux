@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import type { DisplayedMessage, MuxMessage } from "@/common/types/message";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ChatMuxMessage } from "@/common/orpc/types";
 import { useAPI } from "@/browser/contexts/API";
 import { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
 import { ErrorBox, LoadingDots } from "./shared/ToolPrimitives";
 import { MessageRenderer } from "@/browser/components/Messages/MessageRenderer";
+import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
 
 interface SubagentTranscriptDialogProps {
   open: boolean;
@@ -16,33 +18,61 @@ interface SubagentTranscriptDialogProps {
   taskId: string;
 }
 
-export const SubagentTranscriptDialog: React.FC<SubagentTranscriptDialogProps> = (props) => (
-  <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-    <DialogContent className="flex max-h-[80vh] min-h-0 max-w-5xl flex-col overflow-hidden">
-      <DialogHeader>
-        <DialogTitle className="flex items-center gap-2">
-          <span>Transcript</span>
-          <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
-            {props.taskId}
-          </code>
-        </DialogTitle>
-      </DialogHeader>
+export const SubagentTranscriptDialog: React.FC<SubagentTranscriptDialogProps> = (props) => {
+  const [model, setModel] = useState<string | undefined>();
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel | undefined>();
 
-      <SubagentTranscriptViewer
-        open={props.open}
-        workspaceId={props.workspaceId}
-        taskId={props.taskId}
-      />
-    </DialogContent>
-  </Dialog>
-);
+  return (
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent className="flex max-h-[80vh] min-h-0 max-w-5xl flex-col overflow-hidden">
+        <DialogHeader>
+          <DialogTitle className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span>Transcript</span>
+              <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
+                {props.taskId}
+              </code>
+            </div>
+
+            {(model !== undefined || thinkingLevel !== undefined) && (
+              <div className="text-muted flex flex-wrap items-center gap-2 text-[11px] font-normal">
+                {model && <ModelDisplay modelString={model} />}
+                {thinkingLevel && (
+                  <span className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
+                    thinking: {thinkingLevel}
+                  </span>
+                )}
+              </div>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+
+        <SubagentTranscriptViewer
+          open={props.open}
+          workspaceId={props.workspaceId}
+          taskId={props.taskId}
+          setModel={setModel}
+          setThinkingLevel={setThinkingLevel}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+};
 
 const SubagentTranscriptViewer: React.FC<{
   open: boolean;
   workspaceId?: string;
   taskId: string;
+  setModel?: (model: string | undefined) => void;
+  setThinkingLevel?: (thinkingLevel: ThinkingLevel | undefined) => void;
 }> = (props) => {
   const { api } = useAPI();
+
+  const open = props.open;
+  const workspaceId = props.workspaceId;
+  const taskId = props.taskId;
+  const setModel = props.setModel;
+  const setThinkingLevel = props.setThinkingLevel;
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,13 +81,15 @@ const SubagentTranscriptViewer: React.FC<{
   useEffect(() => {
     // TaskToolCall renders this dialog component for each completed task even while closed.
     // Avoid expensive disk/IPC transcript loads until the dialog is opened.
-    if (!props.open) {
+    if (!open) {
       return;
     }
 
     setIsLoading(true);
     setError(null);
     setMessages(null);
+    setModel?.(undefined);
+    setThinkingLevel?.(undefined);
 
     if (!api) {
       setIsLoading(false);
@@ -70,13 +102,15 @@ const SubagentTranscriptViewer: React.FC<{
     const run = async () => {
       try {
         const transcript = await api.workspace.getSubagentTranscript({
-          taskId: props.taskId,
-          workspaceId: props.workspaceId,
+          taskId,
+          workspaceId,
         });
 
         if (cancelled) return;
 
-        setMessages(transcript);
+        setMessages(transcript.messages);
+        setModel?.(transcript.model);
+        setThinkingLevel?.(transcript.thinkingLevel);
         setIsLoading(false);
       } catch (err: unknown) {
         if (cancelled) return;
@@ -90,7 +124,7 @@ const SubagentTranscriptViewer: React.FC<{
     return () => {
       cancelled = true;
     };
-  }, [api, props.open, props.taskId, props.workspaceId]);
+  }, [api, open, taskId, workspaceId, setModel, setThinkingLevel]);
 
   const displayedMessages: DisplayedMessage[] | null = useMemo(() => {
     if (!messages) {
@@ -126,7 +160,7 @@ const SubagentTranscriptViewer: React.FC<{
           displayedMessages.length > 0 ? (
             <div className="flex flex-col gap-2">
               {displayedMessages.map((msg) => (
-                <MessageRenderer key={msg.id} message={msg} workspaceId={props.workspaceId} />
+                <MessageRenderer key={msg.id} message={msg} workspaceId={workspaceId} />
               ))}
             </div>
           ) : (

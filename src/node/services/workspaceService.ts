@@ -66,6 +66,7 @@ import {
   isDockerRuntime,
 } from "@/common/types/runtime";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
 import type { TerminalService } from "@/node/services/terminalService";
@@ -240,6 +241,10 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
   parentSessionDir: string;
   childWorkspaceId: string;
   childSessionDir: string;
+  /** Task-level model string for the child workspace (optional; persists into transcript artifacts). */
+  childTaskModelString?: string;
+  /** Task-level thinking/reasoning level for the child workspace (optional; persists into transcript artifacts). */
+  childTaskThinkingLevel?: ThinkingLevel;
 }): Promise<void> {
   if (params.parentWorkspaceId.length === 0) {
     return;
@@ -300,6 +305,13 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
       if (didCopyChat || didCopyPartial) {
         const nowMs = Date.now();
 
+        const model =
+          typeof params.childTaskModelString === "string" &&
+          params.childTaskModelString.trim().length > 0
+            ? params.childTaskModelString.trim()
+            : undefined;
+        const thinkingLevel = coerceThinkingLevel(params.childTaskThinkingLevel);
+
         await upsertSubagentTranscriptArtifactIndexEntry({
           workspaceId: params.parentWorkspaceId,
           workspaceSessionDir: params.parentSessionDir,
@@ -309,6 +321,8 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
             parentWorkspaceId: params.parentWorkspaceId,
             createdAtMs: existing?.createdAtMs ?? nowMs,
             updatedAtMs: nowMs,
+            model: model ?? existing?.model,
+            thinkingLevel: thinkingLevel ?? existing?.thinkingLevel,
             chatPath: didCopyChat ? archivedChatPath : existing?.chatPath,
             partialPath: didCopyPartial ? archivedPartialPath : existing?.partialPath,
           }),
@@ -1357,6 +1371,8 @@ export class WorkspaceService extends EventEmitter {
       }
 
       let parentWorkspaceId: string | null = null;
+      let childTaskModelString: string | undefined;
+      let childTaskThinkingLevel: ThinkingLevel | undefined;
 
       const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
       if (metadataResult.success) {
@@ -1389,6 +1405,8 @@ export class WorkspaceService extends EventEmitter {
         // Note: Coder workspace deletion is handled by CoderSSHRuntime.deleteWorkspace()
 
         parentWorkspaceId = metadata.parentWorkspaceId ?? null;
+        childTaskModelString = metadata.taskModelString;
+        childTaskThinkingLevel = coerceThinkingLevel(metadata.taskThinkingLevel);
 
         // If this workspace is a sub-agent/task, roll its accumulated timing into the parent BEFORE
         // deleting ~/.mux/sessions/<workspaceId>/session-timing.json.
@@ -1453,6 +1471,8 @@ export class WorkspaceService extends EventEmitter {
               parentSessionDir,
               childWorkspaceId: workspaceId,
               childSessionDir: sessionDir,
+              childTaskModelString,
+              childTaskThinkingLevel,
             });
           } catch (error: unknown) {
             log.error("Failed to roll up child session artifacts into parent", {

@@ -2289,6 +2289,8 @@ export class TaskService {
           parentWorkspaceId,
           ancestorWorkspaceIds,
           reportMarkdown: reportArgs.reportMarkdown,
+          model: latestChildEntry?.workspace.taskModelString,
+          thinkingLevel: latestChildEntry?.workspace.taskThinkingLevel,
           title: reportArgs.title,
           nowMs: persistedAtMs,
         });
