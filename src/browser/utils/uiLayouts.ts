@@ -421,10 +421,12 @@ export async function applyLayoutPresetToWorkspace(
   // Apply global UI keys first so the UI immediately reflects a partially-applied preset
   // even if terminal creation fails.
   updatePersistedState<boolean>(LEFT_SIDEBAR_COLLAPSED_KEY, preset.leftSidebarCollapsed);
-  updatePersistedState<number>(
-    LEFT_SIDEBAR_WIDTH_KEY,
-    clampInt(preset.leftSidebarWidthPx ?? 288, 200, 600)
-  );
+  if (preset.leftSidebarWidthPx !== undefined) {
+    updatePersistedState<number>(
+      LEFT_SIDEBAR_WIDTH_KEY,
+      clampInt(preset.leftSidebarWidthPx, 200, 600)
+    );
+  }
   updatePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, preset.rightSidebar.collapsed);
   updatePersistedState<number>(
     RIGHT_SIDEBAR_WIDTH_KEY,
