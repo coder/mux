@@ -343,13 +343,37 @@ export const TaskAwaitExecuting: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
-
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    const canvas = within(storyRoot);
+    await waitForScrollStabilization(storyRoot);
 
-    const toolTitle = await canvas.findByText("task_await", {}, { timeout: 8000 });
-    await userEvent.click(toolTitle);
+    // Expand the tool card so the awaited-task preview is visible.
+    //
+    // Scope to the message window so we don't accidentally click unrelated disclosure arrows
+    // in the sidebars.
+    const messageWindow = storyRoot.querySelector('[data-testid="message-window"]');
+    if (!(messageWindow instanceof HTMLElement)) {
+      throw new Error("Message window not found");
+    }
+
+    const canvas = within(messageWindow);
+
+    if (!canvas.queryByText("task-fe-001")) {
+      // Wait for the tool header disclosure icon to appear.
+      await waitFor(
+        () => {
+          canvas.getAllByText("▶");
+        },
+        { timeout: 8000 }
+      );
+
+      const expandIcon = canvas.getAllByText("▶")[0];
+      const header = expandIcon?.closest("div.cursor-pointer");
+      if (!(header instanceof HTMLElement)) {
+        throw new Error("Tool header not found");
+      }
+
+      await userEvent.click(header);
+    }
 
     await canvas.findByText("task-fe-001", {}, { timeout: 8000 });
   },
