@@ -389,6 +389,17 @@ export const TaskTranscriptViewer: AppStory = {
     const taskId = "task-transcript-001";
     const canvas = within(canvasElement);
 
+    // TaskToolCall cards are collapsed by default. The task id + "View transcript" button
+    // only render once the tool card is expanded.
+    const taskToolPrompt = "Investigate the workspace cleanup flow";
+    const promptPreview = canvas.getByText(taskToolPrompt);
+    const toolContainer = promptPreview.parentElement;
+    if (!(toolContainer instanceof HTMLElement)) {
+      throw new Error("Task tool container not found");
+    }
+
+    await userEvent.click(within(toolContainer).getByText("task", { selector: "span" }));
+
     // Find the transcript button associated with our specific task.
     // The app may render multiple tasks (and multiple "View transcript" buttons).
     const taskIdButton = await waitFor(
