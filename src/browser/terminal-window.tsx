@@ -8,9 +8,26 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { TerminalView } from "@/browser/components/TerminalView";
-import { APIProvider } from "@/browser/contexts/API";
+import { APIProvider, useAPI } from "@/browser/contexts/API";
 import { TerminalRouterProvider } from "@/browser/terminal/TerminalRouterContext";
 import "./styles/globals.css";
+
+function TerminalWindowContent(props: { workspaceId: string; sessionId: string }) {
+  const { api } = useAPI();
+
+  return (
+    <TerminalView
+      workspaceId={props.workspaceId}
+      sessionId={props.sessionId}
+      visible={true}
+      onExit={() => {
+        api?.terminal.closeWindow({ workspaceId: props.workspaceId }).catch((err) => {
+          console.warn("[TerminalWindow] Failed to close terminal window:", err);
+        });
+      }}
+    />
+  );
+}
 
 // Get workspace ID from query parameter
 const params = new URLSearchParams(window.location.search);
@@ -32,7 +49,7 @@ if (!workspaceId || !sessionId) {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <APIProvider>
       <TerminalRouterProvider>
-        <TerminalView workspaceId={workspaceId} sessionId={sessionId} visible={true} />
+        <TerminalWindowContent workspaceId={workspaceId} sessionId={sessionId} />
       </TerminalRouterProvider>
     </APIProvider>
   );

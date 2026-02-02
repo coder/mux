@@ -216,6 +216,8 @@ interface RightSidebarTabsetNodeProps {
   onAddTerminal: () => void;
   /** Handler to close a terminal tab */
   onCloseTerminal: (tab: TabType) => void;
+  /** Handler to remove a terminal tab after the session exits */
+  onTerminalExit: (tab: TabType) => void;
   /** Map of terminal tab types to their current titles (from OSC sequences) */
   terminalTitles: Map<TabType, string>;
   /** Handler to update a terminal's title */
@@ -494,6 +496,7 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
                 onTitleChange={(title) => props.onTerminalTitleChange(terminalTab, title)}
                 autoFocus={shouldAutoFocus}
                 onAutoFocusConsumed={shouldAutoFocus ? props.onAutoFocusConsumed : undefined}
+                onExit={() => props.onTerminalExit(terminalTab)}
               />
             </div>
           );
@@ -830,6 +833,23 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
   // API for opening terminal windows and managing sessions
   const { api } = useAPI();
 
+  const removeTerminalTab = React.useCallback(
+    (tab: TabType) => {
+      // User request: close terminal panes when the session exits.
+      const nextLayout = removeTabEverywhere(getBaseLayout(), tab);
+      setLayout(() => nextLayout);
+      focusActiveTerminal(nextLayout);
+
+      setTerminalTitles((prev) => {
+        const next = new Map(prev);
+        next.delete(tab);
+        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
+        return next;
+      });
+    },
+    [focusActiveTerminal, getBaseLayout, setLayout, terminalTitlesKey]
+  );
+
   // Keyboard shortcut for closing active tab (Ctrl/Cmd+W)
   // Works for terminal tabs and file tabs
   React.useEffect(() => {
@@ -848,20 +868,12 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         // Close the backend session
         const sessionId = getTerminalSessionId(activeTab);
         if (sessionId) {
-          void api?.terminal.close({ sessionId });
+          api?.terminal.close({ sessionId }).catch((err) => {
+            console.warn("[RightSidebar] Failed to close terminal session:", err);
+          });
         }
 
-        const nextLayout = removeTabEverywhere(layout, activeTab);
-        setLayout(() => nextLayout);
-        focusActiveTerminal(nextLayout);
-
-        // Clean up title (and persist)
-        setTerminalTitles((prev) => {
-          const next = new Map(prev);
-          next.delete(activeTab);
-          updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
-          return next;
-        });
+        removeTerminalTab(activeTab);
         return;
       }
 
@@ -876,7 +888,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
 
     window.addEventListener("keydown", handleKeyDown, { capture: true });
     return () => window.removeEventListener("keydown", handleKeyDown, { capture: true });
-  }, [api, focusActiveTerminal, layout, setLayout, terminalTitlesKey]);
+  }, [api, focusActiveTerminal, layout, removeTerminalTab, setLayout]);
 
   // Sync terminal tabs with backend sessions on workspace mount.
   // - Adds tabs for backend sessions that don't have tabs (restore after reload)
@@ -987,22 +999,14 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
       // Close the backend session
       const sessionId = getTerminalSessionId(tab);
       if (sessionId) {
-        void api?.terminal.close({ sessionId });
+        api?.terminal.close({ sessionId }).catch((err) => {
+          console.warn("[RightSidebar] Failed to close terminal session:", err);
+        });
       }
 
-      const nextLayout = removeTabEverywhere(getBaseLayout(), tab);
-      setLayout(() => nextLayout);
-      focusActiveTerminal(nextLayout);
-
-      // Clean up title (and persist)
-      setTerminalTitles((prev) => {
-        const next = new Map(prev);
-        next.delete(tab);
-        updatePersistedState(terminalTitlesKey, Object.fromEntries(next));
-        return next;
-      });
+      removeTerminalTab(tab);
     },
-    [api, focusActiveTerminal, getBaseLayout, setLayout, terminalTitlesKey]
+    [api, removeTerminalTab]
   );
 
   // Handler to pop out a terminal to a separate window, then remove the tab
@@ -1218,6 +1222,7 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onPopOutTerminal={handlePopOutTerminal}
         onAddTerminal={handleAddTerminal}
         onCloseTerminal={handleCloseTerminal}
+        onTerminalExit={removeTerminalTab}
         terminalTitles={terminalTitles}
         onTerminalTitleChange={handleTerminalTitleChange}
         tabPositions={tabPositions}
