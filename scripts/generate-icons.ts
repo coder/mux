@@ -81,6 +81,13 @@ const LOGO_TARGETS = {
   "public/icon.png": { size: 512, ...APP_ICON },
   "public/icon-192.png": { size: 192, ...APP_ICON },
   "public/icon-512.png": { size: 512, ...APP_ICON },
+
+  // Electron Tray Icons (Monochrome on Transparent)
+  //
+  // Rationale: Runtime will pick the correct variant based on OS theme
+  // (light/dark) and macOS treats these as template images.
+  "public/tray-icon-black.png": { size: 32, ...MONO_ICON },
+  "public/tray-icon-white.png": { size: 32, source: SOURCE_WHITE, bg: false },
 } satisfies Record<string, LogoTargetConfig>;
 
 const APP_ICON_PADDING_RATIO = 0.2;
