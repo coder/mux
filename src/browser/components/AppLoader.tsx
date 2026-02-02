@@ -80,12 +80,11 @@ function AppLoaderInner() {
 
   // Sync stores when metadata finishes loading
   useEffect(() => {
-    if (api) {
-      workspaceStoreInstance.setClient(api);
-      gitStatusStore.setClient(api);
-      backgroundBashStore.setClient(api);
-      getPRStatusStoreInstance().setClient(api);
-    }
+    // Keep store clients in sync even during backend restarts (api can be null while reconnecting).
+    workspaceStoreInstance.setClient(api ?? null);
+    gitStatusStore.setClient(api ?? null);
+    backgroundBashStore.setClient(api ?? null);
+    getPRStatusStoreInstance().setClient(api ?? null);
 
     if (!workspaceContext.loading) {
       workspaceStoreInstance.syncWorkspaces(workspaceContext.workspaceMetadata);

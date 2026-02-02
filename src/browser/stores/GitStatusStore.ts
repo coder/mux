@@ -60,8 +60,16 @@ export class GitStatusStore {
   // Per-workspace refreshing state for UI shimmer effects
   private refreshingWorkspaces = new MapStore<string, boolean>();
 
-  setClient(client: RouterClient<AppRouter>) {
+  setClient(client: RouterClient<AppRouter> | null): void {
     this.client = client;
+
+    if (!client) {
+      return;
+    }
+
+    if (this.workspaceMetadata.size > 0) {
+      this.refreshController.requestImmediate();
+    }
   }
 
   constructor() {
