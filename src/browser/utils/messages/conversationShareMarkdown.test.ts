@@ -35,7 +35,7 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).not.toContain("I\n\n'll");
   });
 
-  test("includes tool calls as <details> blocks", () => {
+  test("renders bash tool calls as inline command", () => {
     const bashTool: MuxToolPart = {
       type: "dynamic-tool",
       toolCallId: "call-1",
@@ -52,11 +52,11 @@ describe("buildConversationShareMarkdown", () => {
 
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
 
-    expect(md).toContain("<summary>Tool: bash (output-available)</summary>");
-    expect(md).toContain("**Input**");
-    expect(md).toContain('"script": "echo hi"');
-    expect(md).not.toContain("**Output**");
-    expect(md).not.toContain('"exitCode": 0');
+    expect(md).toContain("Done");
+    expect(md).toContain("`echo hi`");
+    expect(md).not.toContain("<details>");
+    expect(md).not.toContain("<summary>");
+    expect(md).not.toContain('"script": "echo hi"');
   });
 
   test("summarizes file_read tool calls", () => {
@@ -169,6 +169,22 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).toContain("Secret reasoning");
     expect(md).not.toContain("<details>");
     expect(md).not.toContain("<summary>");
+  });
+
+  test("strips section headers from reasoning", () => {
+    const muxMessages = [
+      createMuxMessage("a1", "assistant", "Answer", undefined, [
+        {
+          type: "reasoning" as const,
+          text: "Updating router endpoints\n\nThis is the real reasoning.",
+        },
+      ]),
+    ];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("This is the real reasoning.");
+    expect(md).not.toContain("Updating router endpoints");
   });
 
   test("concatenates streaming reasoning parts (no per-word <details>)", () => {

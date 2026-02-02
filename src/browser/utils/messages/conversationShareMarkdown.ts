@@ -18,6 +18,10 @@ function getFilePathFromToolInput(input: unknown): string | null {
   return isRecord(input) && typeof input.file_path === "string" ? input.file_path : null;
 }
 
+function getBashScriptFromToolInput(input: unknown): string | null {
+  return isRecord(input) && typeof input.script === "string" ? input.script : null;
+}
+
 function getFileEditDiff(output: unknown): string | null {
   const uiOnlyDiff = getToolOutputUiOnly(output)?.file_edit?.diff;
   if (uiOnlyDiff && uiOnlyDiff.trim().length > 0) {
@@ -187,32 +191,40 @@ function buildCodeBlock(options: { language: string; content: string }): string 
   return `\n\`\`\`${options.language}\n${safeContent}\n\`\`\`\n`;
 }
 
+function buildShellCommand(script: string): string {
+  const trimmed = script.trim();
+  if (trimmed.length === 0) {
+    return "`(empty command)`";
+  }
+
+  // Prefer a single inline code span for one-liners (matches mux.md styling). If the script is
+  // multi-line (or contains backticks), fall back to a code fence.
+  if (trimmed.includes("\n") || trimmed.includes("`")) {
+    const { text } = truncateText(trimmed, MAX_TOOL_BLOCK_CHARS);
+    return buildCodeBlock({ language: "sh", content: text }).trimEnd();
+  }
+
+  return `\`${trimmed}\``;
+}
+
 function buildToolBlock(options: {
   toolName: string;
   state: "input-available" | "output-available";
   input: unknown;
-  preview?: { label: string; language: string; content: string };
 }): string {
+  // Keep tool rendering simple for mux.md shares: avoid <details>/<summary> which render poorly
+  // (and often produce a lot of vertical noise).
   const lines: string[] = [];
-  lines.push("<details>");
-  lines.push(`<summary>Tool: ${options.toolName} (${options.state})</summary>`);
-  lines.push("");
 
-  lines.push("**Input**");
-  lines.push(
-    buildCodeBlock({ language: "json", content: safeJsonStringify(options.input) }).trimEnd()
-  );
+  lines.push(`Tool: ${options.toolName}`);
 
-  if (options.preview) {
-    lines.push("");
-    lines.push(`**${options.preview.label}**`);
-
-    const { text } = truncateText(options.preview.content, MAX_TOOL_BLOCK_CHARS);
-    lines.push(buildCodeBlock({ language: options.preview.language, content: text }).trimEnd());
+  if (options.state === "input-available") {
+    lines.push("_In progress_");
   }
 
-  lines.push("");
-  lines.push("</details>");
+  const inputText = safeJsonStringify(options.input);
+  const { text } = truncateText(inputText, MAX_TOOL_BLOCK_CHARS);
+  lines.push(buildCodeBlock({ language: "json", content: text }).trimEnd());
 
   return lines.join("\n");
 }
@@ -254,6 +266,51 @@ function buildUserMessageBubble(options: { content: string; timestampMs: number 
   return lines.join("\n");
 }
 
+function stripLeadingReasoningHeaders(text: string): string {
+  // Some models emit a short "section title" line at the start of reasoning (often repeated).
+  // Those titles are mostly visual noise in mux.md shares.
+  const lines = text.split(/\r?\n/);
+
+  let idx = 0;
+  while (idx < lines.length && lines[idx]?.trim().length === 0) {
+    idx++;
+  }
+
+  // Drop one-or-more leading header-like lines that are followed by a blank line.
+  // Keep stripping while there's still content afterwards.
+  while (idx < lines.length) {
+    const line = lines[idx]?.trim() ?? "";
+    const next = lines[idx + 1]?.trim() ?? null;
+
+    const isHeaderLike =
+      line.length > 0 &&
+      line.length <= 100 &&
+      next === "" &&
+      !line.startsWith("-") &&
+      !line.startsWith("*") &&
+      !line.startsWith("```") &&
+      !line.startsWith(">");
+
+    if (!isHeaderLike) {
+      break;
+    }
+
+    // Remove this header line and any blank lines after it.
+    idx++;
+    while (idx < lines.length && lines[idx]?.trim().length === 0) {
+      idx++;
+    }
+
+    const remaining = lines.slice(idx).join("\n");
+    if (remaining.trim().length === 0) {
+      // Don't strip if it would remove all content.
+      return text;
+    }
+  }
+
+  return lines.slice(idx).join("\n");
+}
+
 function buildReasoningBlock(content: string): string | null {
   // mux.md doesn't render our <details> blocks particularly well for reasoning (and reasoning
   // often streams as many tiny chunks). For conversation shares, keep this inline.
@@ -262,7 +319,8 @@ function buildReasoningBlock(content: string): string | null {
     return null;
   }
 
-  const { text } = truncateText(trimmedEnd, MAX_TOOL_BLOCK_CHARS);
+  const withoutHeaders = stripLeadingReasoningHeaders(trimmedEnd);
+  const { text } = truncateText(withoutHeaders, MAX_TOOL_BLOCK_CHARS);
   return text.trimEnd();
 }
 
@@ -391,6 +449,13 @@ export function buildConversationShareMarkdown(options: {
       if (part.type === "dynamic-tool") {
         flushPendingText();
         flushPendingReasoning();
+
+        // bash tool calls: include only the command string (no JSON wrapper).
+        if (part.toolName === "bash") {
+          const script = getBashScriptFromToolInput(part.input);
+          assistantBlocks.push(script ? buildShellCommand(script) : "Running a command");
+          continue;
+        }
 
         // File reads are noisy in a transcript; summarize them.
         if (part.toolName === "file_read") {
