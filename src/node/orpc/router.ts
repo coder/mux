@@ -2270,28 +2270,162 @@ export const router = (authToken?: string) => {
 
             context.sessionTimingService.addSubscriber(workspaceId);
 
-            const queue = createAsyncEventQueue<WorkspaceStatsSnapshot>();
-            let pending = Promise.resolve();
+            const queue = (() => {
+              // Coalesce snapshots: keep only the most recent snapshot to avoid an
+              // unbounded queue under high-frequency stream deltas.
+              let buffered: WorkspaceStatsSnapshot | undefined;
+              let hasBuffered = false;
+              let resolveNext: ((value: WorkspaceStatsSnapshot | null) => void) | null = null;
+              let ended = false;
 
-            const enqueueSnapshot = () => {
-              pending = pending.then(async () => {
-                queue.push(await context.sessionTimingService.getSnapshot(workspaceId));
+              const push = (value: WorkspaceStatsSnapshot) => {
+                if (ended) return;
+
+                if (resolveNext) {
+                  const resolve = resolveNext;
+                  resolveNext = null;
+                  resolve(value);
+                  return;
+                }
+
+                buffered = value;
+                hasBuffered = true;
+              };
+
+              async function* iterate(): AsyncGenerator<WorkspaceStatsSnapshot> {
+                while (true) {
+                  if (ended) {
+                    return;
+                  }
+
+                  if (hasBuffered) {
+                    const value = buffered;
+                    buffered = undefined;
+                    hasBuffered = false;
+                    if (value !== undefined) {
+                      yield value;
+                    }
+                    continue;
+                  }
+
+                  const next = await new Promise<WorkspaceStatsSnapshot | null>((resolve) => {
+                    resolveNext = resolve;
+                  });
+
+                  if (ended || next === null) {
+                    return;
+                  }
+
+                  yield next;
+                }
+              }
+
+              const end = () => {
+                ended = true;
+                if (resolveNext) {
+                  const resolve = resolveNext;
+                  resolveNext = null;
+                  resolve(null);
+                }
+              };
+
+              return { push, iterate, end };
+            })();
+
+            // Snapshot computation is async; without coalescing, we can build an unbounded
+            // backlog when token deltas arrive quickly.
+            const SNAPSHOT_THROTTLE_MS = 100;
+
+            let lastPushedAtMs = 0;
+            let inFlight = false;
+            let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+            let pendingSnapshot = false;
+            let closed = false;
+
+            const pushSnapshot = async () => {
+              if (closed) return;
+              if (inFlight) return;
+              if (!pendingSnapshot) return;
+
+              pendingSnapshot = false;
+              inFlight = true;
+
+              try {
+                const snapshot = await context.sessionTimingService.getSnapshot(workspaceId);
+                if (closed) return;
+
+                lastPushedAtMs = snapshot.generatedAt;
+                queue.push(snapshot);
+              } finally {
+                inFlight = false;
+
+                if (closed) {
+                  return;
+                }
+
+                if (pendingSnapshot) {
+                  scheduleSnapshot();
+                }
+              }
+            };
+
+            const runPushSnapshot = () => {
+              void pushSnapshot().catch(() => {
+                // Defensive: a failed snapshot fetch should never brick the subscription.
               });
+            };
+
+            const scheduleSnapshot = () => {
+              pendingSnapshot = true;
+
+              if (closed) {
+                return;
+              }
+
+              if (inFlight) {
+                return;
+              }
+
+              if (pendingTimer) {
+                return;
+              }
+
+              const now = Date.now();
+              const timeSinceLastPush = now - lastPushedAtMs;
+
+              if (timeSinceLastPush >= SNAPSHOT_THROTTLE_MS) {
+                runPushSnapshot();
+                return;
+              }
+
+              const remaining = SNAPSHOT_THROTTLE_MS - timeSinceLastPush;
+              pendingTimer = setTimeout(() => {
+                pendingTimer = undefined;
+                runPushSnapshot();
+              }, remaining);
             };
 
             const onChange = (changedWorkspaceId: string) => {
               if (changedWorkspaceId !== workspaceId) {
                 return;
               }
-              enqueueSnapshot();
+              scheduleSnapshot();
             };
+
+            const initial = await context.sessionTimingService.getSnapshot(workspaceId);
+            lastPushedAtMs = initial.generatedAt;
+            queue.push(initial);
 
             context.sessionTimingService.onStatsChange(onChange);
 
             try {
-              queue.push(await context.sessionTimingService.getSnapshot(workspaceId));
               yield* queue.iterate();
             } finally {
+              closed = true;
+              if (pendingTimer) {
+                clearTimeout(pendingTimer);
+              }
+
               queue.end();
               context.sessionTimingService.offStatsChange(onChange);
               context.sessionTimingService.removeSubscriber(workspaceId);
