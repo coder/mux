@@ -271,6 +271,16 @@ function formatExpiration(expiresAt: number | undefined): string {
   return date.toLocaleDateString();
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function getTextByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 type ShareMessagePopoverProps = {
   model?: string;
   thinking?: string;
@@ -311,6 +321,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
   // For conversation shares, content can be generated lazily on popover open.
   // Keep a resolved copy so cache keys + uploads use a stable string.
   const [resolvedContent, setResolvedContent] = useState(() => props.content ?? "");
+  const [resolvedContentSizeBytes, setResolvedContentSizeBytes] = useState<number | null>(null);
 
   const [isOpen, setIsOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -444,6 +455,9 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
     setIsUploading(true);
     setError(null);
 
+    const sizeBytes = getTextByteLength(resolvedContent);
+    setResolvedContentSizeBytes(sizeBytes);
+
     try {
       // Get preferred expiration and include in upload request
       const preferred = getPreferredExpiration();
@@ -466,7 +480,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
         {
           name: getFileName(),
           type: "text/markdown",
-          size: new TextEncoder().encode(resolvedContent).length,
+          size: sizeBytes,
           model,
           thinking,
         },
@@ -487,7 +501,13 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
       setLocalShareData(data);
     } catch (err) {
       console.error("Share failed:", err);
-      setError(err instanceof Error ? err.message : "Failed to upload");
+      const baseMessage = err instanceof Error ? err.message : "Failed to upload";
+      const shouldIncludeSize = /max size|file too large/i.test(baseMessage);
+      setError(
+        shouldIncludeSize
+          ? `${baseMessage} (content size: ${sizeBytes.toLocaleString()} bytes)`
+          : baseMessage
+      );
     } finally {
       setIsUploading(false);
     }
@@ -586,12 +606,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
         const ms = expirationToMs(preferred);
         const expiresAt = ms ? new Date(Date.now() + ms) : undefined;
 
+        const sizeBytes = getTextByteLength(resolvedContent);
+        setResolvedContentSizeBytes(sizeBytes);
+
         const result = await uploadToMuxMd(
           resolvedContent,
           {
             name: getFileName(),
             type: "text/markdown",
-            size: new TextEncoder().encode(resolvedContent).length,
+            size: sizeBytes,
             model,
             thinking,
           },
@@ -636,6 +659,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
   const handleOpenChange = (open: boolean) => {
     if (open) {
       setError(null);
+      setResolvedContentSizeBytes(null);
 
       // For lazy content (conversation shares), compute the content when the popover opens.
       // We also sync-load cached share data here so the auto-upload effect doesn't fire
@@ -644,6 +668,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
         try {
           const nextContent = props.getContent();
           setResolvedContent(nextContent);
+          setResolvedContentSizeBytes(nextContent ? getTextByteLength(nextContent) : null);
           setLocalShareData(nextContent ? (getShareData(nextContent) ?? null) : null);
         } catch (err) {
           console.error("Failed to generate share content:", err);
@@ -651,6 +676,9 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
           setLocalShareData(null);
           setError(err instanceof Error ? err.message : "Failed to generate content");
         }
+      } else {
+        // Avoid doing O(n) byte-size work during streaming; only compute when the popover is open.
+        setResolvedContentSizeBytes(getTextByteLength(props.content));
       }
     }
 
@@ -672,6 +700,17 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
   }
 
   const ariaLabel = tooltip ?? (isAlreadyShared ? "Already shared" : "Share");
+
+  const contentSizeInfo =
+    resolvedContentSizeBytes !== null ? (
+      <div className="text-muted space-y-0.5 text-[10px]">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate">{getFileName()}</span>
+          <span className="font-mono">{formatBytes(resolvedContentSizeBytes)}</span>
+        </div>
+        <div className="font-mono">{resolvedContentSizeBytes.toLocaleString()} bytes</div>
+      </div>
+    ) : null;
 
   const triggerButton = (
     <Button
@@ -721,6 +760,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
               />
             </div>
 
+            {contentSizeInfo}
             {error ? (
               <>
                 <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
@@ -778,6 +818,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
               )}
             </div>
 
+            {contentSizeInfo}
             {/* URL input with inline copy/open buttons */}
             <div className="border-border bg-background flex items-center gap-1 rounded border px-2 py-1.5">
               <input
