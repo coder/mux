@@ -21,6 +21,7 @@ import {
   isStreamError,
   isDeleteMessage,
   isBashOutputEvent,
+  isTaskCreatedEvent,
   isMuxMessage,
   isQueuedMessageChanged,
   isRestoreToInput,
@@ -219,6 +220,7 @@ interface WorkspaceChatTransientState {
   replayingHistory: boolean;
   queuedMessage: QueuedMessage | null;
   liveBashOutput: Map<string, LiveBashOutputInternal>;
+  liveTaskIds: Map<string, string>;
 }
 
 function createInitialChatTransientState(): WorkspaceChatTransientState {
@@ -229,6 +231,7 @@ function createInitialChatTransientState(): WorkspaceChatTransientState {
     replayingHistory: false,
     queuedMessage: null,
     liveBashOutput: new Map(),
+    liveTaskIds: new Map(),
   };
 }
 
@@ -520,6 +523,11 @@ export class WorkspaceStore {
         }
       }
 
+      // Cleanup ephemeral taskId storage once the actual tool result is available.
+      if (toolCallEnd.toolName === "task") {
+        const transient = this.chatTransientState.get(workspaceId);
+        transient?.liveTaskIds.delete(toolCallEnd.toolCallId);
+      }
       applyWorkspaceChatEventToAggregator(aggregator, data);
 
       this.states.bump(workspaceId);
@@ -930,6 +938,11 @@ export class WorkspaceStore {
     // Important: return the stored object reference so useSyncExternalStore sees a stable snapshot.
     // (Returning a fresh object every call can trigger an infinite re-render loop.)
     return state ?? null;
+  }
+
+  getTaskToolLiveTaskId(workspaceId: string, toolCallId: string): string | null {
+    const taskId = this.chatTransientState.get(workspaceId)?.liveTaskIds.get(toolCallId);
+    return taskId ?? null;
   }
 
   /**
@@ -2058,6 +2071,19 @@ export class WorkspaceStore {
       return;
     }
 
+    if (isTaskCreatedEvent(data)) {
+      const transient = this.assertChatTransientState(workspaceId);
+
+      // Avoid unnecessary re-renders if the taskId is unchanged.
+      const prev = transient.liveTaskIds.get(data.toolCallId);
+      if (prev === data.taskId) return;
+
+      transient.liveTaskIds.set(data.toolCallId, data.taskId);
+
+      // Low-frequency: bump immediately so the user can open the child workspace quickly.
+      this.states.bump(workspaceId);
+      return;
+    }
     // Try buffered event handlers (single source of truth)
     if ("type" in data && data.type in this.bufferedEventHandlers) {
       this.bufferedEventHandlers[data.type](workspaceId, aggregator, data);
@@ -2205,6 +2231,30 @@ export function useBashToolLiveOutput(
     () => {
       if (!workspaceId || !toolCallId) return null;
       return store.getBashToolLiveOutput(workspaceId, toolCallId);
+    }
+  );
+}
+
+/**
+ * Hook to get UI-only taskId for a running task tool call.
+ *
+ * This exists because foreground tasks (run_in_background=false) won't return a tool result
+ * until the child workspace finishes, but we still want to expose the spawned taskId ASAP.
+ */
+export function useTaskToolLiveTaskId(
+  workspaceId: string | undefined,
+  toolCallId: string | undefined
+): string | null {
+  const store = getStoreInstance();
+
+  return useSyncExternalStore(
+    (listener) => {
+      if (!workspaceId) return () => undefined;
+      return store.subscribeKey(workspaceId, listener);
+    },
+    () => {
+      if (!workspaceId || !toolCallId) return null;
+      return store.getTaskToolLiveTaskId(workspaceId, toolCallId);
     }
   );
 }

@@ -10,6 +10,7 @@ import type {
   ToolCallDeltaEvent,
   ToolCallEndEvent,
   BashOutputEvent,
+  TaskCreatedEvent,
   ReasoningDeltaEvent,
   ReasoningEndEvent,
   UsageDeltaEvent,
@@ -87,6 +88,10 @@ export function isToolCallDelta(msg: WorkspaceChatMessage): msg is ToolCallDelta
 
 export function isBashOutputEvent(msg: WorkspaceChatMessage): msg is BashOutputEvent {
   return (msg as { type?: string }).type === "bash-output";
+}
+
+export function isTaskCreatedEvent(msg: WorkspaceChatMessage): msg is TaskCreatedEvent {
+  return (msg as { type?: string }).type === "task-created";
 }
 export function isToolCallEnd(msg: WorkspaceChatMessage): msg is ToolCallEndEvent {
   return (msg as { type?: string }).type === "tool-call-end";

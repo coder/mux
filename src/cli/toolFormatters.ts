@@ -291,16 +291,22 @@ function formatTaskEnd(_toolName: string, _args: unknown, result: unknown): stri
   if (!isRecord(result)) return null;
   const taskResult = result as TaskToolResult;
 
-  if ("taskId" in taskResult && taskResult.status) {
-    return `${chalk.blue("→")} ${taskResult.status}: ${chalk.dim(taskResult.taskId)}`;
+  // Prefer showing the report for completed tasks.
+  const status = (taskResult as { status?: unknown }).status;
+  const taskId = (taskResult as { taskId?: unknown }).taskId;
+  const reportMarkdown = (taskResult as { reportMarkdown?: unknown }).reportMarkdown;
+
+  if (status === "completed" && typeof reportMarkdown === "string") {
+    // Truncate long reports
+    const maxLen = 500;
+    const truncated =
+      reportMarkdown.length > maxLen ? reportMarkdown.slice(0, maxLen) + "…" : reportMarkdown;
+    const id = typeof taskId === "string" ? ` ${chalk.dim(taskId)}` : "";
+    return `${chalk.green("✓")}${id}\n${indent(chalk.dim(truncated))}`;
   }
 
-  if ("reportMarkdown" in taskResult) {
-    // Truncate long reports
-    const report = taskResult.reportMarkdown;
-    const maxLen = 500;
-    const truncated = report.length > maxLen ? report.slice(0, maxLen) + "…" : report;
-    return `${chalk.green("✓")}\n${indent(chalk.dim(truncated))}`;
+  if ((status === "queued" || status === "running") && typeof taskId === "string") {
+    return `${chalk.blue("→")} ${status}: ${chalk.dim(taskId)}`;
   }
 
   return null;

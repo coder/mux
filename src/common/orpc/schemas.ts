@@ -150,6 +150,7 @@ export {
   ToolCallEndEventSchema,
   ToolCallStartEventSchema,
   BashOutputEventSchema,
+  TaskCreatedEventSchema,
   UpdateStatusSchema,
   UsageDeltaEventSchema,
   WorkspaceChatMessageSchema,

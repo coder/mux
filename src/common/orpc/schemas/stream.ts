@@ -231,6 +231,22 @@ export const BashOutputEventSchema = z.object({
   isError: z.boolean().meta({ description: "True if this chunk is from stderr" }),
   timestamp: z.number().meta({ description: "When output was flushed (Date.now())" }),
 });
+
+/**
+ * UI-only notification that a task tool call has created a child workspace.
+ *
+ * This is intentionally NOT part of the tool result returned to the model.
+ * It is streamed over workspace.onChat so the UI can show the spawned taskId
+ * immediately, even when the task tool runs in foreground (run_in_background=false).
+ */
+export const TaskCreatedEventSchema = z.object({
+  type: z.literal("task-created"),
+  workspaceId: z.string(),
+  toolCallId: z.string(),
+  taskId: z.string(),
+  timestamp: z.number().meta({ description: "When the task was created (Date.now())" }),
+});
+
 export const ToolCallEndEventSchema = z.object({
   type: z.literal("tool-call-end"),
   workspaceId: z.string(),
@@ -389,6 +405,7 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   ToolCallDeltaEventSchema,
   ToolCallEndEventSchema,
   BashOutputEventSchema,
+  TaskCreatedEventSchema,
   // Reasoning events
   ReasoningDeltaEventSchema,
   ReasoningEndEventSchema,

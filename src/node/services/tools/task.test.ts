@@ -1,5 +1,6 @@
 import { describe, it, expect, mock } from "bun:test";
 import type { ToolCallOptions } from "ai";
+import type { TaskCreatedEvent } from "@/common/types/stream";
 
 import { createTaskTool } from "./task";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
@@ -103,19 +104,30 @@ describe("task tool", () => {
     using tempDir = new TestTempDir("test-task-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
+    const events: TaskCreatedEvent[] = [];
+    let didEmitTaskCreated = false;
+
     const create = mock(() =>
       Ok({ taskId: "child-task", kind: "agent" as const, status: "running" as const })
     );
-    const waitForAgentReport = mock(() =>
-      Promise.resolve({
+    const waitForAgentReport = mock(() => {
+      // The main thing we care about: emit the UI-only taskId before we block waiting for the report.
+      expect(didEmitTaskCreated).toBe(true);
+      return Promise.resolve({
         reportMarkdown: "Hello from child",
         title: "Result",
-      })
-    );
+      });
+    });
     const taskService = { create, waitForAgentReport } as unknown as TaskService;
 
     const tool = createTaskTool({
       ...baseConfig,
+      emitChatEvent: (event) => {
+        if (event.type === "task-created") {
+          didEmitTaskCreated = true;
+          events.push(event);
+        }
+      },
       taskService,
     });
 
@@ -133,6 +145,23 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalled();
     expect(waitForAgentReport).toHaveBeenCalledWith("child-task", expect.any(Object));
+
+    expect(events).toHaveLength(1);
+    const taskCreated = events[0];
+    if (!taskCreated) {
+      throw new Error("Expected a task-created event");
+    }
+
+    expect(taskCreated.type).toBe("task-created");
+
+    const parentWorkspaceId = baseConfig.workspaceId;
+    if (!parentWorkspaceId) {
+      throw new Error("Expected baseConfig.workspaceId to be set");
+    }
+    expect(taskCreated.workspaceId).toBe(parentWorkspaceId);
+    expect(taskCreated.toolCallId).toBe(mockToolCallOptions.toolCallId);
+    expect(taskCreated.taskId).toBe("child-task");
+    expect(typeof taskCreated.timestamp).toBe("number");
     expect(result).toEqual({
       status: "completed",
       taskId: "child-task",

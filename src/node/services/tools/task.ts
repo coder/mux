@@ -3,6 +3,7 @@ import { tool } from "ai";
 import { coerceThinkingLevel } from "@/common/types/thinking";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TaskToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
 
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
@@ -32,7 +33,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: buildTaskDescription(config),
     inputSchema: TOOL_DEFINITIONS.task.schema,
-    execute: async (args, { abortSignal }): Promise<unknown> => {
+    execute: async (args, { abortSignal, toolCallId }): Promise<unknown> => {
       // Defensive: tool() should have already validated args via inputSchema,
       // but keep runtime validation here to preserve type-safety.
       const parsedArgs = TOOL_DEFINITIONS.task.schema.safeParse(args);
@@ -95,6 +96,19 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       }
 
       const taskId = created.data.taskId;
+
+      // UI-only signal: expose the spawned taskId as soon as the workspace exists.
+      // This allows the frontend to show the taskId even when the task tool is running
+      // in foreground (run_in_background=false).
+      if (config.emitChatEvent && config.workspaceId && toolCallId) {
+        config.emitChatEvent({
+          type: "task-created",
+          workspaceId,
+          toolCallId,
+          taskId,
+          timestamp: Date.now(),
+        } satisfies TaskCreatedEvent);
+      }
 
       if (run_in_background) {
         return parseToolResult(

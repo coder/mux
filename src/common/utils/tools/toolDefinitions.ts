@@ -183,7 +183,7 @@ export const TaskToolQueuedResultSchema = z
 export const TaskToolCompletedResultSchema = z
   .object({
     status: z.literal("completed"),
-    taskId: z.string().optional(),
+    taskId: z.string(),
     reportMarkdown: z.string(),
     title: z.string().optional(),
     agentId: z.string().optional(),

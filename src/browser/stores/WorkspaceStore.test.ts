@@ -773,4 +773,65 @@ describe("WorkspaceStore", () => {
       expect(live).toBeNull();
     });
   });
+
+  describe("task-created events", () => {
+    it("exposes live taskId while the task tool is running", async () => {
+      const workspaceId = "task-created-workspace-1";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "task-created",
+          workspaceId,
+          toolCallId: "call-task-1",
+          taskId: "child-workspace-1",
+          timestamp: 1,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-1")).toBe("child-workspace-1");
+    });
+
+    it("clears live taskId on task tool-call-end", async () => {
+      const workspaceId = "task-created-workspace-2";
+
+      mockOnChat.mockImplementation(async function* (): AsyncGenerator<
+        WorkspaceChatMessage,
+        void,
+        unknown
+      > {
+        yield { type: "caught-up" };
+        await Promise.resolve();
+        yield {
+          type: "task-created",
+          workspaceId,
+          toolCallId: "call-task-2",
+          taskId: "child-workspace-2",
+          timestamp: 1,
+        };
+        yield {
+          type: "tool-call-end",
+          workspaceId,
+          messageId: "m-task-2",
+          toolCallId: "call-task-2",
+          toolName: "task",
+          result: { status: "queued", taskId: "child-workspace-2" },
+          timestamp: 2,
+        };
+      });
+
+      createAndAddWorkspace(store, workspaceId);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(store.getTaskToolLiveTaskId(workspaceId, "call-task-2")).toBeNull();
+    });
+  });
 });
