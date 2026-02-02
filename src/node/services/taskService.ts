@@ -2302,7 +2302,13 @@ export class TaskService {
         });
       }
     }
-    await this.deliverReportToParent(parentWorkspaceId, latestChildEntry, reportArgs);
+
+    await this.deliverReportToParent(
+      parentWorkspaceId,
+      childWorkspaceId,
+      latestChildEntry,
+      reportArgs
+    );
 
     // Begin git-format-patch generation (best-effort).
     //
@@ -2860,15 +2866,20 @@ export class TaskService {
 
   private async deliverReportToParent(
     parentWorkspaceId: string,
+    childWorkspaceId: string,
     childEntry: { projectPath: string; workspace: WorkspaceConfigEntry } | null | undefined,
     report: { reportMarkdown: string; title?: string }
   ): Promise<void> {
+    assert(
+      childWorkspaceId.length > 0,
+      "deliverReportToParent: childWorkspaceId must be non-empty"
+    );
+
     const agentType = childEntry?.workspace.agentType ?? "agent";
-    const childWorkspaceId = childEntry?.workspace.id;
 
     const output = {
       status: "completed" as const,
-      ...(childWorkspaceId ? { taskId: childWorkspaceId } : {}),
+      taskId: childWorkspaceId,
       reportMarkdown: report.reportMarkdown,
       title: report.title,
       agentType,
@@ -2905,7 +2916,7 @@ export class TaskService {
     const titlePrefix = report.title ?? `Subagent (${agentType}) report`;
     const xml = [
       "<mux_subagent_report>",
-      `<task_id>${childWorkspaceId ?? ""}</task_id>`,
+      `<task_id>${childWorkspaceId}</task_id>`,
       `<agent_type>${agentType}</agent_type>`,
       `<title>${titlePrefix}</title>`,
       "<report_markdown>",
