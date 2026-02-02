@@ -31,6 +31,7 @@ import { Switch } from "@/browser/components/ui/switch";
 import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { CachedMCPTestResult, MCPServerInfo, MCPServerTransport } from "@/common/types/mcp";
+import type { MCPOAuthPendingServerConfig } from "@/common/types/mcpOauth";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
 import { MCPHeadersEditor } from "@/browser/components/MCPHeadersEditor";
 import {
@@ -262,9 +263,10 @@ function useMCPOAuthLogin(input: {
   isDesktop: boolean;
   projectPath: string;
   serverName: string;
+  pendingServer?: MCPOAuthPendingServerConfig;
   onSuccess?: () => void | Promise<void>;
 }) {
-  const { api, isDesktop, projectPath, serverName, onSuccess } = input;
+  const { api, isDesktop, projectPath, serverName, pendingServer, onSuccess } = input;
   const loginAttemptRef = useRef(0);
   const [flowId, setFlowId] = useState<string | null>(null);
 
@@ -335,8 +337,8 @@ function useMCPOAuthLogin(input: {
 
       const startResult =
         loginFlowMode === "desktop"
-          ? await mcpOauthApi.startDesktopFlow({ projectPath, serverName })
-          : await mcpOauthApi.startServerFlow({ projectPath, serverName });
+          ? await mcpOauthApi.startDesktopFlow({ projectPath, serverName, pendingServer })
+          : await mcpOauthApi.startServerFlow({ projectPath, serverName, pendingServer });
 
       if (attempt !== loginAttemptRef.current) {
         if (startResult.success) {
@@ -393,7 +395,7 @@ function useMCPOAuthLogin(input: {
       setLoginStatus("error");
       setLoginError(message);
     }
-  }, [api, isDesktop, onSuccess, projectPath, serverName]);
+  }, [api, isDesktop, onSuccess, pendingServer, projectPath, serverName]);
 
   return {
     loginStatus,
@@ -407,9 +409,10 @@ function useMCPOAuthLogin(input: {
 const MCPOAuthRequiredCallout: React.FC<{
   projectPath: string;
   serverName: string;
+  pendingServer?: MCPOAuthPendingServerConfig;
   disabledReason?: string;
   onLoginSuccess?: () => void | Promise<void>;
-}> = ({ projectPath, serverName, disabledReason, onLoginSuccess }) => {
+}> = ({ projectPath, serverName, pendingServer, disabledReason, onLoginSuccess }) => {
   const { api } = useAPI();
   const isDesktop = !!window.api;
 
@@ -418,6 +421,7 @@ const MCPOAuthRequiredCallout: React.FC<{
     isDesktop,
     projectPath,
     serverName,
+    pendingServer,
     onSuccess: onLoginSuccess,
   });
 
@@ -1514,18 +1518,39 @@ export const ProjectSettingsSection: React.FC = () => {
                       <MCPOAuthRequiredCallout
                         projectPath={selectedProject}
                         serverName={newServer.name.trim()}
+                        pendingServer={(() => {
+                          const pendingName = newServer.name.trim();
+                          if (!pendingName) {
+                            return undefined;
+                          }
+
+                          // If the server already exists in config, prefer that config for OAuth.
+                          const existing = servers[pendingName];
+                          if (existing) {
+                            return undefined;
+                          }
+
+                          if (newServer.transport === "stdio") {
+                            return undefined;
+                          }
+
+                          const url = newServer.value.trim();
+                          if (!url) {
+                            return undefined;
+                          }
+
+                          return { transport: newServer.transport, url };
+                        })()}
                         disabledReason={(() => {
                           const pendingName = newServer.name.trim();
                           if (!pendingName) {
-                            return "Enter a server name, then add it to enable OAuth login.";
+                            return "Enter a server name to enable OAuth login.";
                           }
 
                           const existing = servers[pendingName];
-                          if (!existing) {
-                            return "Add this server first to enable OAuth login.";
-                          }
 
-                          if (existing.transport === "stdio") {
+                          const transport = existing?.transport ?? newServer.transport;
+                          if (transport === "stdio") {
                             return "OAuth login is only supported for remote (http/sse) MCP servers.";
                           }
 

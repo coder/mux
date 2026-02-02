@@ -15,6 +15,7 @@ import { roundToBase2 } from "@/common/telemetry/utils";
 import type {
   MCPOAuthAuthStatus,
   MCPOAuthClientInformation,
+  MCPOAuthPendingServerConfig,
   MCPOAuthStoredCredentials,
   MCPOAuthTokens,
 } from "@/common/types/mcpOauth";
@@ -464,10 +465,26 @@ export class McpOauthService {
     return Boolean(creds?.tokens && creds.clientInformation);
   }
 
-  async startDesktopFlow(input: {
+  private async resolveServerForOauthFlow(input: {
     projectPath: string;
     serverName: string;
-  }): Promise<Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>> {
+    pendingServer?: MCPOAuthPendingServerConfig;
+  }): Promise<Result<{ serverUrl: string; transport: "http" | "sse" | "auto" }, string>> {
+    if (input.pendingServer) {
+      // Defensive: pendingServer comes from user input (add-server form), so validate.
+      const transport = input.pendingServer.transport;
+      if (transport !== "http" && transport !== "sse" && transport !== "auto") {
+        return Err("OAuth is only supported for remote (http/sse) MCP servers");
+      }
+
+      const normalizedServerUrl = normalizeServerUrlForComparison(input.pendingServer.url);
+      if (!normalizedServerUrl) {
+        return Err("Invalid MCP server URL");
+      }
+
+      return Ok({ serverUrl: normalizedServerUrl, transport });
+    }
+
     const servers = await this.mcpConfigService.listServers(input.projectPath);
     const server = servers[input.serverName];
     if (!server) {
@@ -482,6 +499,22 @@ export class McpOauthService {
     if (!normalizedServerUrl) {
       return Err("Invalid MCP server URL");
     }
+
+    return Ok({ serverUrl: normalizedServerUrl, transport: server.transport });
+  }
+
+  async startDesktopFlow(input: {
+    projectPath: string;
+    serverName: string;
+    pendingServer?: MCPOAuthPendingServerConfig;
+  }): Promise<Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>> {
+    const serverConfig = await this.resolveServerForOauthFlow(input);
+    if (!serverConfig.success) {
+      return Err(serverConfig.error);
+    }
+
+    const normalizedServerUrl = serverConfig.data.serverUrl;
+    const transport = serverConfig.data.transport;
 
     const projectKey = normalizeProjectPathKey(input.projectPath);
 
@@ -558,7 +591,7 @@ export class McpOauthService {
       projectPath: projectKey,
       serverName: input.serverName,
       serverUrl: normalizedServerUrl,
-      transport: server.transport,
+      transport,
       startedAtMs: Date.now(),
       clientInformation: null,
       authorizeUrl: "",
@@ -661,21 +694,15 @@ export class McpOauthService {
     projectPath: string;
     serverName: string;
     redirectUri: string;
+    pendingServer?: MCPOAuthPendingServerConfig;
   }): Promise<Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>> {
-    const servers = await this.mcpConfigService.listServers(input.projectPath);
-    const server = servers[input.serverName];
-    if (!server) {
-      return Err("MCP server not found");
+    const serverConfig = await this.resolveServerForOauthFlow(input);
+    if (!serverConfig.success) {
+      return Err(serverConfig.error);
     }
 
-    if (server.transport === "stdio") {
-      return Err("OAuth is only supported for remote (http/sse) MCP servers");
-    }
-
-    const normalizedServerUrl = normalizeServerUrlForComparison(server.url);
-    if (!normalizedServerUrl) {
-      return Err("Invalid MCP server URL");
-    }
+    const normalizedServerUrl = serverConfig.data.serverUrl;
+    const transport = serverConfig.data.transport;
 
     let redirectUri: URL;
     try {
@@ -703,7 +730,7 @@ export class McpOauthService {
       projectPath: projectKey,
       serverName: input.serverName,
       serverUrl: normalizedServerUrl,
-      transport: server.transport,
+      transport,
       startedAtMs: Date.now(),
       clientInformation: null,
       authorizeUrl: "",

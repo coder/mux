@@ -210,6 +210,14 @@ export const muxGateway = {
   },
 };
 
+const MCPOAuthPendingServerSchema = z
+  .object({
+    // OAuth is only supported for remote transports.
+    transport: z.union([z.literal("http"), z.literal("sse"), z.literal("auto")]),
+    url: z.string(),
+  })
+  .strict();
+
 // Projects
 export const projects = {
   create: {
@@ -288,6 +296,7 @@ export const projects = {
         .object({
           projectPath: z.string(),
           serverName: z.string(),
+          pendingServer: MCPOAuthPendingServerSchema.optional(),
         })
         .strict(),
       output: ResultSchema(
@@ -317,6 +326,7 @@ export const projects = {
         .object({
           projectPath: z.string(),
           serverName: z.string(),
+          pendingServer: MCPOAuthPendingServerSchema.optional(),
         })
         .strict(),
       output: ResultSchema(

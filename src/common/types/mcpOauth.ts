@@ -6,6 +6,24 @@
  * - Never persist tokens into project-local .mux/mcp.jsonc.
  */
 
+import type { MCPServerTransport } from "./mcp";
+
+/**
+ * Transport types supported by MCP OAuth.
+ *
+ * OAuth is only supported for remote MCP servers (http/sse/auto), not stdio.
+ */
+export type MCPOAuthServerTransport = Exclude<MCPServerTransport, "stdio">;
+
+/**
+ * Ephemeral MCP server config used to start OAuth flows before the server is saved
+ * into project config.
+ */
+export interface MCPOAuthPendingServerConfig {
+  transport: MCPOAuthServerTransport;
+  url: string;
+}
+
 /**
  * OAuth 2.1 token response.
  *
