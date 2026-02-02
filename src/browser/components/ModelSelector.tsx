@@ -1,3 +1,9 @@
+/**
+ * ModelSelector - Dropdown for selecting AI models
+ *
+ * Uses conditional rendering (not Radix Portal) to enable testing in happy-dom.
+ * Pattern follows BaseSelectorPopover.
+ */
 import React, {
   useState,
   useRef,
@@ -12,7 +18,6 @@ import { GatewayToggleButton } from "./GatewayToggleButton";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useGateway, isProviderSupported } from "@/browser/hooks/useGatewayModels";
@@ -91,15 +96,21 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       setHighlightedIndex(0);
     }, []);
 
-    // Popover handles outside click; keep local state in sync.
-    const handleOpenChange = (open: boolean) => {
-      setIsOpen(open);
-      if (!open) {
-        handleCancel();
-      }
-    };
+    // Close dropdown on outside click
+    useEffect(() => {
+      if (!isOpen) return;
 
-    // Initialize search + focus whenever the popover opens.
+      const handleClickOutside = (e: MouseEvent) => {
+        if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+          handleCancel();
+        }
+      };
+
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [isOpen, handleCancel]);
+
+    // Initialize search + focus whenever the dropdown opens.
     useEffect(() => {
       if (!isOpen) {
         return;
@@ -113,8 +124,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       const currentIndex = models.indexOf(value);
       setHighlightedIndex(currentIndex >= 0 ? currentIndex : 0);
 
-      // Focus input after popover renders.
-      const timer = setTimeout(() => inputRef.current?.focus(), 10);
+      // Focus input after dropdown renders.
+      const timer = setTimeout(() => inputRef.current?.focus(), 0);
       return () => clearTimeout(timer);
     }, [isOpen, models, value]);
 
@@ -247,10 +258,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
     const triggerClassName = isBoxVariant
       ? cn(
-          "border-border-medium bg-separator text-foreground flex h-9 flex-1 min-w-0 cursor-pointer justify-between rounded border px-2 text-xs transition-colors duration-200",
+          "border-border-medium h-9 flex-1 min-w-0 rounded border",
           className
         )
-      : "w-[190px] text-foreground bg-background hover:bg-hover flex cursor-pointer justify-between rounded-sm px-2 text-[11px] transition-colors duration-300";
+      : "w-[190px] bg-background rounded-sm text-[11px]";
 
     const hasValue = value.trim().length > 0;
     const selectedProvider = hasValue ? getModelProvider(value) : "";
@@ -309,38 +320,40 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
             </TooltipContent>
           </Tooltip>
         )}
-        <Popover open={isOpen} onOpenChange={handleOpenChange} modal>
-          <Tooltip {...(isOpen || !hasValue ? { open: false } : {})}>
-            <TooltipTrigger asChild>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  className={triggerClassName}
-                  role="combobox"
-                  aria-expanded={isOpen}
-                  variant="outline"
-                  size="sm"
-                >
-                  <span className="flex min-w-0 items-center gap-1.5 truncate">
-                    {selectedProvider && (
-                      <ProviderIcon
-                        provider={selectedProvider}
-                        className="h-3 w-3 shrink-0 opacity-70"
-                      />
-                    )}
-                    <span className="min-w-0 truncate">{displayValue}</span>
-                  </span>
-                  <ChevronDown className="text-muted h-3 w-3 shrink-0" />
-                </Button>
-              </PopoverTrigger>
-            </TooltipTrigger>
-            <TooltipContent align="center">{value}</TooltipContent>
-          </Tooltip>
 
-          <PopoverContent
-            align="start"
-            className={cn("max-h-[400px] p-0 w-82")}
-          >
+        {/* Trigger button */}
+        <Tooltip {...(isOpen || !hasValue ? { open: false } : {})}>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              className={cn(
+                triggerClassName,
+                "text-foreground hover:bg-hover flex cursor-pointer justify-between px-2 transition-colors duration-300"
+              )}
+              role="combobox"
+              aria-expanded={isOpen}
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsOpen(true)}
+            >
+              <span className="flex min-w-0 items-center gap-1.5 truncate">
+                {selectedProvider && (
+                  <ProviderIcon
+                    provider={selectedProvider}
+                    className="h-3 w-3 shrink-0 opacity-70"
+                  />
+                )}
+                <span className="min-w-0 truncate">{displayValue}</span>
+              </span>
+              <ChevronDown className="text-muted h-3 w-3 shrink-0" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent align="center">{value}</TooltipContent>
+        </Tooltip>
+
+        {/* Dropdown content - rendered inline for testability */}
+        {isOpen && (
+          <div className="bg-dark border-border absolute bottom-full left-0 z-[1020] mb-1 w-82 overflow-hidden rounded-md border shadow-md">
             {/* Search input */}
             <div className="border-border border-b px-2 py-1.5">
               <input
@@ -366,7 +379,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     data-highlighted={index === highlightedIndex}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     className={cn(
-                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-xs",
+                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-xs cursor-pointer",
                       index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
                       hiddenSet.has(model) && "opacity-50"
                     )}
@@ -457,7 +470,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               onMouseDown={(e) => e.preventDefault()}
                               onClick={(e) => handleSetDefault(e, model)}
                               className={cn(
-                                "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150",
+                                "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150 cursor-pointer",
                                 defaultModel === model
                                   ? "text-yellow-400 cursor-default"
                                   : "text-muted-light hover:text-foreground"
@@ -535,8 +548,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                 )}
               </div>
             )}
-          </PopoverContent>
-        </Popover>
+          </div>
+        )}
       </div>
     );
   }
