@@ -12,6 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
+import { Button } from "@/browser/components/ui/button";
 import {
   formatKeybind,
   formatNumberedKeybind,
@@ -420,10 +421,11 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       {/* Dropdown trigger - pill style button */}
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
+          <Button
             type="button"
             aria-label="Select agent"
             aria-expanded={isPickerOpen}
+            size="xs"
             onClick={() => {
               if (isPickerOpen) {
                 closePicker();
@@ -444,7 +446,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                 isPickerOpen && "rotate-180"
               )}
             />
-          </button>
+          </Button>
         </TooltipTrigger>
         <TooltipContent align="center">
           Select agent ({formatKeybind(KEYBINDS.TOGGLE_AGENT)})

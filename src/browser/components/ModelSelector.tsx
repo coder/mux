@@ -330,7 +330,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               role="combobox"
               aria-expanded={isOpen}
               variant="ghost"
-              size="sm"
+              size="xs"
               onClick={() => setIsOpen(true)}
             >
               <span className="flex min-w-0 items-center gap-1.5 truncate">

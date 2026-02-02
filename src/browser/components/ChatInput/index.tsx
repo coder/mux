@@ -56,6 +56,7 @@ import {
   processSlashCommand,
   type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
+import { Button } from "../ui/button";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
@@ -2289,14 +2290,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 <AgentModePicker onComplete={() => inputRef.current?.focus()} />
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button
+                    <Button
                       type="button"
                       onClick={() => void handleSend()}
                       disabled={!canSend}
                       aria-label="Send message"
                       style={{ backgroundColor: focusBorderColor }}
+                      size="xs"
                       className={cn(
-                        "border-border-light inline-flex items-center justify-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
+                        "border-border-light inline-flex items-center justify-center rounded-sm border px-1.5 py-3 font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
                         // Mobile: wider tap target + larger icon, keep icon centered.
                         "[@container(max-width:480px)]:h-9 [@container(max-width:480px)]:w-11 [@container(max-width:480px)]:px-0 [@container(max-width:480px)]:py-0 [@container(max-width:480px)]:text-sm",
                         currentAgent?.uiColor ? "text-white" : "text-text"
@@ -2306,7 +2308,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                         className="h-3.5 w-3.5 [@container(max-width:480px)]:h-4 [@container(max-width:480px)]:w-4"
                         strokeWidth={2.5}
                       />
-                    </button>
+                    </Button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
                     Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
