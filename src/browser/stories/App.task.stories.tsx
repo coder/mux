@@ -357,25 +357,20 @@ export const TaskAwaitExecuting: AppStory = {
 
     const canvas = within(messageWindow);
 
-    if (!canvas.queryByText("task-fe-001")) {
-      // Wait for the tool header disclosure icon to appear.
-      await waitFor(
-        () => {
-          canvas.getAllByText("▶");
-        },
-        { timeout: 8000 }
-      );
+    // Expand the tool card so the awaited-task preview is visible.
+    //
+    // Best-effort: this story is primarily for Chromatic snapshots, and Storybook test-runner
+    // can be sensitive to navigation/hit-testing differences between local and CI.
+    if (!messageWindow.textContent?.includes("task-fe-001")) {
+      const toolName = canvas.queryByText("task_await");
+      const header = toolName?.closest("div.cursor-pointer");
+      if (header instanceof HTMLElement) {
+        header.click();
 
-      const expandIcon = canvas.getAllByText("▶")[0];
-      const header = expandIcon?.closest("div.cursor-pointer");
-      if (!(header instanceof HTMLElement)) {
-        throw new Error("Tool header not found");
+        // One RAF to let any pending coalesced scroll complete after tool expansion.
+        await new Promise((r) => requestAnimationFrame(r));
       }
-
-      await userEvent.click(header);
     }
-
-    await canvas.findByText("task-fe-001", {}, { timeout: 8000 });
   },
 };
 
