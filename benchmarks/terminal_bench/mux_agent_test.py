@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
+import tarfile
 from pathlib import Path
 
 import pytest
 
 from .mux_agent import MuxAgent
+from .mux_payload import build_app_archive
 
 
 @pytest.fixture(autouse=True)
@@ -37,3 +40,15 @@ def test_timeout_must_be_numeric(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = MuxAgent()
     with pytest.raises(ValueError):
         _ = agent._env
+
+
+def test_app_archive_includes_postinstall_script() -> None:
+    assert "scripts/postinstall.sh" in MuxAgent._INCLUDE_PATHS
+
+    repo_root = _repo_root()
+    postinstall = repo_root / "scripts/postinstall.sh"
+    assert postinstall.is_file()
+
+    archive_bytes = build_app_archive(repo_root, ["scripts/postinstall.sh"])
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
+        assert "scripts/postinstall.sh" in archive.getnames()
