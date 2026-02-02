@@ -203,13 +203,7 @@ function getMCPOAuthAPI(api: ReturnType<typeof useAPI>["api"]): MCPOAuthAPI | nu
   const maybeOauth: unknown = Reflect.get(api.projects, "mcpOauth");
   if (!isRecord(maybeOauth)) return null;
 
-  const requiredFns = [
-    "getAuthStatus",
-    "startDesktopFlow",
-    "waitForDesktopFlow",
-    "cancelDesktopFlow",
-    "logout",
-  ] as const;
+  const requiredFns = ["getAuthStatus", "logout"] as const;
 
   for (const fn of requiredFns) {
     if (typeof maybeOauth[fn] !== "function") {
@@ -217,10 +211,53 @@ function getMCPOAuthAPI(api: ReturnType<typeof useAPI>["api"]): MCPOAuthAPI | nu
     }
   }
 
+  // Login flow support depends on whether the client can complete the callback.
+  const hasDesktopFlowFns =
+    typeof maybeOauth.startDesktopFlow === "function" &&
+    typeof maybeOauth.waitForDesktopFlow === "function" &&
+    typeof maybeOauth.cancelDesktopFlow === "function";
+
+  const hasServerFlowFns =
+    typeof maybeOauth.startServerFlow === "function" &&
+    typeof maybeOauth.waitForServerFlow === "function" &&
+    typeof maybeOauth.cancelServerFlow === "function";
+
+  if (!hasDesktopFlowFns && !hasServerFlowFns) {
+    return null;
+  }
+
   return maybeOauth as unknown as MCPOAuthAPI;
 }
 
-function useMCPOAuthDesktopLogin(input: {
+type MCPOAuthLoginFlowMode = "desktop" | "server";
+
+function getMCPOAuthLoginFlowMode(input: {
+  isDesktop: boolean;
+  mcpOauthApi: MCPOAuthAPI | null;
+}): MCPOAuthLoginFlowMode | null {
+  const api = input.mcpOauthApi;
+  if (!api || !isRecord(api)) {
+    return null;
+  }
+
+  const hasDesktopFlowFns =
+    typeof api.startDesktopFlow === "function" &&
+    typeof api.waitForDesktopFlow === "function" &&
+    typeof api.cancelDesktopFlow === "function";
+
+  const hasServerFlowFns =
+    typeof api.startServerFlow === "function" &&
+    typeof api.waitForServerFlow === "function" &&
+    typeof api.cancelServerFlow === "function";
+
+  if (input.isDesktop) {
+    return hasDesktopFlowFns ? "desktop" : null;
+  }
+
+  return hasServerFlowFns ? "server" : null;
+}
+
+function useMCPOAuthLogin(input: {
   api: ReturnType<typeof useAPI>["api"];
   isDesktop: boolean;
   projectPath: string;
@@ -229,7 +266,7 @@ function useMCPOAuthDesktopLogin(input: {
 }) {
   const { api, isDesktop, projectPath, serverName, onSuccess } = input;
   const loginAttemptRef = useRef(0);
-  const [desktopFlowId, setDesktopFlowId] = useState<string | null>(null);
+  const [flowId, setFlowId] = useState<string | null>(null);
 
   const [loginStatus, setLoginStatus] = useState<MCPOAuthLoginStatus>("idle");
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -240,27 +277,30 @@ function useMCPOAuthDesktopLogin(input: {
     loginAttemptRef.current++;
 
     const mcpOauthApi = getMCPOAuthAPI(api);
-    if (isDesktop && mcpOauthApi && desktopFlowId) {
-      void mcpOauthApi.cancelDesktopFlow({ flowId: desktopFlowId });
+    const loginFlowMode = getMCPOAuthLoginFlowMode({
+      isDesktop,
+      mcpOauthApi,
+    });
+
+    if (mcpOauthApi && flowId && loginFlowMode === "desktop") {
+      void mcpOauthApi.cancelDesktopFlow({ flowId });
     }
 
-    setDesktopFlowId(null);
+    if (mcpOauthApi && flowId && loginFlowMode === "server") {
+      void mcpOauthApi.cancelServerFlow({ flowId });
+    }
+
+    setFlowId(null);
     setLoginStatus("idle");
     setLoginError(null);
-  }, [api, desktopFlowId, isDesktop]);
+  }, [api, flowId, isDesktop]);
 
   const startLogin = useCallback(async () => {
     const attempt = ++loginAttemptRef.current;
 
     try {
       setLoginError(null);
-      setDesktopFlowId(null);
-
-      if (!isDesktop) {
-        setLoginStatus("error");
-        setLoginError("OAuth login is only available in the desktop app.");
-        return;
-      }
+      setFlowId(null);
 
       if (!api) {
         setLoginStatus("error");
@@ -281,12 +321,30 @@ function useMCPOAuthDesktopLogin(input: {
         return;
       }
 
+      const loginFlowMode = getMCPOAuthLoginFlowMode({
+        isDesktop,
+        mcpOauthApi,
+      });
+      if (!loginFlowMode) {
+        setLoginStatus("error");
+        setLoginError("OAuth login is not available in this environment.");
+        return;
+      }
+
       setLoginStatus("starting");
-      const startResult = await mcpOauthApi.startDesktopFlow({ projectPath, serverName });
+
+      const startResult =
+        loginFlowMode === "desktop"
+          ? await mcpOauthApi.startDesktopFlow({ projectPath, serverName })
+          : await mcpOauthApi.startServerFlow({ projectPath, serverName });
 
       if (attempt !== loginAttemptRef.current) {
         if (startResult.success) {
-          void mcpOauthApi.cancelDesktopFlow({ flowId: startResult.data.flowId });
+          if (loginFlowMode === "desktop") {
+            void mcpOauthApi.cancelDesktopFlow({ flowId: startResult.data.flowId });
+          } else {
+            void mcpOauthApi.cancelServerFlow({ flowId: startResult.data.flowId });
+          }
         }
         return;
       }
@@ -297,18 +355,22 @@ function useMCPOAuthDesktopLogin(input: {
         return;
       }
 
-      const { flowId, authorizeUrl } = startResult.data;
-      setDesktopFlowId(flowId);
+      const { flowId: nextFlowId, authorizeUrl } = startResult.data;
+      setFlowId(nextFlowId);
       setLoginStatus("waiting");
 
       // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+      // In browser mode, this opens a new tab/window.
       window.open(authorizeUrl, "_blank", "noopener");
 
       if (attempt !== loginAttemptRef.current) {
         return;
       }
 
-      const waitResult = await mcpOauthApi.waitForDesktopFlow({ flowId });
+      const waitResult =
+        loginFlowMode === "desktop"
+          ? await mcpOauthApi.waitForDesktopFlow({ flowId: nextFlowId })
+          : await mcpOauthApi.waitForServerFlow({ flowId: nextFlowId });
 
       if (attempt !== loginAttemptRef.current) {
         return;
@@ -351,24 +413,33 @@ const MCPOAuthRequiredCallout: React.FC<{
   const { api } = useAPI();
   const isDesktop = !!window.api;
 
-  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } =
-    useMCPOAuthDesktopLogin({
-      api,
-      isDesktop,
-      projectPath,
-      serverName,
-      onSuccess: onLoginSuccess,
-    });
+  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } = useMCPOAuthLogin({
+    api,
+    isDesktop,
+    projectPath,
+    serverName,
+    onSuccess: onLoginSuccess,
+  });
+
+  const mcpOauthApi = getMCPOAuthAPI(api);
+  const loginFlowMode = getMCPOAuthLoginFlowMode({
+    isDesktop,
+    mcpOauthApi,
+  });
 
   const disabledTitle =
     disabledReason ??
-    (!isDesktop
-      ? "OAuth login is only available in the desktop app"
-      : !api
-        ? "Mux API not connected"
-        : undefined);
+    (!api
+      ? "Mux API not connected"
+      : !mcpOauthApi
+        ? "OAuth is not available in this environment."
+        : !loginFlowMode
+          ? isDesktop
+            ? "OAuth login is not available in this environment."
+            : "OAuth login is only available in the desktop app."
+          : undefined);
 
-  const loginDisabled = Boolean(disabledReason) || !isDesktop || !api || loginInProgress;
+  const loginDisabled = Boolean(disabledReason) || !api || !loginFlowMode || loginInProgress;
 
   return (
     <div className="bg-warning/10 border-warning/30 text-warning rounded-md border px-3 py-2 text-xs">
@@ -440,13 +511,6 @@ const RemoteMCPOAuthSection: React.FC<{
   const [logoutError, setLogoutError] = useState<string | null>(null);
 
   const refreshAuthStatus = useCallback(async () => {
-    if (!isDesktop) {
-      setAuthStatus(null);
-      setAuthStatusLoading(false);
-      setAuthStatusError(null);
-      return;
-    }
-
     const mcpOauthApi = getMCPOAuthAPI(api);
     if (!mcpOauthApi) {
       setAuthStatus(null);
@@ -467,23 +531,24 @@ const RemoteMCPOAuthSection: React.FC<{
     } finally {
       setAuthStatusLoading(false);
     }
-  }, [api, isDesktop, projectPath, serverName]);
+  }, [api, projectPath, serverName]);
 
   useEffect(() => {
     void refreshAuthStatus();
   }, [refreshAuthStatus, transport, url, oauthRefreshNonce]);
 
-  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } =
-    useMCPOAuthDesktopLogin({
-      api,
-      isDesktop,
-      projectPath,
-      serverName,
-      onSuccess: refreshAuthStatus,
-    });
+  const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } = useMCPOAuthLogin({
+    api,
+    isDesktop,
+    projectPath,
+    serverName,
+    onSuccess: refreshAuthStatus,
+  });
 
   const mcpOauthApi = getMCPOAuthAPI(api);
-  const oauthAvailable = isDesktop && Boolean(mcpOauthApi);
+  const oauthAvailable = Boolean(mcpOauthApi);
+  const loginFlowMode = getMCPOAuthLoginFlowMode({ isDesktop, mcpOauthApi });
+  const oauthActionsAvailable = oauthAvailable && Boolean(loginFlowMode);
 
   const isLoggedIn = (authStatus?.isLoggedIn ?? false) || loginStatus === "success";
 
@@ -514,11 +579,6 @@ const RemoteMCPOAuthSection: React.FC<{
   const reloginMenuLabel = loginStatus === "error" ? "Retry login" : "Re-login";
 
   const logout = useCallback(async () => {
-    if (!isDesktop) {
-      setLogoutError("OAuth logout is only available in the desktop app.");
-      return;
-    }
-
     const mcpOauthApi = getMCPOAuthAPI(api);
     if (!mcpOauthApi) {
       setLogoutError("OAuth is not available in this environment.");
@@ -543,7 +603,7 @@ const RemoteMCPOAuthSection: React.FC<{
     } finally {
       setLogoutInProgress(false);
     }
-  }, [api, cancelLogin, isDesktop, projectPath, refreshAuthStatus, serverName]);
+  }, [api, cancelLogin, projectPath, refreshAuthStatus, serverName]);
 
   return (
     <div className="mt-1 flex items-center justify-between gap-2">
@@ -570,7 +630,7 @@ const RemoteMCPOAuthSection: React.FC<{
         )}
       </div>
 
-      {oauthAvailable && (
+      {oauthActionsAvailable && (
         <div className="flex shrink-0 items-center gap-1">
           {loginInProgress ? (
             <>
