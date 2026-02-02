@@ -160,6 +160,7 @@ if (!gotTheLock) {
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let isQuitting = false;
 
 /**
  * Format timestamp as HH:MM:SS.mmm for readable logging
@@ -682,6 +683,20 @@ function createWindow() {
   console.log(`[${timestamp()}] [window] Registering window service...`);
   services.windowService.setMainWindow(mainWindow);
 
+  mainWindow.on("close", (event) => {
+    // Close-to-tray behavior: when the user closes the main window, keep mux
+    // running in the tray/menu bar so it can be re-opened from there.
+    //
+    // Only hide when the tray exists to avoid trapping the user with no UI path
+    // to restore the app.
+    if (isQuitting || !tray) {
+      return;
+    }
+
+    event.preventDefault();
+    mainWindow?.hide();
+  });
+
   // Show window once it's ready and close splash
   console.time("main window startup");
   mainWindow.once("ready-to-show", () => {
@@ -810,6 +825,10 @@ if (gotTheLock) {
   let isDisposing = false;
 
   app.on("before-quit", (event) => {
+    // Ensure window close handlers don't block an explicit quit.
+    // IMPORTANT: must be set before any early returns.
+    isQuitting = true;
+
     // Skip if already disposing or no services to clean up
     if (isDisposing || !services) {
       return;
