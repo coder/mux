@@ -933,7 +933,7 @@ export class McpOauthService {
           response_types: ["code"],
           grant_types: ["authorization_code", "refresh_token"],
           token_endpoint_auth_method: "none",
-          client_name: "Mux MCP",
+          client_name: "Mux",
           scope: flow.scope,
         };
       },
