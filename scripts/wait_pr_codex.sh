@@ -180,7 +180,8 @@ while true; do
     exit 1
   fi
 
-  REQUEST_AT=$(echo "$RESULT" | jq -r '[.data.repository.pullRequest.comments.nodes[] | select(.body | contains("@codex review"))] | sort_by(.createdAt) | last | .createdAt // empty')
+  # Ignore Codex's own comments since they mention "@codex review" in boilerplate.
+  REQUEST_AT=$(echo "$RESULT" | jq -r --arg bot "$BOT_LOGIN_GRAPHQL" '[.data.repository.pullRequest.comments.nodes[] | select(.author.login != $bot and (.body | contains("@codex review")))] | sort_by(.createdAt) | last | .createdAt // empty')
 
   if [[ -z "$REQUEST_AT" ]]; then
     echo "❌ No '@codex review' comment found on PR #$PR_NUMBER." >&2
