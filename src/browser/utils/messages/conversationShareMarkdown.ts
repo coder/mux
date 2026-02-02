@@ -1,6 +1,129 @@
+import type { ConvoSummary, LocSummary } from "@/common/lib/muxMd";
 import type { MuxMessage } from "@/common/types/message";
+import { getToolOutputUiOnly } from "@/common/utils/tools/toolOutputUiOnly";
 
 const MAX_TOOL_BLOCK_CHARS = 20_000;
+
+const FILE_EDIT_TOOL_NAMES = new Set([
+  "file_edit_replace_string",
+  "file_edit_replace_lines",
+  "file_edit_insert",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function getFilePathFromToolInput(input: unknown): string | null {
+  return isRecord(input) && typeof input.file_path === "string" ? input.file_path : null;
+}
+
+function getFileEditDiff(output: unknown): string | null {
+  const uiOnlyDiff = getToolOutputUiOnly(output)?.file_edit?.diff;
+  if (uiOnlyDiff && uiOnlyDiff.trim().length > 0) {
+    return uiOnlyDiff;
+  }
+
+  if (isRecord(output) && typeof output.diff === "string") {
+    return output.diff;
+  }
+
+  return null;
+}
+
+function getDiffLocSummary(diff: string): LocSummary {
+  let added = 0;
+  let removed = 0;
+
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith("+++")) continue;
+    if (line.startsWith("---")) continue;
+
+    if (line.startsWith("+")) {
+      added++;
+      continue;
+    }
+
+    if (line.startsWith("-")) {
+      removed++;
+    }
+  }
+
+  return { added, removed };
+}
+
+export function buildConversationShareConvoSummary(options: {
+  muxMessages: MuxMessage[];
+  includeSynthetic?: boolean;
+  repo?: string;
+}): ConvoSummary {
+  const includeSynthetic = options.includeSynthetic ?? false;
+
+  let userPromptCount = 0;
+  const filesModified = new Set<string>();
+  let locAdded = 0;
+  let locRemoved = 0;
+
+  for (const message of options.muxMessages) {
+    if (!includeSynthetic && message.metadata?.synthetic === true) {
+      continue;
+    }
+
+    if (message.role === "user") {
+      userPromptCount++;
+      continue;
+    }
+
+    if (message.role !== "assistant") {
+      continue;
+    }
+
+    for (const part of message.parts) {
+      if (part.type !== "dynamic-tool") {
+        continue;
+      }
+
+      if (!FILE_EDIT_TOOL_NAMES.has(part.toolName)) {
+        continue;
+      }
+
+      if (part.state !== "output-available" || !("output" in part)) {
+        continue;
+      }
+
+      const output = part.output;
+      if (!isRecord(output) || output.success !== true) {
+        continue;
+      }
+
+      const filePath = getFilePathFromToolInput(part.input);
+      if (filePath) {
+        filesModified.add(filePath);
+      }
+
+      const diff = getFileEditDiff(output);
+      if (diff) {
+        const loc = getDiffLocSummary(diff);
+        locAdded += loc.added;
+        locRemoved += loc.removed;
+      }
+    }
+  }
+
+  return {
+    repo: options.repo,
+    clientMode: "desktop",
+    userPromptCount: userPromptCount > 0 ? userPromptCount : undefined,
+    filesModifiedCount: filesModified.size > 0 ? filesModified.size : undefined,
+    loc:
+      locAdded > 0 || locRemoved > 0
+        ? {
+            added: locAdded,
+            removed: locRemoved,
+          }
+        : undefined,
+  };
+}
 
 function safeJsonStringify(value: unknown): string {
   try {
@@ -68,7 +191,7 @@ function buildToolBlock(options: {
   toolName: string;
   state: "input-available" | "output-available";
   input: unknown;
-  output?: unknown;
+  preview?: { label: string; language: string; content: string };
 }): string {
   const lines: string[] = [];
   lines.push("<details>");
@@ -80,19 +203,12 @@ function buildToolBlock(options: {
     buildCodeBlock({ language: "json", content: safeJsonStringify(options.input) }).trimEnd()
   );
 
-  if (options.state === "output-available") {
+  if (options.preview) {
     lines.push("");
-    lines.push("**Output**");
+    lines.push(`**${options.preview.label}**`);
 
-    const outputContent =
-      typeof options.output === "string" ? options.output : safeJsonStringify(options.output);
-    const { text } = truncateText(outputContent, MAX_TOOL_BLOCK_CHARS);
-    lines.push(
-      buildCodeBlock({
-        language: typeof options.output === "string" ? "text" : "json",
-        content: text,
-      }).trimEnd()
-    );
+    const { text } = truncateText(options.preview.content, MAX_TOOL_BLOCK_CHARS);
+    lines.push(buildCodeBlock({ language: options.preview.language, content: text }).trimEnd());
   }
 
   lines.push("");
@@ -135,6 +251,30 @@ function buildUserMessageBubble(options: { content: string; timestampMs: number 
   }
 
   lines.push("</div>");
+  return lines.join("\n");
+}
+
+function buildReasoningBlock(content: string): string | null {
+  const trimmedEnd = content.trimEnd();
+  const trimmed = trimmedEnd.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const summaryLine = (trimmed.split(/\r?\n/)[0] ?? "").trim();
+  const hasAdditionalLines = /[\r\n]/.test(trimmed);
+  const summary = hasAdditionalLines ? `${summaryLine} ...` : summaryLine;
+
+  const { text } = truncateText(trimmedEnd, MAX_TOOL_BLOCK_CHARS);
+
+  const lines: string[] = [];
+  lines.push("<details>");
+  lines.push(`<summary>${escapeHtml(summary)}</summary>`);
+  lines.push("");
+  lines.push(text.trimEnd());
+  lines.push("");
+  lines.push("</details>");
+
   return lines.join("\n");
 }
 
@@ -231,8 +371,12 @@ export function buildConversationShareMarkdown(options: {
         continue;
       }
 
-      // Reasoning blocks are intentionally omitted from shared transcripts.
       if (part.type === "reasoning") {
+        flushPendingText();
+        const reasoningBlock = buildReasoningBlock(part.text);
+        if (reasoningBlock) {
+          assistantBlocks.push(reasoningBlock);
+        }
         continue;
       }
 
@@ -246,12 +390,28 @@ export function buildConversationShareMarkdown(options: {
 
       if (part.type === "dynamic-tool") {
         flushPendingText();
+
+        let preview: { label: string; language: string; content: string } | undefined;
+        if (
+          FILE_EDIT_TOOL_NAMES.has(part.toolName) &&
+          part.state === "output-available" &&
+          "output" in part
+        ) {
+          const output = part.output;
+          if (isRecord(output) && output.success === true) {
+            const diff = getFileEditDiff(output);
+            if (diff) {
+              preview = { label: "Preview", language: "diff", content: diff };
+            }
+          }
+        }
+
         assistantBlocks.push(
           buildToolBlock({
             toolName: part.toolName,
             state: part.state,
             input: part.input,
-            output: "output" in part ? part.output : undefined,
+            preview,
           })
         );
         continue;

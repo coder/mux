@@ -11,14 +11,25 @@ import {
   deleteFile,
   setExpiration,
   parseUrl,
+  type ConvoSummary,
   type FileInfo,
+  type LocSummary,
+  type MuxClientMode,
   type SignOptions,
   type SignatureEnvelope,
   type UploadResult,
 } from "@coder/mux-md-client";
 
 // Re-export types from package
-export type { FileInfo, SignOptions, SignatureEnvelope, UploadResult };
+export type {
+  ConvoSummary,
+  FileInfo,
+  LocSummary,
+  MuxClientMode,
+  SignOptions,
+  SignatureEnvelope,
+  UploadResult,
+};
 
 export const MUX_MD_BASE_URL = "https://mux.md";
 export const MUX_MD_HOST = "mux.md";

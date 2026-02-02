@@ -1,4 +1,7 @@
-import { buildConversationShareMarkdown } from "./conversationShareMarkdown";
+import {
+  buildConversationShareConvoSummary,
+  buildConversationShareMarkdown,
+} from "./conversationShareMarkdown";
 import { createMuxMessage } from "@/common/types/message";
 import type { MuxToolPart } from "@/common/types/message";
 
@@ -52,11 +55,88 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).toContain("<summary>Tool: bash (output-available)</summary>");
     expect(md).toContain("**Input**");
     expect(md).toContain('"script": "echo hi"');
-    expect(md).toContain("**Output**");
-    expect(md).toContain('"exitCode": 0');
+    expect(md).not.toContain("**Output**");
+    expect(md).not.toContain('"exitCode": 0');
   });
 
-  test("omits reasoning parts", () => {
+  test("includes file edit previews", () => {
+    const diff = [
+      "Index: src/foo.ts",
+      "===================================================================",
+      "--- src/foo.ts",
+      "+++ src/foo.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    const fileEditTool = {
+      type: "dynamic-tool" as const,
+      toolCallId: "call-1",
+      toolName: "file_edit_replace_string",
+      input: {
+        file_path: "src/foo.ts",
+        old_string: "old",
+        new_string: "new",
+      },
+      state: "output-available" as const,
+      output: {
+        success: true,
+        diff,
+      },
+    } as unknown as MuxToolPart;
+
+    const muxMessages = [createMuxMessage("a1", "assistant", "Updated", undefined, [fileEditTool])];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("<summary>Tool: file_edit_replace_string (output-available)</summary>");
+    expect(md).toContain('"file_path": "src/foo.ts"');
+    expect(md).toContain("**Preview**");
+    expect(md).toContain("```diff");
+    expect(md).toContain("+new");
+  });
+
+  test("buildConversationShareConvoSummary counts prompts and file edits", () => {
+    const diff = [
+      "Index: src/foo.ts",
+      "===================================================================",
+      "--- src/foo.ts",
+      "+++ src/foo.ts",
+      "@@ -1 +1 @@",
+      "-old",
+      "+new",
+    ].join("\n");
+
+    const fileEditTool = {
+      type: "dynamic-tool" as const,
+      toolCallId: "call-1",
+      toolName: "file_edit_replace_string",
+      input: {
+        file_path: "src/foo.ts",
+        old_string: "old",
+        new_string: "new",
+      },
+      state: "output-available" as const,
+      output: {
+        success: true,
+        diff,
+      },
+    } as unknown as MuxToolPart;
+
+    const muxMessages = [
+      createMuxMessage("u1", "user", "Hello"),
+      createMuxMessage("a1", "assistant", "Updated", undefined, [fileEditTool]),
+    ];
+
+    const summary = buildConversationShareConvoSummary({ muxMessages });
+
+    expect(summary.clientMode).toBe("desktop");
+    expect(summary.userPromptCount).toBe(1);
+    expect(summary.filesModifiedCount).toBe(1);
+    expect(summary.loc).toEqual({ added: 1, removed: 1 });
+  });
+  test("includes reasoning parts with a summary header", () => {
     const muxMessages = [
       createMuxMessage("a1", "assistant", "Answer", undefined, [
         { type: "reasoning" as const, text: "Secret reasoning" },
@@ -66,7 +146,7 @@ describe("buildConversationShareMarkdown", () => {
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
 
     expect(md).toContain("Answer");
-    expect(md).not.toContain("Secret reasoning");
+    expect(md).toContain("<summary>Secret reasoning</summary>");
     expect(md).not.toContain("<summary>Reasoning</summary>");
   });
   test("filters synthetic messages by default", () => {

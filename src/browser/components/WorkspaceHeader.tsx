@@ -34,7 +34,10 @@ import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
-import { buildConversationShareMarkdown } from "@/browser/utils/messages/conversationShareMarkdown";
+import {
+  buildConversationShareConvoSummary,
+  buildConversationShareMarkdown,
+} from "@/browser/utils/messages/conversationShareMarkdown";
 import { ShareMessagePopover } from "./ShareMessagePopover";
 import type { MuxMessage } from "@/common/types/message";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
@@ -248,6 +251,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             buildConversationShareMarkdown({
               muxMessages,
               workspaceName,
+            })
+          }
+          getFileInfoConvo={() =>
+            buildConversationShareConvoSummary({
+              muxMessages,
             })
           }
         />

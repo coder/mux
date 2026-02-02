@@ -31,6 +31,7 @@ import {
   uploadToMuxMd,
   deleteFromMuxMd,
   updateMuxMdExpiration,
+  type ConvoSummary,
   type SignatureEnvelope,
 } from "@/common/lib/muxMd";
 import {
@@ -294,6 +295,9 @@ type ShareMessagePopoverProps = {
   dataTestId?: string;
   /** Optional override for the uploaded filename. */
   fileNameOverride?: string;
+
+  /** Optional convo metadata to include in the encrypted mux.md file info. */
+  getFileInfoConvo?: () => ConvoSummary;
 } & (
   | {
       content: string;
@@ -475,6 +479,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
         }
       }
 
+      let convo: ConvoSummary | undefined;
+      if (props.getFileInfoConvo) {
+        try {
+          convo = props.getFileInfoConvo();
+        } catch (convoErr) {
+          console.warn("Failed to build share convo summary:", convoErr);
+        }
+      }
+
       const result = await uploadToMuxMd(
         resolvedContent,
         {
@@ -483,6 +496,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
           size: sizeBytes,
           model,
           thinking,
+          convo,
         },
         { expiresAt, signature }
       );
@@ -609,6 +623,15 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
         const sizeBytes = getTextByteLength(resolvedContent);
         setResolvedContentSizeBytes(sizeBytes);
 
+        let convo: ConvoSummary | undefined;
+        if (props.getFileInfoConvo) {
+          try {
+            convo = props.getFileInfoConvo();
+          } catch (convoErr) {
+            console.warn("Failed to build share convo summary:", convoErr);
+          }
+        }
+
         const result = await uploadToMuxMd(
           resolvedContent,
           {
@@ -617,6 +640,7 @@ export const ShareMessagePopover: React.FC<ShareMessagePopoverProps> = (props) =
             size: sizeBytes,
             model,
             thinking,
+            convo,
           },
           { expiresAt, signature }
         );
