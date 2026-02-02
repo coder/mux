@@ -281,7 +281,6 @@ function fromBashTaskId(taskId: string): string | null {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface TaskToolCallProps {
-  workspaceId?: string;
   args: TaskToolArgs;
   result?: TaskToolResult;
   status?: ToolStatus;
@@ -296,7 +295,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   result,
   status = "pending",
   taskReportLinking,
-  workspaceId,
   toolCallId,
 }) => {
   // Narrow result to error or success shape
