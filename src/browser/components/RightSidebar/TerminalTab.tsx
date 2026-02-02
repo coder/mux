@@ -14,6 +14,8 @@ interface TerminalTabProps {
   autoFocus?: boolean;
   /** Called when autoFocus has been consumed (to clear the parent state) */
   onAutoFocusConsumed?: () => void;
+  /** Called when the terminal session exits. */
+  onExit?: () => void;
 }
 
 /**
@@ -45,6 +47,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = (props) => {
       onTitleChange={props.onTitleChange}
       onAutoFocusConsumed={props.onAutoFocusConsumed}
       autoFocus={props.autoFocus ?? false}
+      onExit={props.onExit}
     />
   );
 };

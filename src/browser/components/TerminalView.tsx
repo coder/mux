@@ -147,6 +147,8 @@ interface TerminalViewProps {
    * Set to false when embedding (e.g. RightSidebar) to avoid stealing focus on workspace switch.
    */
   autoFocus?: boolean;
+  /** Called when the terminal process exits. */
+  onExit?: (exitCode: number) => void;
 }
 
 export function TerminalView({
@@ -157,11 +159,13 @@ export function TerminalView({
   onTitleChange,
   onAutoFocusConsumed,
   autoFocus = true,
+  onExit,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const autoFocusRef = useRef(autoFocus);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const exitHandledRef = useRef(false);
   const [terminalError, setTerminalError] = useState<string | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   // Track whether we've received the initial screen state from backend
@@ -204,6 +208,27 @@ export function TerminalView({
     autoFocusConsumedRef.current = true;
     onAutoFocusConsumed?.();
   }, [onAutoFocusConsumed]);
+
+  const handleExit = useCallback(
+    (code: number) => {
+      if (exitHandledRef.current) {
+        return;
+      }
+      exitHandledRef.current = true;
+
+      const term = termRef.current;
+      if (term) {
+        try {
+          term.write(`\r\n[Process exited with code ${code}]\r\n`);
+        } catch (err) {
+          console.warn("[TerminalView] Error writing exit message:", err);
+        }
+      }
+
+      onExit?.(code);
+    },
+    [onExit]
+  );
 
   useEffect(() => {
     autoFocusRef.current = autoFocus;
@@ -264,6 +289,40 @@ export function TerminalView({
     setIsLoading(true);
   }, [sessionId]);
 
+  // Listen for exit events even when the terminal is hidden.
+  useEffect(() => {
+    exitHandledRef.current = false;
+    if (!api) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const listen = async () => {
+      try {
+        const iterator = await api.terminal.onExit({ sessionId }, { signal: controller.signal });
+        for await (const code of iterator) {
+          if (!controller.signal.aborted) {
+            handleExit(code);
+          }
+          break;
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          // Treat failed subscriptions as exits (session ended before listener attached).
+          handleExit(0);
+        }
+      }
+    };
+
+    listen().catch((err) => {
+      console.warn("[TerminalView] Exit listener failed:", err);
+    });
+
+    return () => {
+      controller.abort();
+    };
+  }, [api, sessionId, handleExit]);
+
   // Subscribe to router when terminal is ready and visible
   useEffect(() => {
     if (!visible || !terminalReady || !termRef.current) {
@@ -302,13 +361,7 @@ export function TerminalView({
         // Mark loading complete - we now have valid content to show
         setIsLoading(false);
       },
-      onExit: (code) => {
-        try {
-          term.write(`\r\n[Process exited with code ${code}]\r\n`);
-        } catch (err) {
-          console.warn("[TerminalView] Error writing exit message:", err);
-        }
-      },
+      onExit: handleExit,
     });
 
     // Send initial resize to sync PTY dimensions
@@ -316,7 +369,7 @@ export function TerminalView({
     void router.resize(sessionId, cols, rows);
 
     return unsubscribe;
-  }, [visible, terminalReady, sessionId, router]);
+  }, [visible, terminalReady, sessionId, router, handleExit]);
 
   // Keep ref to onTitleChange for use in terminal callback
   const onTitleChangeRef = useRef(onTitleChange);
