@@ -390,6 +390,9 @@
 
   /* File explorer */
   --color-folder-icon: #c9a227; /* darker gold for light theme */
+  /* Darken git status colors so they remain readable on light backgrounds */
+  --color-git-modified: color-mix(in srgb, var(--color-git-dirty), black 40%);
+  --color-git-untracked: color-mix(in srgb, var(--color-success), black 30%);
 
   --color-background: hsl(210 33% 98%);
   --color-background-secondary: hsl(210 36% 95%);
@@ -626,6 +629,9 @@
 
   /* File explorer */
   --color-folder-icon: #ad8301; /* Flexoki yellow-600 */
+  /* Darken git status colors so they remain readable on light backgrounds */
+  --color-git-modified: color-mix(in srgb, var(--color-warning), black 25%);
+  --color-git-untracked: color-mix(in srgb, var(--color-success), black 10%);
 
   /* Runtime badges (ensure readable on light background) */
   --color-runtime-ssh-text: color-mix(in srgb, var(--color-runtime-ssh), black 20%);
