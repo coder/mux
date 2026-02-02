@@ -5,7 +5,7 @@
  * Must be wrapped inside APIProvider since it depends on the API client.
  */
 
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { TerminalSessionRouter } from "./TerminalSessionRouter";
 
@@ -26,34 +26,28 @@ interface TerminalRouterProviderProps {
  */
 export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
   const { api } = useAPI();
-  const routerRef = useRef<TerminalSessionRouter | null>(null);
+  const [router, setRouter] = useState<TerminalSessionRouter | null>(null);
 
-  // Create/recreate router when API changes
-  if (api && (!routerRef.current || routerRef.current.getApi() !== api)) {
-    // Dispose old router if exists
-    routerRef.current?.dispose();
-    routerRef.current = new TerminalSessionRouter(api);
-  }
-
-  // When API disconnects, dispose the router but keep rendering children.
-  // This ensures the app UI stays visible during reconnection.
-  if (!api && routerRef.current) {
-    routerRef.current.dispose();
-    routerRef.current = null;
-  }
-
-  // Cleanup on unmount
   useEffect(() => {
+    if (!api) {
+      setRouter(null);
+      return;
+    }
+
+    // Create/cleanup after commit to avoid render-time disposal in concurrent mode.
+    const nextRouter = new TerminalSessionRouter(api);
+    setRouter(nextRouter);
     return () => {
-      routerRef.current?.dispose();
-      routerRef.current = null;
+      nextRouter.dispose();
     };
-  }, []);
+  }, [api]);
+
+  const routerForContext = api && router?.getApi() === api ? router : null;
 
   // Always render children - the router may be null during reconnection.
   // Consumers (useTerminalRouter) must handle the null case gracefully.
   return (
-    <TerminalRouterContext.Provider value={routerRef.current}>
+    <TerminalRouterContext.Provider value={routerForContext}>
       {props.children}
     </TerminalRouterContext.Provider>
   );
