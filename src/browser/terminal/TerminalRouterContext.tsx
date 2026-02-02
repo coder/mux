@@ -20,6 +20,9 @@ interface TerminalRouterProviderProps {
  *
  * Creates a single router instance that lives for the lifetime of the provider.
  * The router is recreated if the API client changes (e.g., reconnection).
+ *
+ * Always renders children so the app UI stays visible during reconnection.
+ * The router may be null when API is unavailable; consumers must handle this.
  */
 export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
   const { api } = useAPI();
@@ -32,6 +35,13 @@ export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
     routerRef.current = new TerminalSessionRouter(api);
   }
 
+  // When API disconnects, dispose the router but keep rendering children.
+  // This ensures the app UI stays visible during reconnection.
+  if (!api && routerRef.current) {
+    routerRef.current.dispose();
+    routerRef.current = null;
+  }
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -40,11 +50,8 @@ export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
     };
   }, []);
 
-  // Don't render children until API is ready
-  if (!api || !routerRef.current) {
-    return null;
-  }
-
+  // Always render children - the router may be null during reconnection.
+  // Consumers (useTerminalRouter) must handle the null case gracefully.
   return (
     <TerminalRouterContext.Provider value={routerRef.current}>
       {props.children}
@@ -55,12 +62,11 @@ export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
 /**
  * Hook to access the TerminalSessionRouter.
  *
+ * Returns null when the API is disconnected (e.g., during reconnection).
+ * Callers should handle the null case gracefully.
+ *
  * @throws If used outside of TerminalRouterProvider
  */
-export function useTerminalRouter(): TerminalSessionRouter {
-  const router = useContext(TerminalRouterContext);
-  if (!router) {
-    throw new Error("useTerminalRouter must be used within a TerminalRouterProvider");
-  }
-  return router;
+export function useTerminalRouter(): TerminalSessionRouter | null {
+  return useContext(TerminalRouterContext);
 }

@@ -78,6 +78,11 @@ function AppLoaderInner() {
   // Track whether stores have been synced
   const [storesSynced, setStoresSynced] = useState(false);
 
+  // Track whether the initial load has completed. After the first successful
+  // load, we keep rendering the UI during reconnects instead of flashing the
+  // full-screen LoadingScreen again.
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+
   // Sync stores when metadata finishes loading
   useEffect(() => {
     // Keep store clients in sync even during backend restarts (api can be null while reconnecting).
@@ -108,6 +113,16 @@ function AppLoaderInner() {
     api,
   ]);
 
+  useEffect(() => {
+    if (initialLoadComplete) {
+      return;
+    }
+
+    if (!projectContext.loading && !workspaceContext.loading && storesSynced) {
+      setInitialLoadComplete(true);
+    }
+  }, [initialLoadComplete, projectContext.loading, storesSynced, workspaceContext.loading]);
+
   if (policyState.status.state === "blocked") {
     return <PolicyBlockedScreen reason={policyState.status.reason} />;
   }
@@ -117,8 +132,9 @@ function AppLoaderInner() {
     return <AuthTokenModal isOpen={true} onSubmit={apiState.authenticate} error={apiState.error} />;
   }
 
-  // Show loading screen until both projects and workspaces are loaded and stores synced
-  if (projectContext.loading || workspaceContext.loading || !storesSynced) {
+  // Only block the UI during the very first load. After that, keep rendering the
+  // last-known UI during reconnects so we don't flash the LoadingScreen again.
+  if (!initialLoadComplete) {
     return <LoadingScreen />;
   }
 

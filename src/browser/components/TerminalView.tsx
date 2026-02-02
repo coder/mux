@@ -325,7 +325,8 @@ export function TerminalView({
 
   // Subscribe to router when terminal is ready and visible
   useEffect(() => {
-    if (!visible || !terminalReady || !termRef.current) {
+    // Router may be null during API reconnection - skip subscription until it's back
+    if (!visible || !terminalReady || !termRef.current || !router) {
       return;
     }
 
@@ -555,8 +556,9 @@ export function TerminalView({
         }
 
         // User input → router
+        // Router may become null during API reconnection - silently drop input in that case
         disposeOnData = terminal.onData((data: string) => {
-          router.sendInput(sessionId, data);
+          router?.sendInput(sessionId, data);
         });
 
         // Terminal title changes (from OSC escape sequences like "echo -ne '\033]0;Title\007'")
@@ -654,7 +656,7 @@ export function TerminalView({
       }
 
       const proposed = fitAddon.proposeDimensions();
-      if (!proposed) {
+      if (!proposed || !router) {
         return;
       }
 
@@ -743,7 +745,8 @@ export function TerminalView({
     // before the PTY (shell output is formatted for old dimensions but displayed in the
     // already-resized frontend terminal).
     const doResize = async () => {
-      if (!fitAddonRef.current) return;
+      // Router may be null during API reconnection - skip resize
+      if (!fitAddonRef.current || !router) return;
 
       // Calculate what size we want without applying it yet.
       // (fit() would resize the frontend immediately, reintroducing the race.)
