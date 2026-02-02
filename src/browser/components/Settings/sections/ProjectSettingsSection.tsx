@@ -28,6 +28,7 @@ import {
 } from "@/browser/components/ui/select";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { Switch } from "@/browser/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { cn } from "@/common/lib/utils";
 import { formatRelativeTime } from "@/browser/utils/ui/dateTime";
 import type { CachedMCPTestResult, MCPServerInfo, MCPServerTransport } from "@/common/types/mcp";
@@ -459,6 +460,26 @@ const MCPOAuthRequiredCallout: React.FC<{
 
   const loginDisabled = Boolean(disabledReason) || !api || !loginFlowMode || loginInProgress;
 
+  const loginButton = (
+    <Button
+      size="sm"
+      onClick={() => {
+        void startLogin();
+      }}
+      disabled={loginDisabled}
+      aria-label="Login via OAuth"
+    >
+      {loginInProgress ? (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Waiting for login...
+        </>
+      ) : (
+        "Login via OAuth"
+      )}
+    </Button>
+  );
+
   return (
     <div className="bg-warning/10 border-warning/30 text-warning rounded-md border px-3 py-2 text-xs">
       <div className="flex items-start justify-between gap-3">
@@ -488,23 +509,16 @@ const MCPOAuthRequiredCallout: React.FC<{
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
-          <Button
-            size="sm"
-            onClick={() => {
-              void startLogin();
-            }}
-            disabled={loginDisabled}
-            title={disabledTitle}
-          >
-            {loginInProgress ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Waiting for login...
-              </>
-            ) : (
-              "Login via OAuth"
-            )}
-          </Button>
+          {disabledTitle ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">{loginButton}</span>
+              </TooltipTrigger>
+              <TooltipContent side="top">{disabledTitle}</TooltipContent>
+            </Tooltip>
+          ) : (
+            loginButton
+          )}
 
           {loginStatus === "waiting" && (
             <Button variant="secondary" size="sm" onClick={cancelLogin}>
@@ -1228,22 +1242,36 @@ export const ProjectSettingsSection: React.FC = () => {
                       className="border-border-medium bg-background-secondary overflow-hidden rounded-md border"
                     >
                       <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 px-3 py-2">
-                        <Switch
-                          checked={isEnabled}
-                          onCheckedChange={(checked) => void handleToggleEnabled(name, checked)}
-                          title={isEnabled ? "Disable server" : "Enable server"}
-                          className="mt-0.5 shrink-0"
-                        />
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="mt-0.5 shrink-0">
+                              <Switch
+                                checked={isEnabled}
+                                onCheckedChange={(checked) =>
+                                  void handleToggleEnabled(name, checked)
+                                }
+                                aria-label={`Toggle ${name} enabled`}
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            {isEnabled ? "Disable server" : "Enable server"}
+                          </TooltipContent>
+                        </Tooltip>
                         <div className={cn("min-w-0", !isEnabled && "opacity-50")}>
                           <div className="flex items-center gap-2">
                             <span className="text-foreground text-sm font-medium">{name}</span>
                             {cached?.result.success && !isEditing && isEnabled && (
-                              <span
-                                className="rounded bg-green-500/10 px-1.5 py-0.5 text-xs text-green-500"
-                                title={`Tested ${formatRelativeTime(cached.testedAt)}`}
-                              >
-                                {cached.result.tools.length} tools
-                              </span>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-xs text-green-500">
+                                    {cached.result.tools.length} tools
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  Tested {formatRelativeTime(cached.testedAt)}
+                                </TooltipContent>
+                              </Tooltip>
                             )}
                             {!isEnabled && <span className="text-muted text-xs">disabled</span>}
                           </div>
@@ -1290,70 +1318,105 @@ export const ProjectSettingsSection: React.FC = () => {
                         <div className="flex shrink-0 items-center gap-0.5">
                           {isEditing ? (
                             <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void handleSaveEdit()}
-                                disabled={
-                                  savingEdit ||
-                                  !editing.value.trim() ||
-                                  editHeadersValidation.errors.length > 0
-                                }
-                                className="h-7 w-7 text-green-500 hover:text-green-400"
-                                title="Save (Enter)"
-                              >
-                                {savingEdit ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Check className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={handleCancelEdit}
-                                disabled={savingEdit}
-                                className="text-muted hover:text-foreground h-7 w-7"
-                                title="Cancel (Esc)"
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => void handleSaveEdit()}
+                                      disabled={
+                                        savingEdit ||
+                                        !editing.value.trim() ||
+                                        editHeadersValidation.errors.length > 0
+                                      }
+                                      className="h-7 w-7 text-green-500 hover:text-green-400"
+                                      aria-label="Save"
+                                    >
+                                      {savingEdit ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Check className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Save (Enter)</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={handleCancelEdit}
+                                      disabled={savingEdit}
+                                      className="text-muted hover:text-foreground h-7 w-7"
+                                      aria-label="Cancel"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Cancel (Esc)</TooltipContent>
+                              </Tooltip>
                             </>
                           ) : (
                             <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void handleTest(name)}
-                                disabled={isTesting}
-                                className="text-muted hover:text-accent h-7 w-7"
-                                title="Test connection"
-                              >
-                                {isTesting ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Play className="h-4 w-4" />
-                                )}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleStartEdit(name, entry)}
-                                className="text-muted hover:text-accent h-7 w-7"
-                                title="Edit server"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void handleRemove(name)}
-                                disabled={loading}
-                                className="text-muted hover:text-error h-7 w-7"
-                                title="Remove server"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => void handleTest(name)}
+                                      disabled={isTesting}
+                                      className="text-muted hover:text-accent h-7 w-7"
+                                      aria-label="Test connection"
+                                    >
+                                      {isTesting ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        <Play className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Test connection</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleStartEdit(name, entry)}
+                                      className="text-muted hover:text-accent h-7 w-7"
+                                      aria-label="Edit server"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Edit server</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => void handleRemove(name)}
+                                      disabled={loading}
+                                      className="text-muted hover:text-error h-7 w-7"
+                                      aria-label="Remove server"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">Remove server</TooltipContent>
+                              </Tooltip>
                             </>
                           )}
                         </div>
