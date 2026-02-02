@@ -140,8 +140,12 @@ export class PRStatusStore {
     });
   }
 
-  setClient(client: RouterClient<AppRouter>): void {
+  setClient(client: RouterClient<AppRouter> | null): void {
     this.client = client;
+
+    if (!client) {
+      return;
+    }
 
     // If hooks subscribed before the client was ready, ensure we refresh once it is.
     if (this.workspaceSubscriptionCounts.size > 0) {

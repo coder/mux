@@ -1,10 +1,13 @@
 import { useSyncExternalStore } from "react";
 import type { APIClient } from "@/browser/contexts/API";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
+import { isAbortError } from "@/browser/utils/isAbortError";
 import { MapStore } from "./MapStore";
 
 const EMPTY_SET = new Set<string>();
 const EMPTY_PROCESSES: BackgroundProcessInfo[] = [];
+const BASH_RETRY_BASE_MS = 250;
+const BASH_RETRY_MAX_MS = 5_000;
 
 function areProcessesEqual(a: BackgroundProcessInfo[], b: BackgroundProcessInfo[]): boolean {
   if (a === b) return true;
@@ -45,10 +48,25 @@ export class BackgroundBashStore {
 
   private subscriptions = new Map<string, AbortController>();
   private subscriptionCounts = new Map<string, number>();
+  private retryAttempts = new Map<string, number>();
+  private retryTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
   setClient(client: APIClient | null): void {
     this.client = client;
-    if (!client) return;
+
+    if (!client) {
+      for (const controller of this.subscriptions.values()) {
+        controller.abort();
+      }
+      this.subscriptions.clear();
+
+      for (const timeout of this.retryTimeouts.values()) {
+        clearTimeout(timeout);
+      }
+      this.retryTimeouts.clear();
+      this.retryAttempts.clear();
+      return;
+    }
 
     for (const workspaceId of this.subscriptionCounts.keys()) {
       this.ensureSubscribed(workspaceId);
@@ -232,12 +250,40 @@ export class BackgroundBashStore {
       this.subscriptions.delete(workspaceId);
     }
 
+    this.clearRetry(workspaceId);
+
     this.processesCache.delete(workspaceId);
     this.foregroundIdsCache.delete(workspaceId);
     this.terminatingIdsCache.delete(workspaceId);
     this.processesStore.delete(workspaceId);
     this.foregroundIdsStore.delete(workspaceId);
     this.terminatingIdsStore.delete(workspaceId);
+  }
+
+  private clearRetry(workspaceId: string): void {
+    const timeout = this.retryTimeouts.get(workspaceId);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    this.retryTimeouts.delete(workspaceId);
+    this.retryAttempts.delete(workspaceId);
+  }
+
+  private scheduleRetry(workspaceId: string): void {
+    if (this.retryTimeouts.has(workspaceId)) {
+      return;
+    }
+
+    const attempt = this.retryAttempts.get(workspaceId) ?? 0;
+    const delay = Math.min(BASH_RETRY_BASE_MS * 2 ** attempt, BASH_RETRY_MAX_MS);
+    this.retryAttempts.set(workspaceId, attempt + 1);
+
+    const timeout = setTimeout(() => {
+      this.retryTimeouts.delete(workspaceId);
+      this.ensureSubscribed(workspaceId);
+    }, delay);
+
+    this.retryTimeouts.set(workspaceId, timeout);
   }
 
   private ensureSubscribed(workspaceId: string): void {
@@ -288,8 +334,15 @@ export class BackgroundBashStore {
           }
         }
       } catch (err) {
-        if (!signal.aborted) {
+        if (!signal.aborted && !isAbortError(err)) {
           console.error("Failed to subscribe to background bash state:", err);
+        }
+      } finally {
+        this.subscriptions.delete(workspaceId);
+
+        if (!signal.aborted && this.client && this.subscriptionCounts.has(workspaceId)) {
+          // Retry after unexpected disconnects so background bash status recovers without refresh.
+          this.scheduleRetry(workspaceId);
         }
       }
     })();

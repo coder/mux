@@ -44,6 +44,7 @@ import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
+import { isAbortError } from "@/browser/utils/isAbortError";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
 /**
@@ -815,7 +816,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           }
         }
       } catch (err) {
-        if (!signal.aborted) {
+        if (!signal.aborted && !isAbortError(err)) {
           console.error("Failed to subscribe to metadata:", err);
         }
       }

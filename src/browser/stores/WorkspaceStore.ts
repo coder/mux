@@ -11,6 +11,7 @@ import {
   type LoadedSkill,
 } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { isAbortError } from "@/browser/utils/isAbortError";
 import { getRetryStateKey } from "@/common/constants/storage";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
@@ -330,6 +331,10 @@ export class WorkspaceStore {
   // Usage and consumer stores (two-store approach for CostsTab optimization)
   private usageStore = new MapStore<string, WorkspaceUsageState>();
   private client: RouterClient<AppRouter> | null = null;
+  private clientChangeController = new AbortController();
+  // Workspaces that need a clean history replay once a new iterator is established.
+  // We keep the existing UI visible until the replay can actually start.
+  private pendingReplayReset = new Set<string>();
   private consumersStore = new MapStore<string, WorkspaceConsumersState>();
 
   // Manager for consumer calculations (debouncing, caching, lazy loading)
@@ -664,8 +669,34 @@ export class WorkspaceStore {
       this.subscribeToStats(workspaceId);
     }
   }
-  setClient(client: RouterClient<AppRouter>) {
+  setClient(client: RouterClient<AppRouter> | null): void {
+    if (this.client === client) {
+      return;
+    }
+
+    // Drop stats subscriptions before swapping clients so reconnects resubscribe cleanly.
+    for (const unsubscribe of this.statsUnsubscribers.values()) {
+      unsubscribe();
+    }
+    this.statsUnsubscribers.clear();
+
     this.client = client;
+    this.clientChangeController.abort();
+    this.clientChangeController = new AbortController();
+
+    for (const workspaceId of this.ipcUnsubscribers.keys()) {
+      this.pendingReplayReset.add(workspaceId);
+    }
+
+    if (!client) {
+      return;
+    }
+
+    if (this.statsEnabled) {
+      for (const workspaceId of this.ipcUnsubscribers.keys()) {
+        this.subscribeToStats(workspaceId);
+      }
+    }
   }
 
   /**
@@ -783,7 +814,7 @@ export class WorkspaceStore {
           });
         }
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted || isAbortError(error)) return;
         console.warn(`[WorkspaceStore] Error in stats subscription for ${workspaceId}:`, error);
       }
     })();
@@ -1412,7 +1443,32 @@ export class WorkspaceStore {
       }
 
       // Wait for a client to be attached (e.g., initial connect or reconnect).
-      await this.sleepWithAbort(ON_CHAT_RETRY_BASE_MS, signal);
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          resolve();
+          return;
+        }
+
+        const clientChangeSignal = this.clientChangeController.signal;
+        const onAbort = () => {
+          cleanup();
+          resolve();
+        };
+
+        const timeout = setTimeout(() => {
+          cleanup();
+          resolve();
+        }, ON_CHAT_RETRY_BASE_MS);
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          signal.removeEventListener("abort", onAbort);
+          clientChangeSignal.removeEventListener("abort", onAbort);
+        };
+
+        signal.addEventListener("abort", onAbort, { once: true });
+        clientChangeSignal.addEventListener("abort", onAbort, { once: true });
+      });
     }
 
     return null;
@@ -1461,6 +1517,10 @@ export class WorkspaceStore {
       const onAbort = () => attemptController.abort();
       signal.addEventListener("abort", onAbort);
 
+      const clientChangeSignal = this.clientChangeController.signal;
+      const onClientChange = () => attemptController.abort();
+      clientChangeSignal.addEventListener("abort", onClientChange, { once: true });
+
       let stallInterval: ReturnType<typeof setInterval> | null = null;
       let lastChatEventAt = Date.now();
 
@@ -1469,6 +1529,11 @@ export class WorkspaceStore {
           { workspaceId },
           { signal: attemptController.signal }
         );
+
+        if (this.pendingReplayReset.delete(workspaceId)) {
+          // Keep the existing UI visible until the replay can actually start.
+          this.resetChatStateForReplay(workspaceId);
+        }
 
         // Stall watchdog: server sends heartbeats every 5s, so if we don't receive ANY events
         // (including heartbeats) for 10s, the connection is likely dead.
@@ -1520,10 +1585,14 @@ export class WorkspaceStore {
           return;
         }
 
+        const abortError = isAbortError(error);
+
         if (attemptController.signal.aborted) {
-          console.warn(
-            `[WorkspaceStore] onChat subscription aborted for ${workspaceId}; retrying...`
-          );
+          if (!abortError) {
+            console.warn(
+              `[WorkspaceStore] onChat subscription aborted for ${workspaceId}; retrying...`
+            );
+          }
         } else if (isIteratorValidationFailed(error)) {
           // EVENT_ITERATOR_VALIDATION_FAILED can happen when:
           // 1. Schema validation fails (event doesn't match WorkspaceChatMessageSchema)
@@ -1538,14 +1607,19 @@ export class WorkspaceStore {
           console.error(
             `[WorkspaceStore] Event validation failed for ${workspaceId}: ${formatValidationError(error)}`
           );
-        } else {
+        } else if (!abortError) {
           console.error(`[WorkspaceStore] Error in onChat subscription for ${workspaceId}:`, error);
         }
       } finally {
         signal.removeEventListener("abort", onAbort);
+        clientChangeSignal.removeEventListener("abort", onClientChange);
         if (stallInterval) {
           clearInterval(stallInterval);
         }
+      }
+
+      if (this.isWorkspaceSubscribed(workspaceId)) {
+        this.pendingReplayReset.add(workspaceId);
       }
 
       const delayMs = calculateOnChatBackoffMs(attempt);
@@ -1555,8 +1629,6 @@ export class WorkspaceStore {
       if (signal.aborted) {
         return;
       }
-
-      this.resetChatStateForReplay(workspaceId);
     }
   }
 
@@ -1656,6 +1728,8 @@ export class WorkspaceStore {
       this.ipcUnsubscribers.delete(workspaceId);
     }
 
+    this.pendingReplayReset.delete(workspaceId);
+
     // Clean up state
     this.states.delete(workspaceId);
     this.usageStore.delete(workspaceId);
@@ -1709,6 +1783,7 @@ export class WorkspaceStore {
       unsubscribe();
     }
     this.ipcUnsubscribers.clear();
+    this.pendingReplayReset.clear();
     this.states.clear();
     this.derived.clear();
     this.usageStore.clear();
