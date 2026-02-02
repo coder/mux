@@ -475,15 +475,6 @@ export function CreationControls(props: CreationControlsProps) {
   // Show loading skeleton while branches are loading to avoid layout flash
   const showBranchLoadingPlaceholder = !props.branchesLoaded && runtimeMode !== RUNTIME_MODE.LOCAL;
 
-  // Keep runtime button layout stable by always rendering runtime options on their own line.
-  // This avoids flex-wrap jitter when the branch list ("from") and SSH host input load.
-  const showRuntimeOptionsRow =
-    runtimeMode !== RUNTIME_MODE.LOCAL &&
-    (showTrunkBranchSelector ||
-      showBranchLoadingPlaceholder ||
-      selectedRuntime.mode === "ssh" ||
-      selectedRuntime.mode === "docker");
-
   // Centralized devcontainer selection logic
   const devcontainerSelection = resolveDevcontainerSelection({
     selectedRuntime,
