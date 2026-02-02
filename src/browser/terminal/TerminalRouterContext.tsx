@@ -5,7 +5,7 @@
  * Must be wrapped inside APIProvider since it depends on the API client.
  */
 
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { TerminalSessionRouter } from "./TerminalSessionRouter";
 
@@ -20,33 +20,34 @@ interface TerminalRouterProviderProps {
  *
  * Creates a single router instance that lives for the lifetime of the provider.
  * The router is recreated if the API client changes (e.g., reconnection).
+ *
+ * Always renders children so the app UI stays visible during reconnection.
+ * The router may be null when API is unavailable; consumers must handle this.
  */
 export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
   const { api } = useAPI();
-  const routerRef = useRef<TerminalSessionRouter | null>(null);
+  const [router, setRouter] = useState<TerminalSessionRouter | null>(null);
 
-  // Create/recreate router when API changes
-  if (api && (!routerRef.current || routerRef.current.getApi() !== api)) {
-    // Dispose old router if exists
-    routerRef.current?.dispose();
-    routerRef.current = new TerminalSessionRouter(api);
-  }
-
-  // Cleanup on unmount
   useEffect(() => {
+    if (!api) {
+      setRouter(null);
+      return;
+    }
+
+    // Create/cleanup after commit to avoid render-time disposal in concurrent mode.
+    const nextRouter = new TerminalSessionRouter(api);
+    setRouter(nextRouter);
     return () => {
-      routerRef.current?.dispose();
-      routerRef.current = null;
+      nextRouter.dispose();
     };
-  }, []);
+  }, [api]);
 
-  // Don't render children until API is ready
-  if (!api || !routerRef.current) {
-    return null;
-  }
+  const routerForContext = api && router?.getApi() === api ? router : null;
 
+  // Always render children - the router may be null during reconnection.
+  // Consumers (useTerminalRouter) must handle the null case gracefully.
   return (
-    <TerminalRouterContext.Provider value={routerRef.current}>
+    <TerminalRouterContext.Provider value={routerForContext}>
       {props.children}
     </TerminalRouterContext.Provider>
   );
@@ -55,12 +56,11 @@ export function TerminalRouterProvider(props: TerminalRouterProviderProps) {
 /**
  * Hook to access the TerminalSessionRouter.
  *
+ * Returns null when the API is disconnected (e.g., during reconnection).
+ * Callers should handle the null case gracefully.
+ *
  * @throws If used outside of TerminalRouterProvider
  */
-export function useTerminalRouter(): TerminalSessionRouter {
-  const router = useContext(TerminalRouterContext);
-  if (!router) {
-    throw new Error("useTerminalRouter must be used within a TerminalRouterProvider");
-  }
-  return router;
+export function useTerminalRouter(): TerminalSessionRouter | null {
+  return useContext(TerminalRouterContext);
 }

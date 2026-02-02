@@ -179,6 +179,11 @@ export function TerminalView({
   const terminalFontConfig = normalizeTerminalFontConfig(rawTerminalFontConfig);
   const { api } = useAPI();
   const router = useTerminalRouter();
+  const routerRef = useRef(router);
+  const sessionIdRef = useRef(sessionId);
+  // Keep refs in sync so input/resize handlers always use the latest router/session.
+  routerRef.current = router;
+  sessionIdRef.current = sessionId;
 
   // Set window title (dedicated terminal window only)
   useEffect(() => {
@@ -325,7 +330,8 @@ export function TerminalView({
 
   // Subscribe to router when terminal is ready and visible
   useEffect(() => {
-    if (!visible || !terminalReady || !termRef.current) {
+    // Router may be null during API reconnection - skip subscription until it's back
+    if (!visible || !terminalReady || !termRef.current || !router) {
       return;
     }
 
@@ -555,8 +561,13 @@ export function TerminalView({
         }
 
         // User input → router
+        // Drop input when the router has been disposed during reconnects.
         disposeOnData = terminal.onData((data: string) => {
-          router.sendInput(sessionId, data);
+          const activeRouter = routerRef.current;
+          if (!activeRouter) {
+            return;
+          }
+          activeRouter.sendInput(sessionIdRef.current, data);
         });
 
         // Terminal title changes (from OSC escape sequences like "echo -ne '\033]0;Title\007'")
@@ -654,14 +665,15 @@ export function TerminalView({
       }
 
       const proposed = fitAddon.proposeDimensions();
-      if (!proposed) {
+      const activeRouter = routerRef.current;
+      if (!proposed || !activeRouter || activeRouter !== router) {
         return;
       }
 
       try {
-        await router.resize(sessionId, proposed.cols, proposed.rows);
+        await activeRouter.resize(sessionId, proposed.cols, proposed.rows);
 
-        if (cancelled || term !== termRef.current) {
+        if (cancelled || term !== termRef.current || routerRef.current !== activeRouter) {
           return;
         }
 
@@ -743,7 +755,9 @@ export function TerminalView({
     // before the PTY (shell output is formatted for old dimensions but displayed in the
     // already-resized frontend terminal).
     const doResize = async () => {
-      if (!fitAddonRef.current) return;
+      const activeRouter = routerRef.current;
+      // Router may be null during API reconnection - skip resize
+      if (!fitAddonRef.current || !activeRouter || activeRouter !== router) return;
 
       // Calculate what size we want without applying it yet.
       // (fit() would resize the frontend immediately, reintroducing the race.)
@@ -760,9 +774,9 @@ export function TerminalView({
 
       try {
         // Resize PTY first - wait for backend to confirm.
-        await router.resize(sessionId, cols, rows);
+        await activeRouter.resize(sessionId, cols, rows);
 
-        if (disposed) {
+        if (disposed || routerRef.current !== activeRouter) {
           return;
         }
 
