@@ -310,7 +310,7 @@ export class SessionTimingService {
     const timer = setTimeout(() => {
       // Timer may have been cleared/replaced by an immediate emit.
       const currentState = this.deltaEmitState.get(workspaceId);
-      if (!currentState || currentState.timer !== timer) {
+      if (currentState?.timer !== timer) {
         return;
       }
 

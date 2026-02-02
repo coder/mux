@@ -2359,11 +2359,7 @@ export const router = (authToken?: string) => {
               } finally {
                 inFlight = false;
 
-                if (closed) {
-                  return;
-                }
-
-                if (pendingSnapshot) {
+                if (!closed && pendingSnapshot) {
                   scheduleSnapshot();
                 }
               }
