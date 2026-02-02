@@ -60,13 +60,15 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
       return <div className="text-thinking-mode opacity-60">Thinking...</div>;
     }
 
+    // Preserve single newlines so short section headers (e.g. "Fixing …") don't get
+    // collapsed into the previous paragraph by the markdown renderer.
     // Streaming text gets typewriter effect
     if (isStreaming) {
-      return <TypewriterMarkdown deltas={[content]} isComplete={false} />;
+      return <TypewriterMarkdown deltas={[content]} isComplete={false} preserveLineBreaks />;
     }
 
     // Completed text renders as static content
-    return content ? <MarkdownRenderer content={content} /> : null;
+    return content ? <MarkdownRenderer content={content} preserveLineBreaks /> : null;
   };
 
   return (
