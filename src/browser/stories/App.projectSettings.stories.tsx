@@ -174,12 +174,20 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   // Wait for workspace header to load
   await canvas.findByTestId("workspace-header", {}, { timeout: 10000 });
 
-  // Click the MCP server button in the header
+  // Click the MCP server button in the header.
+  //
+  // DEFENSIVE: In CI we occasionally see the first click not open the modal (Storybook still
+  // settling / focus changes). Retry once before failing to avoid flaky test runs.
   const mcpButton = await canvas.findByTestId("workspace-mcp-button");
   await userEvent.click(mcpButton);
 
-  // Wait for dialog
-  await body.findByRole("dialog", {}, { timeout: 10000 });
+  try {
+    await body.findByRole("dialog", {}, { timeout: 5000 });
+  } catch {
+    const retryButton = await canvas.findByTestId("workspace-mcp-button");
+    await userEvent.click(retryButton);
+    await body.findByRole("dialog", {}, { timeout: 10000 });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
