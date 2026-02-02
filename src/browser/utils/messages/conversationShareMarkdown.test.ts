@@ -12,9 +12,8 @@ describe("buildConversationShareMarkdown", () => {
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "my-workspace" });
 
     expect(md).toContain("# my-workspace");
-    expect(md).toContain("## User");
-    expect(md).toContain("Hello");
-    expect(md).toContain("## Assistant");
+    expect(md).toContain('<div data-message-block class="ml-auto w-fit">');
+    expect(md).toContain("<pre>Hello</pre>");
     expect(md).toContain("Hi there");
   });
 
@@ -57,6 +56,19 @@ describe("buildConversationShareMarkdown", () => {
     expect(md).toContain('"exitCode": 0');
   });
 
+  test("omits reasoning parts", () => {
+    const muxMessages = [
+      createMuxMessage("a1", "assistant", "Answer", undefined, [
+        { type: "reasoning" as const, text: "Secret reasoning" },
+      ]),
+    ];
+
+    const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
+
+    expect(md).toContain("Answer");
+    expect(md).not.toContain("Secret reasoning");
+    expect(md).not.toContain("<summary>Reasoning</summary>");
+  });
   test("filters synthetic messages by default", () => {
     const muxMessages = [
       createMuxMessage("u1", "user", "Visible"),
@@ -88,7 +100,7 @@ describe("buildConversationShareMarkdown", () => {
     ];
 
     const md = buildConversationShareMarkdown({ muxMessages, workspaceName: "ws" });
-    expect(md).toContain("_[file: image.png (image/png)]_");
+    expect(md).toContain("[file: image.png (image/png)]");
     expect(md).not.toContain("data:image/png;base64");
   });
 });

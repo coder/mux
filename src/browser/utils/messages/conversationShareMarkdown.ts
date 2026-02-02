@@ -103,7 +103,39 @@ function buildToolBlock(options: {
 
 function buildFilePlaceholder(options: { filename?: string; mediaType: string }): string {
   const name = options.filename ?? "(unnamed file)";
-  return `_[file: ${name} (${options.mediaType})]_`;
+  return `[file: ${name} (${options.mediaType})]`;
+}
+
+function escapeHtml(text: string): string {
+  // We embed user text into raw HTML (inside a <pre>), so it must be escaped.
+  // This is a best-effort escape and should not be considered a security boundary.
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function formatMessageTimestamp(timestampMs: number): string {
+  return new Date(timestampMs).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function buildUserMessageBubble(options: { content: string; timestampMs: number | null }): string {
+  const lines: string[] = [];
+  lines.push('<div data-message-block class="ml-auto w-fit">');
+  lines.push("  <div>");
+  lines.push(`    <div data-message-content><pre>${escapeHtml(options.content)}</pre></div>`);
+  lines.push("  </div>");
+
+  if (options.timestampMs !== null) {
+    lines.push(
+      `  <div data-message-meta><span data-message-timestamp>${escapeHtml(
+        formatMessageTimestamp(options.timestampMs)
+      )}</span></div>`
+    );
+  }
+
+  lines.push("</div>");
+  return lines.join("\n");
 }
 
 export function buildConversationShareMarkdown(options: {
@@ -115,17 +147,16 @@ export function buildConversationShareMarkdown(options: {
   const title =
     options.workspaceName.trim().length > 0 ? options.workspaceName.trim() : "Conversation";
 
-  const lines: string[] = [];
-  lines.push(`# ${title}`);
+  const blocks: string[] = [];
 
   // NOTE: This must be deterministic for a given conversation so we can re-use cached mux.md
   // shares (the cache key is the transcript content). Avoid Date.now() here.
   const updatedAt = getConversationUpdatedAt(options.muxMessages, includeSynthetic);
-  if (updatedAt !== null) {
-    lines.push(`Shared from Mux · Last updated ${new Date(updatedAt).toISOString()}`);
-  } else {
-    lines.push("Shared from Mux");
-  }
+  const headerLine =
+    updatedAt !== null
+      ? `Shared from Mux · Last updated ${new Date(updatedAt).toISOString()}`
+      : "Shared from Mux";
+  blocks.push([`# ${title}`, headerLine].join("\n"));
 
   for (const message of options.muxMessages) {
     if (!includeSynthetic && message.metadata?.synthetic === true) {
@@ -138,10 +169,48 @@ export function buildConversationShareMarkdown(options: {
       continue;
     }
 
-    const roleLabel = message.role === "user" ? "User" : "Assistant";
+    if (message.role === "user") {
+      // mux.md renders user messages as chat bubbles when wrapped in this structure.
+      // Keep user content in <pre> to preserve whitespace and avoid markdown parsing.
+      const bubbleLines: string[] = [];
+      let pendingText = "";
+      const flushPendingText = () => {
+        if (pendingText.length === 0) return;
+        bubbleLines.push(pendingText);
+        pendingText = "";
+      };
 
-    lines.push("---");
-    lines.push(`## ${roleLabel}`);
+      for (const part of message.parts) {
+        if (part.type === "text") {
+          pendingText += part.text;
+          continue;
+        }
+
+        if (part.type === "file") {
+          flushPendingText();
+          bubbleLines.push(
+            buildFilePlaceholder({ filename: part.filename, mediaType: part.mediaType })
+          );
+          continue;
+        }
+
+        // Reasoning blocks are intentionally omitted from shared transcripts.
+        // Tool parts are unexpected for user messages; omit rather than bloating the transcript.
+      }
+
+      flushPendingText();
+
+      blocks.push(
+        buildUserMessageBubble({
+          content: bubbleLines.join("\n").trimEnd(),
+          timestampMs: getMessageTimestamp(message),
+        })
+      );
+      continue;
+    }
+
+    // Assistant message: render as normal markdown (mux.md handles it naturally).
+    const assistantBlocks: string[] = [];
 
     // NOTE: Real MuxMessage history often contains many sequential "text" parts (streaming deltas).
     // We want to preserve the exact text without inserting extra whitespace between chunks.
@@ -152,7 +221,7 @@ export function buildConversationShareMarkdown(options: {
         return;
       }
 
-      lines.push(pendingText.trimEnd());
+      assistantBlocks.push(pendingText.trimEnd());
       pendingText = "";
     };
 
@@ -162,33 +231,22 @@ export function buildConversationShareMarkdown(options: {
         continue;
       }
 
-      flushPendingText();
-
+      // Reasoning blocks are intentionally omitted from shared transcripts.
       if (part.type === "reasoning") {
-        if (part.text.trim().length === 0) {
-          continue;
-        }
-
-        lines.push(
-          [
-            "<details>",
-            "<summary>Reasoning</summary>",
-            "",
-            part.text.trimEnd(),
-            "",
-            "</details>",
-          ].join("\n")
-        );
         continue;
       }
 
       if (part.type === "file") {
-        lines.push(buildFilePlaceholder({ filename: part.filename, mediaType: part.mediaType }));
+        flushPendingText();
+        assistantBlocks.push(
+          buildFilePlaceholder({ filename: part.filename, mediaType: part.mediaType })
+        );
         continue;
       }
 
       if (part.type === "dynamic-tool") {
-        lines.push(
+        flushPendingText();
+        assistantBlocks.push(
           buildToolBlock({
             toolName: part.toolName,
             state: part.state,
@@ -201,7 +259,12 @@ export function buildConversationShareMarkdown(options: {
     }
 
     flushPendingText();
+
+    const assistantContent = assistantBlocks.join("\n\n").trimEnd();
+    if (assistantContent.trim().length > 0) {
+      blocks.push(assistantContent);
+    }
   }
 
-  return lines.join("\n\n").trimEnd() + "\n";
+  return blocks.join("\n\n").trimEnd() + "\n";
 }
