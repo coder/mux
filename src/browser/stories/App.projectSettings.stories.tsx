@@ -14,8 +14,9 @@ import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
+import { waitForChatMessagesLoaded } from "./storyPlayHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { within, userEvent, expect } from "@storybook/test";
+import { within, userEvent, expect, waitFor } from "@storybook/test";
 import { getMCPTestResultsKey } from "@/common/constants/storage";
 
 export default {
@@ -168,26 +169,25 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
 
 /** Open the workspace MCP modal */
 async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> {
-  const canvas = within(canvasElement);
-  const body = within(canvasElement.ownerDocument.body);
+  const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+  const canvas = within(storyRoot);
+  const body = within(storyRoot.ownerDocument.body);
 
-  // Wait for workspace header to load
-  await canvas.findByTestId("workspace-header", {}, { timeout: 10000 });
+  await waitForChatMessagesLoaded(storyRoot);
 
-  // Click the MCP server button in the header.
-  //
-  // DEFENSIVE: In CI we occasionally see the first click not open the modal (Storybook still
-  // settling / focus changes). Retry once before failing to avoid flaky test runs.
-  const mcpButton = await canvas.findByTestId("workspace-mcp-button");
+  await waitFor(() => expect(canvas.queryByTestId("workspace-header")).not.toBeNull(), {
+    timeout: 10000,
+  });
+
+  // Click the MCP server button in the header
+  const mcpButton = await canvas.findByTestId("workspace-mcp-button", {}, { timeout: 10000 });
+  await waitFor(() => expect(mcpButton).toBeEnabled(), { timeout: 10000 });
   await userEvent.click(mcpButton);
 
-  try {
-    await body.findByRole("dialog", {}, { timeout: 5000 });
-  } catch {
-    const retryButton = await canvas.findByTestId("workspace-mcp-button");
-    await userEvent.click(retryButton);
-    await body.findByRole("dialog", {}, { timeout: 10000 });
-  }
+  // Wait for modal content (role lookup can be flaky with portal rendering).
+  await waitFor(() => expect(body.queryByTestId("workspace-mcp-modal")).not.toBeNull(), {
+    timeout: 10000,
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -6,7 +6,14 @@ import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { cn } from "@/common/lib/utils";
 import type { MCPServerInfo, WorkspaceMCPOverrides } from "@/common/types/mcp";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  VisuallyHidden,
+} from "@/browser/components/ui/dialog";
 import { useMCPTestCache } from "@/browser/hooks/useMCPTestCache";
 import { ToolSelector } from "@/browser/components/ToolSelector";
 
@@ -249,12 +256,21 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+      {/* Storybook play tests need a stable hook to detect this dialog. */}
+      <DialogContent
+        className="max-h-[80vh] max-w-2xl overflow-y-auto"
+        data-testid="workspace-mcp-modal"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Server className="h-5 w-5" />
             Workspace MCP Configuration
           </DialogTitle>
+          <VisuallyHidden>
+            <DialogDescription>
+              Configure MCP servers and tools for this workspace.
+            </DialogDescription>
+          </VisuallyHidden>
         </DialogHeader>
 
         {loading ? (
