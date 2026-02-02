@@ -2136,7 +2136,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             anchorRef={variant === "creation" ? inputRef : undefined}
           />
 
-          <div className="relative flex items-end" data-component="ChatInputControls">
+          <div className="relative flex items-end pb-1" data-component="ChatInputControls">
             {/* Recording/transcribing overlay - replaces textarea when active */}
             {voiceInput.state !== "idle" ? (
               <RecordingOverlay
@@ -2217,7 +2217,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               {/* Row 1 on mobile: Model Selector + Thinking Slider */}
               <div className="flex items-center gap-x-3 [@container(max-width:480px)]:w-full">
                 <div
-                  className="flex items-center"
+                  className="flex items-center gap-2"
                   data-component="ModelSelectorGroup"
                   data-tutorial="model-selector"
                 >

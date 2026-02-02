@@ -7,11 +7,12 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
-import { Eye, Settings, ShieldCheck, Star, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
 import { GatewayToggleButton } from "./GatewayToggleButton";
 import { GatewayIcon } from "./icons/GatewayIcon";
 import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useGateway, isProviderSupported } from "@/browser/hooks/useGatewayModels";
@@ -19,8 +20,10 @@ import {
   formatMuxGatewayBalance,
   useMuxGatewayAccountStatus,
 } from "@/browser/hooks/useMuxGatewayAccountStatus";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
-
+import { getModelName, getModelProvider } from "@/common/utils/ai/models";
+import { Button } from "./ui/button";
 interface ModelSelectorProps {
   value: string;
   onChange: (value: string) => void;
@@ -71,53 +74,49 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       error: muxGatewayAccountError,
       refresh: refreshMuxGatewayAccountStatus,
     } = useMuxGatewayAccountStatus();
-    const [isEditing, setIsEditing] = useState(false);
-    const [inputValue, setInputValue] = useState(value);
+    const [isOpen, setIsOpen] = useState(false);
+    const [inputValue, setInputValue] = useState("");
     const [error, setError] = useState<string | null>(null);
-    const [showDropdown, setShowDropdown] = useState(false);
     const [showAllModels, setShowAllModels] = useState(false);
-    const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
+    const [highlightedIndex, setHighlightedIndex] = useState<number>(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const dropdownItemRefs = useRef<Array<HTMLDivElement | null>>([]);
-
-    // Update input value when prop changes
-    useEffect(() => {
-      if (!isEditing) {
-        setInputValue(value);
-      }
-    }, [value, isEditing]);
-
-    // Focus input when editing starts
-    useEffect(() => {
-      if (isEditing && inputRef.current) {
-        inputRef.current.focus();
-        inputRef.current.select();
-      }
-    }, [isEditing]);
+    const listRef = useRef<HTMLDivElement>(null);
 
     const handleCancel = useCallback(() => {
-      setIsEditing(false);
-      setInputValue(value);
+      setIsOpen(false);
+      setInputValue("");
       setError(null);
-      setShowDropdown(false);
       setShowAllModels(false);
-      setHighlightedIndex(-1);
-    }, [value]);
+      setHighlightedIndex(0);
+    }, []);
 
-    // Handle click outside to close
+    // Popover handles outside click; keep local state in sync.
+    const handleOpenChange = (open: boolean) => {
+      setIsOpen(open);
+      if (!open) {
+        handleCancel();
+      }
+    };
+
+    // Initialize search + focus whenever the popover opens.
     useEffect(() => {
-      if (!isEditing) return;
+      if (!isOpen) {
+        return;
+      }
 
-      const handleClickOutside = (e: MouseEvent) => {
-        if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-          handleCancel();
-        }
-      };
+      setError(null);
+      setInputValue(""); // Clear input to show all models
+      setShowAllModels(false);
 
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [isEditing, handleCancel]);
+      // Start with current value highlighted
+      const currentIndex = models.indexOf(value);
+      setHighlightedIndex(currentIndex >= 0 ? currentIndex : 0);
+
+      // Focus input after popover renders.
+      const timer = setTimeout(() => inputRef.current?.focus(), 10);
+      return () => clearTimeout(timer);
+    }, [isOpen, models, value]);
 
     // Build model list: visible models + (if showAllModels) hidden models
     const baseModels = showAllModels ? [...models, ...hiddenModels] : models;
@@ -134,7 +133,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     // If the list shrinks (e.g., a model is hidden), keep the highlight in-bounds.
     useEffect(() => {
       if (filteredModels.length === 0) {
-        setHighlightedIndex(-1);
+        setHighlightedIndex(0);
         return;
       }
       if (highlightedIndex >= filteredModels.length) {
@@ -149,40 +148,51 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       }
 
       // Use highlighted item, or first item if none highlighted
-      const selectedIndex = highlightedIndex >= 0 ? highlightedIndex : 0;
+      const selectedIndex = highlightedIndex;
       const valueToSave = filteredModels[selectedIndex];
 
       onChange(valueToSave);
-      setIsEditing(false);
-      setError(null);
-      setShowDropdown(false);
-      setHighlightedIndex(-1);
+      handleCancel();
     };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
+        stopKeyboardPropagation(e);
         handleCancel();
-      } else if (e.key === "Enter") {
+        return;
+      }
+
+      if (e.key === "Enter") {
         e.preventDefault();
         // Only call onComplete if save succeeded (had matches)
         if (filteredModels.length > 0) {
           handleSave();
           onComplete?.();
         }
-      } else if (e.key === "Tab") {
+        return;
+      }
+
+      if (e.key === "Tab") {
         e.preventDefault();
         // Tab auto-completes the highlighted item without closing
-        if (highlightedIndex >= 0 && highlightedIndex < filteredModels.length) {
+        if (filteredModels[highlightedIndex]) {
           setInputValue(filteredModels[highlightedIndex]);
-          setHighlightedIndex(-1);
         }
-      } else if (e.key === "ArrowDown") {
+        setHighlightedIndex(0);
+        return;
+      }
+
+      if (e.key === "ArrowDown") {
         e.preventDefault();
         setHighlightedIndex((prev) => Math.min(prev + 1, filteredModels.length - 1));
-      } else if (e.key === "ArrowUp") {
+        return;
+      }
+
+      if (e.key === "ArrowUp") {
         e.preventDefault();
-        setHighlightedIndex((prev) => Math.max(prev - 1, -1));
+        setHighlightedIndex((prev) => Math.max(prev - 1, 0));
+        return;
       }
     };
 
@@ -192,35 +202,17 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       setError(null);
 
       // Auto-highlight first filtered result
-      const filtered =
-        newValue.trim() === ""
-          ? models
-          : models.filter((model) => model.toLowerCase().includes(newValue.toLowerCase()));
-
-      // Highlight first result if any, otherwise no highlight
-      setHighlightedIndex(filtered.length > 0 ? 0 : -1);
-
-      // Keep dropdown visible if there are models (filtering happens automatically)
-      setShowDropdown(models.length > 0);
+      setHighlightedIndex(0);
     };
 
     const handleSelectModel = (model: string) => {
-      setInputValue(model);
       onChange(model);
-      setIsEditing(false);
-      setError(null);
-      setShowDropdown(false);
+      handleCancel();
     };
 
-    const handleClick = useCallback(() => {
-      setIsEditing(true);
-      setInputValue(""); // Clear input to show all models
-      setShowDropdown(models.length > 0);
-
-      // Start with current value highlighted
-      const currentIndex = models.indexOf(value);
-      setHighlightedIndex(currentIndex);
-    }, [models, value]);
+    const handleOpen = useCallback(() => {
+      setIsOpen(true);
+    }, []);
 
     const handleSetDefault = (e: React.MouseEvent, model: string) => {
       e.preventDefault();
@@ -234,18 +226,20 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     useImperativeHandle(
       ref,
       () => ({
-        open: handleClick,
+        open: handleOpen,
       }),
-      [handleClick]
+      [handleOpen]
     );
 
     // Scroll highlighted item into view
     useEffect(() => {
-      if (highlightedIndex >= 0 && dropdownItemRefs.current[highlightedIndex]) {
-        dropdownItemRefs.current[highlightedIndex]?.scrollIntoView({
-          block: "nearest",
-          behavior: "smooth",
-        });
+      if (!listRef.current) {
+        return;
+      }
+
+      const highlighted = listRef.current.querySelector("[data-highlighted=true]");
+      if (highlighted) {
+        highlighted.scrollIntoView({ block: "nearest" });
       }
     }, [highlightedIndex]);
 
@@ -253,152 +247,145 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
     const triggerClassName = isBoxVariant
       ? cn(
-          "border-border-medium bg-separator text-foreground flex h-9 flex-1 min-w-0 cursor-pointer items-center justify-between rounded border px-2 text-xs transition-colors duration-200",
+          "border-border-medium bg-separator text-foreground flex h-9 flex-1 min-w-0 cursor-pointer justify-between rounded border px-2 text-xs transition-colors duration-200",
           className
         )
-      : "text-muted-light hover:bg-hover flex cursor-pointer items-center gap-1 rounded-sm px-1 py-0.5 text-[11px] transition-colors duration-200";
-    const inputClassName = cn(
-      "text-light bg-dark border-border-light font-monospace focus:border-exec-mode rounded-sm border outline-none",
-      isBoxVariant
-        ? cn("h-9 w-full px-2 text-xs", className)
-        : "w-48 px-1 py-0.5 text-[10px] leading-[11px]"
-    );
+      : "w-[190px] text-foreground bg-background hover:bg-hover flex cursor-pointer justify-between rounded-sm px-2 text-[11px] transition-colors duration-300";
 
-    if (!isEditing) {
-      if (value.trim().length === 0) {
-        return (
-          <div ref={containerRef} className={containerClassName}>
-            <div className={triggerClassName} onClick={handleClick}>
-              <span>{emptyLabel ?? ""}</span>
-              {isBoxVariant && <ChevronDown className="ml-1 h-3 w-3 opacity-50" />}
-            </div>
-          </div>
-        );
-      }
+    const hasValue = value.trim().length > 0;
+    const selectedProvider = hasValue ? getModelProvider(value) : "";
+    const displayValue = hasValue
+      ? formatModelDisplayName(getModelName(value))
+      : (emptyLabel ?? "");
 
-      const gatewayActive = gateway.isModelRoutingThroughGateway(value);
-
-      // Parse provider and model name from value (format: "provider:model-name")
-      const [provider, modelName] = value.includes(":") ? value.split(":", 2) : ["", value];
-      // For mux-gateway format, extract inner provider
-      const innerProvider =
-        provider === "mux-gateway" && modelName.includes("/") ? modelName.split("/")[0] : provider;
-
-      // Show gateway icon if gateway is active (configured AND enabled) and provider supports it
-      const showGatewayIcon = gateway.isActive && isProviderSupported(value);
-
-      return (
-        <div ref={containerRef} className={containerClassName}>
-          {showGatewayIcon && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    gateway.toggleModelGateway(value);
-                  }}
-                  onMouseEnter={() => {
-                    void refreshMuxGatewayAccountStatus();
-                  }}
-                  className="cursor-pointer transition-opacity hover:opacity-70"
-                  aria-label={gatewayActive ? "Using Mux Gateway" : "Enable Mux Gateway"}
-                >
-                  <GatewayIcon
-                    className={cn("h-3 w-3 shrink-0", gatewayActive ? "text-accent" : "text-muted")}
-                    active={gatewayActive}
-                  />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent align="start" className="w-56">
-                <div className="text-foreground text-[11px] font-medium">Mux Gateway</div>
-                <div className="mt-1.5 space-y-0.5 text-[11px]">
-                  <div className="flex items-center justify-between gap-4">
-                    <span className="text-muted">Balance</span>
-                    <span className="text-foreground font-mono">
-                      {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-4">
-                    <span className="text-muted">Concurrent requests</span>
-                    <span className="text-foreground font-mono">
-                      {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
-                    </span>
-                  </div>
-                </div>
-                {muxGatewayAccountError && (
-                  <div className="text-destructive mt-1.5 text-[10px]">
-                    {muxGatewayAccountError}
-                  </div>
-                )}
-                <div className="text-muted border-separator-light mt-2 border-t pt-1.5 text-[10px]">
-                  Click to {gatewayActive ? "disable" : "enable"} gateway
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className={triggerClassName} onClick={handleClick}>
-                <div className="flex items-center gap-1">
-                  <ProviderIcon provider={innerProvider} className="h-3 w-3 shrink-0 opacity-70" />
-                  <span>{formatModelDisplayName(modelName)}</span>
-                </div>
-                {isBoxVariant && <ChevronDown className="ml-1 h-3 w-3 opacity-50" />}
-              </div>
-            </TooltipTrigger>
-            <TooltipContent align="center">{value}</TooltipContent>
-          </Tooltip>
-        </div>
-      );
-    }
+    const gatewayActive = hasValue && gateway.isModelRoutingThroughGateway(value);
+    const showGatewayIcon = hasValue && gateway.isActive && isProviderSupported(value);
 
     return (
       <div ref={containerRef} className={containerClassName}>
-        <div className={cn(isBoxVariant && "w-full")}>
-          <input
-            ref={inputRef}
-            value={inputValue}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            placeholder={inputPlaceholder ?? "provider:model-name"}
-            className={inputClassName}
-          />
-          {error && (
-            <div className="text-danger-soft font-monospace mt-0.5 text-[9px]">{error}</div>
-          )}
-        </div>
-        {showDropdown && (
-          <div className="bg-separator border-border-light absolute bottom-full left-0 z-[1020] mb-1 max-h-[200px] min-w-80 overflow-x-hidden overflow-y-auto rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
-            {filteredModels.length === 0 ? (
-              <div className="text-muted-light font-monospace px-2.5 py-1.5 text-[11px]">
-                No matching models
+        {showGatewayIcon && (
+          <Tooltip {...(isOpen ? { open: false } : {})}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  gateway.toggleModelGateway(value);
+                }}
+                onMouseEnter={() => {
+                  void refreshMuxGatewayAccountStatus();
+                }}
+                className="cursor-pointer transition-opacity hover:opacity-70"
+                aria-label={gatewayActive ? "Using Mux Gateway" : "Enable Mux Gateway"}
+              >
+                <GatewayIcon
+                  className={cn("h-3 w-3 shrink-0", gatewayActive ? "text-accent" : "text-muted")}
+                  active={gatewayActive}
+                />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent align="start" className="w-56">
+              <div className="text-foreground text-[11px] font-medium">Mux Gateway</div>
+              <div className="mt-1.5 space-y-0.5 text-[11px]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted">Balance</span>
+                  <span className="text-foreground font-mono">
+                    {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted">Concurrent requests</span>
+                  <span className="text-foreground font-mono">
+                    {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
+                  </span>
+                </div>
               </div>
-            ) : (
-              filteredModels.map((model, index) => (
-                <div
-                  key={model}
-                  ref={(el) => (dropdownItemRefs.current[index] = el)}
-                  className={cn(
-                    "text-[11px] font-monospace py-1.5 px-2.5 cursor-pointer transition-colors duration-100",
-                    "first:rounded-t last:rounded-b",
-                    hiddenSet.has(model) && "opacity-50",
-                    index === highlightedIndex
-                      ? "text-foreground bg-hover"
-                      : "text-light bg-transparent hover:bg-hover hover:text-foreground"
-                  )}
-                  onClick={() => handleSelectModel(model)}
+              {muxGatewayAccountError && (
+                <div className="text-destructive mt-1.5 text-[10px]">{muxGatewayAccountError}</div>
+              )}
+              <div className="text-muted border-separator-light mt-2 border-t pt-1.5 text-[10px]">
+                Click to {gatewayActive ? "disable" : "enable"} gateway
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        )}
+        <Popover open={isOpen} onOpenChange={handleOpenChange} modal>
+          <Tooltip {...(isOpen || !hasValue ? { open: false } : {})}>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  className={triggerClassName}
+                  role="combobox"
+                  aria-expanded={isOpen}
+                  variant="outline"
+                  size="sm"
                 >
-                  {/* Grid: model name | gateway | [visibility] | default - visibility column only when callbacks present */}
-                  <div
-                    className={cn(
-                      "grid w-full min-w-0 items-center gap-1",
-                      (onHideModel ?? onUnhideModel)
-                        ? "grid-cols-[1fr_20px_30px_30px]"
-                        : "grid-cols-[1fr_20px_30px]"
+                  <span className="flex min-w-0 items-center gap-1.5 truncate">
+                    {selectedProvider && (
+                      <ProviderIcon
+                        provider={selectedProvider}
+                        className="h-3 w-3 shrink-0 opacity-70"
+                      />
                     )}
+                    <span className="min-w-0 truncate">{displayValue}</span>
+                  </span>
+                  <ChevronDown className="text-muted h-3 w-3 shrink-0" />
+                </Button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent align="center">{value}</TooltipContent>
+          </Tooltip>
+
+          <PopoverContent
+            align="start"
+            className={cn("max-h-[400px] p-0 w-82")}
+          >
+            {/* Search input */}
+            <div className="border-border border-b px-2 py-1.5">
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputValue}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder={inputPlaceholder ?? "Search models..."}
+                className="text-foreground placeholder:text-muted w-full bg-transparent text-xs outline-none"
+              />
+              {error && <div className="text-danger-soft mt-1 text-[10px]">{error}</div>}
+            </div>
+
+            {/* Scrollable list */}
+            <div ref={listRef} className="max-h-[280px] overflow-y-auto p-1">
+              {filteredModels.length === 0 ? (
+                <div className="text-muted py-2 text-center text-[10px]">No matching models</div>
+              ) : (
+                filteredModels.map((model, index) => (
+                  <div
+                    key={model}
+                    data-highlighted={index === highlightedIndex}
+                    onMouseEnter={() => setHighlightedIndex(index)}
+                    className={cn(
+                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-xs",
+                      index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
+                      hiddenSet.has(model) && "opacity-50"
+                    )}
+                    onClick={() => handleSelectModel(model)}
+                    role="option"
+                    aria-selected={value === model}
                   >
-                    <span className="min-w-0 truncate">{model}</span>
+                    <Check
+                      className={cn(
+                        "h-3 w-3 shrink-0",
+                        value === model ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                    <ProviderIcon
+                      provider={getModelProvider(model)}
+                      className="text-muted h-3 w-3 shrink-0"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{model}</span>
+
                     {/* Gateway toggle */}
                     {gateway.canToggleModel(model) ? (
                       <GatewayToggleButton
@@ -409,7 +396,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                         showTooltip
                       />
                     ) : (
-                      <span /> // Empty cell for alignment
+                      <span className="h-5 w-5" />
                     )}
                     {/* Visibility toggle - Eye with line-through when hidden */}
                     {(onHideModel ?? onUnhideModel) && (
@@ -457,10 +444,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                         </TooltipContent>
                       </Tooltip>
                     )}
+
                     {/* Default star */}
                     {onSetDefaultModel ? (
                       hiddenSet.has(model) ? (
-                        <span /> // Empty cell - can't set hidden model as default
+                        <span className="h-5 w-5" />
                       ) : (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -469,7 +457,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                               onMouseDown={(e) => e.preventDefault()}
                               onClick={(e) => handleSetDefault(e, model)}
                               className={cn(
-                                "flex h-5 w-5 items-center justify-center rounded-sm  transition-colors duration-150",
+                                "flex h-5 w-5 items-center justify-center rounded-sm transition-colors duration-150",
                                 defaultModel === model
                                   ? "text-yellow-400 cursor-default"
                                   : "text-muted-light hover:text-foreground"
@@ -495,16 +483,16 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                         </Tooltip>
                       )
                     ) : (
-                      <span /> // Empty cell for alignment
+                      <span className="h-5 w-5" />
                     )}
                   </div>
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </div>
 
-            {/* Footer actions */}
+            {/* Footer actions (last row in dropdown) */}
             {(hiddenModels.length > 0 || onOpenSettings) && (
-              <div className="border-border-light flex items-center gap-2 border-t px-2.5 py-1.5">
+              <div className="border-border flex flex-col gap-1 border-t px-2 py-1.5">
                 {hiddenModels.length > 0 && (
                   <button
                     type="button"
@@ -513,46 +501,42 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       e.preventDefault();
                       e.stopPropagation();
                       setShowAllModels((prev) => !prev);
+                      setInputValue("");
+                      setHighlightedIndex(0);
                     }}
-                    className="text-muted-light hover:text-foreground text-[10px] transition-colors"
+                    className="text-muted hover:text-foreground text-[10px] transition-colors"
                   >
                     {showAllModels ? "Show fewer models" : "Show all models…"}
                   </button>
                 )}
 
-                <div className="ml-auto flex items-center gap-2">
-                  {policyEnforced && (
-                    <div className="text-muted-light flex items-center gap-1 text-[10px]">
-                      <ShieldCheck className="h-3 w-3" aria-hidden />
-                      <span>Your settings are controlled by a policy.</span>
-                    </div>
-                  )}
+                {policyEnforced && (
+                  <div className="text-muted flex items-center gap-1 text-[10px]">
+                    <ShieldCheck className="h-3 w-3" aria-hidden />
+                    <span>Your settings are controlled by a policy.</span>
+                  </div>
+                )}
 
-                  {onOpenSettings && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            onOpenSettings();
-                          }}
-                          className="text-muted-light hover:text-foreground flex items-center text-[10px] transition-colors"
-                          aria-label="Model Settings"
-                        >
-                          <Settings className="h-3 w-3" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent align="center">Model Settings</TooltipContent>
-                    </Tooltip>
-                  )}
-                </div>
+                {onOpenSettings && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onOpenSettings();
+                      handleCancel();
+                    }}
+                    className="text-muted hover:bg-hover hover:text-foreground flex w-full items-center justify-start gap-1.5 rounded-sm px-2 py-1 text-[11px] transition-colors"
+                  >
+                    <Settings className="h-3 w-3 shrink-0" />
+                    Model settings
+                  </button>
+                )}
               </div>
             )}
-          </div>
-        )}
+          </PopoverContent>
+        </Popover>
       </div>
     );
   }
