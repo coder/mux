@@ -524,8 +524,9 @@ You are in Plan Mode.
 ## Investigation step (required)
 
 Before proposing a plan, identify what you must verify and use the best available tools
-(`file_read` for local file contents, search, or user questions). Do not guess. Investigation can be
-done directly; sub-agents are optional.
+(`file_read` for local file contents, search, or user questions). Do not guess.
+For codebase exploration, start by spawning **1–3 Explore sub-agent** tasks via `task` (required initial delegation).
+If you still have unanswered questions, feel free to spawn additional Explore sub-agents **in parallel** as needed until you have enough evidence to draft a high-confidence plan.
 
 Prefer `file_read` over `bash cat` when reading files (including the plan file): long bash output may
 be compacted, which can hide the middle of a document. Use `file_read` with offset/limit to page
