@@ -1,0 +1,232 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Check, ExternalLink, Link2, Loader2 } from "lucide-react";
+
+import { CopyIcon } from "@/browser/components/icons/CopyIcon";
+import { Button } from "@/browser/components/ui/button";
+import { Checkbox } from "@/browser/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { copyToClipboard } from "@/browser/utils/clipboard";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { uploadToMuxMd } from "@/common/lib/muxMd";
+import { cn } from "@/common/lib/utils";
+import { buildChatJsonlForSharing } from "@/common/utils/messages/transcriptShare";
+
+interface ShareTranscriptPopoverProps {
+  workspaceId: string;
+  workspaceName: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+function getTranscriptFileName(workspaceName: string): string {
+  const trimmed = workspaceName.trim();
+  if (!trimmed) {
+    return "chat.jsonl";
+  }
+
+  // Keep this consistent with existing share filename sanitization.
+  // (mux.md expects `FileInfo.name` to be safe for display and download.)
+  const safeName = trimmed
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!safeName) {
+    return "chat.jsonl";
+  }
+
+  return `${safeName}-chat.jsonl`;
+}
+
+export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
+  const store = useWorkspaceStoreRaw();
+
+  const [includeToolOutput, setIncludeToolOutput] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const urlInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!props.open || !shareUrl) {
+      return;
+    }
+
+    urlInputRef.current?.focus();
+    urlInputRef.current?.select();
+  }, [props.open, shareUrl]);
+
+  const handleGenerateLink = useCallback(async () => {
+    if (isUploading) {
+      return;
+    }
+
+    setIsUploading(true);
+    setError(null);
+
+    try {
+      const workspaceState = store.getWorkspaceState(props.workspaceId);
+      const chatJsonl = buildChatJsonlForSharing(workspaceState.muxMessages, {
+        includeToolOutput,
+        workspaceId: props.workspaceId,
+      });
+
+      if (!chatJsonl) {
+        setError("No messages to share yet");
+        return;
+      }
+
+      const fileInfo = {
+        name: getTranscriptFileName(props.workspaceName),
+        type: "application/x-ndjson",
+        size: new TextEncoder().encode(chatJsonl).length,
+      };
+
+      const result = await uploadToMuxMd(chatJsonl, fileInfo);
+      setShareUrl(result.url);
+    } catch (err) {
+      console.error("Failed to share transcript:", err);
+      setError(err instanceof Error ? err.message : "Failed to upload");
+    } finally {
+      setIsUploading(false);
+    }
+  }, [includeToolOutput, isUploading, props.workspaceId, props.workspaceName, store]);
+
+  const handleCopy = useCallback(() => {
+    if (!shareUrl) {
+      return;
+    }
+
+    void copyToClipboard(shareUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [shareUrl]);
+
+  const handleOpenInBrowser = useCallback(() => {
+    if (!shareUrl) {
+      return;
+    }
+
+    window.open(shareUrl, "_blank", "noopener,noreferrer");
+  }, [shareUrl]);
+
+  const handleOpenChange = (open: boolean) => {
+    props.onOpenChange(open);
+
+    if (!open) {
+      setError(null);
+      setCopied(false);
+    }
+  };
+
+  return (
+    <Popover open={props.open} onOpenChange={handleOpenChange}>
+      <Tooltip {...(props.open ? { open: false } : {})}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Share transcript"
+              className={cn(
+                "h-6 w-6 shrink-0 [&_svg]:h-3.5 [&_svg]:w-3.5",
+                shareUrl ? "text-blue-400" : "text-muted hover:text-foreground"
+              )}
+            >
+              <Link2 />
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center">
+          Share transcript ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
+        </TooltipContent>
+      </Tooltip>
+
+      <PopoverContent side="bottom" align="end" collisionPadding={16} className="w-[320px] p-3">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-foreground text-xs font-medium">Share transcript</span>
+          </div>
+
+          <label className="flex cursor-pointer items-center gap-2">
+            <Checkbox
+              checked={includeToolOutput}
+              onCheckedChange={(checked) => setIncludeToolOutput(checked === true)}
+            />
+            <span className="text-muted-foreground text-xs">Include tool output</span>
+          </label>
+
+          <Button
+            onClick={() => void handleGenerateLink()}
+            disabled={isUploading}
+            className="h-7 w-full text-xs"
+          >
+            {isUploading ? (
+              <>
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              "Generate link"
+            )}
+          </Button>
+
+          {shareUrl && (
+            <div className="border-border bg-background flex items-center gap-1 rounded border px-2 py-1.5">
+              <input
+                ref={urlInputRef}
+                type="text"
+                readOnly
+                value={shareUrl}
+                className="text-foreground min-w-0 flex-1 bg-transparent font-mono text-[10px] outline-none"
+                data-testid="share-transcript-url"
+                onFocus={(e) => e.target.select()}
+              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleCopy}
+                    className="text-muted hover:bg-muted/50 hover:text-foreground shrink-0 rounded p-1 transition-colors"
+                    aria-label="Copy to clipboard"
+                    data-testid="copy-share-transcript-url"
+                  >
+                    {copied ? (
+                      <Check className="h-3.5 w-3.5 text-green-500" />
+                    ) : (
+                      <CopyIcon className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{copied ? "Copied!" : "Copy"}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleOpenInBrowser}
+                    className="text-muted hover:bg-muted/50 hover:text-foreground shrink-0 rounded p-1 transition-colors"
+                    aria-label="Open in browser"
+                    data-testid="open-share-transcript-url"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>Open</TooltipContent>
+              </Tooltip>
+            </div>
+          )}
+
+          {error && (
+            <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
+              {error}
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
