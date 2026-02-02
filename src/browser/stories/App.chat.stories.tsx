@@ -1523,9 +1523,6 @@ export const ProposePlanMobile: AppStory = {
   parameters: {
     ...ProposePlan.parameters,
     viewport: { defaultViewport: "mobile1" },
-    chromatic: {
-      viewports: [375],
-    },
     docs: {
       description: {
         story:
