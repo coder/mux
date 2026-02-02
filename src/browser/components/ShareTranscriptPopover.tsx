@@ -51,6 +51,18 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
 
   const urlInputRef = useRef<HTMLInputElement>(null);
 
+  // Guards against cross-workspace leakage when users switch workspaces mid-upload.
+  // (WorkspaceHeader can be reused across workspace changes.)
+  const uploadSeqRef = useRef(0);
+
+  useEffect(() => {
+    uploadSeqRef.current += 1;
+    setShareUrl(null);
+    setError(null);
+    setCopied(false);
+    setIsUploading(false);
+  }, [props.workspaceId]);
+
   useEffect(() => {
     if (!props.open || !shareUrl) {
       return;
@@ -65,18 +77,24 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
       return;
     }
 
+    const uploadSeq = uploadSeqRef.current + 1;
+    uploadSeqRef.current = uploadSeq;
+
     setIsUploading(true);
     setError(null);
 
     try {
-      const workspaceState = store.getWorkspaceState(props.workspaceId);
+      const workspaceId = props.workspaceId;
+      const workspaceState = store.getWorkspaceState(workspaceId);
       const chatJsonl = buildChatJsonlForSharing(workspaceState.muxMessages, {
         includeToolOutput,
-        workspaceId: props.workspaceId,
+        workspaceId,
       });
 
       if (!chatJsonl) {
-        setError("No messages to share yet");
+        if (uploadSeqRef.current === uploadSeq) {
+          setError("No messages to share yet");
+        }
         return;
       }
 
@@ -87,12 +105,18 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
       };
 
       const result = await uploadToMuxMd(chatJsonl, fileInfo);
-      setShareUrl(result.url);
+      if (uploadSeqRef.current === uploadSeq) {
+        setShareUrl(result.url);
+      }
     } catch (err) {
       console.error("Failed to share transcript:", err);
-      setError(err instanceof Error ? err.message : "Failed to upload");
+      if (uploadSeqRef.current === uploadSeq) {
+        setError(err instanceof Error ? err.message : "Failed to upload");
+      }
     } finally {
-      setIsUploading(false);
+      if (uploadSeqRef.current === uploadSeq) {
+        setIsUploading(false);
+      }
     }
   }, [includeToolOutput, isUploading, props.workspaceId, props.workspaceName, store]);
 
@@ -182,6 +206,7 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
                 ref={urlInputRef}
                 type="text"
                 readOnly
+                aria-label="Shared transcript URL"
                 value={shareUrl}
                 className="text-foreground min-w-0 flex-1 bg-transparent font-mono text-[10px] outline-none"
                 data-testid="share-transcript-url"
@@ -221,7 +246,10 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
           )}
 
           {error && (
-            <div className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]">
+            <div
+              role="alert"
+              className="bg-destructive/10 text-destructive rounded px-2 py-1.5 text-[11px]"
+            >
               {error}
             </div>
           )}

@@ -128,6 +128,26 @@ describe("buildChatJsonlForSharing", () => {
     expect(parsed).toEqual(messages[0]);
   });
 
+  it("injects workspaceId into each message when provided", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "hello" }],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, { workspaceId: "ws-123" });
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage & { workspaceId?: string };
+
+    expect(parsed.workspaceId).toBe("ws-123");
+    expect((messages[0] as MuxMessage & { workspaceId?: string }).workspaceId).toBeUndefined();
+  });
+
+  it("returns empty string for empty messages array", () => {
+    expect(buildChatJsonlForSharing([])).toBe("");
+  });
+
   it("produces valid JSONL (each line parses, trailing newline)", () => {
     const messages: MuxMessage[] = [
       {
