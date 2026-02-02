@@ -257,10 +257,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const isBoxVariant = variant === "box";
     const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
     const triggerClassName = isBoxVariant
-      ? cn(
-          "border-border-medium h-9 flex-1 min-w-0 rounded border",
-          className
-        )
+      ? cn("border-border-medium h-9 flex-1 min-w-0 rounded border", className)
       : "w-[190px] bg-background rounded-sm text-[11px]";
 
     const hasValue = value.trim().length > 0;
@@ -362,7 +359,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                 value={inputValue}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                placeholder={inputPlaceholder ?? "Search models..."}
+                placeholder={inputPlaceholder ?? "Search [provider:model-name]"}
                 className="text-foreground placeholder:text-muted w-full bg-transparent text-xs outline-none"
               />
               {error && <div className="text-danger-soft mt-1 text-[10px]">{error}</div>}

@@ -24,7 +24,7 @@ async function openModelSelector(container: HTMLElement): Promise<HTMLInputEleme
 
   return await waitFor(() => {
     const input = container.querySelector<HTMLInputElement>(
-      'input[placeholder="provider:model-name"]'
+      'input[placeholder="Search [provider:model-name]"]'
     );
     if (!input) {
       throw new Error("Model selector input not found");
