@@ -302,6 +302,25 @@ describeIntegration("Workspace Sections", () => {
         },
         { timeout: 5_000 }
       );
+
+      // The creation UI should allow clearing the selection (return to unsectioned).
+      const sectionSelector = view.container.querySelector('[data-testid="section-selector"]');
+      if (!sectionSelector) {
+        throw new Error("Section selector not found on create page (post-selection)");
+      }
+
+      const clearButton = sectionSelector.querySelector(
+        'button[aria-label="Clear section selection"]'
+      );
+      expect(clearButton).not.toBeNull();
+
+      await act(async () => {
+        fireEvent.click(clearButton as HTMLElement);
+      });
+
+      await waitFor(() => {
+        expect(sectionSelector.getAttribute("data-selected-section")).toBe("");
+      });
     } finally {
       await cleanupView(view, cleanupDom);
       await env.orpc.workspace.remove({ workspaceId: setupWs.metadata.id });

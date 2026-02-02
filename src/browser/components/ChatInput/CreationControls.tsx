@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Loader2, Wand2 } from "lucide-react";
+import { Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
@@ -269,8 +269,13 @@ interface SectionPickerProps {
 function SectionPicker(props: SectionPickerProps) {
   const { sections, selectedSectionId, onSectionChange, disabled } = props;
 
-  const selectedSection = selectedSectionId
-    ? sections.find((s) => s.id === selectedSectionId)
+  // Radix Select treats `""` as an "unselected" value; normalize any accidental
+  // empty-string IDs back to null so the UI stays consistent.
+  const normalizedSelectedSectionId =
+    selectedSectionId && selectedSectionId.trim().length > 0 ? selectedSectionId : null;
+
+  const selectedSection = normalizedSelectedSectionId
+    ? sections.find((s) => s.id === normalizedSelectedSectionId)
     : null;
   const sectionColor = resolveSectionColor(selectedSection?.color);
 
@@ -283,7 +288,7 @@ function SectionPicker(props: SectionPickerProps) {
         backgroundColor: selectedSection ? `${sectionColor}08` : "transparent",
       }}
       data-testid="section-selector"
-      data-selected-section={selectedSectionId ?? ""}
+      data-selected-section={normalizedSelectedSectionId ?? ""}
     >
       {/* Color indicator dot */}
       <div
@@ -295,8 +300,8 @@ function SectionPicker(props: SectionPickerProps) {
       />
       <label className="text-muted-foreground shrink-0 text-xs">Section</label>
       <RadixSelect
-        value={selectedSectionId ?? ""}
-        onValueChange={onSectionChange}
+        value={normalizedSelectedSectionId ?? ""}
+        onValueChange={(value) => onSectionChange(value.trim() ? value : null)}
         disabled={disabled}
       >
         <SelectTrigger
@@ -315,6 +320,30 @@ function SectionPicker(props: SectionPickerProps) {
           ))}
         </SelectContent>
       </RadixSelect>
+      {normalizedSelectedSectionId && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Clear section selection"
+              disabled={disabled}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onSectionChange(null);
+              }}
+              className={cn(
+                "text-muted hover:text-error -mr-1 inline-flex size-5 items-center justify-center rounded-sm transition-colors",
+                "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent",
+                "disabled:pointer-events-none disabled:opacity-50"
+              )}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Clear section</TooltipContent>
+        </Tooltip>
+      )}
     </div>
   );
 }
