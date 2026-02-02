@@ -12,6 +12,25 @@ const mockToolCallOptions: ToolCallOptions = {
   messages: [],
 };
 
+function expectQueuedOrRunningTaskToolResult(
+  result: unknown,
+  expected: { status: "queued" | "running"; taskId: string }
+): void {
+  expect(result).toBeTruthy();
+  expect(typeof result).toBe("object");
+  expect(result).not.toBeNull();
+
+  const obj = result as Record<string, unknown>;
+  expect(obj.status).toBe(expected.status);
+  expect(obj.taskId).toBe(expected.taskId);
+
+  const note = obj.note;
+  expect(typeof note).toBe("string");
+  if (typeof note === "string") {
+    expect(note).toContain("task_await");
+  }
+}
+
 describe("task tool", () => {
   it("should return immediately when run_in_background is true", async () => {
     using tempDir = new TestTempDir("test-task-tool");
@@ -38,7 +57,7 @@ describe("task tool", () => {
 
     expect(create).toHaveBeenCalled();
     expect(waitForAgentReport).not.toHaveBeenCalled();
-    expect(result).toEqual({ status: "queued", taskId: "child-task" });
+    expectQueuedOrRunningTaskToolResult(result, { status: "queued", taskId: "child-task" });
   });
 
   it("should allow sub-agent workspaces to spawn nested tasks", async () => {
@@ -77,7 +96,7 @@ describe("task tool", () => {
         agentType: "explore",
       })
     );
-    expect(result).toEqual({ status: "queued", taskId: "grandchild-task" });
+    expectQueuedOrRunningTaskToolResult(result, { status: "queued", taskId: "grandchild-task" });
   });
 
   it("should block and return report when run_in_background is false", async () => {
@@ -122,6 +141,46 @@ describe("task tool", () => {
       agentId: "explore",
       agentType: "explore",
     });
+  });
+
+  it("should return taskId (with note) if foreground wait times out", async () => {
+    using tempDir = new TestTempDir("test-task-tool");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const create = mock(() =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "queued" as const })
+    );
+    const waitForAgentReport = mock(() =>
+      Promise.reject(new Error("Timed out waiting for agent_report"))
+    );
+    const getAgentTaskStatus = mock(() => "running" as const);
+    const taskService = {
+      create,
+      waitForAgentReport,
+      getAgentTaskStatus,
+    } as unknown as TaskService;
+
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskService,
+    });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          subagent_type: "explore",
+          prompt: "do it",
+          title: "Child task",
+          run_in_background: false,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalled();
+    expect(waitForAgentReport).toHaveBeenCalledWith("child-task", expect.any(Object));
+    expect(getAgentTaskStatus).toHaveBeenCalledWith("child-task");
+    expectQueuedOrRunningTaskToolResult(result, { status: "running", taskId: "child-task" });
   });
 
   it("should throw when TaskService.create fails (e.g., depth limit)", async () => {

@@ -94,31 +94,61 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error(created.error);
       }
 
+      const taskId = created.data.taskId;
+
       if (run_in_background) {
         return parseToolResult(
           TaskToolResultSchema,
-          { status: created.data.status, taskId: created.data.taskId },
+          {
+            status: created.data.status,
+            taskId,
+            note: "Task started in background. Use task_await to monitor progress.",
+          },
           "task"
         );
       }
 
-      const report = await taskService.waitForAgentReport(created.data.taskId, {
-        abortSignal,
-        requestingWorkspaceId: workspaceId,
-      });
+      try {
+        const report = await taskService.waitForAgentReport(taskId, {
+          abortSignal,
+          requestingWorkspaceId: workspaceId,
+        });
 
-      return parseToolResult(
-        TaskToolResultSchema,
-        {
-          status: "completed" as const,
-          taskId: created.data.taskId,
-          reportMarkdown: report.reportMarkdown,
-          title: report.title,
-          agentId: requestedAgentId,
-          agentType: requestedAgentId,
-        },
-        "task"
-      );
+        return parseToolResult(
+          TaskToolResultSchema,
+          {
+            status: "completed" as const,
+            taskId,
+            reportMarkdown: report.reportMarkdown,
+            title: report.title,
+            agentId: requestedAgentId,
+            agentType: requestedAgentId,
+          },
+          "task"
+        );
+      } catch (error: unknown) {
+        if (abortSignal?.aborted) {
+          throw new Error("Interrupted");
+        }
+
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === "Timed out waiting for agent_report") {
+          const currentStatus = taskService.getAgentTaskStatus(taskId) ?? created.data.status;
+          const normalizedStatus = currentStatus === "queued" ? "queued" : "running";
+
+          return parseToolResult(
+            TaskToolResultSchema,
+            {
+              status: normalizedStatus,
+              taskId,
+              note: "Task exceeded foreground wait limit and continues running in background. Use task_await to monitor progress.",
+            },
+            "task"
+          );
+        }
+
+        throw error;
+      }
     },
   });
 };

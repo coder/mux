@@ -173,6 +173,10 @@ export const TaskToolQueuedResultSchema = z
   .object({
     status: z.enum(["queued", "running"]),
     taskId: z.string(),
+    note: z
+      .string()
+      .min(1)
+      .describe("Additional guidance for the caller (e.g., use task_await to monitor progress)."),
   })
   .strict();
 
@@ -741,7 +745,8 @@ export const TOOL_DEFINITIONS = {
       "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
       "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
       "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns a completed reportMarkdown. " +
-      "If run_in_background is true, returns a queued/running taskId; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
+      "If the foreground wait times out, returns a queued/running taskId with a note (the task continues running); use task_await to monitor progress. " +
+      "If run_in_background is true, returns a queued/running taskId with a note; use task_await to wait for completion, task_list to rediscover active tasks, and task_terminate to stop it. " +
       "Use the bash tool to run shell commands.",
     schema: TaskToolArgsSchema,
   },
