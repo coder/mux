@@ -35,10 +35,10 @@ export const SubagentTranscriptDialog: React.FC<SubagentTranscriptDialogProps> =
             </div>
 
             {(model !== undefined || thinkingLevel !== undefined) && (
-              <div className="text-muted flex flex-wrap items-center gap-2 text-[11px] font-normal">
+              <div className="text-muted flex flex-wrap items-baseline gap-2 text-[11px] font-normal">
                 {model && <ModelDisplay modelString={model} />}
                 {thinkingLevel && (
-                  <span className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
+                  <span className="inline-flex items-center rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px] leading-none">
                     thinking: {thinkingLevel}
                   </span>
                 )}
