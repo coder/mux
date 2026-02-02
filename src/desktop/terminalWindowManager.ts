@@ -7,6 +7,7 @@
 
 import { app, BrowserWindow } from "electron";
 import * as path from "path";
+import { getMuxAppIcon } from "@/desktop/appIcon";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 
@@ -40,7 +41,10 @@ export class TerminalWindowManager {
       title = `Terminal ${windowId} — ${workspaceId}`;
     }
 
+    const icon = getMuxAppIcon();
+
     const terminalWindow = new BrowserWindow({
+      ...(icon ? { icon } : {}),
       width: 1000,
       height: 600,
       title,

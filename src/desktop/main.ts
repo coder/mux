@@ -51,6 +51,7 @@ import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
 import { isBashAvailable } from "@/node/utils/main/bashPath";
 import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "@/desktop/titleBarOptions";
+import { getMuxAppIcon } from "@/desktop/appIcon";
 
 // React DevTools for development profiling
 // Using dynamic import() to avoid loading electron-devtools-installer at module init time
@@ -253,7 +254,10 @@ async function showSplashScreen() {
   const startTime = Date.now();
   console.log(`[${timestamp()}] Showing splash screen...`);
 
+  const icon = getMuxAppIcon();
+
   splashWindow = new BrowserWindow({
+    ...(icon ? { icon } : {}),
     width: 400,
     height: 300,
     frame: false,
@@ -547,7 +551,10 @@ function createWindow() {
 
   console.log(`[${timestamp()}] [window] Creating BrowserWindow...`);
 
+  const icon = getMuxAppIcon();
+
   mainWindow = new BrowserWindow({
+    ...(icon ? { icon } : {}),
     x: windowState.x,
     y: windowState.y,
     width: windowState.width,
@@ -644,6 +651,20 @@ if (gotTheLock) {
 
       // Migrate from .cmux to .mux directory structure if needed
       migrateLegacyMuxHome();
+
+      // In development (`bun start` / `electron .`), Electron will otherwise show the default
+      // Electron icon in the Dock. Packaged builds get the icon from the app bundle.
+      if (!app.isPackaged && process.platform === "darwin" && app.dock) {
+        const icon = getMuxAppIcon();
+        if (icon) {
+          try {
+            app.dock.setIcon(icon);
+          } catch (error) {
+            // Non-fatal: fall back to Electron's default icon.
+            console.debug("[dock icon] Failed to set Dock icon:", error);
+          }
+        }
+      }
 
       // Install React DevTools in development
       if (!app.isPackaged) {
