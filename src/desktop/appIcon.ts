@@ -17,12 +17,23 @@ export function getMuxAppIcon(): NativeImage | undefined {
     return cachedIcon ?? undefined;
   }
 
-  const candidatePaths = [
+  const candidatePaths: string[] = [];
+
+  // On macOS, `app.dock.setIcon()` does not apply the system icon mask, so we prefer
+  // a rounded-corner asset to avoid a harsh square in the Dock.
+  if (process.platform === "darwin") {
+    candidatePaths.push(
+      path.join(__dirname, "../icon-mac.png"),
+      path.join(__dirname, "../../public/icon-mac.png")
+    );
+  }
+
+  candidatePaths.push(
     // Primary: built static assets (present for `make start` and packaged apps)
     path.join(__dirname, "../icon.png"),
     // Fallback: running from source without build-static
-    path.join(__dirname, "../../public/icon.png"),
-  ];
+    path.join(__dirname, "../../public/icon.png")
+  );
 
   for (const iconPath of candidatePaths) {
     const icon = nativeImage.createFromPath(iconPath);
