@@ -647,6 +647,120 @@ export const TaskApplyGitPatchStates: AppStory = {
 };
 
 /**
+ * task_apply_git_patch success: show applied commit list.
+ *
+ * Chromatic note: this story expands the tool card so the commit list is visible.
+ */
+export const TaskApplyGitPatchCommitList: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("u1", "Apply the patch from task-fe-001", { historySequence: 1 }),
+            createAssistantMessage("a1", "Applied the patch.", {
+              historySequence: 2,
+              toolCalls: [
+                createTaskApplyGitPatchTool("tc1", {
+                  task_id: "task-fe-001",
+                  three_way: true,
+                  output: {
+                    success: true,
+                    appliedCommits: [
+                      {
+                        sha: "0f1e2d3c4b5a69788796a5b4c3d2e1f0a9b8c7d6",
+                        subject: "feat: add Apply Patch tool UI",
+                      },
+                      {
+                        sha: "d7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9",
+                        subject: "fix: render applied commit list",
+                      },
+                    ],
+                    headCommitSha: "d7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9",
+                  },
+                }),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForScrollStabilization(storyRoot);
+
+    const messageWindow = storyRoot.querySelector('[data-testid="message-window"]');
+    if (!(messageWindow instanceof HTMLElement)) {
+      throw new Error("Message window not found");
+    }
+
+    const canvas = within(messageWindow);
+
+    const toolTitle = await canvas.findByText("Apply patch", {}, { timeout: 8000 });
+    await userEvent.click(toolTitle);
+
+    await canvas.findByText("Commits", {}, { timeout: 8000 });
+    await canvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
+  },
+};
+
+/**
+ * task_apply_git_patch dry-run: show would-apply commit subjects (no SHAs).
+ *
+ * Chromatic note: this story expands the tool card so the commit list is visible.
+ */
+export const TaskApplyGitPatchDryRunCommitList: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("u1", "Dry-run the patch from task-fe-001", { historySequence: 1 }),
+            createAssistantMessage("a1", "Dry-run succeeded.", {
+              historySequence: 2,
+              toolCalls: [
+                createTaskApplyGitPatchTool("tc1", {
+                  task_id: "task-fe-001",
+                  dry_run: true,
+                  three_way: true,
+                  output: {
+                    success: true,
+                    appliedCommits: [
+                      { subject: "feat: add Apply Patch tool UI" },
+                      { subject: "fix: render applied commit list" },
+                    ],
+                    dryRun: true,
+                    note: "Dry run succeeded; no commits were applied.",
+                  },
+                }),
+              ],
+            }),
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForScrollStabilization(storyRoot);
+
+    const messageWindow = storyRoot.querySelector('[data-testid="message-window"]');
+    if (!(messageWindow instanceof HTMLElement)) {
+      throw new Error("Message window not found");
+    }
+
+    const canvas = within(messageWindow);
+
+    const toolTitle = await canvas.findByText("Apply patch", {}, { timeout: 8000 });
+    await userEvent.click(toolTitle);
+
+    await canvas.findByText("Commits", {}, { timeout: 8000 });
+    await canvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
+  },
+};
+
+/**
  * Task termination and error states.
  * Shows task_terminate with mixed success/error results, task_await errors, and task spawn failures.
  */
