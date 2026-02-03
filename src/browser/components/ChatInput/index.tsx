@@ -2267,7 +2267,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
                 {/* Thinking: paddles hidden on narrow containers, label stays usable */}
                 <div
-                  className="flex items-center [&_[data-thinking-paddle]]:[@container(max-width:550px)]:hidden"
+                  className="flex shrink-0 items-center [&_[data-thinking-paddle]]:[@container(max-width:550px)]:hidden"
                   data-component="ThinkingSliderGroup"
                 >
                   <ThinkingSliderComponent modelString={baseModel} />
@@ -2284,7 +2284,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 data-tutorial="mode-selector"
               >
                 {variant === "workspace" && (
-                  <div className="@container w-[clamp(1.5rem,18cqw,6rem)] shrink-0">
+                  <div className="@container w-20 shrink-0">
                     <ContextUsageIndicatorButton
                       data={contextUsageData}
                       autoCompaction={autoCompactionProps}

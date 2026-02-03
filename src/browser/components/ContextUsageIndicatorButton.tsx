@@ -235,14 +235,14 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       <button
         aria-label={ariaLabel}
         aria-haspopup="dialog"
-        className="hover:bg-sidebar-hover flex w-full cursor-pointer items-center gap-1.5 rounded py-0.5 [@container(max-width:72px)]:justify-center"
+        className="hover:bg-sidebar-hover flex w-full cursor-pointer items-center rounded py-0.5"
         type="button"
       >
         {/* Idle compaction indicator */}
         {isIdleCompactionEnabled && (
           <span
             title={`Auto-compact after ${idleHours}h idle`}
-            className="[@container(max-width:72px)]:hidden"
+            className="mr-1.5 [@container(max-width:72px)]:hidden"
           >
             <Hourglass className="text-muted h-3 w-3" />
           </span>
@@ -252,7 +252,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
         {data.totalTokens > 0 ? (
           <div
             data-context-usage-meter
-            className="relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink [@container(max-width:72px)]:hidden"
+            className="relative h-3 w-14 [@container(max-width:72px)]:hidden"
           >
             <TokenMeter
               segments={data.segments}
@@ -268,7 +268,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           /* Empty meter placeholder - allows access to settings with no usage */
           <div
             data-context-usage-meter
-            className="bg-dark relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink rounded-full [@container(max-width:72px)]:hidden"
+            className="bg-dark relative h-3 w-14 rounded-full [@container(max-width:72px)]:hidden"
           />
         )}
 
