@@ -43,6 +43,15 @@ import type {
 
 export type WorkspaceChatEventUpdateHint = "immediate" | "throttled" | "ignored";
 
+export interface ApplyWorkspaceChatEventToAggregatorOptions {
+  /**
+   * When false, suppress side effects (e.g. toasts / localStorage writes) when replaying history.
+   *
+   * Defaults to true.
+   */
+  allowSideEffects?: boolean;
+}
+
 /**
  * Minimal interface required by applyWorkspaceChatEventToAggregator.
  *
@@ -84,13 +93,16 @@ export interface WorkspaceChatEventAggregator {
  */
 export function applyWorkspaceChatEventToAggregator(
   aggregator: WorkspaceChatEventAggregator,
-  event: WorkspaceChatMessage
+  event: WorkspaceChatMessage,
+  options?: ApplyWorkspaceChatEventToAggregatorOptions
 ): WorkspaceChatEventUpdateHint {
   assert(aggregator, "applyWorkspaceChatEventToAggregator requires aggregator");
   assert(
     event && typeof event === "object",
     "applyWorkspaceChatEventToAggregator requires event object"
   );
+
+  const allowSideEffects = options?.allowSideEffects !== false;
 
   if (isStreamStart(event)) {
     aggregator.handleStreamStart(event);
@@ -116,7 +128,7 @@ export function applyWorkspaceChatEventToAggregator(
   }
 
   if (isStreamError(event)) {
-    if (event.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
+    if (allowSideEffects && event.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
       updatePersistedState(GATEWAY_CONFIGURED_KEY, false);
       if (typeof window !== "undefined") {
         window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));

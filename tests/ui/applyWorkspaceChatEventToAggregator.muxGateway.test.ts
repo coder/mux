@@ -69,4 +69,28 @@ describe("applyWorkspaceChatEventToAggregator (Mux Gateway session expiry)", () 
     expect(readPersistedState(GATEWAY_CONFIGURED_KEY, true)).toBe(false);
     expect(dispatchCount).toBe(1);
   });
+
+  test("does not trigger gateway side effects when allowSideEffects is false", () => {
+    updatePersistedState(GATEWAY_CONFIGURED_KEY, true);
+
+    let dispatchCount = 0;
+    window.addEventListener(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED, () => {
+      dispatchCount += 1;
+    });
+
+    const event: StreamErrorMessage = {
+      type: "stream-error",
+      messageId: "test-message",
+      error: MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
+      errorType: "authentication",
+    };
+
+    const hint = applyWorkspaceChatEventToAggregator(stubAggregator, event, {
+      allowSideEffects: false,
+    });
+
+    expect(hint).toBe("immediate");
+    expect(readPersistedState(GATEWAY_CONFIGURED_KEY, true)).toBe(true);
+    expect(dispatchCount).toBe(0);
+  });
 });

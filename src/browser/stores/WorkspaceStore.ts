@@ -2014,7 +2014,10 @@ export class WorkspaceStore {
   ): void {
     // Handle non-buffered special events first
     if (isStreamError(data)) {
-      applyWorkspaceChatEventToAggregator(aggregator, data);
+      const transient = this.assertChatTransientState(workspaceId);
+      applyWorkspaceChatEventToAggregator(aggregator, data, {
+        allowSideEffects: transient.caughtUp,
+      });
 
       // Increment retry attempt counter when stream fails.
       updatePersistedState(
