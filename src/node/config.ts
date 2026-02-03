@@ -960,6 +960,70 @@ ${jsonString}`;
 
   private static readonly GLOBAL_SECRETS_KEY = "__global__";
 
+  private static normalizeSecretsProjectPath(projectPath: string): string {
+    return stripTrailingSlashes(projectPath);
+  }
+
+  private static isSecret(value: unknown): value is Secret {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "key" in value &&
+      "value" in value &&
+      typeof (value as { key?: unknown }).key === "string" &&
+      typeof (value as { value?: unknown }).value === "string"
+    );
+  }
+
+  private static parseSecretsArray(value: unknown): Secret[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    // Filter invalid entries to avoid crashes when iterating secrets.
+    return value.filter((entry): entry is Secret => Config.isSecret(entry));
+  }
+
+  private static mergeSecretsByKey(primary: Secret[], secondary: Secret[]): Secret[] {
+    // Merge-by-key (last writer wins).
+    const mergedByKey = new Map<string, Secret>();
+    for (const secret of primary) {
+      mergedByKey.set(secret.key, secret);
+    }
+    for (const secret of secondary) {
+      mergedByKey.set(secret.key, secret);
+    }
+    return Array.from(mergedByKey.values());
+  }
+
+  private static normalizeSecretsConfig(raw: unknown): SecretsConfig {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return {};
+    }
+
+    const record = raw as Record<string, unknown>;
+    const normalized: SecretsConfig = {};
+
+    for (const [rawKey, rawValue] of Object.entries(record)) {
+      let key = rawKey;
+      if (rawKey !== Config.GLOBAL_SECRETS_KEY) {
+        const normalizedKey = Config.normalizeSecretsProjectPath(rawKey);
+        key = normalizedKey || rawKey;
+      }
+
+      const secrets = Config.parseSecretsArray(rawValue);
+
+      if (!Object.prototype.hasOwnProperty.call(normalized, key)) {
+        normalized[key] = secrets;
+        continue;
+      }
+
+      normalized[key] = Config.mergeSecretsByKey(normalized[key], secrets);
+    }
+
+    return normalized;
+  }
+
   /**
    * Load secrets configuration from JSON file
    * Returns empty config if file doesn't exist
@@ -968,7 +1032,8 @@ ${jsonString}`;
     try {
       if (fs.existsSync(this.secretsFile)) {
         const data = fs.readFileSync(this.secretsFile, "utf-8");
-        return JSON.parse(data) as SecretsConfig;
+        const parsed = JSON.parse(data) as unknown;
+        return Config.normalizeSecretsConfig(parsed);
       }
     } catch (error) {
       log.error("Error loading secrets config:", error);
@@ -987,7 +1052,10 @@ ${jsonString}`;
         fs.mkdirSync(this.rootDir, { recursive: true });
       }
 
-      await writeFileAtomic(this.secretsFile, JSON.stringify(config, null, 2), "utf-8");
+      await writeFileAtomic(this.secretsFile, JSON.stringify(config, null, 2), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
     } catch (error) {
       log.error("Error saving secrets config:", error);
       throw error;
@@ -1017,9 +1085,10 @@ ${jsonString}`;
    * Merges global + project secrets with project keys overriding global keys.
    */
   getEffectiveSecrets(projectPath: string): Secret[] {
+    const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
     const globalSecrets = config[Config.GLOBAL_SECRETS_KEY] ?? [];
-    const projectSecrets = config[projectPath] ?? [];
+    const projectSecrets = config[normalizedProjectPath] ?? [];
 
     // Merge-by-key (last writer wins).
     const mergedByKey = new Map<string, Secret>();
@@ -1039,8 +1108,9 @@ ${jsonString}`;
    * Note: this is project-only (does not include global secrets).
    */
   getProjectSecrets(projectPath: string): Secret[] {
+    const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
-    return config[projectPath] ?? [];
+    return config[normalizedProjectPath] ?? [];
   }
 
   /**
@@ -1049,8 +1119,9 @@ ${jsonString}`;
    * @param secrets The secrets to save for the project
    */
   async updateProjectSecrets(projectPath: string, secrets: Secret[]): Promise<void> {
+    const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
-    config[projectPath] = secrets;
+    config[normalizedProjectPath] = secrets;
     await this.saveSecretsConfig(config);
   }
 }

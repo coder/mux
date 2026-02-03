@@ -214,5 +214,35 @@ describe("Config", () => {
         B: "2",
       });
     });
+
+    it("normalizes project paths so trailing slashes don't split secrets", async () => {
+      const projectPath = "/repo";
+      const projectPathWithSlash = "/repo/";
+
+      await config.updateProjectSecrets(projectPathWithSlash, [{ key: "A", value: "1" }]);
+
+      expect(config.getProjectSecrets(projectPath)).toEqual([{ key: "A", value: "1" }]);
+      expect(config.getProjectSecrets(projectPathWithSlash)).toEqual([{ key: "A", value: "1" }]);
+
+      const raw = fs.readFileSync(path.join(tempDir, "secrets.json"), "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      expect(parsed[projectPath]).toEqual([{ key: "A", value: "1" }]);
+      expect(parsed[projectPathWithSlash]).toBeUndefined();
+    });
+
+    it("treats malformed store shapes as empty arrays", () => {
+      const secretsFile = path.join(tempDir, "secrets.json");
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: { key: "NOPE", value: "1" },
+          "/repo": "not-an-array",
+          "/repo/": [{ key: "A", value: "1" }, null, { key: 123, value: "x" }],
+        })
+      );
+
+      expect(config.getGlobalSecrets()).toEqual([]);
+      expect(config.getProjectSecrets("/repo")).toEqual([{ key: "A", value: "1" }]);
+    });
   });
 });
