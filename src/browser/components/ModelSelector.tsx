@@ -89,6 +89,9 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
 
+    // Prevent scrollIntoView jitter on hover (hovered rows are visible already).
+    const highlightedIndexUpdatedByMouseRef = useRef(false);
+
     const handleCancel = useCallback(() => {
       setIsOpen(false);
       setInputValue("");
@@ -245,6 +248,11 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
     // Scroll highlighted item into view
     useEffect(() => {
+      if (highlightedIndexUpdatedByMouseRef.current) {
+        highlightedIndexUpdatedByMouseRef.current = false;
+        return;
+      }
+
       if (!listRef.current) {
         return;
       }
@@ -380,7 +388,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                   <div
                     key={model}
                     data-highlighted={index === highlightedIndex}
-                    onMouseEnter={() => setHighlightedIndex(index)}
+                    onMouseEnter={() => {
+                      highlightedIndexUpdatedByMouseRef.current = true;
+                      setHighlightedIndex(index);
+                    }}
                     className={cn(
                       menuItemBaseClassName,
                       "w-full gap-1.5 px-2 py-0.5 text-xs cursor-pointer",
