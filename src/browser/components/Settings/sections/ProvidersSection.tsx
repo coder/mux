@@ -81,6 +81,13 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
     return [
       { key: "region", label: "Region", placeholder: "us-east-1", type: "text" },
       {
+        key: "profile",
+        label: "AWS Profile",
+        placeholder: "my-sso-profile",
+        type: "text",
+        optional: true,
+      },
+      {
         key: "bearerToken",
         label: "Bearer Token",
         placeholder: "AWS_BEARER_TOKEN_BEDROCK",
@@ -586,9 +593,9 @@ export function ProvidersSection() {
     const providerConfig = config?.[provider];
     if (!providerConfig) return undefined;
 
-    // For bedrock, check aws nested object for region
-    if (provider === "bedrock" && field === "region") {
-      return providerConfig.aws?.region;
+    // For bedrock, check aws nested object for region/profile
+    if (provider === "bedrock" && (field === "region" || field === "profile")) {
+      return field === "region" ? providerConfig.aws?.region : providerConfig.aws?.profile;
     }
 
     // For standard fields like baseUrl

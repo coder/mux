@@ -1060,6 +1060,13 @@ export class AIService extends EventEmitter {
         }
         const { region } = creds;
 
+        // Optional AWS shared config profile name (equivalent to AWS_PROFILE).
+        // Useful for SSO profiles when Mux isn't launched with AWS_PROFILE set.
+        const profile =
+          typeof providerConfig.profile === "string" && providerConfig.profile.trim()
+            ? providerConfig.profile.trim()
+            : undefined;
+
         const baseFetch = getProviderFetch(providerConfig);
         const { createAmazonBedrock } = await PROVIDER_REGISTRY.bedrock();
 
@@ -1110,7 +1117,7 @@ export class AIService extends EventEmitter {
         // - And more...
         const provider = createAmazonBedrock({
           region,
-          credentialProvider: fromNodeProviderChain(),
+          credentialProvider: fromNodeProviderChain(profile ? { profile } : {}),
           fetch: baseFetch,
         });
         return Ok(provider(modelId));

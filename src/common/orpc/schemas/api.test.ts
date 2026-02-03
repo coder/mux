@@ -20,6 +20,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
   it("preserves all AWSCredentialStatus fields", () => {
     const full: AWSCredentialStatus = {
       region: "us-east-1",
+      profile: "my-sso-profile",
       bearerTokenSet: true,
       accessKeyIdSet: true,
       secretAccessKeySet: false,
@@ -54,6 +55,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       models: [],
       aws: {
         region: "eu-west-1",
+        profile: "my-sso-profile",
         bearerTokenSet: false,
         accessKeyIdSet: true,
         secretAccessKeySet: true,
@@ -90,6 +92,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
       serviceTier: "flex",
       aws: {
         region: "ap-northeast-1",
+        profile: "my-sso-profile",
         bearerTokenSet: true,
         accessKeyIdSet: true,
         secretAccessKeySet: true,
@@ -128,6 +131,7 @@ describe("ProviderConfigInfoSchema conformance", () => {
         isConfigured: false,
         aws: {
           region: "us-west-2",
+          profile: "my-sso-profile",
           bearerTokenSet: false,
           accessKeyIdSet: true,
           secretAccessKeySet: true,

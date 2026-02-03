@@ -69,6 +69,8 @@ export class ProviderService {
         models?: string[];
         serviceTier?: unknown;
         region?: string;
+        /** Optional AWS shared config profile name (equivalent to AWS_PROFILE). */
+        profile?: string;
         bearerToken?: string;
         accessKeyId?: string;
         secretAccessKey?: string;
@@ -111,6 +113,7 @@ export class ProviderService {
       if (provider === "bedrock") {
         providerInfo.aws = {
           region: config.region,
+          profile: config.profile,
           bearerTokenSet: !!config.bearerToken,
           accessKeyIdSet: !!config.accessKeyId,
           secretAccessKeySet: !!config.secretAccessKey,
