@@ -367,9 +367,7 @@ export function GovernorSection() {
             {policyState.policy && (
               <div className="space-y-1">
                 <span className="text-sm font-medium">Effective policy:</span>
-                <div className="rounded-md border border-zinc-700 p-2">
-                  <JsonHighlight value={policyState.policy} />
-                </div>
+                <JsonHighlight value={policyState.policy} />
               </div>
             )}
           </div>

@@ -197,6 +197,16 @@ export interface MockORPCClientOptions {
   agentSkills?: AgentSkillDescriptor[];
   /** Agent skills that were discovered but couldn't be loaded (SKILL.md parse errors, etc.) */
   invalidAgentSkills?: AgentSkillIssue[];
+  /** Mux Governor URL (null = not enrolled) */
+  muxGovernorUrl?: string | null;
+  /** Whether enrolled with Mux Governor */
+  muxGovernorEnrolled?: boolean;
+  /** Policy response for policy.get */
+  policyResponse?: {
+    source: "none" | "env" | "governor";
+    status: { state: "disabled" | "enforced" | "blocked"; reason?: string };
+    policy: unknown;
+  };
 }
 
 interface MockBackgroundProcess {
@@ -277,6 +287,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     layoutPresets: initialLayoutPresets,
     agentSkills = [],
     invalidAgentSkills = [],
+    muxGovernorUrl = null,
+    muxGovernorEnrolled = false,
+    policyResponse = {
+      source: "none" as const,
+      status: { state: "disabled" as const },
+      policy: null,
+    },
   } = options;
 
   // Feature flags
@@ -488,6 +505,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           muxGatewayModels,
           agentAiDefaults,
           subagentAiDefaults,
+          muxGovernorUrl,
+          muxGovernorEnrolled,
         }),
       saveConfig: (input: {
         taskSettings: unknown;
@@ -527,6 +546,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         muxGatewayModels = input.muxGatewayModels.length > 0 ? input.muxGatewayModels : undefined;
         return Promise.resolve(undefined);
       },
+      unenrollMuxGovernor: () => Promise.resolve(undefined),
     },
     agents: {
       list: (_input: {
@@ -952,6 +972,29 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         yield* [];
         await new Promise<void>(() => undefined);
       },
+    },
+    policy: {
+      get: () => Promise.resolve(policyResponse),
+      onChanged: async function* () {
+        yield* [];
+        await new Promise<void>(() => undefined);
+      },
+      refreshNow: () => Promise.resolve({ success: true as const, value: policyResponse }),
+    },
+    muxGovernorOauth: {
+      startDesktopFlow: () =>
+        Promise.resolve({
+          success: true as const,
+          value: {
+            flowId: "mock-flow-id",
+            authorizeUrl: "https://governor.example.com/oauth/authorize",
+            redirectUri: "http://localhost:12345/callback",
+          },
+        }),
+      waitForDesktopFlow: () =>
+        // Never resolves - user would complete in browser
+        new Promise(() => undefined),
+      cancelDesktopFlow: () => Promise.resolve(undefined),
     },
   } as unknown as APIClient;
 }
