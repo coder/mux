@@ -2217,7 +2217,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               </div>
             )}
 
-            <div className="@container flex min-w-0 flex-nowrap items-center gap-2 overflow-hidden">
+            <div className="@container flex min-w-[340px] flex-nowrap items-center gap-2 overflow-hidden">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <div
                   className="flex min-w-0 items-center gap-2"
@@ -2284,7 +2284,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 data-tutorial="mode-selector"
               >
                 {variant === "workspace" && (
-                  <div className="@container w-20 shrink-0">
+                  <div className="shrink">
                     <ContextUsageIndicatorButton
                       data={contextUsageData}
                       autoCompaction={autoCompactionProps}

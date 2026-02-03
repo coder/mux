@@ -242,7 +242,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
         {isIdleCompactionEnabled && (
           <span
             title={`Auto-compact after ${idleHours}h idle`}
-            className="mr-1.5 [@container(max-width:72px)]:hidden"
+            className="mr-1.5 [@container(max-width:420px)]:hidden"
           >
             <Hourglass className="text-muted h-3 w-3" />
           </span>
@@ -252,7 +252,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
         {data.totalTokens > 0 ? (
           <div
             data-context-usage-meter
-            className="relative h-3 w-14 [@container(max-width:72px)]:hidden"
+            className="relative h-3 w-14 [@container(max-width:420px)]:hidden"
           >
             <TokenMeter
               segments={data.segments}
@@ -268,13 +268,13 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           /* Empty meter placeholder - allows access to settings with no usage */
           <div
             data-context-usage-meter
-            className="bg-dark relative h-3 w-14 rounded-full [@container(max-width:72px)]:hidden"
+            className="bg-dark relative h-3 w-14 rounded-full [@container(max-width:420px)]:hidden"
           />
         )}
 
         <span
           data-context-usage-percent
-          className="text-muted hidden text-[10px] font-medium tabular-nums [@container(max-width:72px)]:block"
+          className="text-muted hidden text-[10px] font-medium tabular-nums [@container(max-width:420px)]:block"
         >
           {compactLabel}
         </span>
