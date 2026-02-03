@@ -105,6 +105,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
             type="button"
             onClick={goLeft}
             disabled={!canGoLeft}
+            data-thinking-paddle="left"
             className={cn(
               "flex h-4 w-4 items-center justify-center rounded-sm transition-colors",
               canGoLeft
@@ -115,18 +116,33 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
           >
             <ChevronLeft className="h-3 w-3" />
           </button>
-          <span
-            className="w-[4ch] text-center text-[11px] transition-all duration-200 select-none"
+          <button
+            type="button"
+            onClick={() => {
+              // On narrow layouts the paddles may be hidden, so the label remains a usable control.
+              const nextIndex = (currentIndex + 1) % allowed.length;
+              setThinkingLevel(allowed[nextIndex]);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                const nextIndex = (currentIndex + 1) % allowed.length;
+                setThinkingLevel(allowed[nextIndex]);
+              }
+            }}
+            data-thinking-label
+            className="hover:bg-hover w-[4ch] rounded-sm bg-transparent p-0 text-center text-[11px] transition-all duration-200 select-none"
             style={textStyle}
             aria-live="polite"
-            aria-label={`Thinking level: ${effectiveThinkingLevel}`}
+            aria-label={`Thinking level: ${effectiveThinkingLevel}. Click to cycle.`}
           >
             {displayLabel}
-          </span>
+          </button>
           <button
             type="button"
             onClick={goRight}
             disabled={!canGoRight}
+            data-thinking-paddle="right"
             className={cn(
               "flex h-4 w-4 items-center justify-center rounded-sm transition-colors",
               canGoRight

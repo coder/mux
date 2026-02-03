@@ -242,7 +242,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
         )}
         {/* Show meter when there's usage, or show empty placeholder for settings access */}
         {data.totalTokens > 0 ? (
-          <div className="relative h-3 w-20 min-w-12 shrink">
+          <div className="relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink">
             <TokenMeter
               segments={data.segments}
               orientation="horizontal"
@@ -255,7 +255,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           </div>
         ) : (
           /* Empty meter placeholder - allows access to settings with no usage */
-          <div className="bg-dark relative h-3 w-20 min-w-12 shrink rounded-full" />
+          <div className="bg-dark relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink rounded-full" />
         )}
       </button>
     </HoverClickPopover>

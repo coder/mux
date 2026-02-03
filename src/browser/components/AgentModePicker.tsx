@@ -439,7 +439,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
               activeClassName
             )}
           >
-            <span className="max-w-[130px] truncate">{activeDisplayName}</span>
+            <span className="max-w-[clamp(4.5rem,30vw,130px)] truncate">{activeDisplayName}</span>
             <ChevronDown
               className={cn(
                 "h-3 w-3 transition-transform duration-150",
