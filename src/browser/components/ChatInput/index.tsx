@@ -2078,7 +2078,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           "relative flex flex-col gap-1",
           variant === "creation"
             ? "bg-separator w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
-            : "bg-separator border-border-light border-t px-[15px] pt-[5px] pb-[max(15px,min(env(safe-area-inset-bottom,0px),40px))] mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]"
+            : "bg-separator border-border-light border-t px-[15px] pt-[5px] pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]"
         )}
         data-component="ChatInputSection"
         data-autofocus-state="done"
@@ -2301,14 +2301,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       style={{ backgroundColor: focusBorderColor }}
                       size="xs"
                       className={cn(
-                        "border-border-light inline-flex items-center justify-center rounded-sm border px-1.5 py-3 font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
+                        "border-border-light inline-flex items-center justify-center rounded-sm border px-1.5 py-0.5 font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
                         // Mobile: wider tap target + larger icon, keep icon centered.
                         "[@container(max-width:480px)]:h-9 [@container(max-width:480px)]:w-11 [@container(max-width:480px)]:px-0 [@container(max-width:480px)]:py-0 [@container(max-width:480px)]:text-sm",
                         currentAgent?.uiColor ? "text-white" : "text-text"
                       )}
                     >
                       <SendHorizontal
-                        className="h-3.5 w-3.5 [@container(max-width:480px)]:h-4 [@container(max-width:480px)]:w-4"
+                        className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
                         strokeWidth={2.5}
                       />
                     </Button>

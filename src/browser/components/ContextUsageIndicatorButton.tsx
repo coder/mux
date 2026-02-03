@@ -231,10 +231,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       <button
         aria-label={ariaLabel}
         aria-haspopup="dialog"
-        className={cn(
-          "hover:bg-sidebar-hover flex cursor-pointer items-center gap-1 rounded px-1 py-0.5",
-          "[@container(max-width:480px)]:gap-2 [@container(max-width:480px)]:px-2"
-        )}
+        className="hover:bg-sidebar-hover flex cursor-pointer items-center gap-1 rounded px-1 py-0.5"
         type="button"
       >
         {/* Idle compaction indicator */}
@@ -245,7 +242,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
         )}
         {/* Show meter when there's usage, or show empty placeholder for settings access */}
         {data.totalTokens > 0 ? (
-          <div className="relative h-3 w-12 [@container(max-width:480px)]:w-20">
+          <div className="relative h-3 w-20 min-w-12 shrink">
             <TokenMeter
               segments={data.segments}
               orientation="horizontal"
@@ -258,7 +255,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           </div>
         ) : (
           /* Empty meter placeholder - allows access to settings with no usage */
-          <div className="bg-dark relative h-3 w-12 rounded-full [@container(max-width:480px)]:w-20" />
+          <div className="bg-dark relative h-3 w-20 min-w-12 shrink rounded-full" />
         )}
       </button>
     </HoverClickPopover>
