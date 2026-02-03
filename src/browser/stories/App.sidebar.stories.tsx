@@ -684,3 +684,87 @@ export const WorkspaceDraftSelected: AppStory = {
     await userEvent.click(row);
   },
 };
+
+/**
+ * Secrets modal with import functionality.
+ * Shows the modal for managing project secrets with the ability to import from other projects.
+ * Uses play function to open the modal via the key icon button on a project header.
+ */
+export const SecretsModalWithImport: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const sourceProjectPath = "/home/user/projects/source-project";
+        const targetProjectPath = "/home/user/projects/target-project";
+
+        const sourceWorkspace = createWorkspace({
+          id: "ws-source",
+          name: "source-branch",
+          title: "Source workspace",
+          projectName: "source-project",
+          projectPath: sourceProjectPath,
+          createdAt: new Date(NOW - 86400000).toISOString(),
+        });
+
+        const targetWorkspace = createWorkspace({
+          id: "ws-target",
+          name: "target-branch",
+          title: "Target workspace",
+          projectName: "target-project",
+          projectPath: targetProjectPath,
+          createdAt: new Date(NOW - 3600000).toISOString(),
+        });
+
+        const workspaces = [sourceWorkspace, targetWorkspace];
+
+        // Set up secrets for both projects
+        const projectSecrets = new Map<string, Array<{ key: string; value: string }>>();
+        projectSecrets.set(sourceProjectPath, [
+          { key: "SOURCE_API_KEY", value: "sk-source-12345" },
+          { key: "SHARED_TOKEN", value: "source-shared-value" },
+          { key: "SOURCE_SECRET", value: "source-only-secret" },
+        ]);
+        projectSecrets.set(targetProjectPath, [
+          { key: "SHARED_TOKEN", value: "target-shared-value" },
+          { key: "TARGET_DB_URL", value: "postgres://target:5432/db" },
+        ]);
+
+        expandProjects([sourceProjectPath, targetProjectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          projectSecrets,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    // Wait for the projects to load
+    await waitFor(
+      () => {
+        const secretsButton = canvasElement.querySelector<HTMLElement>(
+          '[aria-label="Manage secrets for target-project"]'
+        );
+        if (!secretsButton) throw new Error("Secrets button not found");
+      },
+      { timeout: 5000 }
+    );
+
+    // Click the secrets button (key icon) for target-project
+    const secretsButton = canvasElement.querySelector<HTMLElement>(
+      '[aria-label="Manage secrets for target-project"]'
+    )!;
+    await userEvent.click(secretsButton);
+
+    // Wait for modal to open (portaled to body)
+    await waitFor(
+      () => {
+        const modal = document.body.querySelector<HTMLElement>('[role="dialog"]');
+        if (!modal) throw new Error("Secrets modal not found");
+        within(modal).getByText("Manage Secrets");
+      },
+      { timeout: 5000 }
+    );
+  },
+};
