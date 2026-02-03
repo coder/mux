@@ -1489,18 +1489,22 @@ export class WorkspaceStore {
         return;
       }
 
+      const onAbort = () => {
+        cleanup();
+        resolve();
+      };
+
       const timeout = setTimeout(() => {
+        cleanup();
         resolve();
       }, timeoutMs);
 
-      signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timeout);
-          resolve();
-        },
-        { once: true }
-      );
+      const cleanup = () => {
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", onAbort);
+      };
+
+      signal.addEventListener("abort", onAbort, { once: true });
     });
   }
 
