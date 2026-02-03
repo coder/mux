@@ -1,6 +1,7 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
+import type { z } from "zod";
 import {
   MUX_GATEWAY_ORIGIN,
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
@@ -18,6 +19,8 @@ import type {
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import { decodeRemoteWorkspaceId, encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
+import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
@@ -112,6 +115,315 @@ function isPathInsideDir(dirPath: string, filePath: string): boolean {
   const relative = path.relative(resolvedDir, resolvedFile);
 
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+// -----------------------------------------------------------------------------
+// Remote workspace proxying
+// -----------------------------------------------------------------------------
+
+type RemoteMuxOrpcClient = {
+  workspace: {
+    onChat: (
+      input: z.infer<typeof schemas.workspace.onChat.input>,
+      options?: { signal?: AbortSignal }
+    ) => Promise<AsyncIterable<WorkspaceChatMessage>>;
+    sendMessage: (
+      input: z.infer<typeof schemas.workspace.sendMessage.input>
+    ) => Promise<z.infer<typeof schemas.workspace.sendMessage.output>>;
+    answerAskUserQuestion: (
+      input: z.infer<typeof schemas.workspace.answerAskUserQuestion.input>
+    ) => Promise<z.infer<typeof schemas.workspace.answerAskUserQuestion.output>>;
+    resumeStream: (
+      input: z.infer<typeof schemas.workspace.resumeStream.input>
+    ) => Promise<z.infer<typeof schemas.workspace.resumeStream.output>>;
+    interruptStream: (
+      input: z.infer<typeof schemas.workspace.interruptStream.input>
+    ) => Promise<z.infer<typeof schemas.workspace.interruptStream.output>>;
+    getInfo: (
+      input: z.infer<typeof schemas.workspace.getInfo.input>
+    ) => Promise<FrontendWorkspaceMetadataSchemaType | null>;
+    getFullReplay: (
+      input: z.infer<typeof schemas.workspace.getFullReplay.input>
+    ) => Promise<WorkspaceChatMessage[]>;
+    getSubagentTranscript: (
+      input: z.infer<typeof schemas.workspace.getSubagentTranscript.input>
+    ) => Promise<z.infer<typeof schemas.workspace.getSubagentTranscript.output>>;
+  };
+};
+
+type RemoteWorkspaceProxy = {
+  client: RemoteMuxOrpcClient;
+  remoteWorkspaceId: string;
+  serverId: string;
+};
+
+function resolveRemoteWorkspaceProxy(
+  context: ORPCContext,
+  workspaceId: string
+): RemoteWorkspaceProxy | null {
+  const decoded = decodeRemoteWorkspaceId(workspaceId);
+  if (!decoded) {
+    return null;
+  }
+
+  const serverId = decoded.serverId.trim();
+  const remoteWorkspaceId = decoded.remoteId.trim();
+
+  assert(serverId.length > 0, "resolveRemoteWorkspaceProxy: decoded serverId must be non-empty");
+  assert(
+    remoteWorkspaceId.length > 0,
+    "resolveRemoteWorkspaceProxy: decoded remoteWorkspaceId must be non-empty"
+  );
+
+  const config = context.config.loadConfigOrDefault();
+  const server = config.remoteServers?.find((entry) => entry.id === serverId) ?? null;
+  assert(server, `Remote server not found for id: ${serverId}`);
+
+  const authToken = context.remoteServersService.getAuthToken({ id: serverId }) ?? undefined;
+  const client = createRemoteClient<RemoteMuxOrpcClient>({ baseUrl: server.baseUrl, authToken });
+
+  return { client, remoteWorkspaceId, serverId };
+}
+
+function encodeRemoteIdBestEffort(serverId: string, remoteId: string): string {
+  assert(typeof serverId === "string", "encodeRemoteIdBestEffort: serverId must be a string");
+  assert(typeof remoteId === "string", "encodeRemoteIdBestEffort: remoteId must be a string");
+
+  // Avoid double-encoding if a remote server ever returns already-encoded IDs.
+  if (decodeRemoteWorkspaceId(remoteId) !== null) {
+    return remoteId;
+  }
+
+  const trimmed = remoteId.trim();
+  if (!trimmed) {
+    // Keep rewriting tolerant/defensive.
+    return remoteId;
+  }
+
+  return encodeRemoteWorkspaceId(serverId, trimmed);
+}
+
+function rewriteRemoteFrontendWorkspaceMetadataIds(
+  metadata: FrontendWorkspaceMetadataSchemaType,
+  serverId: string
+): FrontendWorkspaceMetadataSchemaType {
+  const next: FrontendWorkspaceMetadataSchemaType = { ...metadata };
+
+  if (typeof next.id === "string") {
+    next.id = encodeRemoteIdBestEffort(serverId, next.id);
+  }
+
+  if (typeof next.parentWorkspaceId === "string") {
+    next.parentWorkspaceId = encodeRemoteIdBestEffort(serverId, next.parentWorkspaceId);
+  }
+
+  return next;
+}
+
+const TASK_TOOL_RESULT_ID_KEYS = new Set<string>([
+  "workspaceId",
+  "parentWorkspaceId",
+  "sourceWorkspaceId",
+  "taskId",
+]);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+function rewriteRemoteTaskToolPayloadIds(serverId: string, value: unknown): unknown {
+  const seen = new WeakSet<object>();
+  const MAX_DEPTH = 20;
+
+  const visit = (current: unknown, depth: number): unknown => {
+    if (depth > MAX_DEPTH) {
+      return current;
+    }
+
+    if (Array.isArray(current)) {
+      let changed = false;
+      const next = current.map((entry) => {
+        const rewritten = visit(entry, depth + 1);
+        if (rewritten !== entry) {
+          changed = true;
+        }
+        return rewritten;
+      });
+      return changed ? next : current;
+    }
+
+    if (!isPlainObject(current)) {
+      return current;
+    }
+
+    if (seen.has(current)) {
+      return current;
+    }
+
+    seen.add(current);
+
+    let changed = false;
+    const next: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(current)) {
+      let rewritten = entry;
+
+      if (TASK_TOOL_RESULT_ID_KEYS.has(key) && typeof entry === "string") {
+        rewritten = encodeRemoteIdBestEffort(serverId, entry);
+      } else {
+        rewritten = visit(entry, depth + 1);
+      }
+
+      if (rewritten !== entry) {
+        changed = true;
+      }
+
+      next[key] = rewritten;
+    }
+
+    return changed ? next : current;
+  };
+
+  return visit(value, 0);
+}
+
+function rewriteRemoteTaskToolPartsInMessage<T extends { parts: MuxMessage["parts"] }>(
+  message: T,
+  serverId: string
+): T {
+  let changed = false;
+
+  const nextParts = message.parts.map((part) => {
+    if (part.type !== "dynamic-tool") {
+      return part;
+    }
+
+    const isTaskTool = part.toolName.startsWith("task");
+
+    const rewrittenInput = isTaskTool
+      ? rewriteRemoteTaskToolPayloadIds(serverId, part.input)
+      : part.input;
+
+    const rewrittenOutput =
+      isTaskTool && part.state === "output-available"
+        ? rewriteRemoteTaskToolPayloadIds(serverId, part.output)
+        : part.state === "output-available"
+          ? part.output
+          : undefined;
+
+    let nestedChanged = false;
+    const nextNestedCalls = Array.isArray(part.nestedCalls)
+      ? part.nestedCalls.map((call) => {
+          if (typeof call.toolName !== "string" || !call.toolName.startsWith("task")) {
+            return call;
+          }
+
+          const nextInput = rewriteRemoteTaskToolPayloadIds(serverId, call.input);
+          const nextOutput =
+            call.state === "output-available" && call.output !== undefined
+              ? rewriteRemoteTaskToolPayloadIds(serverId, call.output)
+              : call.output;
+
+          if (nextInput === call.input && nextOutput === call.output) {
+            return call;
+          }
+
+          nestedChanged = true;
+          return {
+            ...call,
+            input: nextInput,
+            output: nextOutput,
+          };
+        })
+      : part.nestedCalls;
+
+    const outputChanged =
+      part.state === "output-available" && isTaskTool && rewrittenOutput !== part.output;
+
+    if (rewrittenInput === part.input && !outputChanged && !nestedChanged) {
+      return part;
+    }
+
+    changed = true;
+
+    if (part.state === "output-available") {
+      return {
+        ...part,
+        input: rewrittenInput,
+        output: rewrittenOutput,
+        nestedCalls: nextNestedCalls,
+      };
+    }
+
+    return {
+      ...part,
+      input: rewrittenInput,
+      nestedCalls: nextNestedCalls,
+    };
+  });
+
+  if (!changed) {
+    return message;
+  }
+
+  // Type assertion is safe: we only replace parts with the same part union type.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return { ...message, parts: nextParts } as T;
+}
+
+function rewriteRemoteWorkspaceChatMessageIds(
+  message: WorkspaceChatMessage,
+  serverId: string
+): WorkspaceChatMessage {
+  if (!message || typeof message !== "object") {
+    return message;
+  }
+
+  if (message.type === "message") {
+    return rewriteRemoteTaskToolPartsInMessage(message, serverId);
+  }
+
+  let changed = false;
+  const next: WorkspaceChatMessage = { ...message };
+
+  if ("workspaceId" in next && typeof next.workspaceId === "string") {
+    const rewritten = encodeRemoteIdBestEffort(serverId, next.workspaceId);
+    if (rewritten !== next.workspaceId) {
+      next.workspaceId = rewritten;
+      changed = true;
+    }
+  }
+
+  if (next.type === "task-created" && typeof next.taskId === "string") {
+    const rewritten = encodeRemoteIdBestEffort(serverId, next.taskId);
+    if (rewritten !== next.taskId) {
+      next.taskId = rewritten;
+      changed = true;
+    }
+  }
+
+  if (next.type === "session-usage-delta" && typeof next.sourceWorkspaceId === "string") {
+    const rewritten = encodeRemoteIdBestEffort(serverId, next.sourceWorkspaceId);
+    if (rewritten !== next.sourceWorkspaceId) {
+      next.sourceWorkspaceId = rewritten;
+      changed = true;
+    }
+  }
+
+  // Tools like task/task_await return workspace IDs that must be re-encoded locally.
+  if (next.type === "tool-call-end" && next.toolName.startsWith("task")) {
+    const rewritten = rewriteRemoteTaskToolPayloadIds(serverId, next.result);
+    if (rewritten !== next.result) {
+      next.result = rewritten;
+      changed = true;
+    }
+  }
+
+  return changed ? next : message;
 }
 
 function normalizeMuxMessageFromDisk(value: unknown): MuxMessage | null {
@@ -2295,6 +2607,15 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.sendMessage.input)
         .output(schemas.workspace.sendMessage.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.sendMessage({
+              workspaceId: remote.remoteWorkspaceId,
+              message: input.message,
+              options: input.options,
+            });
+          }
+
           const result = await context.workspaceService.sendMessage(
             input.workspaceId,
             input.message,
@@ -2311,6 +2632,15 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.answerAskUserQuestion.input)
         .output(schemas.workspace.answerAskUserQuestion.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.answerAskUserQuestion({
+              workspaceId: remote.remoteWorkspaceId,
+              toolCallId: input.toolCallId,
+              answers: input.answers,
+            });
+          }
+
           const result = await context.workspaceService.answerAskUserQuestion(
             input.workspaceId,
             input.toolCallId,
@@ -2327,6 +2657,14 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.resumeStream.input)
         .output(schemas.workspace.resumeStream.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.resumeStream({
+              workspaceId: remote.remoteWorkspaceId,
+              options: input.options,
+            });
+          }
+
           const result = await context.workspaceService.resumeStream(
             input.workspaceId,
             input.options
@@ -2344,6 +2682,14 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.interruptStream.input)
         .output(schemas.workspace.interruptStream.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.interruptStream({
+              workspaceId: remote.remoteWorkspaceId,
+              options: input.options,
+            });
+          }
+
           const result = await context.workspaceService.interruptStream(
             input.workspaceId,
             input.options
@@ -2400,6 +2746,17 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getInfo.input)
         .output(schemas.workspace.getInfo.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            const metadata = await remote.client.workspace.getInfo({
+              workspaceId: remote.remoteWorkspaceId,
+            });
+
+            return metadata
+              ? rewriteRemoteFrontendWorkspaceMetadataIds(metadata, remote.serverId)
+              : metadata;
+          }
+
           return context.workspaceService.getInfo(input.workspaceId);
         }),
       getLastLlmRequest: t
@@ -2412,6 +2769,17 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getFullReplay.input)
         .output(schemas.workspace.getFullReplay.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            const events = await remote.client.workspace.getFullReplay({
+              workspaceId: remote.remoteWorkspaceId,
+            });
+
+            return events.map((event) =>
+              rewriteRemoteWorkspaceChatMessageIds(event, remote.serverId)
+            );
+          }
+
           return context.workspaceService.getFullReplay(input.workspaceId);
         }),
       getSubagentTranscript: t
@@ -2420,6 +2788,45 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const taskId = input.taskId.trim();
           assert(taskId.length > 0, "workspace.getSubagentTranscript: taskId must be non-empty");
+
+          const remoteTask = resolveRemoteWorkspaceProxy(context, taskId);
+          if (remoteTask) {
+            const requestingWorkspaceIdTrimmedForRemote = input.workspaceId?.trim();
+            let remoteRequestingWorkspaceId: string | undefined;
+
+            if (
+              requestingWorkspaceIdTrimmedForRemote &&
+              requestingWorkspaceIdTrimmedForRemote.length > 0
+            ) {
+              const decodedRequesting = decodeRemoteWorkspaceId(
+                requestingWorkspaceIdTrimmedForRemote
+              );
+              if (decodedRequesting) {
+                const requestingServerId = decodedRequesting.serverId.trim();
+                assert(
+                  requestingServerId === remoteTask.serverId,
+                  "workspace.getSubagentTranscript: requesting workspace must be on the same remote server"
+                );
+
+                const remoteIdTrimmed = decodedRequesting.remoteId.trim();
+                if (remoteIdTrimmed.length > 0) {
+                  remoteRequestingWorkspaceId = remoteIdTrimmed;
+                }
+              }
+            }
+
+            const transcript = await remoteTask.client.workspace.getSubagentTranscript({
+              taskId: remoteTask.remoteWorkspaceId,
+              workspaceId: remoteRequestingWorkspaceId,
+            });
+
+            return {
+              ...transcript,
+              messages: transcript.messages.map((message) =>
+                rewriteRemoteTaskToolPartsInMessage(message, remoteTask.serverId)
+              ),
+            };
+          }
 
           const requestingWorkspaceIdTrimmed = input.workspaceId?.trim();
           const requestingWorkspaceId =
@@ -2616,6 +3023,40 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.onChat.input)
         .output(schemas.workspace.onChat.output)
         .handler(async function* ({ context, input, signal }) {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            const controller = new AbortController();
+
+            const onRemoteAbort = () => {
+              controller.abort();
+            };
+
+            if (signal) {
+              if (signal.aborted) {
+                onRemoteAbort();
+              } else {
+                signal.addEventListener("abort", onRemoteAbort, { once: true });
+              }
+            }
+
+            try {
+              const iterator = await remote.client.workspace.onChat(
+                { workspaceId: remote.remoteWorkspaceId },
+                { signal: controller.signal }
+              );
+
+              for await (const event of iterator) {
+                yield rewriteRemoteWorkspaceChatMessageIds(event, remote.serverId);
+              }
+            } finally {
+              // Best-effort: abort the underlying HTTP stream if the local subscription ends.
+              signal?.removeEventListener("abort", onRemoteAbort);
+              controller.abort();
+            }
+
+            return;
+          }
+
           const session = context.workspaceService.getOrCreateSession(input.workspaceId);
           const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
 
