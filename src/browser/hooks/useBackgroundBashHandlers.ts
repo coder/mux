@@ -110,14 +110,22 @@ export function useBackgroundBashHandlers(
     const controller = new AbortController();
     const { signal } = controller;
 
+    // Some oRPC iterators don't eagerly close on abort alone.
+    // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
+    let iterator: AsyncIterator<{
+      processes: BackgroundProcessInfo[];
+      foregroundToolCallIds: string[];
+    }> | null = null;
+
     (async () => {
       try {
-        const iterator = await api.workspace.backgroundBashes.subscribe(
+        const subscribedIterator = await api.workspace.backgroundBashes.subscribe(
           { workspaceId },
           { signal }
         );
+        iterator = subscribedIterator;
 
-        for await (const state of iterator) {
+        for await (const state of subscribedIterator) {
           if (signal.aborted) break;
 
           setProcesses(state.processes);
@@ -150,6 +158,7 @@ export function useBackgroundBashHandlers(
 
     return () => {
       controller.abort();
+      void iterator?.return?.();
     };
   }, [api, workspaceId]);
 

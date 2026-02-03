@@ -1140,8 +1140,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Voice input: track whether OpenAI API key is configured (subscribe to provider config changes)
   useEffect(() => {
     if (!api) return;
+
     const abortController = new AbortController();
-    const signal = abortController.signal;
+    const { signal } = abortController;
+
+    // Some oRPC iterators don't eagerly close on abort alone.
+    // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
+    let iterator: AsyncIterator<unknown> | null = null;
 
     const checkOpenAIKey = async () => {
       try {
@@ -1160,8 +1165,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Subscribe to provider config changes via oRPC
     (async () => {
       try {
-        const iterator = await api.providers.onConfigChanged(undefined, { signal });
-        for await (const _ of iterator) {
+        const subscribedIterator = await api.providers.onConfigChanged(undefined, { signal });
+        iterator = subscribedIterator;
+
+        for await (const _ of subscribedIterator) {
           if (signal.aborted) break;
           void checkOpenAIKey();
         }
@@ -1170,7 +1177,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
     })();
 
-    return () => abortController.abort();
+    return () => {
+      abortController.abort();
+      void iterator?.return?.();
+    };
   }, [api]);
 
   // Allow external components (e.g., CommandPalette, Queued message edits) to insert text
