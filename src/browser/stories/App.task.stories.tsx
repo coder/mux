@@ -697,7 +697,15 @@ export const TaskApplyGitPatchCommitList: AppStory = {
 
     const canvas = within(messageWindow);
 
-    const toolTitle = await canvas.findByText("Apply patch", {}, { timeout: 8000 });
+    const toolTitleCandidates = await canvas.findAllByText("Apply patch", {}, { timeout: 8000 });
+    const toolTitle =
+      toolTitleCandidates.find((candidate) => candidate.closest("summary")) ??
+      toolTitleCandidates[0];
+
+    if (!toolTitle) {
+      throw new Error("Apply patch tool title not found");
+    }
+
     await userEvent.click(toolTitle);
 
     await canvas.findByText("Commits", {}, { timeout: 8000 });
@@ -752,7 +760,15 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
 
     const canvas = within(messageWindow);
 
-    const toolTitle = await canvas.findByText("Apply patch", {}, { timeout: 8000 });
+    const toolTitleCandidates = await canvas.findAllByText("Apply patch", {}, { timeout: 8000 });
+    const toolTitle =
+      toolTitleCandidates.find((candidate) => candidate.closest("summary")) ??
+      toolTitleCandidates[0];
+
+    if (!toolTitle) {
+      throw new Error("Apply patch tool title not found");
+    }
+
     await userEvent.click(toolTitle);
 
     await canvas.findByText("Commits", {}, { timeout: 8000 });
