@@ -1166,6 +1166,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     (async () => {
       try {
         const subscribedIterator = await api.providers.onConfigChanged(undefined, { signal });
+
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
         iterator = subscribedIterator;
 
         for await (const _ of subscribedIterator) {

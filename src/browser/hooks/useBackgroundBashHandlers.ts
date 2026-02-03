@@ -123,6 +123,12 @@ export function useBackgroundBashHandlers(
           { workspaceId },
           { signal }
         );
+
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
         iterator = subscribedIterator;
 
         for await (const state of subscribedIterator) {
