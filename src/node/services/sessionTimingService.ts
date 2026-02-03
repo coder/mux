@@ -326,6 +326,9 @@ export class SessionTimingService {
       this.emitChange(workspaceId);
     }, remainingTime);
 
+    // Avoid keeping Node (or Jest workers) alive due to a leaked throttle timer.
+    timer.unref?.();
+
     state.timer = timer;
     this.deltaEmitState.set(workspaceId, state);
   }
@@ -342,6 +345,9 @@ export class SessionTimingService {
       }
       this.emitChange(workspaceId);
     }, 1000);
+
+    // Avoid keeping Node (or Jest workers) alive due to a leaked tick interval.
+    interval.unref?.();
 
     this.tickIntervals.set(workspaceId, interval);
   }

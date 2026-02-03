@@ -2399,6 +2399,9 @@ export const router = (authToken?: string) => {
                 pendingTimer = undefined;
                 runPushSnapshot();
               }, remaining);
+
+              // Avoid keeping Node (or Jest workers) alive due to a leaked throttle timer.
+              pendingTimer.unref?.();
             };
 
             const onChange = (changedWorkspaceId: string) => {
