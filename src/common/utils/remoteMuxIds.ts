@@ -24,7 +24,6 @@ function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(byte);
   }
 
-  // eslint-disable-next-line no-undef
   return btoa(binary);
 }
 
@@ -34,7 +33,6 @@ function fromBase64(base64: string): Uint8Array | null {
       return new Uint8Array(Buffer.from(base64, "base64"));
     }
 
-    // eslint-disable-next-line no-undef
     const binary = atob(base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i += 1) {

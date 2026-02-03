@@ -8,20 +8,20 @@ import { Switch } from "@/browser/components/ui/switch";
 import { cn } from "@/common/lib/utils";
 import type { RemoteMuxServerConfig, RemoteMuxServerProjectMapping } from "@/common/types/project";
 
-type RemoteMuxServerListEntry = {
+interface RemoteMuxServerListEntry {
   config: RemoteMuxServerConfig;
   hasAuthToken: boolean;
-};
+}
 
-type PingStatus = {
+interface PingStatus {
   status: "idle" | "loading" | "success" | "error";
   message?: string;
-};
+}
 
-type EditorNotice = {
+interface EditorNotice {
   type: "success" | "error";
   message: string;
-};
+}
 
 type EditorMode = "add" | "edit";
 
@@ -376,7 +376,7 @@ export function RemoteServersSection() {
                       <div className="text-foreground truncate text-sm font-medium">
                         {config.label || config.id}
                       </div>
-                      <div className="text-muted mt-0.5 break-all font-mono text-xs">
+                      <div className="text-muted mt-0.5 font-mono text-xs break-all">
                         {config.baseUrl}
                       </div>
                       <div className="text-muted mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
@@ -422,7 +422,7 @@ export function RemoteServersSection() {
                     </div>
                   )}
                   {pingStatus.status === "error" && pingStatus.message && (
-                    <div className="mt-2 flex items-start gap-1.5 text-xs text-destructive">
+                    <div className="text-destructive mt-2 flex items-start gap-1.5 text-xs">
                       <XCircle className="mt-0.5 h-3 w-3 shrink-0" />
                       <span>{pingStatus.message}</span>
                     </div>

@@ -33,6 +33,5 @@ export function createRemoteClient<TClient = unknown>({
 
   // Type assertion is safe: createORPCClient returns a runtime client object. The caller chooses
   // the type parameter based on the procedures they intend to call.
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return createORPCClient(link) as unknown as TClient;
 }
