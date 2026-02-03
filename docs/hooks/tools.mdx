@@ -68,24 +68,42 @@ Create `.mux/tool_post` to run validation after tools complete:
 ```bash
 #!/usr/bin/env bash
 # .mux/tool_post - runs after every tool
+set -euo pipefail
 
-if [[ "$MUX_TOOL" == file_edit_* ]]; then
-  file="$MUX_TOOL_INPUT_FILE_PATH"
+[[ "$MUX_TOOL" == file_edit_* ]] || exit 0
+file="${MUX_TOOL_INPUT_FILE_PATH:-}"
+[[ -n "$file" ]] || exit 0
 
-  case "$file" in
-    *.py)
-      ruff check "$file" 2>&1 || exit 1
-      ;;
-    *.ts|*.tsx)
-      npx tsc --noEmit "$file" 2>&1 || exit 1
-      ;;
-  esac
-fi
+case "$file" in
+  *.py)
+    ruff check "$file"
+    ;;
+  *.ts|*.tsx)
+    npx tsc --noEmit "$file"
+    ;;
+esac
 ```
 
 ```bash
 chmod +x .mux/tool_post
 ```
+
+<details>
+<summary>Minimal formatter example (Go)</summary>
+
+```bash
+#!/usr/bin/env bash
+# .mux/tool_post - runs after every tool
+set -euo pipefail
+
+[[ "$MUX_TOOL" == file_edit_* ]] || exit 0
+file="${MUX_TOOL_INPUT_FILE_PATH:-}"
+[[ "$file" == *.go ]] || exit 0
+
+gofmt -w "$file"
+```
+
+</details>
 
 Lint errors appear in `hook_output` and the agent can fix them.
 
@@ -131,21 +149,18 @@ All hooks receive these environment variables:
 | Variable              | Description                                                      |
 | --------------------- | ---------------------------------------------------------------- |
 | `MUX_TOOL`            | Tool name: `bash`, `file_edit_replace_string`, `file_read`, etc. |
-| `MUX_TOOL_INPUT`      | JSON string with tool arguments (placeholder if large)           |
-| `MUX_TOOL_INPUT_PATH` | Path to full input JSON (when input is large)                    |
 | `MUX_WORKSPACE_ID`    | Current workspace identifier                                     |
-| `MUX_PROJECT_DIR`     | Workspace root directory                                         |
+| `MUX_TOOL_INPUT_PATH` | Path to file containing full tool input (always set)             |
 
-In addition, Mux flattens the tool input JSON into `MUX_TOOL_INPUT_<...>` environment variables (see the appendix below). Large values are omitted rather than truncated; use `MUX_TOOL_INPUT_PATH` for full fidelity.
+Mux flattens the tool input into `MUX_TOOL_INPUT_<...>` environment variables (see the appendix below). Fields longer than 8KB are omitted—use `MUX_TOOL_INPUT_PATH` for full access.
 
 **Post-hook only (`tool_post`):**
 
-| Variable               | Description                             |
-| ---------------------- | --------------------------------------- |
-| `MUX_TOOL_RESULT`      | Tool result JSON (placeholder if large) |
-| `MUX_TOOL_RESULT_PATH` | Path to full result JSON file           |
+| Variable               | Description                              |
+| ---------------------- | ---------------------------------------- |
+| `MUX_TOOL_RESULT_PATH` | Path to file containing full tool result |
 
-Post-hooks also receive flattened tool result fields as `MUX_TOOL_RESULT_<...>` environment variables. Large values are omitted rather than truncated; use `MUX_TOOL_RESULT_PATH` for full fidelity.
+Flattened result fields are available as `MUX_TOOL_RESULT_<...>`. Fields longer than 8KB are omitted—use `MUX_TOOL_RESULT_PATH` for full access.
 
 </Accordion>
 
@@ -192,13 +207,13 @@ Keep hooks fast—if you need longer operations, consider running them asynchron
 
 <Accordion title="Appendix: Tool input env vars (auto-generated)">
 
-Mux also provides flattened tool input env vars so hook scripts can avoid JSON parsing.
+Mux also provides flattened tool input env vars so hook scripts can stay compact.
 
 - Scalars become `MUX_TOOL_INPUT_<FIELD>`
 - Nested objects become `MUX_TOOL_INPUT_<PARENT>_<CHILD>`
 - Arrays also include `..._COUNT` and per-index variables like `..._<INDEX>`
 
-If a value is too large for the environment, it may be omitted (not set). For full fidelity, read the JSON from `MUX_TOOL_INPUT_PATH`. Mux also caps the number of flattened env vars and array elements to keep hook execution reliable.
+If a value is too large for the environment, it may be omitted (not set). Mux also caps the number of flattened env vars and array elements to keep hook execution reliable.
 
 {/* BEGIN TOOL_HOOK_ENV_VARS */}
 
@@ -490,7 +505,7 @@ fi
 #!/usr/bin/env bash
 # .mux/tool_post
 
-# MUX_TOOL_RESULT contains the result JSON
+# Tool results are available via MUX_TOOL_RESULT_* if needed.
 echo "$(date '+%H:%M:%S') $MUX_TOOL completed" >> /tmp/mux-tools.log
 ```
 
