@@ -961,7 +961,7 @@ export function createTaskApplyGitPatchTool(
     output:
       | {
           success: true;
-          appliedCommitCount: number;
+          appliedCommits: Array<{ subject: string; sha?: string }>;
           headCommitSha?: string;
           dryRun?: boolean;
           note?: string;
@@ -988,7 +988,7 @@ export function createTaskApplyGitPatchTool(
       ? {
           success: true,
           taskId: opts.task_id,
-          appliedCommitCount: opts.output.appliedCommitCount,
+          appliedCommits: opts.output.appliedCommits,
           headCommitSha: opts.output.headCommitSha,
           dryRun: opts.output.dryRun,
           note: opts.output.note,
