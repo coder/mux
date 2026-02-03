@@ -687,29 +687,34 @@ export const TaskApplyGitPatchCommitList: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    await waitForScrollStabilization(storyRoot);
+    await waitForScrollStabilization(canvasElement);
 
-    const messageWindow = storyRoot.querySelector('[data-testid="message-window"]');
-    if (!(messageWindow instanceof HTMLElement)) {
-      throw new Error("Message window not found");
+    const canvas = within(canvasElement);
+    const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
+    const messageCanvas = within(messageWindow);
+
+    const toolHeader = await waitFor(
+      () => {
+        const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
+          (candidate) => candidate.textContent?.includes("Apply patch")
+        );
+
+        if (!(header instanceof HTMLElement)) {
+          throw new Error("Apply patch tool header not found");
+        }
+
+        return header;
+      },
+      { timeout: 8000 }
+    );
+
+    // Storybook can preserve component state between stories if keys are reused. Only click when needed.
+    if (!messageCanvas.queryByText("Commits")) {
+      await userEvent.click(toolHeader);
     }
 
-    const canvas = within(messageWindow);
-
-    // "Apply patch" appears multiple times within the tool card (header + content).
-    // Expand reliably by clicking the tool header associated with our task id.
-    const taskIdLabel = await canvas.findByText("task-fe-001", {}, { timeout: 8000 });
-    const toolHeader = taskIdLabel.closest("div.cursor-pointer");
-
-    if (!(toolHeader instanceof HTMLElement)) {
-      throw new Error("Apply patch tool header not found");
-    }
-
-    await userEvent.click(toolHeader);
-
-    await canvas.findByText("Commits", {}, { timeout: 8000 });
-    await canvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
+    await messageCanvas.findByText("Commits", {}, { timeout: 8000 });
+    await messageCanvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
   },
 };
 
@@ -750,29 +755,34 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    await waitForScrollStabilization(storyRoot);
+    await waitForScrollStabilization(canvasElement);
 
-    const messageWindow = storyRoot.querySelector('[data-testid="message-window"]');
-    if (!(messageWindow instanceof HTMLElement)) {
-      throw new Error("Message window not found");
+    const canvas = within(canvasElement);
+    const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
+    const messageCanvas = within(messageWindow);
+
+    const toolHeader = await waitFor(
+      () => {
+        const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
+          (candidate) => candidate.textContent?.includes("Apply patch")
+        );
+
+        if (!(header instanceof HTMLElement)) {
+          throw new Error("Apply patch tool header not found");
+        }
+
+        return header;
+      },
+      { timeout: 8000 }
+    );
+
+    // Storybook can preserve component state between stories if keys are reused. Only click when needed.
+    if (!messageCanvas.queryByText("Commits")) {
+      await userEvent.click(toolHeader);
     }
 
-    const canvas = within(messageWindow);
-
-    // "Apply patch" appears multiple times within the tool card (header + content).
-    // Expand reliably by clicking the tool header associated with our task id.
-    const taskIdLabel = await canvas.findByText("task-fe-001", {}, { timeout: 8000 });
-    const toolHeader = taskIdLabel.closest("div.cursor-pointer");
-
-    if (!(toolHeader instanceof HTMLElement)) {
-      throw new Error("Apply patch tool header not found");
-    }
-
-    await userEvent.click(toolHeader);
-
-    await canvas.findByText("Commits", {}, { timeout: 8000 });
-    await canvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
+    await messageCanvas.findByText("Commits", {}, { timeout: 8000 });
+    await messageCanvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
   },
 };
 
