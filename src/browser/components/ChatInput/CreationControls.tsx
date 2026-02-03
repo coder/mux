@@ -515,6 +515,7 @@ export function CreationControls(props: CreationControlsProps) {
     runtimeAvailabilityState,
     createOnRemote,
     remoteServerId,
+    onCreateOnRemoteChange,
     onRemoteServerIdChange,
   } = props;
   const { api } = useAPI();
@@ -577,6 +578,35 @@ export function CreationControls(props: CreationControlsProps) {
   const enabledRemoteServers = remoteServers.filter((entry) => entry.config.enabled !== false);
   const hasRemoteServers = enabledRemoteServers.length > 0;
   const firstRemoteServerId = hasRemoteServers ? enabledRemoteServers[0].config.id : null;
+
+  const shouldRenderCreateTargetGroup = remoteServersStatus !== "loaded" || hasRemoteServers;
+
+  // If no remotes are configured, force creation back to local so the user can't
+  // get stuck in a hidden `createOnRemote=true` state.
+  useEffect(() => {
+    if (remoteServersStatus !== "loaded") {
+      return;
+    }
+
+    if (hasRemoteServers) {
+      return;
+    }
+
+    if (createOnRemote) {
+      onCreateOnRemoteChange(false);
+    }
+
+    if (remoteServerId !== null) {
+      onRemoteServerIdChange(null);
+    }
+  }, [
+    remoteServersStatus,
+    hasRemoteServers,
+    createOnRemote,
+    remoteServerId,
+    onCreateOnRemoteChange,
+    onRemoteServerIdChange,
+  ]);
 
   useEffect(() => {
     if (!createOnRemote) {
@@ -779,69 +809,66 @@ export function CreationControls(props: CreationControlsProps) {
       </div>
 
       {/* Create target - local vs remote mux server */}
-      <div className="flex flex-col gap-1.5" data-component="CreateTargetGroup">
-        <label className="text-muted-foreground text-xs font-medium">Create on</label>
-        <div className="flex flex-wrap items-center gap-2">
-          <RadixSelect
-            value={props.createOnRemote ? "remote" : "local"}
-            onValueChange={(value) => props.onCreateOnRemoteChange(value === "remote")}
-            disabled={props.disabled}
-          >
-            <SelectTrigger className="h-7 w-[140px]" aria-label="Create on">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="local">Local</SelectItem>
-              <SelectItem
-                value="remote"
-                disabled={
-                  remoteServersStatus === "error" ||
-                  (remoteServersStatus === "loaded" && !hasRemoteServers)
-                }
-              >
-                Remote
-              </SelectItem>
-            </SelectContent>
-          </RadixSelect>
-
-          {props.createOnRemote && (
-            <>
-              {remoteServersStatus === "loading" && (
-                <Skeleton className="h-7 w-[280px] rounded-md" />
-              )}
-              {remoteServersStatus === "loaded" && hasRemoteServers && (
-                <RadixSelect
-                  value={props.remoteServerId ?? undefined}
-                  onValueChange={(value) => props.onRemoteServerIdChange(value)}
-                  disabled={props.disabled}
+      {shouldRenderCreateTargetGroup && (
+        <div className="flex flex-col gap-1.5" data-component="CreateTargetGroup">
+          <label className="text-muted-foreground text-xs font-medium">Create on</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <RadixSelect
+              value={createOnRemote ? "remote" : "local"}
+              onValueChange={(value) => onCreateOnRemoteChange(value === "remote")}
+              disabled={props.disabled}
+            >
+              <SelectTrigger className="h-7 w-[140px]" aria-label="Create on">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">Local</SelectItem>
+                <SelectItem
+                  value="remote"
+                  disabled={
+                    remoteServersStatus === "error" ||
+                    (remoteServersStatus === "loaded" && !hasRemoteServers)
+                  }
                 >
-                  <SelectTrigger className="h-7 w-[280px]" aria-label="Remote server">
-                    <SelectValue placeholder="Select remote server" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {enabledRemoteServers.map((entry) => (
-                      <SelectItem key={entry.config.id} value={entry.config.id}>
-                        {formatRemoteServerLabel(entry.config)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </RadixSelect>
-              )}
-            </>
+                  Remote
+                </SelectItem>
+              </SelectContent>
+            </RadixSelect>
+
+            {createOnRemote && (
+              <>
+                {remoteServersStatus === "loading" && (
+                  <Skeleton className="h-7 w-[280px] rounded-md" />
+                )}
+                {remoteServersStatus === "loaded" && hasRemoteServers && (
+                  <RadixSelect
+                    value={remoteServerId ?? undefined}
+                    onValueChange={(value) => onRemoteServerIdChange(value)}
+                    disabled={props.disabled}
+                  >
+                    <SelectTrigger className="h-7 w-[280px]" aria-label="Remote server">
+                      <SelectValue placeholder="Select remote server" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {enabledRemoteServers.map((entry) => (
+                        <SelectItem key={entry.config.id} value={entry.config.id}>
+                          {formatRemoteServerLabel(entry.config)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </RadixSelect>
+                )}
+              </>
+            )}
+          </div>
+
+          {remoteServersStatus === "error" && (
+            <p className="text-xs text-red-500">
+              Failed to load remote servers{remoteServersError ? `: ${remoteServersError}` : "."}
+            </p>
           )}
         </div>
-
-        {remoteServersStatus === "loaded" && !hasRemoteServers && (
-          <p className="text-muted-foreground text-xs">
-            No remote servers configured. Add one in Settings → Remote Servers.
-          </p>
-        )}
-        {remoteServersStatus === "error" && (
-          <p className="text-xs text-red-500">
-            Failed to load remote servers{remoteServersError ? `: ${remoteServersError}` : "."}
-          </p>
-        )}
-      </div>
+      )}
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
         <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>
