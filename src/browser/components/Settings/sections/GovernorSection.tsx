@@ -68,16 +68,23 @@ export function GovernorSection() {
     void loadConfig();
   }, [api]);
 
-  // Cleanup desktop flow on unmount
+  // Cleanup desktop flow on unmount only
+  // We use refs to access current values without triggering re-runs of the cleanup
+  const desktopFlowIdRef = useRef(desktopFlowId);
+  desktopFlowIdRef.current = desktopFlowId;
+  const apiRef = useRef(api);
+  apiRef.current = api;
+
   useEffect(() => {
     return () => {
-      if (isDesktop && api && desktopFlowId) {
-        void api.muxGovernorOauth.cancelDesktopFlow({ flowId: desktopFlowId });
+      if (isDesktop && apiRef.current && desktopFlowIdRef.current) {
+        void apiRef.current.muxGovernorOauth.cancelDesktopFlow({
+          flowId: desktopFlowIdRef.current,
+        });
       }
       enrollAttemptRef.current += 1;
-      setEnrollStatus("idle");
     };
-  }, [api, desktopFlowId, isDesktop]);
+  }, [isDesktop]);
 
   // Validate and normalize URL input
   const validateUrl = (input: string): { valid: boolean; origin?: string; warning?: string } => {
