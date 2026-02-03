@@ -122,7 +122,7 @@ function isPathInsideDir(dirPath: string, filePath: string): boolean {
 // Remote workspace proxying
 // -----------------------------------------------------------------------------
 
-type RemoteMuxOrpcClient = {
+interface RemoteMuxOrpcClient {
   workspace: {
     list: (
       input: z.infer<typeof schemas.workspace.list.input>
@@ -179,13 +179,13 @@ type RemoteMuxOrpcClient = {
       input: z.infer<typeof schemas.workspace.getSubagentTranscript.input>
     ) => Promise<z.infer<typeof schemas.workspace.getSubagentTranscript.output>>;
   };
-};
+}
 
-type RemoteWorkspaceProxy = {
+interface RemoteWorkspaceProxy {
   client: RemoteMuxOrpcClient;
   remoteWorkspaceId: string;
   serverId: string;
-};
+}
 
 function resolveRemoteWorkspaceProxy(
   context: ORPCContext,
@@ -329,7 +329,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     return false;
   }
 
-  const proto = Object.getPrototypeOf(value);
+  const proto: unknown = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
 }
 

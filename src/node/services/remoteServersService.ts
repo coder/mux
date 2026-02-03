@@ -113,10 +113,10 @@ function hasAuthTokenInSecretsConfig(secretsConfig: SecretsConfig, serverId: str
   return Boolean(getAuthTokenFromSecrets(secretsConfig[secretsKey]));
 }
 
-export type RemoteMuxServerListEntry = {
+export interface RemoteMuxServerListEntry {
   config: RemoteMuxServerConfig;
   hasAuthToken: boolean;
-};
+}
 
 export class RemoteServersService {
   constructor(private readonly config: Config) {

@@ -105,10 +105,10 @@ function CredentialSharingCheckbox(props: {
   );
 }
 
-type RemoteMuxServerListEntry = {
+interface RemoteMuxServerListEntry {
   config: RemoteMuxServerConfig;
   hasAuthToken: boolean;
-};
+}
 
 function formatRemoteServerLabel(config: RemoteMuxServerConfig): string {
   const label = config.label.trim().length > 0 ? config.label.trim() : config.id;
@@ -510,7 +510,13 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
 export function CreationControls(props: CreationControlsProps) {
   const { projects } = useProjectContext();
   const { beginWorkspaceCreation } = useWorkspaceContext();
-  const { nameState, runtimeAvailabilityState } = props;
+  const {
+    nameState,
+    runtimeAvailabilityState,
+    createOnRemote,
+    remoteServerId,
+    onRemoteServerIdChange,
+  } = props;
   const { api } = useAPI();
 
   const [remoteServers, setRemoteServers] = useState<RemoteMuxServerListEntry[]>([]);
@@ -560,11 +566,11 @@ export function CreationControls(props: CreationControlsProps) {
   const firstRemoteServerId = hasRemoteServers ? enabledRemoteServers[0].config.id : null;
 
   useEffect(() => {
-    if (!props.createOnRemote) {
+    if (!createOnRemote) {
       return;
     }
 
-    if (typeof props.remoteServerId === "string" && props.remoteServerId.trim().length > 0) {
+    if (typeof remoteServerId === "string" && remoteServerId.trim().length > 0) {
       return;
     }
 
@@ -572,13 +578,8 @@ export function CreationControls(props: CreationControlsProps) {
       return;
     }
 
-    props.onRemoteServerIdChange(firstRemoteServerId);
-  }, [
-    props.createOnRemote,
-    props.remoteServerId,
-    firstRemoteServerId,
-    props.onRemoteServerIdChange,
-  ]);
+    onRemoteServerIdChange(firstRemoteServerId);
+  }, [createOnRemote, remoteServerId, firstRemoteServerId, onRemoteServerIdChange]);
 
   // Extract mode from discriminated union for convenience
   const runtimeMode = props.selectedRuntime.mode;

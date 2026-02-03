@@ -29,10 +29,8 @@ describe("remoteMuxIds", () => {
     expect(() => encodeRemoteWorkspaceId("x", "")).toThrow();
 
     // Runtime misuse: defensive assertions should catch non-string inputs.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(() => encodeRemoteWorkspaceId(123 as any, "x")).toThrow();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    expect(() => encodeRemoteWorkspaceId("x", null as any)).toThrow();
+    expect(() => encodeRemoteWorkspaceId(123 as unknown as string, "x")).toThrow();
+    expect(() => encodeRemoteWorkspaceId("x", null as unknown as string)).toThrow();
   });
 
   it("returns null for non-remote or malformed ids", () => {
