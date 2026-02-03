@@ -59,6 +59,12 @@ export const CUSTOM_EVENTS = {
   RESUME_CHECK_REQUESTED: "mux:resumeCheckRequested",
 
   /**
+   * Event emitted when the mux gateway session expires.
+   * No detail
+   */
+  MUX_GATEWAY_SESSION_EXPIRED: "mux:muxGatewaySessionExpired",
+
+  /**
    * Event to switch to a different workspace after fork
    * Detail: { workspaceId: string, projectPath: string, projectName: string, workspacePath: string, branch: string }
    */
@@ -110,6 +116,7 @@ export interface CustomEventPayloads {
     workspaceId: string;
     isManual?: boolean; // true when user explicitly clicks retry (bypasses eligibility checks)
   };
+  [CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED]: never; // No payload
   [CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH]: {
     workspaceId: string;
     projectPath: string;
