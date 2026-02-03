@@ -14,21 +14,21 @@ import {
   setWorkspaceModelWithOrigin,
 } from "@/browser/utils/modelChange";
 
+async function* emptyStream() {
+  // no-op
+}
+
 function createStubApiClient(): APIClient {
   // Avoid mock.module (global) by injecting a minimal client through providers.
   // Keep this stub local unless other tests need the same wiring.
-  async function* empty() {
-    // no-op
-  }
-
   return {
     providers: {
       getConfig: () => Promise.resolve(null),
-      onConfigChanged: () => Promise.resolve(empty()),
+      onConfigChanged: () => Promise.resolve(emptyStream()),
     },
     policy: {
       get: () => Promise.resolve({ status: { state: "disabled" }, policy: null }),
-      onChanged: () => Promise.resolve(empty()),
+      onChanged: () => Promise.resolve(emptyStream()),
     },
   } as unknown as APIClient;
 }
@@ -41,6 +41,45 @@ const wrapper: React.FC<{ children: React.ReactNode }> = (props) =>
     { client: stubClient } as React.ComponentProps<typeof APIProvider>,
     React.createElement(PolicyProvider, null, props.children)
   );
+
+const createPolicyChurnClient = () => {
+  const policyEventResolvers: Array<() => void> = [];
+  const triggerPolicyEvent = () => {
+    const resolve = policyEventResolvers.shift();
+    if (resolve) {
+      resolve();
+    }
+  };
+
+  async function* policyEvents() {
+    for (let i = 0; i < 2; i++) {
+      await new Promise<void>((resolve) => policyEventResolvers.push(resolve));
+      yield {};
+    }
+  }
+
+  const client = {
+    providers: {
+      getConfig: () => Promise.resolve(null),
+      onConfigChanged: () => Promise.resolve(emptyStream()),
+    },
+    policy: {
+      get: () =>
+        Promise.resolve({
+          status: { state: "enforced" },
+          policy: {
+            policyFormatVersion: "0.1",
+            providerAccess: null,
+            mcp: { allowUserDefined: { stdio: true, remote: true } },
+            runtimes: null,
+          },
+        }),
+      onChanged: () => Promise.resolve(policyEvents()),
+    },
+  } as unknown as APIClient;
+
+  return { client, triggerPolicyEvent };
+};
 
 const buildUsage = (tokens: number, model?: string): WorkspaceUsageState => ({
   totalTokens: tokens,
@@ -171,6 +210,71 @@ describe("useContextSwitchWarning", () => {
     });
 
     await waitFor(() => expect(result.current.warning?.targetModel).toBe(gatewayModel));
+  });
+
+  test("does not loop when policy refreshes with identical values", async () => {
+    const consoleError = console.error;
+    const errorMessages: string[] = [];
+    console.error = (...args: unknown[]) => {
+      errorMessages.push(args.map((arg) => String(arg)).join(" "));
+      consoleError(...args);
+    };
+
+    try {
+      const { client, triggerPolicyEvent } = createPolicyChurnClient();
+      const policyWrapper: React.FC<{ children: React.ReactNode }> = (props) =>
+        React.createElement(
+          APIProvider,
+          { client } as React.ComponentProps<typeof APIProvider>,
+          React.createElement(PolicyProvider, null, props.children)
+        );
+
+      const previousModel = "anthropic:claude-sonnet-4-5";
+      const nextModel = "openai:gpt-5.2-codex";
+      const limit = getEffectiveContextLimit(nextModel, false);
+      expect(limit).not.toBeNull();
+      if (!limit) return;
+
+      const tokens = Math.floor(limit * 1.05);
+      const props = {
+        workspaceId: "workspace-12",
+        messages: [buildAssistantMessage(previousModel)],
+        pendingModel: previousModel,
+        use1M: false,
+        workspaceUsage: buildUsage(tokens, previousModel),
+        api: undefined,
+        pendingSendOptions: buildSendOptions(previousModel),
+      };
+
+      const { result, rerender } = renderHook(
+        (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+        { initialProps: props, wrapper: policyWrapper }
+      );
+
+      act(() => {
+        setWorkspaceModelWithOrigin(props.workspaceId, nextModel, "user");
+        rerender({
+          ...props,
+          pendingModel: nextModel,
+          pendingSendOptions: buildSendOptions(nextModel),
+        });
+      });
+
+      await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+
+      act(() => {
+        triggerPolicyEvent();
+        triggerPolicyEvent();
+      });
+
+      await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+
+      expect(
+        errorMessages.some((message) => message.includes("Maximum update depth exceeded"))
+      ).toBe(false);
+    } finally {
+      console.error = consoleError;
+    }
   });
 
   test("warns when an agent-driven model change overflows context", async () => {

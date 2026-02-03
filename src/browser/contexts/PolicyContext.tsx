@@ -26,9 +26,21 @@ export function PolicyProvider(props: { children: React.ReactNode }) {
 
     try {
       const next = await api.policy.get();
-      setResponse(next);
+      // Avoid churn when policy refresh returns the same values; keeps consumers stable.
+      setResponse((prev) => {
+        if (!prev) {
+          return next;
+        }
+        const prevStatus = prev.status.state;
+        const nextStatus = next.status.state;
+        const samePolicy = prev.policy === next.policy;
+        if (prevStatus === nextStatus && samePolicy) {
+          return prev;
+        }
+        return next;
+      });
     } catch {
-      setResponse(null);
+      setResponse((prev) => (prev ? null : prev));
     } finally {
       setLoading(false);
     }

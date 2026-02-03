@@ -71,6 +71,22 @@ const createSwitchState = (model: string): SwitchState => ({
   warning: null,
 });
 
+// Avoid re-dispatching identical warnings when policy/config refreshes churn.
+const areWarningsEqual = (
+  a: ContextSwitchWarning | null,
+  b: ContextSwitchWarning | null
+): boolean => {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.currentTokens === b.currentTokens &&
+    a.targetLimit === b.targetLimit &&
+    a.targetModel === b.targetModel &&
+    a.compactionModel === b.compactionModel &&
+    a.errorMessage === b.errorMessage
+  );
+};
+
 // User request: keep explicit model switches isolated so deferred switches
 // (tokens === 0) don't leak into background updates.
 function switchReducer(state: SwitchState, action: SwitchAction): SwitchState {
@@ -313,6 +329,9 @@ export function useContextSwitchWarning(
       previousModel: prevWarningPreviousModelRef.current,
       allowSameModel: true,
     });
+    if (areWarningsEqual(warning, nextWarning)) {
+      return;
+    }
     dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
   }, [checkOptions, warning, tokens, pendingModel, evaluateWarning]);
 
@@ -346,13 +365,16 @@ export function useContextSwitchWarning(
           previousModel: findPreviousModel(messages),
           allowSameModel: true,
         });
+        if (areWarningsEqual(warning, nextWarning)) {
+          return;
+        }
         dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
       } else if (use1M) {
         // No tokens but toggled ON - clear any stale warning
         dispatch({ type: "CLEAR_WARNING" });
       }
     }
-  }, [use1M, pendingModel, tokens, messages, evaluateWarning]);
+  }, [use1M, pendingModel, tokens, messages, evaluateWarning, warning]);
 
   return { warning, handleModelChange, handleCompact, handleDismiss };
 }
