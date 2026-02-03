@@ -565,7 +565,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}
                   >
-                    <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2">
+                    <div className="grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-2">
                       <span
                         data-testid="agent-name"
                         className="min-w-0 truncate text-[11px] font-medium"
