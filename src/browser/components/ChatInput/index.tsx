@@ -2284,7 +2284,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 data-tutorial="mode-selector"
               >
                 {variant === "workspace" && (
-                  <div className="[@container(max-width:360px)]:hidden">
+                  <div className="@container w-[clamp(1.5rem,18cqw,6rem)] shrink-0">
                     <ContextUsageIndicatorButton
                       data={contextUsageData}
                       autoCompaction={autoCompactionProps}

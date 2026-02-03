@@ -235,7 +235,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       <button
         aria-label={ariaLabel}
         aria-haspopup="dialog"
-        className="hover:bg-sidebar-hover @container flex cursor-pointer items-center gap-1 rounded px-1 py-0.5"
+        className="hover:bg-sidebar-hover flex w-full cursor-pointer items-center gap-1.5 rounded py-0.5 [@container(max-width:72px)]:justify-center"
         type="button"
       >
         {/* Idle compaction indicator */}
@@ -274,7 +274,7 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
 
         <span
           data-context-usage-percent
-          className="text-muted-light hidden text-[10px] font-medium tabular-nums [@container(max-width:72px)]:block"
+          className="text-muted hidden text-[10px] font-medium tabular-nums [@container(max-width:72px)]:block"
         >
           {compactLabel}
         </span>
