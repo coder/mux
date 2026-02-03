@@ -29,11 +29,10 @@ function filterAndMapSuggestions<T extends SuggestionDefinition>(
     .filter((definition) => {
       if (filter && !filter(definition)) return false;
       const normalizedKey = definition.key.toLowerCase();
-      // Match hyphenated segments so partials like /r can find deep-review.
+      // Keep full-prefix matches (e.g., /deep-r) alongside segment matches (e.g., /r).
       return normalizedPartial
-        ? normalizedKey
-            .split("-")
-            .some((segment) => segment.startsWith(normalizedPartial))
+        ? normalizedKey.startsWith(normalizedPartial) ||
+            normalizedKey.split("-").some((segment) => segment.startsWith(normalizedPartial))
         : true;
     })
     .map((definition) => build(definition));
