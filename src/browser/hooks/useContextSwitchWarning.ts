@@ -320,6 +320,12 @@ export function useContextSwitchWarning(
       return;
     }
 
+    // User request: keep explicit warnings tied to the model that triggered them.
+    // If a background model change happens, skip refresh instead of re-warning.
+    if (warning.targetModel !== pendingModel) {
+      return;
+    }
+
     // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
     // Only update active warnings to avoid resurrecting dismissed banners.
     // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
