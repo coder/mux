@@ -147,3 +147,39 @@ test("thinking effort command submits selected level", async () => {
 
   expect(onSetThinkingLevel).toHaveBeenCalledWith("w1", "high");
 });
+
+test("buildCoreSources includes archive merged workspaces in project action", () => {
+  const sources = mk();
+  const actions = sources.flatMap((s) => s());
+  const archiveAction = actions.find((a) => a.id === "ws:archive-merged-in-project");
+
+  expect(archiveAction).toBeDefined();
+  expect(archiveAction?.title).toBe("Archive Merged Workspaces in Project…");
+});
+
+test("archive merged workspaces prompt submits selected project", async () => {
+  const onArchiveMergedWorkspacesInProject = mock(() => Promise.resolve());
+  const sources = mk({ onArchiveMergedWorkspacesInProject });
+  const actions = sources.flatMap((s) => s());
+  const archiveAction = actions.find((a) => a.id === "ws:archive-merged-in-project");
+
+  expect(archiveAction).toBeDefined();
+  expect(archiveAction?.prompt).toBeDefined();
+
+  // buildCoreSources uses confirm(...) in onSubmit.
+  const originalConfirm = (globalThis as unknown as { confirm?: typeof confirm }).confirm;
+  (globalThis as unknown as { confirm: typeof confirm }).confirm = () => true;
+  try {
+    await archiveAction!.prompt!.onSubmit({ projectPath: "/repo/a" });
+  } finally {
+    if (originalConfirm) {
+      (globalThis as unknown as { confirm: typeof confirm }).confirm = originalConfirm;
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete (globalThis as unknown as { confirm?: typeof confirm }).confirm;
+    }
+  }
+
+  expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledTimes(1);
+  expect(onArchiveMergedWorkspacesInProject).toHaveBeenCalledWith("/repo/a");
+});

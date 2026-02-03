@@ -17,6 +17,7 @@ import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { BashToolResult } from "@/common/types/tools";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -1001,6 +1002,91 @@ describe("WorkspaceService archiveMergedInProject", () => {
     return { workspaceService, executeBashMock, archiveMock };
   }
 
+  test("excludes MUX_HELP_CHAT_WORKSPACE_ID workspaces", async () => {
+    const allMetadata: FrontendWorkspaceMetadata[] = [
+      createMetadata(MUX_HELP_CHAT_WORKSPACE_ID),
+      createMetadata("ws-merged"),
+    ];
+
+    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
+      "ws-merged": bashOk('{"state":"MERGED"}'),
+    };
+
+    const { workspaceService, executeBashMock, archiveMock } = createServiceHarness(
+      allMetadata,
+      (workspaceId) => {
+        const result = ghResultsByWorkspaceId[workspaceId];
+        if (!result) {
+          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
+        }
+        return Promise.resolve(result);
+      },
+      () => Promise.resolve({ success: true, data: undefined })
+    );
+
+    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.archivedWorkspaceIds).toEqual(["ws-merged"]);
+    expect(result.data.skippedWorkspaceIds).toEqual([]);
+    expect(result.data.errors).toEqual([]);
+
+    expect(archiveMock).toHaveBeenCalledTimes(1);
+    expect(archiveMock).toHaveBeenCalledWith("ws-merged");
+
+    // Should only query GitHub for the eligible non-mux-chat workspace.
+    expect(executeBashMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("treats workspaces with later unarchivedAt as eligible", async () => {
+    const allMetadata: FrontendWorkspaceMetadata[] = [
+      createMetadata("ws-merged-unarchived", {
+        archivedAt: "2025-01-01T00:00:00.000Z",
+        unarchivedAt: "2025-02-01T00:00:00.000Z",
+      }),
+      createMetadata("ws-still-archived", {
+        archivedAt: "2025-03-01T00:00:00.000Z",
+        unarchivedAt: "2025-02-01T00:00:00.000Z",
+      }),
+    ];
+
+    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
+      "ws-merged-unarchived": bashOk('{"state":"MERGED"}'),
+    };
+
+    const { workspaceService, executeBashMock, archiveMock } = createServiceHarness(
+      allMetadata,
+      (workspaceId) => {
+        const result = ghResultsByWorkspaceId[workspaceId];
+        if (!result) {
+          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
+        }
+        return Promise.resolve(result);
+      },
+      () => Promise.resolve({ success: true, data: undefined })
+    );
+
+    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.archivedWorkspaceIds).toEqual(["ws-merged-unarchived"]);
+    expect(result.data.skippedWorkspaceIds).toEqual([]);
+    expect(result.data.errors).toEqual([]);
+
+    expect(archiveMock).toHaveBeenCalledTimes(1);
+    expect(archiveMock).toHaveBeenCalledWith("ws-merged-unarchived");
+
+    // Should only query GitHub for the workspace that is considered unarchived.
+    expect(executeBashMock).toHaveBeenCalledTimes(1);
+  });
   test("archives only MERGED workspaces", async () => {
     const allMetadata: FrontendWorkspaceMetadata[] = [
       createMetadata("ws-open"),
