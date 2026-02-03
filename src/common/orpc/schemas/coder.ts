@@ -33,7 +33,12 @@ export type CoderUnavailableReason = z.infer<typeof CoderUnavailableReasonSchema
 
 // Coder CLI availability info - discriminated union by state
 export const CoderInfoSchema = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("available"), version: z.string() }),
+  z.object({
+    state: z.literal("available"),
+    version: z.string(),
+    username: z.string().optional(),
+    url: z.string().optional(),
+  }),
   z.object({ state: z.literal("outdated"), version: z.string(), minVersion: z.string() }),
   z.object({ state: z.literal("unavailable"), reason: CoderUnavailableReasonSchema }),
 ]);
@@ -85,6 +90,30 @@ export const CoderWorkspaceSchema = z.object({
 
 export type CoderWorkspace = z.infer<typeof CoderWorkspaceSchema>;
 
+// Coder workspace list result (lets UI distinguish errors from empty list)
+export const CoderListWorkspacesResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), workspaces: z.array(CoderWorkspaceSchema) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+export type CoderListWorkspacesResult = z.infer<typeof CoderListWorkspacesResultSchema>;
+
+// Coder template list result (lets UI distinguish errors from empty list)
+export const CoderListTemplatesResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), templates: z.array(CoderTemplateSchema) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+export type CoderListTemplatesResult = z.infer<typeof CoderListTemplatesResultSchema>;
+
+// Coder preset list result (lets UI distinguish errors from empty list)
+export const CoderListPresetsResultSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), presets: z.array(CoderPresetSchema) }),
+  z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+export type CoderListPresetsResult = z.infer<typeof CoderListPresetsResultSchema>;
+
 // API schemas for coder namespace
 export const coder = {
   getInfo: {
@@ -93,17 +122,17 @@ export const coder = {
   },
   listTemplates: {
     input: z.void(),
-    output: z.array(CoderTemplateSchema),
+    output: CoderListTemplatesResultSchema,
   },
   listPresets: {
     input: z.object({
       template: z.string(),
       org: z.string().optional().meta({ description: "Organization name for disambiguation" }),
     }),
-    output: z.array(CoderPresetSchema),
+    output: CoderListPresetsResultSchema,
   },
   listWorkspaces: {
     input: z.void(),
-    output: z.array(CoderWorkspaceSchema),
+    output: CoderListWorkspacesResultSchema,
   },
 };

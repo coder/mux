@@ -496,6 +496,12 @@ export function CreationControls(props: CreationControlsProps) {
   const isCoderSelected =
     selectedRuntime.mode === RUNTIME_MODE.SSH && selectedRuntime.coder != null;
   const runtimeChoice: RuntimeChoice = isCoderSelected ? "coder" : runtimeMode;
+  const coderUsername =
+    props.coderProps?.coderInfo?.state === "available"
+      ? props.coderProps.coderInfo.username
+      : undefined;
+  const coderDeploymentUrl =
+    props.coderProps?.coderInfo?.state === "available" ? props.coderProps.coderInfo.url : undefined;
 
   // Local runtime doesn't need a trunk branch selector (uses project dir as-is)
   const availabilityMap =
@@ -910,18 +916,25 @@ export function CreationControls(props: CreationControlsProps) {
             {/* Coder runtime needs availability status without the SSH-only toggle. */}
             <CoderAvailabilityMessage coderInfo={props.coderProps.coderInfo} />
             {props.coderProps.enabled && (
-              <CoderWorkspaceForm
-                coderConfig={props.coderProps.coderConfig}
-                onCoderConfigChange={props.coderProps.onCoderConfigChange}
-                templates={props.coderProps.templates}
-                presets={props.coderProps.presets}
-                existingWorkspaces={props.coderProps.existingWorkspaces}
-                loadingTemplates={props.coderProps.loadingTemplates}
-                loadingPresets={props.coderProps.loadingPresets}
-                loadingWorkspaces={props.coderProps.loadingWorkspaces}
-                disabled={props.disabled}
-                hasError={props.runtimeFieldError === "ssh"}
-              />
+              <>
+                <CoderWorkspaceForm
+                  coderConfig={props.coderProps.coderConfig}
+                  username={coderUsername}
+                  deploymentUrl={coderDeploymentUrl}
+                  onCoderConfigChange={props.coderProps.onCoderConfigChange}
+                  templates={props.coderProps.templates}
+                  templatesError={props.coderProps.templatesError}
+                  presets={props.coderProps.presets}
+                  presetsError={props.coderProps.presetsError}
+                  existingWorkspaces={props.coderProps.existingWorkspaces}
+                  workspacesError={props.coderProps.workspacesError}
+                  loadingTemplates={props.coderProps.loadingTemplates}
+                  loadingPresets={props.coderProps.loadingPresets}
+                  loadingWorkspaces={props.coderProps.loadingWorkspaces}
+                  disabled={props.disabled}
+                  hasError={props.runtimeFieldError === "ssh"}
+                />
+              </>
             )}
           </div>
         )}
