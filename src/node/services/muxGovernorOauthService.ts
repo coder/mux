@@ -66,9 +66,9 @@ export class MuxGovernorOauthService {
     private readonly windowService?: WindowService
   ) {}
 
-  async startDesktopFlow(input: { governorOrigin: string }): Promise<
-    Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>
-  > {
+  async startDesktopFlow(input: {
+    governorOrigin: string;
+  }): Promise<Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>> {
     // Normalize and validate the governor origin
     let governorOrigin: string;
     try {
@@ -154,7 +154,9 @@ export class MuxGovernorOauthService {
       settled: false,
     });
 
-    log.debug(`Mux Governor OAuth desktop flow started (flowId=${flowId}, origin=${governorOrigin})`);
+    log.debug(
+      `Mux Governor OAuth desktop flow started (flowId=${flowId}, origin=${governorOrigin})`
+    );
 
     return Ok({ flowId, authorizeUrl, redirectUri });
   }
