@@ -1,8 +1,6 @@
+import { createORPCClient } from "@orpc/client";
 import { RPCLink as HTTPRPCLink } from "@orpc/client/fetch";
-import type { RouterClient } from "@orpc/server";
-import { createClient } from "@/common/orpc/client";
 import assert from "@/common/utils/assert";
-import type { AppRouter } from "@/node/orpc/router";
 
 export interface CreateRemoteClientOptions {
   baseUrl: string;
@@ -12,10 +10,10 @@ export interface CreateRemoteClientOptions {
 /**
  * Creates a typed oRPC client for talking to a remote mux server over HTTP.
  */
-export function createRemoteClient({
+export function createRemoteClient<TClient = unknown>({
   baseUrl,
   authToken,
-}: CreateRemoteClientOptions): RouterClient<AppRouter> {
+}: CreateRemoteClientOptions): TClient {
   assert(typeof baseUrl === "string", "createRemoteClient: baseUrl must be a string");
 
   const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/g, "");
@@ -32,5 +30,9 @@ export function createRemoteClient({
   }
 
   const link = new HTTPRPCLink({ url: orpcUrl, headers });
-  return createClient(link);
+
+  // Type assertion is safe: createORPCClient returns a runtime client object. The caller chooses
+  // the type parameter based on the procedures they intend to call.
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return createORPCClient(link) as unknown as TClient;
 }
