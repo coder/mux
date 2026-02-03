@@ -65,6 +65,7 @@ async function createTestServer(): Promise<TestServerHandle> {
     projectService: services.projectService,
     workspaceService: services.workspaceService,
     muxGatewayOauthService: services.muxGatewayOauthService,
+    muxGovernorOauthService: services.muxGovernorOauthService,
     taskService: services.taskService,
     providerService: services.providerService,
     terminalService: services.terminalService,

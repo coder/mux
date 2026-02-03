@@ -489,6 +489,9 @@ export const router = (authToken?: string) => {
         .output(schemas.config.getConfig.output)
         .handler(({ context }) => {
           const config = context.config.loadConfigOrDefault();
+          // Determine governor enrollment: requires both URL and token
+          const muxGovernorUrl = config.muxGovernorUrl ?? null;
+          const muxGovernorEnrolled = Boolean(config.muxGovernorUrl && config.muxGovernorToken);
           return {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
@@ -496,6 +499,9 @@ export const router = (authToken?: string) => {
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
+            // Mux Governor enrollment status (safe fields only - token never exposed)
+            muxGovernorUrl,
+            muxGovernorEnrolled,
           };
         }),
       updateAgentAiDefaults: t
@@ -611,6 +617,15 @@ export const router = (authToken?: string) => {
 
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
+        }),
+      unenrollMuxGovernor: t
+        .input(schemas.config.unenrollMuxGovernor.input)
+        .output(schemas.config.unenrollMuxGovernor.output)
+        .handler(async ({ context }) => {
+          await context.config.editConfig((config) => {
+            const { muxGovernorUrl: _url, muxGovernorToken: _token, ...rest } = config;
+            return rest;
+          });
         }),
     },
     uiLayouts: {
@@ -980,6 +995,30 @@ export const router = (authToken?: string) => {
         .output(schemas.muxGatewayOauth.cancelDesktopFlow.output)
         .handler(async ({ context, input }) => {
           await context.muxGatewayOauthService.cancelDesktopFlow(input.flowId);
+        }),
+    },
+    muxGovernorOauth: {
+      startDesktopFlow: t
+        .input(schemas.muxGovernorOauth.startDesktopFlow.input)
+        .output(schemas.muxGovernorOauth.startDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.muxGovernorOauthService.startDesktopFlow({
+            governorOrigin: input.governorOrigin,
+          });
+        }),
+      waitForDesktopFlow: t
+        .input(schemas.muxGovernorOauth.waitForDesktopFlow.input)
+        .output(schemas.muxGovernorOauth.waitForDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.muxGovernorOauthService.waitForDesktopFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDesktopFlow: t
+        .input(schemas.muxGovernorOauth.cancelDesktopFlow.input)
+        .output(schemas.muxGovernorOauth.cancelDesktopFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.muxGovernorOauthService.cancelDesktopFlow(input.flowId);
         }),
     },
     general: {

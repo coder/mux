@@ -330,6 +330,155 @@ export async function createOrpcServer({
     res.send(html);
   });
 
+  // --- Mux Governor OAuth (unauthenticated bootstrap routes) ---
+  // Similar to Mux Gateway OAuth but accepts user-provided governorUrl.
+  app.get("/auth/mux-governor/start", (req, res) => {
+    if (authToken?.trim()) {
+      const expectedToken = authToken.trim();
+      const presentedToken = extractBearerToken(req.header("authorization"));
+      if (!presentedToken || !safeEq(presentedToken, expectedToken)) {
+        res.status(401).json({ error: "Invalid or missing auth token" });
+        return;
+      }
+    }
+
+    const governorUrl = typeof req.query.governorUrl === "string" ? req.query.governorUrl : null;
+    if (!governorUrl) {
+      res.status(400).json({ error: "Missing governorUrl query parameter" });
+      return;
+    }
+
+    const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
+    const host = hostHeader?.split(",")[0]?.trim();
+    if (!host) {
+      res.status(400).json({ error: "Missing Host header" });
+      return;
+    }
+
+    const protoHeader = req.get("x-forwarded-proto");
+    const forwardedProto = protoHeader?.split(",")[0]?.trim();
+    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
+
+    const redirectUri = `${proto}://${host}/auth/mux-governor/callback`;
+    const result = context.muxGovernorOauthService.startServerFlow({
+      governorOrigin: governorUrl,
+      redirectUri,
+    });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+
+    res.json({ authorizeUrl: result.data.authorizeUrl, state: result.data.state });
+  });
+
+  app.get("/auth/mux-governor/callback", async (req, res) => {
+    const state = typeof req.query.state === "string" ? req.query.state : null;
+    const code = typeof req.query.code === "string" ? req.query.code : null;
+    const error = typeof req.query.error === "string" ? req.query.error : null;
+    const errorDescription =
+      typeof req.query.error_description === "string" ? req.query.error_description : undefined;
+
+    const result = await context.muxGovernorOauthService.handleServerCallbackAndExchange({
+      state,
+      code,
+      error,
+      errorDescription,
+    });
+
+    const payload = {
+      type: "mux-governor-oauth",
+      state,
+      ok: result.success,
+      error: result.success ? null : result.error,
+    };
+
+    const payloadJson = escapeJsonForHtmlScript(payload);
+
+    const title = result.success ? "Enrollment complete" : "Enrollment failed";
+    const description = result.success
+      ? "You can return to Mux. You may now close this tab."
+      : payload.error
+        ? escapeHtml(payload.error)
+        : "An unknown error occurred.";
+
+    const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>${title}</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 600px; margin: 4rem auto; padding: 1rem; }
+      h1 { margin-bottom: 1rem; }
+      .muted { color: #666; }
+      .btn { display: inline-block; padding: 0.5rem 1rem; background: #333; color: #fff; text-decoration: none; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>${title}</h1>
+    <p>${description}</p>
+    ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
+    <p><a class="btn" href="/">Return to Mux</a></p>
+
+    <script>
+      (() => {
+        const payload = ${payloadJson};
+        const ok = payload.ok === true;
+
+        try {
+          if (window.opener && typeof window.opener.postMessage === "function") {
+            window.opener.postMessage(payload, "*");
+          }
+        } catch {
+          // Ignore postMessage failures.
+        }
+
+        if (!ok) {
+          return;
+        }
+
+        try {
+          if (window.opener && typeof window.opener.focus === "function") {
+            window.opener.focus();
+          }
+        } catch {
+          // Ignore focus failures.
+        }
+
+        try {
+          window.close();
+        } catch {
+          // Ignore close failures.
+        }
+
+        setTimeout(() => {
+          try {
+            window.close();
+          } catch {
+            // Ignore close failures.
+          }
+        }, 50);
+
+        setTimeout(() => {
+          try {
+            window.location.replace("/");
+          } catch {
+            // Ignore navigation failures.
+          }
+        }, 150);
+      })();
+    </script>
+  </body>
+</html>`;
+
+    res.status(result.success ? 200 : 400);
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
+  });
+
   // --- MCP OAuth (unauthenticated redirect callback) ---
   // The OAuth provider cannot attach a mux Bearer token during redirects.
   app.get("/auth/mcp-oauth/callback", async (req, res) => {
@@ -447,6 +596,7 @@ export async function createOrpcServer({
     res.setHeader("Content-Type", "text/html");
     res.send(html);
   });
+
   const orpcRouter = existingRouter ?? router(authToken);
 
   // OpenAPI generator for spec endpoint
