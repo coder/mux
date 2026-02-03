@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Bell, BellOff, Menu, Pencil, Server } from "lucide-react";
+import { Bell, BellOff, Globe, Menu, Pencil, Server } from "lucide-react";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
+import { decodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 
 import {
   RIGHT_SIDEBAR_COLLAPSED_KEY,
@@ -66,6 +67,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
+  const remoteWorkspaceInfo = decodeRemoteWorkspaceId(workspaceId);
   const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills } =
     useWorkspaceSidebarState(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
@@ -226,6 +228,21 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           workspaceName={workspaceName}
           tooltipSide="bottom"
         />
+        {remoteWorkspaceInfo && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="text-muted-foreground inline-flex shrink-0"
+                aria-label={`Remote workspace (Mux server: ${remoteWorkspaceInfo.serverId})`}
+              >
+                <Globe className="h-3.5 w-3.5" />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" align="start">
+              Remote workspace (Mux server: {remoteWorkspaceInfo.serverId})
+            </TooltipContent>
+          </Tooltip>
+        )}
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
         <div className="flex items-center gap-1">
           <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />

@@ -1,6 +1,7 @@
 import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
+import { decodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
@@ -18,7 +19,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis } from "lucide-react";
+import { Globe, Pencil, Trash2, Ellipsis } from "lucide-react";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -235,6 +236,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
+  const remoteWorkspaceInfo = decodeRemoteWorkspaceId(workspaceId);
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const isCreating = status === "creating";
   const isDisabled = isCreating || isArchiving;
@@ -452,27 +454,47 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               />
             ) : (
               <HoverCard openDelay={300} closeDelay={100}>
-                <HoverCardTrigger asChild>
-                  <span
-                    className={cn(
-                      "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer"
-                    )}
-                    onDoubleClick={(e) => {
-                      if (isDisabled) return;
-                      e.stopPropagation();
-                      startEditing();
-                    }}
-                  >
-                    {/* Always render text in same structure; Shimmer just adds animation class */}
-                    <Shimmer
-                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
-                      colorClass="var(--color-foreground)"
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <HoverCardTrigger asChild>
+                    <span
+                      className={cn(
+                        "text-foreground block min-w-0 flex-1 truncate text-left text-[13px] transition-colors duration-200",
+                        !isDisabled && "cursor-pointer"
+                      )}
+                      onDoubleClick={(e) => {
+                        if (isDisabled) return;
+                        e.stopPropagation();
+                        startEditing();
+                      }}
                     >
-                      {displayTitle}
-                    </Shimmer>
-                  </span>
-                </HoverCardTrigger>
+                      {/* Always render text in same structure; Shimmer just adds animation class */}
+                      <Shimmer
+                        className={cn(
+                          "w-full truncate",
+                          !(isWorking || isCreating) && "no-shimmer"
+                        )}
+                        colorClass="var(--color-foreground)"
+                      >
+                        {displayTitle}
+                      </Shimmer>
+                    </span>
+                  </HoverCardTrigger>
+                  {remoteWorkspaceInfo && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="text-muted-foreground inline-flex shrink-0"
+                          aria-label={`Remote workspace (Mux server: ${remoteWorkspaceInfo.serverId})`}
+                        >
+                          <Globe className="h-3 w-3" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent align="start">
+                        Remote workspace (Mux server: {remoteWorkspaceInfo.serverId})
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
                 <HoverCardContent
                   align="start"
                   side="top"
