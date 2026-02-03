@@ -217,6 +217,10 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       )}%)`
     : `Context usage: ${formatTokens(data.totalTokens)} (unknown limit)`;
 
+  const compactLabel = data.maxTokens
+    ? `${Math.round(data.totalPercentage)}%`
+    : formatTokens(data.totalTokens);
+
   return (
     <HoverClickPopover
       content={
@@ -231,18 +235,25 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
       <button
         aria-label={ariaLabel}
         aria-haspopup="dialog"
-        className="hover:bg-sidebar-hover flex cursor-pointer items-center gap-1 rounded px-1 py-0.5"
+        className="hover:bg-sidebar-hover @container flex cursor-pointer items-center gap-1 rounded px-1 py-0.5"
         type="button"
       >
         {/* Idle compaction indicator */}
         {isIdleCompactionEnabled && (
-          <span title={`Auto-compact after ${idleHours}h idle`}>
+          <span
+            title={`Auto-compact after ${idleHours}h idle`}
+            className="[@container(max-width:72px)]:hidden"
+          >
             <Hourglass className="text-muted h-3 w-3" />
           </span>
         )}
-        {/* Show meter when there's usage, or show empty placeholder for settings access */}
+
+        {/* Full meter when there's room; fall back to a compact percentage label on narrow layouts. */}
         {data.totalTokens > 0 ? (
-          <div className="relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink">
+          <div
+            data-context-usage-meter
+            className="relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink [@container(max-width:72px)]:hidden"
+          >
             <TokenMeter
               segments={data.segments}
               orientation="horizontal"
@@ -255,8 +266,18 @@ export const ContextUsageIndicatorButton: React.FC<ContextUsageIndicatorButtonPr
           </div>
         ) : (
           /* Empty meter placeholder - allows access to settings with no usage */
-          <div className="bg-dark relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink rounded-full" />
+          <div
+            data-context-usage-meter
+            className="bg-dark relative h-3 w-[clamp(3rem,18vw,5rem)] min-w-12 shrink rounded-full [@container(max-width:72px)]:hidden"
+          />
         )}
+
+        <span
+          data-context-usage-percent
+          className="text-muted-light hidden text-[10px] font-medium tabular-nums [@container(max-width:72px)]:block"
+        >
+          {compactLabel}
+        </span>
       </button>
     </HoverClickPopover>
   );

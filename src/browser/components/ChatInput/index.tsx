@@ -115,7 +115,6 @@ import {
 } from "./draftAttachmentsStorage";
 import { RecordingOverlay } from "./RecordingOverlay";
 import { AttachedReviewsPanel } from "./AttachedReviewsPanel";
-import { ChatInputMoreControls } from "./ChatInputMoreControls";
 import {
   buildSkillInvocationMetadata,
   parseCommandWithSkillInvocation,
@@ -2274,10 +2273,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
 
-                <div
-                  className="flex items-center [@container(max-width:420px)]:hidden"
-                  data-component="ModelSettingsGroup"
-                >
+                <div className="flex items-center" data-component="ModelSettingsGroup">
                   <ModelSettings model={baseModel || ""} />
                 </div>
               </div>
@@ -2330,22 +2326,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})
                   </TooltipContent>
                 </Tooltip>
-
-                <div className="hidden [@container(max-width:420px)]:block">
-                  <ChatInputMoreControls
-                    modelString={baseModel || ""}
-                    contextUsage={
-                      variant === "workspace"
-                        ? {
-                            data: contextUsageData,
-                            autoCompaction: autoCompactionProps,
-                            idleCompaction: idleCompactionProps,
-                          }
-                        : undefined
-                    }
-                    onComplete={() => inputRef.current?.focus()}
-                  />
-                </div>
               </div>
             </div>
           </div>
