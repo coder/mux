@@ -123,6 +123,32 @@ function isPathInsideDir(dirPath: string, filePath: string): boolean {
 
 type RemoteMuxOrpcClient = {
   workspace: {
+    list: (
+      input: z.infer<typeof schemas.workspace.list.input>
+    ) => Promise<FrontendWorkspaceMetadataSchemaType[]>;
+    onMetadata: (
+      input: z.infer<typeof schemas.workspace.onMetadata.input>,
+      options?: { signal?: AbortSignal }
+    ) => Promise<
+      AsyncIterable<{
+        workspaceId: string;
+        metadata: FrontendWorkspaceMetadataSchemaType | null;
+      }>
+    >;
+    activity: {
+      list: (
+        input: z.infer<typeof schemas.workspace.activity.list.input>
+      ) => Promise<Record<string, WorkspaceActivitySnapshot>>;
+      subscribe: (
+        input: z.infer<typeof schemas.workspace.activity.subscribe.input>,
+        options?: { signal?: AbortSignal }
+      ) => Promise<
+        AsyncIterable<{
+          workspaceId: string;
+          activity: WorkspaceActivitySnapshot | null;
+        }>
+      >;
+    };
     onChat: (
       input: z.infer<typeof schemas.workspace.onChat.input>,
       options?: { signal?: AbortSignal }
@@ -201,6 +227,73 @@ function encodeRemoteIdBestEffort(serverId: string, remoteId: string): string {
   }
 
   return encodeRemoteWorkspaceId(serverId, trimmed);
+}
+
+function getRemoteServersForWorkspaceViews(context: ORPCContext) {
+  const config = context.config.loadConfigOrDefault();
+  const servers = config.remoteServers ?? [];
+  return servers.filter((server) => server.enabled !== false && server.projectMappings.length > 0);
+}
+
+function buildRemoteProjectPathMap(
+  projectMappings: Array<{ localProjectPath: string; remoteProjectPath: string }>
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const mapping of projectMappings) {
+    const remoteProjectPath = mapping.remoteProjectPath.trim();
+    const localProjectPath = mapping.localProjectPath.trim();
+
+    if (!remoteProjectPath || !localProjectPath) {
+      continue;
+    }
+
+    map.set(remoteProjectPath, localProjectPath);
+  }
+
+  return map;
+}
+
+function rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
+  metadata: FrontendWorkspaceMetadataSchemaType,
+  serverId: string,
+  remoteProjectPathMap: ReadonlyMap<string, string>
+): FrontendWorkspaceMetadataSchemaType | null {
+  const localProjectPath = remoteProjectPathMap.get(metadata.projectPath);
+  if (!localProjectPath) {
+    return null;
+  }
+
+  const rewritten = rewriteRemoteFrontendWorkspaceMetadataIds(metadata, serverId);
+
+  return rewritten.projectPath === localProjectPath
+    ? rewritten
+    : { ...rewritten, projectPath: localProjectPath };
+}
+
+async function sleepMs(ms: number, signal: AbortSignal): Promise<void> {
+  assert(Number.isFinite(ms) && ms >= 0, "sleepMs: ms must be a non-negative finite number");
+
+  if (signal.aborted) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    const onAbort = () => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      resolve();
+    };
+
+    timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function rewriteRemoteFrontendWorkspaceMetadataIds(
@@ -2505,12 +2598,55 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.list.output)
         .handler(async ({ context, input }) => {
           const allWorkspaces = await context.workspaceService.list();
+
           // Filter by archived status (derived from timestamps via shared utility)
-          if (input?.archived) {
-            return allWorkspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
-          }
-          // Default: return non-archived workspaces
-          return allWorkspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
+          const localWorkspaces = input?.archived
+            ? allWorkspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt))
+            : allWorkspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
+
+          const remoteServers = getRemoteServersForWorkspaceViews(context);
+
+          const remoteWorkspaces = (
+            await Promise.all(
+              remoteServers.map(async (server) => {
+                const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+
+                try {
+                  const authToken =
+                    context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                  const client = createRemoteClient<RemoteMuxOrpcClient>({
+                    baseUrl: server.baseUrl,
+                    authToken,
+                  });
+
+                  const workspaces = await client.workspace.list(input);
+
+                  const mapped: FrontendWorkspaceMetadataSchemaType[] = [];
+                  for (const metadata of workspaces) {
+                    const rewritten = rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
+                      metadata,
+                      server.id,
+                      remoteProjectPathMap
+                    );
+                    if (rewritten) {
+                      mapped.push(rewritten);
+                    }
+                  }
+
+                  return mapped;
+                } catch (error) {
+                  log.warn("Failed to list workspaces from remote server", {
+                    serverId: server.id,
+                    baseUrl: server.baseUrl,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  return [];
+                }
+              })
+            )
+          ).flat();
+
+          return [...localWorkspaces, ...remoteWorkspaces];
         }),
       create: t
         .input(schemas.workspace.create.input)
@@ -3105,6 +3241,8 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.onMetadata.output)
         .handler(async function* ({ context, signal }) {
           const service = context.workspaceService;
+          const controller = new AbortController();
+          const remoteServers = getRemoteServersForWorkspaceViews(context);
 
           interface MetadataEvent {
             workspaceId: string;
@@ -3135,6 +3273,7 @@ export const router = (authToken?: string) => {
           const onAbort = () => {
             if (ended) return;
             ended = true;
+            controller.abort();
 
             if (resolveNext) {
               const resolve = resolveNext;
@@ -3149,6 +3288,104 @@ export const router = (authToken?: string) => {
             } else {
               signal.addEventListener("abort", onAbort, { once: true });
             }
+          }
+
+          for (const server of remoteServers) {
+            const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+            const visibleWorkspaceIds = new Set<string>();
+
+            const pumpRemoteMetadata = async () => {
+              const BASE_BACKOFF_MS = 250;
+              const MAX_BACKOFF_MS = 5_000;
+              let backoffMs = BASE_BACKOFF_MS;
+
+              while (!controller.signal.aborted) {
+                try {
+                  const authToken =
+                    context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                  const client = createRemoteClient<RemoteMuxOrpcClient>({
+                    baseUrl: server.baseUrl,
+                    authToken,
+                  });
+
+                  const iterator = await client.workspace.onMetadata(undefined, {
+                    signal: controller.signal,
+                  });
+
+                  backoffMs = BASE_BACKOFF_MS;
+
+                  for await (const event of iterator) {
+                    if (controller.signal.aborted) {
+                      break;
+                    }
+
+                    const remoteWorkspaceId = event.workspaceId.trim();
+                    if (!remoteWorkspaceId) {
+                      continue;
+                    }
+
+                    const encodedWorkspaceId = encodeRemoteIdBestEffort(
+                      server.id,
+                      remoteWorkspaceId
+                    );
+
+                    if (event.metadata) {
+                      const rewritten = rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
+                        event.metadata,
+                        server.id,
+                        remoteProjectPathMap
+                      );
+
+                      if (rewritten) {
+                        visibleWorkspaceIds.add(remoteWorkspaceId);
+                        const metadata =
+                          rewritten.id === encodedWorkspaceId
+                            ? rewritten
+                            : { ...rewritten, id: encodedWorkspaceId };
+                        push({ workspaceId: encodedWorkspaceId, metadata });
+                      } else if (visibleWorkspaceIds.has(remoteWorkspaceId)) {
+                        visibleWorkspaceIds.delete(remoteWorkspaceId);
+                        push({ workspaceId: encodedWorkspaceId, metadata: null });
+                      }
+
+                      continue;
+                    }
+
+                    if (!visibleWorkspaceIds.has(remoteWorkspaceId)) {
+                      continue;
+                    }
+
+                    visibleWorkspaceIds.delete(remoteWorkspaceId);
+                    push({ workspaceId: encodedWorkspaceId, metadata: null });
+                  }
+                } catch (error) {
+                  if (controller.signal.aborted) {
+                    break;
+                  }
+
+                  log.warn("Remote workspace.onMetadata subscription failed", {
+                    serverId: server.id,
+                    baseUrl: server.baseUrl,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                }
+
+                if (controller.signal.aborted) {
+                  break;
+                }
+
+                await sleepMs(backoffMs, controller.signal);
+                backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+              }
+            };
+
+            void pumpRemoteMetadata().catch((error) => {
+              log.error("Remote workspace.onMetadata pump crashed", {
+                serverId: server.id,
+                baseUrl: server.baseUrl,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
           }
 
           try {
@@ -3171,6 +3408,7 @@ export const router = (authToken?: string) => {
           } finally {
             ended = true;
             signal?.removeEventListener("abort", onAbort);
+            controller.abort();
             service.off("metadata", onMetadata);
           }
         }),
@@ -3179,13 +3417,101 @@ export const router = (authToken?: string) => {
           .input(schemas.workspace.activity.list.input)
           .output(schemas.workspace.activity.list.output)
           .handler(async ({ context }) => {
-            return context.workspaceService.getActivityList();
+            const localActivity = await context.workspaceService.getActivityList();
+            const remoteServers = getRemoteServersForWorkspaceViews(context);
+
+            const remoteActivityRecords = await Promise.all(
+              remoteServers.map(async (server) => {
+                const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+
+                try {
+                  const authToken =
+                    context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                  const client = createRemoteClient<RemoteMuxOrpcClient>({
+                    baseUrl: server.baseUrl,
+                    authToken,
+                  });
+
+                  const allowedWorkspaceIds = new Set<string>();
+
+                  try {
+                    const workspaces = await client.workspace.list(undefined);
+                    for (const metadata of workspaces) {
+                      if (remoteProjectPathMap.has(metadata.projectPath)) {
+                        allowedWorkspaceIds.add(metadata.id);
+                      }
+                    }
+                  } catch (error) {
+                    log.warn("Failed to list workspaces from remote server for activity", {
+                      serverId: server.id,
+                      baseUrl: server.baseUrl,
+                      archived: false,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                  }
+
+                  try {
+                    const workspaces = await client.workspace.list({ archived: true });
+                    for (const metadata of workspaces) {
+                      if (remoteProjectPathMap.has(metadata.projectPath)) {
+                        allowedWorkspaceIds.add(metadata.id);
+                      }
+                    }
+                  } catch (error) {
+                    log.warn("Failed to list archived workspaces from remote server for activity", {
+                      serverId: server.id,
+                      baseUrl: server.baseUrl,
+                      archived: true,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                  }
+
+                  if (allowedWorkspaceIds.size === 0) {
+                    return {};
+                  }
+
+                  const remoteActivity = await client.workspace.activity.list(undefined);
+
+                  const mapped: Record<string, WorkspaceActivitySnapshot> = {};
+                  for (const [remoteWorkspaceIdRaw, activity] of Object.entries(remoteActivity)) {
+                    const remoteWorkspaceId = remoteWorkspaceIdRaw.trim();
+                    if (!remoteWorkspaceId || !allowedWorkspaceIds.has(remoteWorkspaceId)) {
+                      continue;
+                    }
+
+                    const encodedWorkspaceId = encodeRemoteIdBestEffort(
+                      server.id,
+                      remoteWorkspaceId
+                    );
+                    mapped[encodedWorkspaceId] = activity;
+                  }
+
+                  return mapped;
+                } catch (error) {
+                  log.warn("Failed to list workspace activity from remote server", {
+                    serverId: server.id,
+                    baseUrl: server.baseUrl,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  return {};
+                }
+              })
+            );
+
+            const merged: Record<string, WorkspaceActivitySnapshot> = { ...localActivity };
+            for (const record of remoteActivityRecords) {
+              Object.assign(merged, record);
+            }
+
+            return merged;
           }),
         subscribe: t
           .input(schemas.workspace.activity.subscribe.input)
           .output(schemas.workspace.activity.subscribe.output)
           .handler(async function* ({ context, signal }) {
             const service = context.workspaceService;
+            const controller = new AbortController();
+            const remoteServers = getRemoteServersForWorkspaceViews(context);
 
             interface ActivityEvent {
               workspaceId: string;
@@ -3216,6 +3542,7 @@ export const router = (authToken?: string) => {
             const onAbort = () => {
               if (ended) return;
               ended = true;
+              controller.abort();
 
               if (resolveNext) {
                 const resolve = resolveNext;
@@ -3230,6 +3557,124 @@ export const router = (authToken?: string) => {
               } else {
                 signal.addEventListener("abort", onAbort, { once: true });
               }
+            }
+
+            for (const server of remoteServers) {
+              const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+
+              const pumpRemoteActivity = async () => {
+                const BASE_BACKOFF_MS = 250;
+                const MAX_BACKOFF_MS = 5_000;
+                let backoffMs = BASE_BACKOFF_MS;
+
+                while (!controller.signal.aborted) {
+                  try {
+                    const authToken =
+                      context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                    const client = createRemoteClient<RemoteMuxOrpcClient>({
+                      baseUrl: server.baseUrl,
+                      authToken,
+                    });
+
+                    const allowedWorkspaceIds = new Set<string>();
+
+                    try {
+                      const workspaces = await client.workspace.list(undefined);
+                      for (const metadata of workspaces) {
+                        if (remoteProjectPathMap.has(metadata.projectPath)) {
+                          allowedWorkspaceIds.add(metadata.id);
+                        }
+                      }
+                    } catch (error) {
+                      log.warn(
+                        "Failed to list workspaces from remote server for activity subscribe",
+                        {
+                          serverId: server.id,
+                          baseUrl: server.baseUrl,
+                          archived: false,
+                          error: error instanceof Error ? error.message : String(error),
+                        }
+                      );
+                    }
+
+                    try {
+                      const workspaces = await client.workspace.list({ archived: true });
+                      for (const metadata of workspaces) {
+                        if (remoteProjectPathMap.has(metadata.projectPath)) {
+                          allowedWorkspaceIds.add(metadata.id);
+                        }
+                      }
+                    } catch (error) {
+                      log.warn(
+                        "Failed to list archived workspaces from remote server for activity subscribe",
+                        {
+                          serverId: server.id,
+                          baseUrl: server.baseUrl,
+                          archived: true,
+                          error: error instanceof Error ? error.message : String(error),
+                        }
+                      );
+                    }
+
+                    if (allowedWorkspaceIds.size === 0) {
+                      await sleepMs(backoffMs, controller.signal);
+                      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+                      continue;
+                    }
+
+                    const iterator = await client.workspace.activity.subscribe(undefined, {
+                      signal: controller.signal,
+                    });
+
+                    backoffMs = BASE_BACKOFF_MS;
+
+                    for await (const event of iterator) {
+                      if (controller.signal.aborted) {
+                        break;
+                      }
+
+                      const remoteWorkspaceId = event.workspaceId.trim();
+                      if (!remoteWorkspaceId || !allowedWorkspaceIds.has(remoteWorkspaceId)) {
+                        continue;
+                      }
+
+                      const encodedWorkspaceId = encodeRemoteIdBestEffort(
+                        server.id,
+                        remoteWorkspaceId
+                      );
+                      push({
+                        workspaceId: encodedWorkspaceId,
+                        activity: event.activity,
+                      });
+                    }
+                  } catch (error) {
+                    if (controller.signal.aborted) {
+                      break;
+                    }
+
+                    log.warn("Remote workspace.activity.subscribe failed", {
+                      serverId: server.id,
+                      baseUrl: server.baseUrl,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                  }
+
+                  if (controller.signal.aborted) {
+                    break;
+                  }
+
+                  await sleepMs(backoffMs, controller.signal);
+                  backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+                }
+              };
+
+              void pumpRemoteActivity().catch((error) => {
+                log.error("Remote workspace.activity.subscribe pump crashed", {
+                  serverId: server.id,
+                  baseUrl: server.baseUrl,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              });
             }
 
             try {
@@ -3252,6 +3697,7 @@ export const router = (authToken?: string) => {
             } finally {
               ended = true;
               signal?.removeEventListener("abort", onAbort);
+              controller.abort();
               service.off("activity", onActivity);
             }
           }),
