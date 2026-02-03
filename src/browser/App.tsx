@@ -65,6 +65,7 @@ import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
+import { PowerModeProvider } from "./contexts/PowerModeContext";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
@@ -1015,7 +1016,9 @@ function App() {
               <SplashScreenProvider>
                 <TutorialProvider>
                   <CommandRegistryProvider>
-                    <AppInner />
+                    <PowerModeProvider>
+                      <AppInner />
+                    </PowerModeProvider>
                   </CommandRegistryProvider>
                 </TutorialProvider>
               </SplashScreenProvider>

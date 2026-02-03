@@ -51,6 +51,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   NAVIGATE_BACK: "Navigate back",
   NAVIGATE_FORWARD: "Navigate forward",
   TOGGLE_NOTIFICATIONS: "Toggle notifications",
+  TOGGLE_POWER_MODE: "",
 };
 
 /** Groups for organizing keybinds in the UI */

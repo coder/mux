@@ -348,6 +348,8 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+N, Win/Linux: Ctrl+Shift+N
   // "N" for Notifications
   TOGGLE_NOTIFICATIONS: { key: "N", ctrl: true, shift: true },
+
+  TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;
 
 /**

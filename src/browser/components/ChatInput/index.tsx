@@ -107,6 +107,7 @@ import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { usePowerMode } from "@/browser/contexts/PowerModeContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import {
@@ -316,6 +317,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
+  const powerMode = usePowerMode();
   const [atMentionCursorNonce, setAtMentionCursorNonce] = useState(0);
   const lastAtMentionCursorRef = useRef<number | null>(null);
   const handleAtMentionCursorActivity = useCallback(() => {
@@ -332,6 +334,23 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     lastAtMentionCursorRef.current = nextCursor;
     setAtMentionCursorNonce((n) => n + 1);
   }, [input.length]);
+
+  const handleInputChange = useCallback(
+    (next: string) => {
+      if (powerMode.enabled) {
+        const delta = next.length - input.length;
+        if (delta > 0) {
+          const el = inputRef.current;
+          if (el) {
+            powerMode.burstFromTextarea(el, Math.min(6, delta));
+          }
+        }
+      }
+
+      setInput(next);
+    },
+    [input.length, powerMode, setInput]
+  );
 
   // Draft state combines text input and attachments
   // Reviews are managed separately via props (persisted in pendingReviews state)
@@ -2156,7 +2175,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   value={input}
                   isEditing={!!editingMessage}
                   focusBorderColor={focusBorderColor}
-                  onChange={setInput}
+                  onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   onKeyUp={handleAtMentionCursorActivity}
