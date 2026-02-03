@@ -47,6 +47,8 @@ export function GovernorSection() {
   const [enrollError, setEnrollError] = useState<string | null>(null);
   const [desktopFlowId, setDesktopFlowId] = useState<string | null>(null);
   const enrollAttemptRef = useRef(0);
+  // Cleanup function for browser OAuth flow (listener + interval)
+  const browserFlowCleanupRef = useRef<(() => void) | null>(null);
 
   // Load config on mount
   useEffect(() => {
@@ -77,11 +79,15 @@ export function GovernorSection() {
 
   useEffect(() => {
     return () => {
+      // Cleanup desktop flow
       if (isDesktop && apiRef.current && desktopFlowIdRef.current) {
         void apiRef.current.muxGovernorOauth.cancelDesktopFlow({
           flowId: desktopFlowIdRef.current,
         });
       }
+      // Cleanup browser flow (listener + interval)
+      browserFlowCleanupRef.current?.();
+      browserFlowCleanupRef.current = null;
       enrollAttemptRef.current += 1;
     };
   }, [isDesktop]);
@@ -285,11 +291,19 @@ export function GovernorSection() {
         if (popup.closed) {
           clearInterval(checkClosed);
           window.removeEventListener("message", handleMessage);
+          browserFlowCleanupRef.current = null;
           if (currentAttempt === enrollAttemptRef.current) {
             setEnrollStatus("idle");
           }
         }
       }, 500);
+
+      // Store cleanup function for unmount
+      browserFlowCleanupRef.current = () => {
+        clearInterval(checkClosed);
+        window.removeEventListener("message", handleMessage);
+        popup.close();
+      };
     }
   };
 
