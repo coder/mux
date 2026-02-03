@@ -45,6 +45,21 @@ describe("getSlashCommandSuggestions", () => {
     expect(skillSuggestion?.description).toContain("(project)");
   });
 
+  it("matches hyphenated skill segments", () => {
+    const suggestions = getSlashCommandSuggestions("/r", {
+      agentSkills: [
+        {
+          name: "deep-review",
+          description: "Test",
+          scope: "project",
+        },
+      ],
+    });
+
+    const labels = suggestions.map((s) => s.display);
+    expect(labels).toContain("/deep-review");
+  });
+
   it("filters top level commands by partial input", () => {
     const suggestions = getSlashCommandSuggestions("/cl");
     expect(suggestions).toHaveLength(1);

@@ -28,7 +28,13 @@ function filterAndMapSuggestions<T extends SuggestionDefinition>(
   return definitions
     .filter((definition) => {
       if (filter && !filter(definition)) return false;
-      return normalizedPartial ? definition.key.toLowerCase().startsWith(normalizedPartial) : true;
+      const normalizedKey = definition.key.toLowerCase();
+      // Match hyphenated segments so partials like /r can find deep-review.
+      return normalizedPartial
+        ? normalizedKey
+            .split("-")
+            .some((segment) => segment.startsWith(normalizedPartial))
+        : true;
     })
     .map((definition) => build(definition));
 }
