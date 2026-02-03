@@ -44,6 +44,7 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import { resolveProjectPathFromProjectQuery } from "@/common/utils/deepLink";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
@@ -508,6 +509,33 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             resolvedProjectPath = projectPath;
             break;
           }
+        }
+      }
+
+      const projectQueryFromPayload =
+        resolvedProjectPath === null &&
+        typeof payload.project === "string" &&
+        payload.project.trim().length > 0
+          ? payload.project
+          : null;
+
+      // Back-compat/ergonomics: if a deep link passed a projectPath that doesn't match
+      // exactly (e.g., different machine), still try matching by its final path segment.
+      const inferredProjectQueryFromPath =
+        resolvedProjectPath === null && projectQueryFromPayload === null && projectPathFromPayload
+          ? projectPathFromPayload
+          : null;
+
+      const projectQuery = projectQueryFromPayload ?? inferredProjectQueryFromPath;
+      if (resolvedProjectPath === null && projectQuery) {
+        resolvedProjectPath = resolveProjectPathFromProjectQuery(projects.keys(), projectQuery);
+      }
+
+      // If no project is specified (or matching failed), default to the first project in the list.
+      if (resolvedProjectPath === null) {
+        const firstProjectPath = projects.keys().next().value;
+        if (typeof firstProjectPath === "string") {
+          resolvedProjectPath = firstProjectPath;
         }
       }
 
