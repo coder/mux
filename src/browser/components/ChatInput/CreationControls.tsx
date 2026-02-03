@@ -579,12 +579,12 @@ export function CreationControls(props: CreationControlsProps) {
   const hasRemoteServers = enabledRemoteServers.length > 0;
   const firstRemoteServerId = hasRemoteServers ? enabledRemoteServers[0].config.id : null;
 
-  const shouldRenderCreateTargetGroup = remoteServersStatus !== "loaded" || hasRemoteServers;
+  const shouldRenderCreateTargetGroup = hasRemoteServers;
 
   // If no remotes are configured, force creation back to local so the user can't
   // get stuck in a hidden `createOnRemote=true` state.
   useEffect(() => {
-    if (remoteServersStatus !== "loaded") {
+    if (remoteServersStatus === "loading") {
       return;
     }
 
