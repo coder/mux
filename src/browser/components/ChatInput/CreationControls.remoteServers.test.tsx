@@ -6,6 +6,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import type { APIClient } from "@/browser/contexts/API";
 import { TooltipProvider } from "@/browser/components/ui/tooltip";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import { RUNTIME_MODE, type ParsedRuntime } from "@/common/types/runtime";
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import type { RemoteMuxServerConfig } from "@/common/types/project";
@@ -66,6 +67,12 @@ const DEFAULT_RUNTIME_AVAILABILITY: RuntimeAvailabilityState = {
 
 const DEFAULT_RUNTIME: ParsedRuntime = { mode: RUNTIME_MODE.WORKTREE };
 
+const REMOTE_MUX_SERVERS_EXPERIMENT_KEY = getExperimentKey(EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
+
+function enableRemoteMuxServersExperiment() {
+  globalThis.window.localStorage.setItem(REMOTE_MUX_SERVERS_EXPERIMENT_KEY, JSON.stringify(true));
+}
+
 function Harness(props: { initialCreateOnRemote: boolean }) {
   const [createOnRemote, setCreateOnRemote] = React.useState(props.initialCreateOnRemote);
   const [remoteServerId, setRemoteServerId] = React.useState<string | null>(null);
@@ -104,6 +111,7 @@ describe("CreationControls remote server availability", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
+    globalThis.window.localStorage.clear();
     projects = new Map([["/projects/demo", {}]]);
   });
 
@@ -115,6 +123,8 @@ describe("CreationControls remote server availability", () => {
   });
 
   test("does not render Create-on controls when no remote servers are configured", async () => {
+    enableRemoteMuxServersExperiment();
+
     const listMock = mock(() => Promise.resolve([]));
     currentApi = {
       remoteServers: {
@@ -133,6 +143,8 @@ describe("CreationControls remote server availability", () => {
   });
 
   test("renders Create-on controls when at least one remote server is configured", async () => {
+    enableRemoteMuxServersExperiment();
+
     const listMock = mock(() =>
       Promise.resolve([
         {
@@ -162,5 +174,37 @@ describe("CreationControls remote server availability", () => {
       expect(view.getByLabelText("Create on")).toBeTruthy();
       expect(view.getByTestId("createOnRemote").textContent).toBe("local");
     });
+  });
+
+  test("does not render Create-on controls when experiment is disabled (even if remote servers are configured)", async () => {
+    const listMock = mock(() =>
+      Promise.resolve([
+        {
+          config: {
+            id: "remote-1",
+            label: "Remote 1",
+            baseUrl: "https://example.com",
+            enabled: true,
+            projectMappings: [],
+          },
+          hasAuthToken: false,
+        },
+      ] satisfies RemoteMuxServerListEntry[])
+    );
+
+    currentApi = {
+      remoteServers: {
+        list: () => listMock(),
+      },
+    };
+
+    const view = render(<Harness initialCreateOnRemote={true} />);
+
+    await waitFor(() => {
+      expect(view.queryByLabelText("Create on")).toBeNull();
+      expect(view.getByTestId("createOnRemote").textContent).toBe("local");
+    });
+
+    expect(listMock.mock.calls.length).toBe(0);
   });
 });
