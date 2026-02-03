@@ -60,8 +60,8 @@ import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/pr
 
 import {
   DEFAULT_THINKING_LEVEL,
-  THINKING_LEVELS,
-  isThinkingLevel,
+  THINKING_DISPLAY_LABELS,
+  parseThinkingDisplayLabel,
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -77,7 +77,8 @@ import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
-const THINKING_LEVELS_LIST = THINKING_LEVELS.join(", ");
+// Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
+const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
 
 type CLIMode = "plan" | "exec";
 
@@ -111,11 +112,13 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
 function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
   if (!value) return DEFAULT_THINKING_LEVEL; // Default for mux run
 
-  const normalized = value.trim().toLowerCase();
-  if (isThinkingLevel(normalized)) {
-    return normalized;
+  const level = parseThinkingDisplayLabel(value);
+  if (level) {
+    return level;
   }
-  throw new Error(`Invalid thinking level "${value}". Expected: ${THINKING_LEVELS_LIST}`);
+  throw new Error(
+    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, xhigh)`
+  );
 }
 
 function parseMode(value: string | undefined): CLIMode {
@@ -244,8 +247,8 @@ program
   .option("--mode <mode>", "agent mode: plan or exec", "exec")
   .option(
     "-t, --thinking <level>",
-    `thinking level: ${THINKING_LEVELS_LIST}`,
-    DEFAULT_THINKING_LEVEL
+    `thinking level: ${THINKING_LABELS_LIST}`,
+    THINKING_DISPLAY_LABELS[DEFAULT_THINKING_LEVEL]
   )
   .option("-v, --verbose", "show info-level logs (default: errors only)")
   .option("--hide-costs", "hide cost summary at end of run")

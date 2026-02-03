@@ -9,6 +9,43 @@ export const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as cons
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**
+ * User-facing display labels for thinking levels
+ * Used in UI and CLI help text for cleaner presentation
+ */
+export const THINKING_DISPLAY_LABELS: Record<ThinkingLevel, string> = {
+  off: "OFF",
+  low: "LOW",
+  medium: "MED",
+  high: "HIGH",
+  xhigh: "MAX",
+};
+
+/**
+ * Reverse mapping from display labels to internal values
+ * Supports both display labels (OFF, LOW, MED, HIGH, MAX) and legacy values
+ */
+const DISPLAY_LABEL_TO_LEVEL: Record<string, ThinkingLevel> = {
+  // Display labels (case-insensitive matching handled in parseThinkingDisplayLabel)
+  off: "off",
+  low: "low",
+  med: "medium",
+  high: "high",
+  max: "xhigh",
+  // Legacy values for backward compatibility
+  medium: "medium",
+  xhigh: "xhigh",
+};
+
+/**
+ * Parse a thinking level from user input (display label or legacy value)
+ * Returns undefined if not recognized
+ */
+export function parseThinkingDisplayLabel(value: string): ThinkingLevel | undefined {
+  const normalized = value.trim().toLowerCase();
+  return DISPLAY_LABEL_TO_LEVEL[normalized];
+}
+
+/**
  * Active thinking levels (excludes "off")
  * Used for storing/restoring the last-used thinking level per model
  */

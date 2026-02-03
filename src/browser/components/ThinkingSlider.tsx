@@ -1,6 +1,10 @@
 import React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  THINKING_LEVELS,
+  THINKING_DISPLAY_LABELS,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
@@ -9,15 +13,6 @@ import { cn } from "@/common/lib/utils";
 
 // Uses CSS variable --color-thinking-mode for theme compatibility
 const BASE_THINKING_LEVELS: ThinkingLevel[] = THINKING_LEVELS.filter((level) => level !== "xhigh");
-
-// Display labels (shortened for space)
-const DISPLAY_LABELS: Record<ThinkingLevel, string> = {
-  off: "OFF",
-  low: "LOW",
-  medium: "MED",
-  high: "HIGH",
-  xhigh: "MAX",
-};
 
 // Text styling based on level (n: 0-3)
 // Uses CSS variables for theme compatibility
@@ -75,14 +70,14 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
     }
   };
 
-  const displayLabel = DISPLAY_LABELS[effectiveThinkingLevel];
+  const displayLabel = THINKING_DISPLAY_LABELS[effectiveThinkingLevel];
 
   // Single-option policy: render non-interactive badge
   if (allowed.length <= 1) {
     const fixedLevel = allowed[0] || "off";
     const standardIndex = BASE_THINKING_LEVELS.indexOf(fixedLevel);
     const value = standardIndex === -1 ? 0 : standardIndex;
-    const tooltipMessage = `Model ${modelString} locks thinking at ${DISPLAY_LABELS[fixedLevel]} to match its capabilities.`;
+    const tooltipMessage = `Model ${modelString} locks thinking at ${THINKING_DISPLAY_LABELS[fixedLevel]} to match its capabilities.`;
 
     return (
       <Tooltip>
@@ -93,7 +88,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
               style={getTextStyle(value)}
               aria-label={`Thinking level fixed to ${fixedLevel}`}
             >
-              {DISPLAY_LABELS[fixedLevel]}
+              {THINKING_DISPLAY_LABELS[fixedLevel]}
             </span>
           </div>
         </TooltipTrigger>
