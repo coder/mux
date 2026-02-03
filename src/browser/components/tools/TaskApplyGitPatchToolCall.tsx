@@ -20,9 +20,16 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { cn } from "@/common/lib/utils";
 
+type TaskApplyGitPatchSuccessResult = Extract<TaskApplyGitPatchToolResult, { success: true }>;
+type TaskApplyGitPatchFailureResult = Extract<TaskApplyGitPatchToolResult, { success: false }>;
+
 interface TaskApplyGitPatchToolCallProps {
   args: TaskApplyGitPatchToolArgs;
-  result?: TaskApplyGitPatchToolResult | null;
+  /**
+   * Tool results may be wrapped as `{ type: "json", value: ... }` (e.g. via streamManager).
+   * Treat as unknown and unwrap defensively.
+   */
+  result?: unknown;
   status?: ToolStatus;
 }
 
@@ -41,6 +48,28 @@ interface AppliedCommit {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function unwrapJsonContainer(value: unknown): unknown {
+  let current = value;
+
+  // Tool outputs can be wrapped as `{ type: "json", value: ... }`.
+  // Some paths may double-wrap; unwrap a couple layers defensively.
+  for (let i = 0; i < 2; i++) {
+    if (
+      current !== null &&
+      typeof current === "object" &&
+      "type" in current &&
+      (current as { type?: unknown }).type === "json" &&
+      "value" in current
+    ) {
+      current = (current as { value: unknown }).value;
+      continue;
+    }
+    break;
+  }
+
+  return current;
 }
 
 function readAppliedCommits(result: unknown): AppliedCommit[] | undefined {
@@ -111,14 +140,21 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
   result,
   status = "pending",
 }) => {
-  const successResult = result?.success === true ? result : null;
-  const errorResult = result?.success === false ? result : null;
+  const unwrappedResult = unwrapJsonContainer(result);
+
+  const successResult =
+    isRecord(unwrappedResult) && unwrappedResult.success === true
+      ? (unwrappedResult as TaskApplyGitPatchSuccessResult)
+      : null;
+  const errorResult =
+    isRecord(unwrappedResult) && unwrappedResult.success === false
+      ? (unwrappedResult as TaskApplyGitPatchFailureResult)
+      : null;
 
   const taskIdFromResult =
-    result && typeof result === "object" && result !== null && "taskId" in result
-      ? typeof (result as { taskId?: unknown }).taskId === "string"
-        ? (result as { taskId: string }).taskId
-        : undefined
+    isRecord(unwrappedResult) &&
+    typeof (unwrappedResult as { taskId?: unknown }).taskId === "string"
+      ? (unwrappedResult as { taskId: string }).taskId
       : undefined;
   const taskId = taskIdFromResult ?? args.task_id;
 

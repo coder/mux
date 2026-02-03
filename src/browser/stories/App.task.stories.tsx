@@ -708,11 +708,12 @@ export const TaskApplyGitPatchCommitList: AppStory = {
       { timeout: 8000 }
     );
 
-    // Storybook can preserve component state between stories if keys are reused. Only click when needed.
-    if (!messageCanvas.queryByText("Commits")) {
+    // Tool cards are collapsed by default; expand the card so the commit list is visible.
+    if (!messageCanvas.queryByText("Patch source")) {
       await userEvent.click(toolHeader);
     }
 
+    await messageCanvas.findByText("Patch source", {}, { timeout: 8000 });
     await messageCanvas.findByText("Commits", {}, { timeout: 8000 });
     await messageCanvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
   },
@@ -776,11 +777,12 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
       { timeout: 8000 }
     );
 
-    // Storybook can preserve component state between stories if keys are reused. Only click when needed.
-    if (!messageCanvas.queryByText("Commits")) {
+    // Tool cards are collapsed by default; expand the card so the commit list is visible.
+    if (!messageCanvas.queryByText("Patch source")) {
       await userEvent.click(toolHeader);
     }
 
+    await messageCanvas.findByText("Patch source", {}, { timeout: 8000 });
     await messageCanvas.findByText("Commits", {}, { timeout: 8000 });
     await messageCanvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
   },
