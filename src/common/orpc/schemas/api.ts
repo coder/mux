@@ -1262,6 +1262,77 @@ export const server = {
   },
 };
 
+// Remote mux servers
+const RemoteMuxServerProjectMappingSchema = z
+  .object({
+    localProjectPath: z.string(),
+    remoteProjectPath: z.string(),
+  })
+  .strict();
+
+const RemoteMuxServerConfigSchema = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    baseUrl: z.url(),
+    enabled: z.boolean().optional(),
+    projectMappings: z.array(RemoteMuxServerProjectMappingSchema),
+  })
+  .strict();
+
+const RemoteMuxServerListEntrySchema = z
+  .object({
+    config: RemoteMuxServerConfigSchema,
+    hasAuthToken: z.boolean(),
+  })
+  .strict();
+
+export const remoteServers = {
+  list: {
+    input: z.void(),
+    output: z.array(RemoteMuxServerListEntrySchema),
+  },
+  upsert: {
+    input: z
+      .object({
+        config: RemoteMuxServerConfigSchema,
+        authToken: z.string().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void()),
+  },
+  remove: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(z.void()),
+  },
+  clearAuthToken: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(z.void()),
+  },
+  ping: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(
+      z
+        .object({
+          version: z.any(),
+        })
+        .strict()
+    ),
+  },
+};
+
 // Config (global settings)
 const SubagentAiDefaultsEntrySchema = z
   .object({

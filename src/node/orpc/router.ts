@@ -468,6 +468,65 @@ export const router = (authToken?: string) => {
           };
         }),
     },
+    remoteServers: {
+      list: t
+        .input(schemas.remoteServers.list.input)
+        .output(schemas.remoteServers.list.output)
+        .handler(({ context }) => {
+          return context.remoteServersService.list();
+        }),
+      upsert: t
+        .input(schemas.remoteServers.upsert.input)
+        .output(schemas.remoteServers.upsert.output)
+        .handler(async ({ context, input }) => {
+          try {
+            await context.remoteServersService.upsert({
+              config: input.config,
+              authToken: input.authToken,
+            });
+            return Ok(undefined);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      remove: t
+        .input(schemas.remoteServers.remove.input)
+        .output(schemas.remoteServers.remove.output)
+        .handler(async ({ context, input }) => {
+          try {
+            await context.remoteServersService.remove({ id: input.id });
+            return Ok(undefined);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      clearAuthToken: t
+        .input(schemas.remoteServers.clearAuthToken.input)
+        .output(schemas.remoteServers.clearAuthToken.output)
+        .handler(async ({ context, input }) => {
+          try {
+            await context.remoteServersService.clearAuthToken({ id: input.id });
+            return Ok(undefined);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      ping: t
+        .input(schemas.remoteServers.ping.input)
+        .output(schemas.remoteServers.ping.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const version = await context.remoteServersService.ping({ id: input.id });
+            return Ok({ version });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+    },
     features: {
       getStatsTabState: t
         .input(schemas.features.getStatsTabState.input)

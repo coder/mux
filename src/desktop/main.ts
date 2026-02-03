@@ -567,6 +567,7 @@ async function loadServices(): Promise<void> {
     updateService: services.updateService,
     tokenizerService: services.tokenizerService,
     serverService: services.serverService,
+    remoteServersService: services.remoteServersService,
     featureFlagService: services.featureFlagService,
     sessionTimingService: services.sessionTimingService,
     workspaceMcpOverridesService: services.workspaceMcpOverridesService,
