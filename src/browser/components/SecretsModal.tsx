@@ -9,7 +9,15 @@ import {
   DialogInfo,
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
 import type { Secret } from "@/common/types/secrets";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
 
 // Visibility toggle icon component
 const ToggleVisibilityIcon: React.FC<{ visible: boolean }> = ({ visible }) => {
@@ -61,15 +69,20 @@ interface SecretsModalProps {
 
 const SecretsModal: React.FC<SecretsModalProps> = ({
   isOpen,
-  projectPath: _projectPath,
+  projectPath,
   projectName,
   initialSecrets,
   onClose,
   onSave,
 }) => {
+  const { projects, getSecrets } = useProjectContext();
   const [secrets, setSecrets] = useState<Secret[]>(initialSecrets);
   const [visibleSecrets, setVisibleSecrets] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Get other projects (excluding current one) for import dropdown
+  const otherProjects = Array.from(projects.entries()).filter(([path]) => path !== projectPath);
 
   // Reset state when modal opens with new secrets
   useEffect(() => {
@@ -127,6 +140,29 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
       newVisible.add(index);
     }
     setVisibleSecrets(newVisible);
+  };
+
+  // Import secrets from another project (doesn't overwrite existing keys)
+  const handleImportFromProject = async (sourceProjectPath: string) => {
+    setIsImporting(true);
+    try {
+      const sourceSecrets = await getSecrets(sourceProjectPath);
+      if (sourceSecrets.length === 0) return;
+
+      // Get current keys (normalized to uppercase for comparison)
+      const existingKeys = new Set(secrets.map((s) => s.key.toUpperCase()));
+
+      // Filter to only new secrets (keys that don't already exist)
+      const newSecrets = sourceSecrets.filter((s) => !existingKeys.has(s.key.toUpperCase()));
+
+      if (newSecrets.length > 0) {
+        setSecrets([...secrets, ...newSecrets]);
+      }
+    } catch (err) {
+      console.error("Failed to import secrets:", err);
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const handleOpenChange = useCallback(
@@ -204,13 +240,36 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
           )}
         </div>
 
-        <button
-          onClick={addSecret}
-          disabled={isLoading}
-          className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground mb-4 w-full cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-all duration-200"
-        >
-          + Add Secret
-        </button>
+        <div className="mb-4 flex gap-2">
+          <button
+            onClick={addSecret}
+            disabled={isLoading || isImporting}
+            className="text-muted border-border-medium hover:bg-hover hover:border-border-darker hover:text-foreground flex-1 cursor-pointer rounded border border-dashed bg-transparent px-3 py-2 text-[13px] transition-all duration-200"
+          >
+            + Add Secret
+          </button>
+          {otherProjects.length > 0 && (
+            <Select
+              value=""
+              onValueChange={(path) => void handleImportFromProject(path)}
+              disabled={isLoading || isImporting}
+            >
+              <SelectTrigger className="h-auto w-auto shrink-0 px-3 py-2 text-[13px]">
+                <SelectValue placeholder={isImporting ? "Importing..." : "Import from..."} />
+              </SelectTrigger>
+              <SelectContent>
+                {otherProjects.map(([path]) => {
+                  const name = path.split("/").pop() ?? path;
+                  return (
+                    <SelectItem key={path} value={path}>
+                      {name}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
 
         <DialogFooter>
           <Button variant="secondary" type="button" onClick={handleCancel} disabled={isLoading}>
