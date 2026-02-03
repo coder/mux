@@ -461,7 +461,9 @@ export class PolicyService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
 
-      if (options.isStartup) {
+      // Fail closed on startup, or if there's no existing enforced policy (e.g., first fetch
+      // after enrollment). This ensures enrollment can't silently bypass policy on a bad first fetch.
+      if (options.isStartup || this.effectivePolicy === null) {
         this.updateState({
           source: schemaSource,
           status: { state: "blocked", reason: `Failed to load policy: ${message}` },
