@@ -134,6 +134,8 @@ export class Config {
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           useSSH2Transport?: unknown;
+          muxGovernorUrl?: unknown;
+          muxGovernorToken?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -191,6 +193,8 @@ export class Config {
             subagentAiDefaults: legacySubagentAiDefaults,
             featureFlagOverrides: parsed.featureFlagOverrides,
             useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
+            muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
+            muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
           };
         }
       }
@@ -230,6 +234,8 @@ export class Config {
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         useSSH2Transport?: boolean;
+        muxGovernorUrl?: string;
+        muxGovernorToken?: string;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -304,6 +310,16 @@ export class Config {
 
       if (config.useSSH2Transport !== undefined) {
         data.useSSH2Transport = config.useSSH2Transport;
+      }
+
+      const muxGovernorUrl = parseOptionalNonEmptyString(config.muxGovernorUrl);
+      if (muxGovernorUrl) {
+        data.muxGovernorUrl = muxGovernorUrl;
+      }
+
+      const muxGovernorToken = parseOptionalNonEmptyString(config.muxGovernorToken);
+      if (muxGovernorToken) {
+        data.muxGovernorToken = muxGovernorToken;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
