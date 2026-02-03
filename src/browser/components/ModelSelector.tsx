@@ -325,15 +325,15 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               type="button"
               className={cn(
                 triggerClassName,
-                "text-foreground hover:bg-hover flex cursor-pointer justify-between px-2 transition-colors duration-300"
+                "text-foreground hover:bg-hover flex cursor-pointer items-center justify-between gap-1 px-1.5 py-0.5 transition-colors duration-300"
               )}
               role="combobox"
               aria-expanded={isOpen}
               variant="ghost"
-              size="sm"
-              onClick={() => setIsOpen(true)}
+              size="xs"
+              onClick={() => setIsOpen((prev) => !prev)}
             >
-              <span className="flex min-w-0 items-center gap-1.5 truncate">
+              <span className="flex min-w-0 items-center gap-1.5">
                 {selectedProvider && (
                   <ProviderIcon
                     provider={selectedProvider}
@@ -352,7 +352,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
         {isOpen && (
           <div className="bg-dark border-border absolute bottom-full left-0 z-[1020] mb-1 w-82 overflow-hidden rounded-md border shadow-md">
             {/* Search input */}
-            <div className="border-border border-b px-2 py-1.5">
+            <div className="border-border border-b px-2 py-1">
               <input
                 ref={inputRef}
                 type="text"
@@ -376,7 +376,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     data-highlighted={index === highlightedIndex}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     className={cn(
-                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-xs cursor-pointer",
+                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
                       index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
                       hiddenSet.has(model) && "opacity-50"
                     )}
@@ -502,7 +502,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
             {/* Footer actions (last row in dropdown) */}
             {(hiddenModels.length > 0 || onOpenSettings) && (
-              <div className="border-border flex flex-col gap-1 border-t px-2 py-1.5">
+              <div className="border-border flex flex-col gap-1 border-t px-2 py-1">
                 {hiddenModels.length > 0 && (
                   <button
                     type="button"
