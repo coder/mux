@@ -335,6 +335,9 @@
     /* Error backgrounds */
     --color-error-bg-dark: hsl(0 33% 13%); /* #3c1f1f - dark error bg */
 
+    /* Z-index */
+    --z-dropdown: 1600;
+
     /* Radius */
     --radius: 0.5rem;
   }
