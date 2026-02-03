@@ -1,4 +1,8 @@
 import assert from "@/common/utils/assert";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { GATEWAY_CONFIGURED_KEY } from "@/common/constants/storage";
+import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import type { DeleteMessage, StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
 import {
   isBashOutputEvent,
@@ -112,6 +116,13 @@ export function applyWorkspaceChatEventToAggregator(
   }
 
   if (isStreamError(event)) {
+    if (event.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
+      updatePersistedState(GATEWAY_CONFIGURED_KEY, false);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
+      }
+    }
+
     aggregator.handleStreamError(event);
     return "immediate";
   }

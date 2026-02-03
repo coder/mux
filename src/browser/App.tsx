@@ -63,6 +63,7 @@ import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
+import { MuxGatewaySessionExpiredToast } from "./components/MuxGatewaySessionExpiredToast";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
 import { PowerModeProvider } from "./contexts/PowerModeContext";
@@ -982,6 +983,7 @@ function AppInner() {
           }}
         />
         <SettingsModal />
+        <MuxGatewaySessionExpiredToast />
       </div>
     </>
   );
