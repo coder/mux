@@ -80,15 +80,14 @@ async function selectModel(
     { timeout: 3000 }
   );
 
-  // Wait for UI to stabilize - ensure thinking slider is present and not in flux.
+  // Wait for UI to stabilize - ensure thinking controls are present and not in flux.
   // Backend metadata updates can cause re-renders; waiting for a stable state
   // prevents races when the test immediately interacts with thinking controls.
   await waitFor(
     () => {
-      const thinkingButton = container.querySelector(
-        '[data-component="ThinkingSliderGroup"] button span'
-      );
-      if (!thinkingButton?.textContent) {
+      const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
+      const thinkingLabel = group?.querySelector("span");
+      if (!thinkingLabel?.textContent) {
         throw new Error("Waiting for thinking controls to stabilize");
       }
     },
@@ -97,26 +96,31 @@ async function selectModel(
 }
 
 async function setThinkingToMax(container: HTMLElement): Promise<void> {
-  // Wait for the thinking slider to render and for it to show xhigh.
-  // We cycle by clicking the button, which cycles through levels.
-  // For CODEX model the levels are: off → low → medium → high → xhigh → off...
+  // Wait for the thinking slider to render and for it to show MAX.
+  // We click the right paddle (second button) repeatedly to increase levels.
+  // For CODEX model the levels are: OFF → LOW → MED → HIGH → MAX
   await waitFor(
     async () => {
-      const button = container.querySelector(
-        '[data-component="ThinkingSliderGroup"] button'
-      ) as HTMLButtonElement | null;
-      if (!button) {
-        throw new Error("Thinking level button not found");
+      const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
+      if (!group) {
+        throw new Error("ThinkingSliderGroup not found");
       }
 
-      const current = button.querySelector("span")?.textContent?.trim()?.toLowerCase();
-      if (current === "xhigh") {
+      // Find the label span (direct child span in the group's div)
+      const label = group.querySelector("span")?.textContent?.trim()?.toUpperCase();
+      if (label === "MAX") {
         return; // Done!
       }
 
-      // Click to cycle to next level
-      fireEvent.click(button);
-      throw new Error(`Cycling thinking level, currently at: ${current ?? "<missing>"}`);
+      // Click the right paddle (second button) to increase level
+      const buttons = group.querySelectorAll("button");
+      const rightPaddle = buttons[1] as HTMLButtonElement | undefined;
+      if (!rightPaddle) {
+        throw new Error("Right paddle button not found");
+      }
+
+      fireEvent.click(rightPaddle);
+      throw new Error(`Cycling thinking level, currently at: ${label ?? "<missing>"}`);
     },
     { timeout: 10000, interval: 200 }
   );
@@ -125,7 +129,8 @@ async function setThinkingToMax(container: HTMLElement): Promise<void> {
 async function expectThinkingLabel(container: HTMLElement, expected: string): Promise<void> {
   await waitFor(
     () => {
-      const label = container.querySelector('[data-component="ThinkingSliderGroup"] button span');
+      const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
+      const label = group?.querySelector("span");
       const text = label?.textContent?.trim();
       if (text !== expected) {
         throw new Error(`Expected thinking label ${expected} but got ${text ?? "<missing>"}`);
@@ -136,19 +141,19 @@ async function expectThinkingLabel(container: HTMLElement, expected: string): Pr
 }
 
 describeIntegration("Thinking level persistence", () => {
-  test("keeps xhigh preference when switching away and back", async () => {
+  test("keeps MAX preference when switching away and back", async () => {
     const harness = await createAppHarness({ branchPrefix: "thinking" });
 
     try {
       await selectModel(harness.view.container, harness.workspaceId, CODEX_MODEL);
       await setThinkingToMax(harness.view.container);
-      await expectThinkingLabel(harness.view.container, "xhigh");
+      await expectThinkingLabel(harness.view.container, "MAX");
 
       await selectModel(harness.view.container, harness.workspaceId, OPUS_MODEL);
-      await expectThinkingLabel(harness.view.container, "high");
+      await expectThinkingLabel(harness.view.container, "HIGH");
 
       await selectModel(harness.view.container, harness.workspaceId, CODEX_MODEL);
-      await expectThinkingLabel(harness.view.container, "xhigh");
+      await expectThinkingLabel(harness.view.container, "MAX");
     } finally {
       await harness.dispose();
     }
