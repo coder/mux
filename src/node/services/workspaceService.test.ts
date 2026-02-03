@@ -453,7 +453,9 @@ describe("WorkspaceService remove timing rollup", () => {
 
       const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
-      const mockInitStateManager: Partial<InitStateManager> = {};
+      const mockInitStateManager: Partial<InitStateManager> = {
+        clearInMemoryState: mock(() => undefined),
+      };
       const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
         setStreaming: mock((_workspaceId: string, streaming: boolean) =>
           Promise.resolve({
