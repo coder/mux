@@ -1,5 +1,7 @@
 import { cn } from "@/common/lib/utils";
 
+// Shared menu/dropdown surface + item styling for consistent UI across bespoke and Radix menus.
+// Includes the --z-dropdown token so all menus stack consistently.
 export const menuSurfaceClassName = cn(
   "bg-dark text-foreground border border-border shadow-md rounded-md z-[var(--z-dropdown)]"
 );

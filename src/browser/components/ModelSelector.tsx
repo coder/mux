@@ -13,6 +13,7 @@ import React, {
   forwardRef,
 } from "react";
 import { cn } from "@/common/lib/utils";
+import { menuItemBaseClassName, menuSurfaceClassName } from "./ui/menuStyles";
 import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
 import { GatewayToggleButton } from "./GatewayToggleButton";
 import { GatewayIcon } from "./icons/GatewayIcon";
@@ -350,7 +351,12 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
 
         {/* Dropdown content - rendered inline for testability */}
         {isOpen && (
-          <div className="bg-dark border-border absolute bottom-full left-0 z-[1020] mb-1 w-82 overflow-hidden rounded-md border shadow-md">
+          <div
+            className={cn(
+              menuSurfaceClassName,
+              "absolute bottom-full left-0 h-50 mb-1 w-82 overflow-hidden"
+            )}
+          >
             {/* Search input */}
             <div className="border-border border-b px-2 py-1">
               <input
@@ -376,8 +382,9 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                     data-highlighted={index === highlightedIndex}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     className={cn(
-                      "flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-xs cursor-pointer",
-                      index === highlightedIndex ? "bg-hover" : "hover:bg-hover",
+                      menuItemBaseClassName,
+                      "w-full gap-1.5 px-2 py-0.5 text-xs cursor-pointer",
+                      index === highlightedIndex && "bg-hover",
                       hiddenSet.has(model) && "opacity-50"
                     )}
                     onClick={() => handleSelectModel(model)}
@@ -537,7 +544,10 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
                       onOpenSettings();
                       handleCancel();
                     }}
-                    className="text-muted hover:bg-hover hover:text-foreground flex w-full items-center justify-start gap-1.5 rounded-sm px-2 py-1 text-[11px] transition-colors"
+                    className={cn(
+                      menuItemBaseClassName,
+                      "w-full cursor-pointer justify-start gap-1.5 px-2 py-1 text-[11px] text-muted transition-colors hover:text-foreground"
+                    )}
                   >
                     <Settings className="h-3 w-3 shrink-0" />
                     Model settings

@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/browser/components/ui/tooltip";
 import { Button } from "@/browser/components/ui/button";
+import { menuItemBaseClassName, menuSurfaceClassName } from "@/browser/components/ui/menuStyles";
 import {
   formatKeybind,
   formatNumberedKeybind,
@@ -456,7 +457,12 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
       <AgentHelpTooltip />
 
       {isPickerOpen && (
-        <div className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 max-w-[420px] min-w-72 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">
+        <div
+          className={cn(
+            menuSurfaceClassName,
+            "absolute right-0 bottom-full mb-1 max-w-[420px] min-w-72 overflow-hidden"
+          )}
+        >
           <div className="border-border-light flex items-center gap-1.5 border-b p-1.5">
             <input
               ref={inputRef}
@@ -549,11 +555,12 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
                     tabIndex={-1}
                     data-agent-id={opt.id}
                     className={cn(
-                      "px-2.5 py-1.5 cursor-pointer transition-colors duration-100",
+                      menuItemBaseClassName,
+                      "px-2.5 py-1.5 transition-colors duration-100",
                       "first:rounded-t last:rounded-b",
                       isHighlighted
                         ? "text-foreground bg-hover"
-                        : "text-light bg-transparent hover:bg-hover hover:text-foreground"
+                        : "text-light bg-transparent hover:text-foreground"
                     )}
                     onMouseEnter={() => setHighlightedIndex(index)}
                     onClick={() => handleSelectAgent(opt.id)}

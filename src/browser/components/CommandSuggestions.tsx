@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/common/lib/utils";
+import { menuItemBaseClassName, menuSurfaceClassName } from "@/browser/components/ui/menuStyles";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import { FileIcon } from "@/browser/components/FileIcon";
 
@@ -245,7 +246,8 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
       }
       data-command-suggestions
       className={cn(
-        "bg-separator border-border-light z-[1010] flex max-h-[200px] flex-col overflow-y-auto rounded border shadow-[0_-4px_12px_rgba(0,0,0,0.4)]",
+        menuSurfaceClassName,
+        "flex max-h-[200px] flex-col overflow-y-auto",
         // Use absolute positioning relative to parent when not in portal mode
         !anchorRef && "absolute right-0 bottom-full left-0 mb-2"
       )}
@@ -270,8 +272,9 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           role="option"
           aria-selected={index === selectedIndex}
           className={cn(
-            "cursor-pointer flex items-center gap-2 px-2.5 py-1.5 hover:bg-hover",
-            index === selectedIndex ? "bg-hover" : "bg-transparent"
+            menuItemBaseClassName,
+            "cursor-pointer gap-2 px-2.5 py-1.5",
+            index === selectedIndex && "bg-hover"
           )}
         >
           {isFileSuggestion && (
@@ -296,7 +299,7 @@ export const CommandSuggestions: React.FC<CommandSuggestionsProps> = ({
           </div>
         </div>
       ))}
-      <div className="border-border-light bg-dark text-placeholder [&_span]:text-medium shrink-0 border-t px-2.5 py-1 text-center text-[10px] [&_span]:font-medium">
+      <div className="border-border bg-dark text-placeholder [&_span]:text-medium shrink-0 border-t px-2.5 py-1 text-center text-[10px] [&_span]:font-medium">
         <span>Enter</span> or <span>Tab</span> to complete • <span>↑↓</span> to navigate •{" "}
         <span>Esc</span> to dismiss
       </div>

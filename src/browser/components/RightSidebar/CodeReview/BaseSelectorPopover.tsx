@@ -8,6 +8,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/common/lib/utils";
+import { menuItemBaseClassName, menuSurfaceClassName } from "@/browser/components/ui/menuStyles";
 
 const BASE_SUGGESTIONS = [
   "HEAD",
@@ -111,7 +112,12 @@ export function BaseSelectorPopover({
       </button>
 
       {isOpen && (
-        <div className="bg-dark border-border absolute top-full left-0 z-[10001] mt-1 w-[160px] overflow-hidden rounded-md border shadow-md">
+        <div
+          className={cn(
+            menuSurfaceClassName,
+            "absolute top-full left-0 mt-1 w-[160px] overflow-hidden"
+          )}
+        >
           {/* Search/edit input */}
           <div className="border-border border-b px-2 py-1.5">
             <input
@@ -137,7 +143,10 @@ export function BaseSelectorPopover({
                   data-testid={`base-suggestion-${suggestion}`}
                   onMouseDown={(e) => e.preventDefault()} // Prevent input blur before click
                   onClick={() => handleSelect(suggestion)}
-                  className="hover:bg-hover flex w-full items-center gap-1.5 rounded-sm px-2 py-1 font-mono text-[11px]"
+                  className={cn(
+                    menuItemBaseClassName,
+                    "w-full gap-1.5 px-2 py-1 font-mono text-[11px]"
+                  )}
                 >
                   <Check
                     className={cn(
