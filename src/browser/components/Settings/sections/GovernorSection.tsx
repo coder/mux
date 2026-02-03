@@ -272,11 +272,13 @@ export function GovernorSection() {
       window.addEventListener("message", handleMessage);
 
       // Cleanup listener if popup is closed without completing
+      // Note: we don't check enrollStatus here since it's captured at closure time
+      // and may be stale. The attempt ref ensures we only reset for the current flow.
       const checkClosed = setInterval(() => {
         if (popup.closed) {
           clearInterval(checkClosed);
           window.removeEventListener("message", handleMessage);
-          if (currentAttempt === enrollAttemptRef.current && enrollStatus === "waiting") {
+          if (currentAttempt === enrollAttemptRef.current) {
             setEnrollStatus("idle");
           }
         }
