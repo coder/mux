@@ -168,7 +168,6 @@ export async function processSlashCommand(
   const {
     api: client,
     setInput,
-    setSendingState,
     setToast,
     variant,
     setVimEnabled,
