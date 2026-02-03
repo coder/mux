@@ -50,6 +50,7 @@ export interface BuildSourcesParams {
   onSetThinkingLevel: (workspaceId: string, level: ThinkingLevel) => void;
 
   onStartWorkspaceCreation: (projectPath: string) => void;
+  onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
     projectPath: string;
@@ -789,6 +790,40 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             const projectPath = vals.projectPath;
             // Reuse the chat-based creation flow for the selected project
             p.onStartWorkspaceCreation(projectPath);
+          },
+        },
+      },
+      {
+        id: CommandIds.workspaceArchiveMergedInProject(),
+        title: "Archive Merged Workspaces in Project…",
+        section: section.projects,
+        run: () => undefined,
+        prompt: {
+          title: "Archive Merged Workspaces in Project",
+          fields: [
+            {
+              type: "select",
+              name: "projectPath",
+              label: "Select project",
+              placeholder: "Search projects…",
+              getOptions: (_values) =>
+                Array.from(p.projects.keys()).map((projectPath) => ({
+                  id: projectPath,
+                  label: projectPath.split("/").pop() ?? projectPath,
+                  keywords: [projectPath],
+                })),
+            },
+          ],
+          onSubmit: async (vals) => {
+            const projectPath = vals.projectPath;
+            const projectName = projectPath.split("/").pop() ?? projectPath;
+
+            const ok = confirm(
+              `Archive merged workspaces in ${projectName}?\n\nThis will archive (not delete) workspaces in this project whose GitHub PR is merged. This is reversible.\n\nThis uses GitHub via the gh CLI. Make sure gh is installed and authenticated.`
+            );
+            if (!ok) return;
+
+            await p.onArchiveMergedWorkspacesInProject(projectPath);
           },
         },
       },

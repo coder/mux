@@ -440,6 +440,37 @@ function AppInner() {
     [startWorkspaceCreation]
   );
 
+  const archiveMergedWorkspacesInProjectFromPalette = useCallback(
+    async (projectPath: string): Promise<void> => {
+      const trimmedProjectPath = projectPath.trim();
+      if (!trimmedProjectPath) return;
+
+      if (!api) {
+        if (typeof window !== "undefined") {
+          window.alert("Cannot archive merged workspaces: API not connected");
+        }
+        return;
+      }
+
+      try {
+        const result = await api.workspace.archiveMergedInProject({
+          projectPath: trimmedProjectPath,
+        });
+        if (!result.success) {
+          if (typeof window !== "undefined") {
+            window.alert(result.error);
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (typeof window !== "undefined") {
+          window.alert(message);
+        }
+      }
+    },
+    [api]
+  );
+
   const getBranchesForProject = useCallback(
     async (projectPath: string): Promise<BranchListResult> => {
       if (!api) {
@@ -510,6 +541,7 @@ function AppInner() {
     getThinkingLevel: getThinkingLevelForWorkspace,
     onSetThinkingLevel: setThinkingLevelFromPalette,
     onStartWorkspaceCreation: openNewWorkspaceFromPalette,
+    onArchiveMergedWorkspacesInProject: archiveMergedWorkspacesInProjectFromPalette,
     getBranchesForProject,
     onSelectWorkspace: selectWorkspaceFromPalette,
     onRemoveWorkspace: removeWorkspaceFromPalette,
