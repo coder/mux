@@ -123,13 +123,6 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
               const nextIndex = (currentIndex + 1) % allowed.length;
               setThinkingLevel(allowed[nextIndex]);
             }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                const nextIndex = (currentIndex + 1) % allowed.length;
-                setThinkingLevel(allowed[nextIndex]);
-              }
-            }}
             data-thinking-label
             className="hover:bg-hover w-[4ch] min-w-[4ch] shrink-0 rounded-sm bg-transparent p-0 text-center text-[11px] transition-all duration-200 select-none"
             style={textStyle}

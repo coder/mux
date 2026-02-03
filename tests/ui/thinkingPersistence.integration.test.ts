@@ -106,15 +106,17 @@ async function setThinkingToMax(container: HTMLElement): Promise<void> {
         throw new Error("ThinkingSliderGroup not found");
       }
 
-      // Find the label span (direct child span in the group's div)
-      const label = group.querySelector("span")?.textContent?.trim()?.toUpperCase();
+      const label = group
+        .querySelector("[data-thinking-label]")
+        ?.textContent?.trim()
+        ?.toUpperCase();
       if (label === "MAX") {
         return; // Done!
       }
 
-      // Click the right paddle (second button) to increase level
-      const buttons = group.querySelectorAll("button");
-      const rightPaddle = buttons[1] as HTMLButtonElement | undefined;
+      const rightPaddle = group.querySelector(
+        'button[data-thinking-paddle="right"]'
+      ) as HTMLButtonElement | null;
       if (!rightPaddle) {
         throw new Error("Right paddle button not found");
       }
