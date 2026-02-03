@@ -13,9 +13,8 @@ import { shouldRunIntegrationTests } from "../testUtils";
 import { createTestEnvironment, cleanupTestEnvironment, preloadTestModules } from "../ipc/setup";
 import { cleanupTempGitRepo, createTempGitRepo } from "../ipc/helpers";
 
-import { installDom } from "./dom";
 import { renderApp } from "./renderReviewPanel";
-import { cleanupView } from "./helpers";
+import { cleanupView, setupTestDom } from "./helpers";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
@@ -28,7 +27,7 @@ describeIntegration("Secrets Import (UI)", () => {
     const env = await createTestEnvironment();
     const sourceRepoPath = await createTempGitRepo();
     const targetRepoPath = await createTempGitRepo();
-    const cleanupDom = installDom();
+    const cleanupDom = setupTestDom();
 
     let view: ReturnType<typeof renderApp> | undefined;
 

@@ -149,15 +149,12 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
       const sourceSecrets = await getSecrets(sourceProjectPath);
       if (sourceSecrets.length === 0) return;
 
-      // Get current keys (normalized to uppercase for comparison)
-      const existingKeys = new Set(secrets.map((s) => s.key.toUpperCase()));
-
-      // Filter to only new secrets (keys that don't already exist)
-      const newSecrets = sourceSecrets.filter((s) => !existingKeys.has(s.key.toUpperCase()));
-
-      if (newSecrets.length > 0) {
-        setSecrets([...secrets, ...newSecrets]);
-      }
+      // Use functional update to safely merge with any edits made during the async fetch
+      setSecrets((current) => {
+        const existingKeys = new Set(current.map((s) => s.key.toUpperCase()));
+        const newSecrets = sourceSecrets.filter((s) => !existingKeys.has(s.key.toUpperCase()));
+        return newSecrets.length > 0 ? [...current, ...newSecrets] : current;
+      });
     } catch (err) {
       console.error("Failed to import secrets:", err);
     } finally {
