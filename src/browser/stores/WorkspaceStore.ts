@@ -2015,9 +2015,17 @@ export class WorkspaceStore {
     // Handle non-buffered special events first
     if (isStreamError(data)) {
       const transient = this.assertChatTransientState(workspaceId);
-      applyWorkspaceChatEventToAggregator(aggregator, data, {
-        allowSideEffects: transient.caughtUp,
-      });
+
+      const hasActiveStream = transient.pendingStreamEvents.some(
+        (e) => "type" in e && e.type === "stream-start"
+      );
+
+      // Suppress side effects during historical replay, but allow live errors to disable routing/show
+      // toasts during reconnect/startup when an active stream exists.
+      const allowSideEffects =
+        !transient.replayingHistory && (transient.caughtUp || hasActiveStream);
+
+      applyWorkspaceChatEventToAggregator(aggregator, data, { allowSideEffects });
 
       // Increment retry attempt counter when stream fails.
       updatePersistedState(
