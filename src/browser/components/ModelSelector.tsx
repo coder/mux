@@ -258,7 +258,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const containerClassName = cn("relative flex items-center gap-1", isBoxVariant && "w-full");
     const triggerClassName = isBoxVariant
       ? cn("border-border-medium h-9 flex-1 min-w-0 rounded border", className)
-      : "w-[190px] bg-background rounded-sm text-[11px]";
+      : "w-[160px] bg-background rounded-sm text-[11px]";
 
     const hasValue = value.trim().length > 0;
     const selectedProvider = hasValue ? getModelProvider(value) : "";
@@ -331,9 +331,9 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
               aria-expanded={isOpen}
               variant="ghost"
               size="xs"
-              onClick={() => setIsOpen(true)}
+              onClick={() => setIsOpen((prev) => !prev)}
             >
-              <span className="flex min-w-0 items-center gap-1.5 truncate">
+              <span className="flex min-w-0 items-center gap-1.5">
                 {selectedProvider && (
                   <ProviderIcon
                     provider={selectedProvider}
