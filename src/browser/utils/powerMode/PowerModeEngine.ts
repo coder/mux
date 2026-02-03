@@ -1,5 +1,6 @@
 // Inspired by Joel Besada's "activate-power-mode" (MIT).
-// Audio clips are sourced from that project (see assets/audio/activate-power-mode/LICENSE.txt).
+// The original project uses pre-recorded WAVs; we synthesize similar clicks/pops via the Web Audio API
+// to keep latency low and avoid shipping audio assets.
 
 interface Particle {
   x: number;
@@ -31,10 +32,10 @@ export class PowerModeEngine {
   private shakePrevTransform: string | null = null;
   private lastShakeTimeMs = 0;
 
-  private typewriterPool: HTMLAudioElement[] = [];
-  private gunPool: HTMLAudioElement[] = [];
-  private typewriterIndex = 0;
-  private gunIndex = 0;
+  private audioCtx: AudioContext | null = null;
+  private audioMasterGain: GainNode | null = null;
+  private audioNoiseBuffer: AudioBuffer | null = null;
+  private audioInitFailed = false;
 
   private resizeListenerActive = false;
 
@@ -59,22 +60,6 @@ export class PowerModeEngine {
 
     this.clearShake();
     this.shakeEl = el;
-  }
-
-  setAudio(urls: { typewriterUrl: string; gunUrl: string } | null): void {
-    if (!urls) {
-      this.typewriterPool = [];
-      this.gunPool = [];
-      this.typewriterIndex = 0;
-      this.gunIndex = 0;
-      return;
-    }
-
-    // Keep pools small to avoid unnecessary overhead.
-    this.typewriterPool = this.createAudioPool(urls.typewriterUrl, 6, 0.08);
-    this.gunPool = this.createAudioPool(urls.gunUrl, 2, 0.04);
-    this.typewriterIndex = 0;
-    this.gunIndex = 0;
   }
 
   burst(x: number, y: number, intensity = 1, options?: BurstOptions): void {
@@ -124,6 +109,7 @@ export class PowerModeEngine {
     this.particles = [];
     this.stopAnimation();
     this.clearShake();
+    this.stopAudio();
   }
 
   private startAnimationIfNeeded(): void {
@@ -271,47 +257,238 @@ export class PowerModeEngine {
   }
 
   private maybePlaySounds(intensity: number, kind: PowerModeBurstKind): void {
-    // Typing audio should feel subtle; avoid errors if autoplay is blocked.
-    if (this.typewriterPool.length > 0) {
-      const base = kind === "delete" ? 0.35 : 0.55;
-      const typeChance = Math.min(0.95, base + intensity * 0.06);
-      if (Math.random() <= typeChance) {
-        this.playFromPool(this.typewriterPool, "typewriter");
-      }
+    // Audio should feel subtle; fail silently if AudioContext is unavailable or blocked.
+    const base = kind === "delete" ? 0.35 : 0.55;
+    const typeChance = Math.min(0.95, base + intensity * 0.06);
+    if (Math.random() <= typeChance) {
+      this.playTypewriter(intensity, kind);
     }
 
-    if (this.gunPool.length > 0) {
-      const cap = kind === "delete" ? 0.2 : 0.12;
-      const gunChance = Math.min(cap, (kind === "delete" ? 0.03 : 0.015) * intensity);
-      if (Math.random() <= gunChance) {
-        this.playFromPool(this.gunPool, "gun");
-      }
+    const cap = kind === "delete" ? 0.2 : 0.12;
+    const gunChance = Math.min(cap, (kind === "delete" ? 0.03 : 0.015) * intensity);
+    if (Math.random() <= gunChance) {
+      this.playGun(intensity, kind);
     }
   }
 
-  private playFromPool(pool: HTMLAudioElement[], kind: "typewriter" | "gun"): void {
-    const nextIndex = kind === "typewriter" ? this.typewriterIndex++ : this.gunIndex++;
-    const audio = pool[nextIndex % pool.length];
+  private stopAudio(): void {
+    const ctx = this.audioCtx;
+    if (!ctx) return;
+
+    this.audioCtx = null;
+    this.audioMasterGain = null;
+    this.audioNoiseBuffer = null;
+
+    ctx.close().catch(() => {
+      // Ignored.
+    });
+  }
+
+  private ensureAudioContext(): AudioContext | null {
+    if (this.audioInitFailed) {
+      return null;
+    }
+
+    const existing = this.audioCtx;
+    if (existing && existing.state !== "closed") {
+      return existing;
+    }
+
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    const AudioContextConstructor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+    if (!AudioContextConstructor) {
+      this.audioInitFailed = true;
+      return null;
+    }
 
     try {
-      audio.currentTime = 0;
-      void audio.play().catch(() => {
-        // Ignored: browsers may block audio until a gesture; typing usually counts.
-      });
+      const ctx = new AudioContextConstructor();
+      const masterGain = ctx.createGain();
+      // Keep this subtle; per-sound envelopes are tuned against this base.
+      masterGain.gain.value = 0.12;
+      masterGain.connect(ctx.destination);
+
+      this.audioCtx = ctx;
+      this.audioMasterGain = masterGain;
+      this.audioNoiseBuffer = null;
+
+      return ctx;
     } catch {
-      // Ignored.
+      this.audioInitFailed = true;
+      return null;
     }
   }
 
-  private createAudioPool(url: string, size: number, volume: number): HTMLAudioElement[] {
-    const pool: HTMLAudioElement[] = [];
-    for (let i = 0; i < size; i++) {
-      const audio = new Audio(url);
-      audio.preload = "auto";
-      audio.volume = volume;
-      pool.push(audio);
+  private ensureNoiseBuffer(ctx: AudioContext): AudioBuffer | null {
+    if (this.audioNoiseBuffer) {
+      return this.audioNoiseBuffer;
     }
-    return pool;
+
+    try {
+      const durationS = 0.18;
+      const frames = Math.max(1, Math.floor(ctx.sampleRate * durationS));
+      const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+
+      this.audioNoiseBuffer = buffer;
+      return buffer;
+    } catch {
+      return null;
+    }
+  }
+
+  private tryResumeAudioContext(ctx: AudioContext): void {
+    if (ctx.state !== "suspended") {
+      return;
+    }
+
+    ctx.resume().catch(() => {
+      // Ignored: browsers may block audio until a gesture; typing usually counts.
+    });
+  }
+
+  private safeDisconnect(...nodes: AudioNode[]): void {
+    for (const node of nodes) {
+      try {
+        node.disconnect();
+      } catch {
+        // Ignored.
+      }
+    }
+  }
+
+  private playTypewriter(intensity: number, kind: PowerModeBurstKind): void {
+    const ctx = this.ensureAudioContext();
+    const masterGain = this.audioMasterGain;
+    if (!ctx || !masterGain) {
+      return;
+    }
+
+    const noiseBuffer = this.ensureNoiseBuffer(ctx);
+    if (!noiseBuffer) {
+      return;
+    }
+
+    this.tryResumeAudioContext(ctx);
+
+    const t0 = ctx.currentTime;
+    const intensityT = (Math.max(1, Math.min(12, intensity)) - 1) / 11;
+
+    const noiseSource = ctx.createBufferSource();
+    noiseSource.buffer = noiseBuffer;
+    noiseSource.playbackRate.value = kind === "delete" ? 1.15 : 1.0;
+
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = "highpass";
+    noiseFilter.frequency.setValueAtTime(kind === "delete" ? 900 : 1200, t0);
+    noiseFilter.Q.setValueAtTime(0.7, t0);
+
+    const noiseGain = ctx.createGain();
+    const clickPeak = (kind === "delete" ? 0.55 : 0.65) + intensityT * 0.15;
+    noiseGain.gain.setValueAtTime(0.0001, t0);
+    noiseGain.gain.linearRampToValueAtTime(clickPeak, t0 + 0.002);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.04);
+
+    const thudOsc = ctx.createOscillator();
+    thudOsc.type = "triangle";
+    const baseFreq = kind === "delete" ? 150 : 180;
+    thudOsc.frequency.setValueAtTime(baseFreq + intensityT * 30, t0);
+
+    const thudGain = ctx.createGain();
+    const thudPeak = (kind === "delete" ? 0.18 : 0.15) + intensityT * 0.05;
+    thudGain.gain.setValueAtTime(0.0001, t0);
+    thudGain.gain.linearRampToValueAtTime(thudPeak, t0 + 0.001);
+    thudGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.03);
+
+    noiseSource.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(masterGain);
+
+    thudOsc.connect(thudGain);
+    thudGain.connect(masterGain);
+
+    const stopTime = t0 + 0.06;
+    noiseSource.start(t0);
+    noiseSource.stop(stopTime);
+    thudOsc.start(t0);
+    thudOsc.stop(stopTime);
+
+    noiseSource.onended = () => {
+      this.safeDisconnect(noiseSource, noiseFilter, noiseGain, thudOsc, thudGain);
+    };
+  }
+
+  private playGun(intensity: number, kind: PowerModeBurstKind): void {
+    const ctx = this.ensureAudioContext();
+    const masterGain = this.audioMasterGain;
+    if (!ctx || !masterGain) {
+      return;
+    }
+
+    const noiseBuffer = this.ensureNoiseBuffer(ctx);
+    if (!noiseBuffer) {
+      return;
+    }
+
+    this.tryResumeAudioContext(ctx);
+
+    const t0 = ctx.currentTime;
+    const intensityT = (Math.max(1, Math.min(12, intensity)) - 1) / 11;
+
+    const noiseSource = ctx.createBufferSource();
+    noiseSource.buffer = noiseBuffer;
+    noiseSource.playbackRate.value = kind === "delete" ? 0.75 : 0.85;
+
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = "lowpass";
+    noiseFilter.frequency.setValueAtTime(kind === "delete" ? 900 : 700, t0);
+    noiseFilter.Q.setValueAtTime(0.9, t0);
+
+    const gain = ctx.createGain();
+    const peak = (kind === "delete" ? 0.38 : 0.33) + intensityT * 0.08;
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(peak, t0 + 0.003);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    const startFreq = (kind === "delete" ? 220 : 200) + intensityT * 50;
+    const endFreq = kind === "delete" ? 70 : 90;
+    osc.frequency.setValueAtTime(startFreq, t0);
+    osc.frequency.exponentialRampToValueAtTime(endFreq, t0 + 0.09);
+
+    const oscGain = ctx.createGain();
+    const oscPeak = (kind === "delete" ? 0.18 : 0.14) + intensityT * 0.04;
+    oscGain.gain.setValueAtTime(0.0001, t0);
+    oscGain.gain.linearRampToValueAtTime(oscPeak, t0 + 0.003);
+    oscGain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
+
+    noiseSource.connect(noiseFilter);
+    noiseFilter.connect(gain);
+    gain.connect(masterGain);
+
+    osc.connect(oscGain);
+    oscGain.connect(masterGain);
+
+    const stopTime = t0 + 0.14;
+    noiseSource.start(t0);
+    noiseSource.stop(stopTime);
+    osc.start(t0);
+    osc.stop(stopTime);
+
+    noiseSource.onended = () => {
+      this.safeDisconnect(noiseSource, noiseFilter, gain, osc, oscGain);
+    };
   }
 
   private setResizeListenerActive(active: boolean): void {
