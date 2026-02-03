@@ -26,6 +26,7 @@ import { GovernorSection } from "./sections/GovernorSection";
 import { Button } from "@/browser/components/ui/button";
 import { MCPSettingsSection } from "./sections/MCPSettingsSection";
 import { SecretsSection } from "./sections/SecretsSection";
+import { RemoteServersSection } from "./sections/RemoteServersSection";
 import { LayoutsSection } from "./sections/LayoutsSection";
 import { ExperimentsSection } from "./sections/ExperimentsSection";
 import { KeybindsSection } from "./sections/KeybindsSection";
@@ -61,6 +62,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Secrets",
     icon: <Lock className="h-4 w-4" />,
     component: SecretsSection,
+  },
+  {
+    id: "remoteServers",
+    label: "Remote Servers",
+    icon: <Server className="h-4 w-4" />,
+    component: RemoteServersSection,
   },
   {
     id: "models",
