@@ -175,7 +175,6 @@ test("archive merged workspaces prompt submits selected project", async () => {
     if (originalConfirm) {
       (globalThis as unknown as { confirm: typeof confirm }).confirm = originalConfirm;
     } else {
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete (globalThis as unknown as { confirm?: typeof confirm }).confirm;
     }
   }
