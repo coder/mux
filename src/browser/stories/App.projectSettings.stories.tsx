@@ -23,7 +23,7 @@ import { getMCPTestResultsKey } from "@/common/constants/storage";
 
 export default {
   ...appMeta,
-  title: "App/Project Settings",
+  title: "App/Settings/MCP",
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -63,9 +63,9 @@ const POSTHOG_TOOLS = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface MCPStoryOptions {
-  /** MCP servers configured at project level */
+  /** Global MCP servers (Settings → MCP) */
   servers?: Record<string, MCPServerInfo>;
-  /** Optional mock OAuth auth status per server name (serverName -> status) */
+  /** Optional mock OAuth auth status per MCP server URL (serverUrl -> status) */
   mcpOauthAuthStatus?: Map<string, MCPOAuthAuthStatus>;
   /** Workspace-level MCP overrides */
   workspaceOverrides?: {
@@ -75,7 +75,7 @@ interface MCPStoryOptions {
   };
   /** Test results for each server (tools available) */
   testResults?: Record<string, string[]>;
-  /** Project secrets (used for secret-backed MCP header dropdowns) */
+  /** Global secrets (used for secret-backed MCP header dropdowns) */
   secrets?: Secret[];
   /** Pre-cache test results in localStorage */
   preCacheTools?: boolean;
@@ -97,7 +97,7 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
 
   // Pre-cache tool test results if requested
   if (options.preCacheTools && options.testResults) {
-    const cacheKey = getMCPTestResultsKey(projectPath);
+    const cacheKeys = [getMCPTestResultsKey("__global__"), getMCPTestResultsKey(projectPath)];
     const cacheData: Record<
       string,
       { result: { success: true; tools: string[] }; testedAt: number }
@@ -108,7 +108,9 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
         testedAt: Date.now(),
       };
     }
-    localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+    for (const cacheKey of cacheKeys) {
+      localStorage.setItem(cacheKey, JSON.stringify(cacheData));
+    }
   }
 
   // Build mock data
@@ -143,7 +145,9 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
+    globalSecrets: options.secrets ?? [],
     projectSecrets,
+    globalMcpServers: options.servers ?? {},
     mcpServers,
     mcpOverrides,
     mcpTestResults,
@@ -151,7 +155,7 @@ function setupMCPStory(options: MCPStoryOptions = {}): APIClient {
   });
 }
 
-/** Open settings modal and navigate to Projects section, scrolling to MCP servers */
+/** Open settings modal and navigate to MCP section */
 async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
   const canvas = within(canvasElement);
   const body = within(canvasElement.ownerDocument.body);
@@ -161,10 +165,9 @@ async function openProjectSettings(canvasElement: HTMLElement): Promise<void> {
 
   await body.findByRole("dialog", {}, { timeout: 10000 });
 
-  const projectsButton = await body.findByRole("button", { name: /Projects/i });
-  await userEvent.click(projectsButton);
+  const mcpButton = await body.findByRole("button", { name: /^MCP$/i });
+  await userEvent.click(mcpButton);
 
-  // Scroll to MCP Servers section (past Idle Compaction)
   const mcpHeading = await body.findByText("MCP Servers");
   mcpHeading.scrollIntoView({ block: "start" });
 }
@@ -420,7 +423,7 @@ export const ProjectSettingsOAuthNotLoggedIn: AppStory = {
           },
           mcpOauthAuthStatus: new Map<string, MCPOAuthAuthStatus>([
             [
-              "remote-oauth",
+              "https://example.com/mcp",
               {
                 serverUrl: "https://example.com/mcp",
                 isLoggedIn: false,
@@ -460,7 +463,7 @@ export const ProjectSettingsOAuthLoggedIn: AppStory = {
           },
           mcpOauthAuthStatus: new Map<string, MCPOAuthAuthStatus>([
             [
-              "remote-oauth",
+              "https://example.com/mcp",
               {
                 serverUrl: "https://example.com/mcp",
                 isLoggedIn: true,
