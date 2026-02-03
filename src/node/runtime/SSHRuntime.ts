@@ -746,6 +746,7 @@ export class SSHRuntime extends RemoteRuntime {
       } else {
         const hookExists = await checkInitHookExists(projectPath);
         if (hookExists) {
+          initLogger.enterHookPhase?.();
           const muxEnv = { ...env, ...getMuxEnv(projectPath, "ssh", branchName) };
           // Expand tilde in hook path (quoted paths don't auto-expand on remote)
           const hookPath = expandHookPath(`${workspacePath}/.mux/init`);

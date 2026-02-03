@@ -338,6 +338,9 @@ export class WorkspaceService extends EventEmitter {
       logComplete: (exitCode: number) => {
         void this.initStateManager.endInit(workspaceId, exitCode);
       },
+      enterHookPhase: () => {
+        this.initStateManager.enterHookPhase(workspaceId);
+      },
     };
   }
 
@@ -1005,6 +1008,9 @@ export class WorkspaceService extends EventEmitter {
 
       // Dispose session
       this.disposeSession(workspaceId);
+
+      // Avoid leaking init waiters/logs after workspace deletion.
+      this.initStateManager.clearInMemoryState(workspaceId);
 
       // Close any terminal sessions for this workspace
       this.terminalService?.closeWorkspaceSessions(workspaceId);
