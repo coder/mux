@@ -92,7 +92,7 @@ export const ProjectMCPOverview: React.FC<ProjectMCPOverviewProps> = (props) => 
           variant="secondary"
           size="sm"
           className="shrink-0"
-          onClick={() => settings.openProjectSettings(projectPath)}
+          onClick={() => settings.open("mcp")}
         >
           <Plus />
           Add MCP server

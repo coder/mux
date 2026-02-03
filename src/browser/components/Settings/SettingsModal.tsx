@@ -4,13 +4,14 @@ import {
   Key,
   Cpu,
   X,
-  Briefcase,
   FlaskConical,
   Bot,
   Keyboard,
   Layout,
   BrainCircuit,
   ShieldCheck,
+  Server,
+  Lock,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
@@ -23,7 +24,8 @@ import { ModelsSection } from "./sections/ModelsSection";
 import { System1Section } from "./sections/System1Section";
 import { GovernorSection } from "./sections/GovernorSection";
 import { Button } from "@/browser/components/ui/button";
-import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
+import { MCPSettingsSection } from "./sections/MCPSettingsSection";
+import { SecretsSection } from "./sections/SecretsSection";
 import { LayoutsSection } from "./sections/LayoutsSection";
 import { ExperimentsSection } from "./sections/ExperimentsSection";
 import { KeybindsSection } from "./sections/KeybindsSection";
@@ -49,10 +51,16 @@ const BASE_SECTIONS: SettingsSection[] = [
     component: ProvidersSection,
   },
   {
-    id: "projects",
-    label: "Projects",
-    icon: <Briefcase className="h-4 w-4" />,
-    component: ProjectSettingsSection,
+    id: "mcp",
+    label: "MCP",
+    icon: <Server className="h-4 w-4" />,
+    component: MCPSettingsSection,
+  },
+  {
+    id: "secrets",
+    label: "Secrets",
+    icon: <Lock className="h-4 w-4" />,
+    component: SecretsSection,
   },
   {
     id: "models",

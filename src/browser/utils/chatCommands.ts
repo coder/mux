@@ -299,7 +299,7 @@ export async function processSlashCommand(
 
   if (parsed.type === "mcp-open") {
     setInput("");
-    context.openSettings?.("projects");
+    context.openSettings?.("mcp");
     return { clearInput: true, toastShown: false };
   }
 
