@@ -104,8 +104,9 @@ const MuxChatHelpButton: React.FC<{
   );
 };
 
+// Keep the project header visible while scrolling through long workspace lists.
 const PROJECT_ITEM_BASE_CLASS =
-  "py-2 pl-2 pr-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
+  "sticky top-0 z-10 py-2 pl-2 pr-3 flex items-center border-l-transparent bg-sidebar transition-colors duration-150";
 
 function getProjectItemClassName(opts: {
   isDragging: boolean;
