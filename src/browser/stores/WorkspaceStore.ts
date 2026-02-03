@@ -823,12 +823,17 @@ export class WorkspaceStore {
 
     const controller = new AbortController();
     const { signal } = controller;
+    let iterator: AsyncIterator<WorkspaceStatsSnapshot> | null = null;
 
     (async () => {
       try {
-        const iterator = await this.client!.workspace.stats.subscribe({ workspaceId }, { signal });
+        const subscribedIterator = await this.client!.workspace.stats.subscribe(
+          { workspaceId },
+          { signal }
+        );
+        iterator = subscribedIterator;
 
-        for await (const snapshot of iterator) {
+        for await (const snapshot of subscribedIterator) {
           if (signal.aborted) break;
           queueMicrotask(() => {
             if (signal.aborted) {
@@ -844,7 +849,10 @@ export class WorkspaceStore {
       }
     })();
 
-    this.statsUnsubscribers.set(workspaceId, () => controller.abort());
+    this.statsUnsubscribers.set(workspaceId, () => {
+      controller.abort();
+      void iterator?.return?.();
+    });
   }
 
   /**
