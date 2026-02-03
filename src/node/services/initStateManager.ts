@@ -393,6 +393,7 @@ export class InitStateManager extends EventEmitter {
    * - Init running: waits for runtime provisioning to reach the hook phase (no timeout),
    *   then waits up to 5 minutes from hook start before proceeding anyway.
    * - If abortSignal is provided, resolves early when aborted.
+   * - If the workspace is deleted during init, resolves early when state is cleared.
    *
    * This method NEVER throws - tools should always proceed. If init fails or times out,
    * the tool will either succeed (if init wasn't critical) or fail with its own error
@@ -451,8 +452,9 @@ export class InitStateManager extends EventEmitter {
         abortSignal.addEventListener("abort", abortHandler, { once: true });
       });
 
-      // User request: allow long runtime provisioning (Coder/devcontainer/etc.)
-      // without timing out. Only start the 5-minute timer once .mux/init begins.
+      // Intentional: provisioning (Coder/devcontainer/etc.) can be long-running, so we
+      // avoid timeouts until .mux/init begins. The wait is still interruptible via
+      // abortSignal or workspace deletion (clearInMemoryState).
       const phase = state.phase ?? "runtime_setup";
       if (phase === "runtime_setup") {
         const first = await Promise.race([

@@ -394,7 +394,7 @@ describe("InitStateManager", () => {
   });
 
   describe("waitForInit hook phase", () => {
-    it("should not time out during runtime setup", async () => {
+    it("should not time out during runtime setup (intentional)", async () => {
       const workspaceId = "test-workspace";
       manager.startInit(workspaceId, "/path/to/hook");
 
