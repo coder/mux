@@ -419,6 +419,8 @@ export function GovernorSection() {
           <Button
             variant="secondary"
             onClick={() => {
+              // Bump attempt to invalidate any in-flight browser flow listeners
+              enrollAttemptRef.current += 1;
               if (isDesktop && desktopFlowId && api) {
                 void api.muxGovernorOauth.cancelDesktopFlow({ flowId: desktopFlowId });
               }
