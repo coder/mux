@@ -44,6 +44,14 @@ import {
   type CoderControlsProps,
 } from "./CoderControls";
 
+/**
+ * Shared styling for inline form controls in the creation UI.
+ * Used by both Select and text inputs to ensure visual consistency.
+ * Fixed width ensures Select (with chevron) and text inputs render identically.
+ */
+const INLINE_CONTROL_CLASSES =
+  "h-7 w-[140px] rounded border border-border-medium bg-separator px-2 text-xs text-foreground focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-50";
+
 /** Shared runtime config text input - used for SSH host, Docker image, etc. */
 function RuntimeConfigInput(props: {
   label: string;
@@ -68,10 +76,7 @@ function RuntimeConfigInput(props: {
         onChange={(e) => props.onChange(e.target.value)}
         placeholder={props.placeholder}
         disabled={props.disabled}
-        className={cn(
-          "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-xs focus:outline-none disabled:opacity-50",
-          props.hasError && "border-red-500"
-        )}
+        className={cn(INLINE_CONTROL_CLASSES, props.hasError && "border-red-500")}
       />
     </div>
   );
@@ -766,7 +771,7 @@ export function CreationControls(props: CreationControlsProps) {
                 options={props.branches}
                 onChange={props.onTrunkBranchChange}
                 disabled={props.disabled}
-                className="h-7 max-w-[140px]"
+                className={INLINE_CONTROL_CLASSES}
               />
             </div>
           )}
@@ -774,7 +779,7 @@ export function CreationControls(props: CreationControlsProps) {
           {showBranchLoadingPlaceholder && (
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground text-xs">from</span>
-              <div className="bg-bg-dark/50 h-7 w-24 animate-pulse rounded-md" />
+              <div className="border-border-medium bg-separator/50 h-7 w-[140px] animate-pulse rounded border" />
             </div>
           )}
 
