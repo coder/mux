@@ -456,9 +456,31 @@ function AppInner() {
         const result = await api.workspace.archiveMergedInProject({
           projectPath: trimmedProjectPath,
         });
+
         if (!result.success) {
           if (typeof window !== "undefined") {
             window.alert(result.error);
+          }
+          return;
+        }
+
+        const errorCount = result.data.errors.length;
+        if (errorCount > 0) {
+          const archivedCount = result.data.archivedWorkspaceIds.length;
+          const skippedCount = result.data.skippedWorkspaceIds.length;
+
+          const MAX_ERRORS_TO_SHOW = 5;
+          const shownErrors = result.data.errors
+            .slice(0, MAX_ERRORS_TO_SHOW)
+            .map((e) => `- ${e.workspaceId}: ${e.error}`)
+            .join("\n");
+          const remainingCount = Math.max(0, errorCount - MAX_ERRORS_TO_SHOW);
+          const remainingSuffix = remainingCount > 0 ? `\n… and ${remainingCount} more.` : "";
+
+          if (typeof window !== "undefined") {
+            window.alert(
+              `Archived merged workspaces with some errors.\n\nArchived: ${archivedCount}\nSkipped: ${skippedCount}\nErrors: ${errorCount}\n\nErrors:\n${shownErrors}${remainingSuffix}`
+            );
           }
         }
       } catch (error) {

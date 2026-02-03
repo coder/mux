@@ -797,6 +797,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         id: CommandIds.workspaceArchiveMergedInProject(),
         title: "Archive Merged Workspaces in Project…",
         section: section.projects,
+        keywords: ["archive", "merged", "pr", "github", "gh", "cleanup"],
         run: () => undefined,
         prompt: {
           title: "Archive Merged Workspaces in Project",
@@ -819,7 +820,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
             const projectName = projectPath.split("/").pop() ?? projectPath;
 
             const ok = confirm(
-              `Archive merged workspaces in ${projectName}?\n\nThis will archive (not delete) workspaces in this project whose GitHub PR is merged. This is reversible.\n\nThis uses GitHub via the gh CLI. Make sure gh is installed and authenticated.`
+              `Archive merged workspaces in ${projectName}?\n\nThis will archive (not delete) workspaces in this project whose GitHub PR is merged. This is reversible.\n\nThis may start/wake workspace runtimes and can take a while.\n\nThis uses GitHub via the gh CLI. Make sure gh is installed and authenticated.`
             );
             if (!ok) return;
 
