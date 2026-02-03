@@ -739,10 +739,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
 
+  // User request: this sync effect runs on mount and when defaults/config change.
+  // Only treat *real* agent changes as explicit (origin "agent"); everything else is "sync".
+  const prevCreationAgentIdRef = useRef<string | null>(null);
+  const prevCreationScopeIdRef = useRef<string | null>(null);
   // Creation variant: keep the project-scoped model/thinking in sync with global agent defaults
   // so switching agents uses the configured defaults (and respects "inherit" semantics).
   useEffect(() => {
     if (variant !== "creation") {
+      // Reset tracking on variant transitions so creation entry never counts as an explicit switch.
+      prevCreationAgentIdRef.current = null;
+      prevCreationScopeIdRef.current = null;
       return;
     }
 
@@ -757,6 +764,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         ? agentId.trim().toLowerCase()
         : "exec";
 
+    const isExplicitAgentSwitch =
+      prevCreationAgentIdRef.current !== null &&
+      prevCreationScopeIdRef.current === scopeId &&
+      prevCreationAgentIdRef.current !== normalizedAgentId;
+
+    // Update refs for the next run (even if no model changes).
+    prevCreationAgentIdRef.current = normalizedAgentId;
+    prevCreationScopeIdRef.current = scopeId;
+
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
     const candidateModel = agentAiDefaults[normalizedAgentId]?.modelString ?? existingModel;
     const resolvedModel =
@@ -770,7 +786,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
     if (existingModel !== resolvedModel) {
-      setWorkspaceModelWithOrigin(scopeId, resolvedModel, "agent");
+      setWorkspaceModelWithOrigin(scopeId, resolvedModel, isExplicitAgentSwitch ? "agent" : "sync");
     }
 
     if (existingThinking !== resolvedThinking) {

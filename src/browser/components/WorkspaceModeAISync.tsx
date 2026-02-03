@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import {
   readPersistedState,
@@ -35,6 +35,12 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     { listener: true }
   );
 
+  // User request: this effect runs on mount and during background sync (defaults/config).
+  // Only treat *real* agentId changes as explicit (origin "agent"); everything else is "sync"
+  // so we don't show context-switch warnings on workspace entry.
+  const prevAgentIdRef = useRef<string | null>(null);
+  const prevWorkspaceIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     const fallbackModel = getDefaultModel();
     const modelKey = getModelKey(workspaceId);
@@ -44,6 +50,15 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
       typeof agentId === "string" && agentId.trim().length > 0
         ? agentId.trim().toLowerCase()
         : "exec";
+
+    const isExplicitAgentSwitch =
+      prevAgentIdRef.current !== null &&
+      prevWorkspaceIdRef.current === workspaceId &&
+      prevAgentIdRef.current !== normalizedAgentId;
+
+    // Update refs for the next run (even if no model changes).
+    prevAgentIdRef.current = normalizedAgentId;
+    prevWorkspaceIdRef.current = workspaceId;
 
     const activeDescriptor = agents.find((entry) => entry.id === normalizedAgentId);
     const fallbackAgentId =
@@ -86,7 +101,11 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
     if (existingModel !== resolvedModel) {
-      setWorkspaceModelWithOrigin(workspaceId, resolvedModel, "agent");
+      setWorkspaceModelWithOrigin(
+        workspaceId,
+        resolvedModel,
+        isExplicitAgentSwitch ? "agent" : "sync"
+      );
     }
 
     if (existingThinking !== resolvedThinking) {

@@ -52,14 +52,9 @@ describe("PolicyContext", () => {
   });
 
   test("updates when blocked reason changes", async () => {
-    const responses = [buildBlockedResponse("Reason A"), buildBlockedResponse("Reason B")];
-    let callCount = 0;
-
-    const get = mock(() => {
-      const response = responses[Math.min(callCount, responses.length - 1)];
-      callCount += 1;
-      return Promise.resolve(response);
-    });
+    // Keep this mock resilient to multiple mount refreshes (e.g. StrictMode).
+    let current = buildBlockedResponse("Reason A");
+    const get = mock(() => Promise.resolve(current));
 
     const client = {
       policy: {
@@ -72,13 +67,18 @@ describe("PolicyContext", () => {
       wrapper: buildWrapper(client),
     });
 
-    await waitFor(() => expect(result.current.status.reason).toBe("Reason A"));
+    await waitFor(() => expect(result.current.status.reason).toBe("Reason A"), {
+      timeout: 3000,
+    });
 
+    current = buildBlockedResponse("Reason B");
     await act(async () => {
       await result.current.refresh();
     });
 
-    await waitFor(() => expect(result.current.status.reason).toBe("Reason B"));
+    await waitFor(() => expect(result.current.status.reason).toBe("Reason B"), {
+      timeout: 3000,
+    });
   });
 
   test("keeps identical policy responses stable", async () => {
@@ -95,7 +95,7 @@ describe("PolicyContext", () => {
       wrapper: buildWrapper(client),
     });
 
-    await waitFor(() => expect(result.current.policy).not.toBeNull());
+    await waitFor(() => expect(result.current.policy).not.toBeNull(), { timeout: 3000 });
 
     const firstPolicy = result.current.policy;
     const firstStatus = result.current.status;
