@@ -11,6 +11,7 @@ import type {
   ProjectConfig,
   ProjectsConfig,
   FeatureFlagOverride,
+  RemoteMuxServerConfig,
 } from "@/common/types/project";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -88,6 +89,95 @@ function parseOptionalPort(value: unknown): number | undefined {
 
   return value;
 }
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const REMOTE_MUX_SERVER_ID_RE = /^[a-zA-Z0-9._-]+$/;
+
+function parseRemoteMuxServerId(value: unknown): string | undefined {
+  const id = parseOptionalNonEmptyString(value);
+  if (!id) {
+    return undefined;
+  }
+
+  return REMOTE_MUX_SERVER_ID_RE.test(id) ? id : undefined;
+}
+
+function parseRemoteMuxProjectMappings(value: unknown): RemoteMuxServerConfig["projectMappings"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const mappings: RemoteMuxServerConfig["projectMappings"] = [];
+  for (const item of value) {
+    if (!isPlainObject(item)) {
+      continue;
+    }
+
+    const localProjectPath = parseOptionalNonEmptyString(item.localProjectPath);
+    const remoteProjectPath = parseOptionalNonEmptyString(item.remoteProjectPath);
+    if (!localProjectPath || !remoteProjectPath) {
+      continue;
+    }
+
+    mappings.push({ localProjectPath, remoteProjectPath });
+  }
+
+  return mappings;
+}
+
+function parseRemoteMuxServerConfig(value: unknown): RemoteMuxServerConfig | null {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const id = parseRemoteMuxServerId(value.id);
+  const label = parseOptionalNonEmptyString(value.label);
+  const baseUrlRaw = parseOptionalNonEmptyString(value.baseUrl);
+  const baseUrl = baseUrlRaw ? stripTrailingSlashes(baseUrlRaw) : undefined;
+
+  if (!id || !label || !baseUrl) {
+    return null;
+  }
+
+  return {
+    id,
+    label,
+    baseUrl,
+    enabled: parseOptionalBoolean(value.enabled),
+    projectMappings: parseRemoteMuxProjectMappings(value.projectMappings),
+  };
+}
+
+function parseRemoteMuxServerConfigs(value: unknown): RemoteMuxServerConfig[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const servers: RemoteMuxServerConfig[] = [];
+  const seenIds = new Set<string>();
+
+  for (let i = 0; i < value.length; i++) {
+    const parsed = parseRemoteMuxServerConfig(value[i]);
+    if (!parsed) {
+      log.warn("Filtering out malformed remote server config", { index: i });
+      continue;
+    }
+
+    if (seenIds.has(parsed.id)) {
+      log.warn("Filtering out remote server config with duplicate id", { id: parsed.id });
+      continue;
+    }
+
+    seenIds.add(parsed.id);
+    servers.push(parsed);
+  }
+
+  return servers.length > 0 ? servers : undefined;
+}
+
 export type ProvidersConfig = Record<string, ProviderConfig>;
 
 /**
@@ -125,6 +215,7 @@ export class Config {
           mdnsAdvertisementEnabled?: unknown;
           mdnsServiceName?: unknown;
           serverSshHost?: string;
+          remoteServers?: unknown;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
           layoutPresets?: unknown;
@@ -178,6 +269,8 @@ export class Config {
             ? undefined
             : layoutPresetsRaw;
 
+          const remoteServers = parseRemoteMuxServerConfigs(parsed.remoteServers);
+
           return {
             projects: projectsMap,
             apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -188,6 +281,7 @@ export class Config {
             mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
             mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
+            remoteServers,
             viewedSplashScreens: parsed.viewedSplashScreens,
             layoutPresets,
             taskSettings,
@@ -231,6 +325,7 @@ export class Config {
         mdnsAdvertisementEnabled?: boolean;
         mdnsServiceName?: string;
         serverSshHost?: string;
+        remoteServers?: ProjectsConfig["remoteServers"];
         viewedSplashScreens?: string[];
         layoutPresets?: ProjectsConfig["layoutPresets"];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
@@ -284,6 +379,11 @@ export class Config {
 
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
+      }
+
+      const remoteServers = parseRemoteMuxServerConfigs(config.remoteServers);
+      if (remoteServers) {
+        data.remoteServers = remoteServers;
       }
       if (config.featureFlagOverrides) {
         data.featureFlagOverrides = config.featureFlagOverrides;
