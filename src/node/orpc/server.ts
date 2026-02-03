@@ -155,7 +155,10 @@ export async function createOrpcServer({
   // Express app setup
   const app = express();
   app.use(cors());
+  // OAuth providers may use POST redirects (307/308) or response_mode=form_post.
+  // Support both JSON API requests and form-encoded callback payloads.
   app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ extended: false }));
 
   let spaIndexHtml: string | null = null;
 
@@ -182,6 +185,14 @@ export async function createOrpcServer({
     res.json({ ...VERSION, mode: "server" });
   });
 
+  function getStringParamFromQueryOrBody(req: express.Request, key: string): string | null {
+    const queryValue = req.query[key];
+    if (typeof queryValue === "string") return queryValue;
+
+    const bodyRecord = req.body as Record<string, unknown> | undefined;
+    const bodyValue = bodyRecord?.[key];
+    return typeof bodyValue === "string" ? bodyValue : null;
+  }
   // --- Mux Gateway OAuth (unauthenticated bootstrap routes) ---
   // These are raw Express routes (not oRPC) because the OAuth provider cannot
   // send a mux Bearer token during the redirect callback.
@@ -214,12 +225,17 @@ export async function createOrpcServer({
     res.json({ authorizeUrl, state });
   });
 
-  app.get("/auth/mux-gateway/callback", async (req, res) => {
-    const state = typeof req.query.state === "string" ? req.query.state : null;
-    const code = typeof req.query.code === "string" ? req.query.code : null;
-    const error = typeof req.query.error === "string" ? req.query.error : null;
-    const errorDescription =
-      typeof req.query.error_description === "string" ? req.query.error_description : undefined;
+  app.all("/auth/mux-gateway/callback", async (req, res) => {
+    // Some providers use 307/308 redirects that preserve POST, or response_mode=form_post.
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.sendStatus(405);
+      return;
+    }
+
+    const state = getStringParamFromQueryOrBody(req, "state");
+    const code = getStringParamFromQueryOrBody(req, "code");
+    const error = getStringParamFromQueryOrBody(req, "error");
+    const errorDescription = getStringParamFromQueryOrBody(req, "error_description") ?? undefined;
 
     const result = await context.muxGatewayOauthService.handleServerCallbackAndExchange({
       state,
@@ -373,12 +389,24 @@ export async function createOrpcServer({
     res.json({ authorizeUrl: result.data.authorizeUrl, state: result.data.state });
   });
 
-  app.get("/auth/mux-governor/callback", async (req, res) => {
-    const state = typeof req.query.state === "string" ? req.query.state : null;
-    const code = typeof req.query.code === "string" ? req.query.code : null;
-    const error = typeof req.query.error === "string" ? req.query.error : null;
-    const errorDescription =
-      typeof req.query.error_description === "string" ? req.query.error_description : undefined;
+  app.all("/auth/mux-governor/callback", async (req, res) => {
+    // Some providers use 307/308 redirects that preserve POST, or response_mode=form_post.
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.sendStatus(405);
+      return;
+    }
+
+    const state = getStringParamFromQueryOrBody(req, "state");
+    const code = getStringParamFromQueryOrBody(req, "code");
+    const error = getStringParamFromQueryOrBody(req, "error");
+    const errorDescription = getStringParamFromQueryOrBody(req, "error_description") ?? undefined;
+
+    log.debug("Governor OAuth callback received", {
+      method: req.method,
+      state,
+      hasCode: typeof code === "string" && code.length > 0,
+      hasError: typeof error === "string" && error.length > 0,
+    });
 
     const result = await context.muxGovernorOauthService.handleServerCallbackAndExchange({
       state,
@@ -481,12 +509,17 @@ export async function createOrpcServer({
 
   // --- MCP OAuth (unauthenticated redirect callback) ---
   // The OAuth provider cannot attach a mux Bearer token during redirects.
-  app.get("/auth/mcp-oauth/callback", async (req, res) => {
-    const state = typeof req.query.state === "string" ? req.query.state : null;
-    const code = typeof req.query.code === "string" ? req.query.code : null;
-    const error = typeof req.query.error === "string" ? req.query.error : null;
-    const errorDescription =
-      typeof req.query.error_description === "string" ? req.query.error_description : undefined;
+  app.all("/auth/mcp-oauth/callback", async (req, res) => {
+    // Some providers use 307/308 redirects that preserve POST, or response_mode=form_post.
+    if (req.method !== "GET" && req.method !== "POST") {
+      res.sendStatus(405);
+      return;
+    }
+
+    const state = getStringParamFromQueryOrBody(req, "state");
+    const code = getStringParamFromQueryOrBody(req, "code");
+    const error = getStringParamFromQueryOrBody(req, "error");
+    const errorDescription = getStringParamFromQueryOrBody(req, "error_description") ?? undefined;
 
     const result = await context.mcpOauthService.handleServerCallbackAndExchange({
       state,
@@ -703,7 +736,10 @@ export async function createOrpcServer({
         return;
       }
 
-      res.sendFile(path.join(staticDir, "index.html"));
+      // If the server was started with serveStatic enabled but the frontend build
+      // hasn't been generated (common in `make dev-server`), avoid throwing noisy
+      // NotFoundError stack traces. Let the request fall through to a normal 404.
+      next();
     });
   }
 
