@@ -96,8 +96,9 @@ export const SecretsProject: AppStory = {
     const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
     const dialogCanvas = within(dialog);
 
-    const projectScopeButton = await dialogCanvas.findByRole("button", { name: /^Project$/i });
-    await userEvent.click(projectScopeButton);
+    // Radix ToggleGroup (type="single") items render with role="radio".
+    const projectScopeToggle = await dialogCanvas.findByRole("radio", { name: /^Project$/i });
+    await userEvent.click(projectScopeToggle);
 
     await dialogCanvas.findByText(/Select a project to configure/i);
     await dialogCanvas.findByDisplayValue("PROJECT_TOKEN");
