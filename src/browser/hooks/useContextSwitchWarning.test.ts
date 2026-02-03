@@ -137,6 +137,42 @@ describe("useContextSwitchWarning", () => {
     await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
   });
 
+  test("warns when gateway model strings are normalized for explicit switches", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:gpt-5.2-codex";
+    const gatewayModel = "mux-gateway:openai/gpt-5.2-codex";
+    const limit = getEffectiveContextLimit(nextModel, false);
+    expect(limit).not.toBeNull();
+    if (!limit) return;
+
+    const tokens = Math.floor(limit * 1.05);
+    const props = {
+      workspaceId: "workspace-11",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(tokens, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      setWorkspaceModelWithOrigin(props.workspaceId, nextModel, "user");
+      rerender({
+        ...props,
+        pendingModel: gatewayModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(gatewayModel));
+  });
+
   test("warns when an agent-driven model change overflows context", async () => {
     const previousModel = "anthropic:claude-sonnet-4-5";
     const nextModel = "openai:gpt-5.2-codex";

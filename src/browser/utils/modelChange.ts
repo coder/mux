@@ -1,4 +1,5 @@
 import { getModelKey } from "@/common/constants/storage";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
 export type ModelChangeOrigin = "user" | "agent" | "sync";
@@ -11,13 +12,16 @@ interface ExplicitModelChange {
 // User request: keep origin tracking in-memory so UI-only warnings don't add persistence complexity.
 const pendingExplicitChanges = new Map<string, ExplicitModelChange>();
 
+const normalizeExplicitModel = (model: string): string => normalizeGatewayModel(model).trim();
+
 export function recordWorkspaceModelChange(
   workspaceId: string,
   model: string,
   origin: ModelChangeOrigin
 ): void {
   if (origin === "sync") return;
-  pendingExplicitChanges.set(workspaceId, { model, origin });
+  const normalized = normalizeExplicitModel(model);
+  pendingExplicitChanges.set(workspaceId, { model: normalized, origin });
 }
 
 export function consumeWorkspaceModelChange(
@@ -25,7 +29,8 @@ export function consumeWorkspaceModelChange(
   model: string
 ): ModelChangeOrigin | null {
   const entry = pendingExplicitChanges.get(workspaceId);
-  if (entry?.model !== model) return null;
+  const normalized = normalizeExplicitModel(model);
+  if (entry?.model !== normalized) return null;
   pendingExplicitChanges.delete(workspaceId);
   return entry.origin;
 }
