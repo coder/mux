@@ -22,6 +22,8 @@ import {
 import { Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
 import { useAPI } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
@@ -519,6 +521,7 @@ export function CreationControls(props: CreationControlsProps) {
     onRemoteServerIdChange,
   } = props;
   const { api } = useAPI();
+  const remoteMuxServersEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
 
   const [remoteServers, setRemoteServers] = useState<RemoteMuxServerListEntry[]>([]);
   const [remoteServersStatus, setRemoteServersStatus] = useState<"loading" | "loaded" | "error">(
@@ -528,15 +531,16 @@ export function CreationControls(props: CreationControlsProps) {
   const remoteServersRequestIdRef = useRef(0);
 
   useEffect(() => {
-    if (!api) {
+    // Bump requestId so in-flight results are ignored when the experiment/API toggles.
+    const requestId = remoteServersRequestIdRef.current + 1;
+    remoteServersRequestIdRef.current = requestId;
+
+    if (!remoteMuxServersEnabled || !api) {
       setRemoteServers([]);
       setRemoteServersStatus("loaded");
       setRemoteServersError(null);
       return;
     }
-
-    const requestId = remoteServersRequestIdRef.current + 1;
-    remoteServersRequestIdRef.current = requestId;
 
     setRemoteServersStatus("loading");
     setRemoteServersError(null);
@@ -573,7 +577,7 @@ export function CreationControls(props: CreationControlsProps) {
       setRemoteServersStatus("loaded");
       setRemoteServersError(null);
     }
-  }, [api]);
+  }, [api, remoteMuxServersEnabled]);
 
   const enabledRemoteServers = remoteServers.filter((entry) => entry.config.enabled !== false);
   const hasRemoteServers = enabledRemoteServers.length > 0;
