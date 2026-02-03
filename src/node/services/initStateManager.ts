@@ -185,6 +185,8 @@ export class InitStateManager extends EventEmitter {
       resolve = res;
       reject = rej;
     });
+    // Prevent unhandled rejections if a workspace is deleted before any waiters attach.
+    promise.catch(() => undefined);
     const hookPhasePromise = new Promise<void>((res) => {
       resolveHookPhase = res;
     });
