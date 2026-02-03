@@ -13,6 +13,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
+import { execSync } from "node:child_process";
 import { WebSocket } from "ws";
 import { RPCLink as HTTPRPCLink } from "@orpc/client/fetch";
 import { RPCLink as WebSocketRPCLink } from "@orpc/client/websocket";
@@ -25,6 +26,7 @@ import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import type { RouterClient } from "@orpc/server";
 import { createOrpcServer, type OrpcServer } from "@/node/orpc/server";
+import { encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 
 // --- Test Server Factory ---
 
@@ -370,5 +372,119 @@ describe("oRPC Server Endpoints", () => {
         close();
       }
     });
+  });
+
+  describe("Remote server workspace proxying", () => {
+    test(
+      "surfaces remote workspaces via workspace.list and supports remoteServers.workspaceCreate",
+      async () => {
+        const localClient = createHttpClient(serverHandle.server.baseUrl);
+
+        const serverId = "remote1";
+        let remoteHandle: TestServerHandle | null = null;
+        let projectPath: string | null = null;
+
+        try {
+          remoteHandle = await createTestServer();
+          const remoteClient = createHttpClient(remoteHandle.server.baseUrl);
+
+          projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mux-remote-workspace-project-"));
+
+          execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
+          execSync('git config user.email "test@example.com"', {
+            cwd: projectPath,
+            stdio: "ignore",
+          });
+          execSync('git config user.name "test"', { cwd: projectPath, stdio: "ignore" });
+          // Ensure tests don't hang when developers have global commit signing enabled.
+          execSync("git config commit.gpgsign false", { cwd: projectPath, stdio: "ignore" });
+          await fs.writeFile(path.join(projectPath, "README.md"), "hello\n", "utf-8");
+          execSync("git add README.md", { cwd: projectPath, stdio: "ignore" });
+          execSync('git commit -m "init"', { cwd: projectPath, stdio: "ignore" });
+
+          const remoteProjectResult = await remoteClient.projects.create({ projectPath });
+          expect(remoteProjectResult.success).toBe(true);
+          if (!remoteProjectResult.success) {
+            throw new Error(remoteProjectResult.error);
+          }
+
+          const remoteBranchA = `remote-branch-${Date.now().toString(36)}-a`;
+          const remoteWorkspaceA = await remoteClient.workspace.create({
+            projectPath,
+            branchName: remoteBranchA,
+            trunkBranch: "main",
+          });
+          expect(remoteWorkspaceA.success).toBe(true);
+          if (!remoteWorkspaceA.success) {
+            throw new Error(remoteWorkspaceA.error);
+          }
+
+          const upsertResult = await localClient.remoteServers.upsert({
+            config: {
+              id: serverId,
+              label: "Remote 1",
+              baseUrl: remoteHandle.server.baseUrl,
+              enabled: true,
+              projectMappings: [{ localProjectPath: projectPath, remoteProjectPath: projectPath }],
+            },
+            authToken: "",
+          });
+          expect(upsertResult.success).toBe(true);
+          if (!upsertResult.success) {
+            throw new Error(upsertResult.error);
+          }
+
+          const listed = await localClient.workspace.list();
+          const expectedSurfacedId = encodeRemoteWorkspaceId(
+            serverId,
+            remoteWorkspaceA.metadata.id
+          );
+          const surfaced = listed.find((w) => w.id === expectedSurfacedId);
+          expect(surfaced).toBeDefined();
+          expect(surfaced?.projectPath).toBe(projectPath);
+
+          const remoteBranchB = `remote-branch-${Date.now().toString(36)}-b`;
+          const proxyCreateResult = await localClient.remoteServers.workspaceCreate({
+            serverId,
+            localProjectPath: projectPath,
+            branchName: remoteBranchB,
+            trunkBranch: "main",
+          });
+          expect(proxyCreateResult.success).toBe(true);
+          if (!proxyCreateResult.success) {
+            throw new Error(proxyCreateResult.error);
+          }
+
+          expect(proxyCreateResult.metadata.projectPath).toBe(projectPath);
+
+          const remoteWorkspaces = await remoteClient.workspace.list();
+          const remoteWorkspaceB = remoteWorkspaces.find((w) => w.name === remoteBranchB);
+          if (!remoteWorkspaceB) {
+            throw new Error(`Remote workspace not found after proxy create: ${remoteBranchB}`);
+          }
+
+          expect(proxyCreateResult.metadata.id).toBe(
+            encodeRemoteWorkspaceId(serverId, remoteWorkspaceB.id)
+          );
+
+          const listedAfter = await localClient.workspace.list();
+          expect(listedAfter.some((w) => w.id === proxyCreateResult.metadata.id)).toBe(true);
+        } finally {
+          try {
+            await localClient.remoteServers.remove({ id: serverId });
+          } catch {
+            // Best-effort cleanup.
+          }
+
+          if (remoteHandle) {
+            await remoteHandle.close();
+          }
+          if (projectPath) {
+            await fs.rm(projectPath, { recursive: true, force: true });
+          }
+        }
+      },
+      { timeout: 60_000 }
+    );
   });
 });
