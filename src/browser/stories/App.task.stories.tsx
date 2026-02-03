@@ -691,7 +691,6 @@ export const TaskApplyGitPatchCommitList: AppStory = {
 
     const canvas = within(canvasElement);
     const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
-    const messageCanvas = within(messageWindow);
 
     const getToolHeader = (): HTMLElement => {
       const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
@@ -725,8 +724,20 @@ export const TaskApplyGitPatchCommitList: AppStory = {
       );
     }
 
-    await messageCanvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
-    await messageCanvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
+    const waitForCommitSubject = async (subject: string): Promise<void> => {
+      await waitFor(
+        () => {
+          if (!messageWindow.textContent?.includes(subject)) {
+            throw new Error(`Expected commit subject not found: ${subject}`);
+          }
+        },
+        // Keep this below the Storybook test-runner per-story timeout.
+        { timeout: 8000 }
+      );
+    };
+
+    await waitForCommitSubject("feat: add Apply Patch tool UI");
+    await waitForCommitSubject("fix: render applied commit list");
   },
 };
 
@@ -771,7 +782,6 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
 
     const canvas = within(canvasElement);
     const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
-    const messageCanvas = within(messageWindow);
 
     const getToolHeader = (): HTMLElement => {
       const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
@@ -805,8 +815,20 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
       );
     }
 
-    await messageCanvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
-    await messageCanvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
+    const waitForCommitSubject = async (subject: string): Promise<void> => {
+      await waitFor(
+        () => {
+          if (!messageWindow.textContent?.includes(subject)) {
+            throw new Error(`Expected commit subject not found: ${subject}`);
+          }
+        },
+        // Keep this below the Storybook test-runner per-story timeout.
+        { timeout: 8000 }
+      );
+    };
+
+    await waitForCommitSubject("feat: add Apply Patch tool UI");
+    await waitForCommitSubject("fix: render applied commit list");
   },
 };
 
