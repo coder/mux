@@ -697,16 +697,16 @@ export const TaskApplyGitPatchCommitList: AppStory = {
 
     const canvas = within(messageWindow);
 
-    const toolTitleCandidates = await canvas.findAllByText("Apply patch", {}, { timeout: 8000 });
-    const toolTitle =
-      toolTitleCandidates.find((candidate) => candidate.closest("summary")) ??
-      toolTitleCandidates[0];
+    // "Apply patch" appears multiple times within the tool card (header + content).
+    // Expand reliably by clicking the tool header associated with our task id.
+    const taskIdLabel = await canvas.findByText("task-fe-001", {}, { timeout: 8000 });
+    const toolHeader = taskIdLabel.closest("div.cursor-pointer");
 
-    if (!toolTitle) {
-      throw new Error("Apply patch tool title not found");
+    if (!(toolHeader instanceof HTMLElement)) {
+      throw new Error("Apply patch tool header not found");
     }
 
-    await userEvent.click(toolTitle);
+    await userEvent.click(toolHeader);
 
     await canvas.findByText("Commits", {}, { timeout: 8000 });
     await canvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
@@ -760,16 +760,16 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
 
     const canvas = within(messageWindow);
 
-    const toolTitleCandidates = await canvas.findAllByText("Apply patch", {}, { timeout: 8000 });
-    const toolTitle =
-      toolTitleCandidates.find((candidate) => candidate.closest("summary")) ??
-      toolTitleCandidates[0];
+    // "Apply patch" appears multiple times within the tool card (header + content).
+    // Expand reliably by clicking the tool header associated with our task id.
+    const taskIdLabel = await canvas.findByText("task-fe-001", {}, { timeout: 8000 });
+    const toolHeader = taskIdLabel.closest("div.cursor-pointer");
 
-    if (!toolTitle) {
-      throw new Error("Apply patch tool title not found");
+    if (!(toolHeader instanceof HTMLElement)) {
+      throw new Error("Apply patch tool header not found");
     }
 
-    await userEvent.click(toolTitle);
+    await userEvent.click(toolHeader);
 
     await canvas.findByText("Commits", {}, { timeout: 8000 });
     await canvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
