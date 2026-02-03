@@ -2408,11 +2408,26 @@ export const router = (authToken?: string) => {
               scheduleSnapshot();
             };
 
-            const initial = await context.sessionTimingService.getSnapshot(workspaceId);
-            lastPushedAtMs = initial.generatedAt;
-            queue.push(initial);
-
+            // Subscribe before awaiting the initial snapshot so we don't miss a
+            // stats-change event that happens while getSnapshot() is in-flight.
+            //
+            // Treat the initial snapshot fetch as inFlight to prevent scheduleSnapshot()
+            // from starting a concurrent fetch that could push a newer snapshot before
+            // the initial one.
+            inFlight = true;
             context.sessionTimingService.onStatsChange(onChange);
+
+            try {
+              const initial = await context.sessionTimingService.getSnapshot(workspaceId);
+              lastPushedAtMs = initial.generatedAt;
+              queue.push(initial);
+            } finally {
+              inFlight = false;
+
+              if (!closed && pendingSnapshot) {
+                scheduleSnapshot();
+              }
+            }
 
             try {
               yield* queue.iterate();
