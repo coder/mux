@@ -25,6 +25,7 @@ import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
@@ -126,6 +127,9 @@ type RemoteMuxOrpcClient = {
     list: (
       input: z.infer<typeof schemas.workspace.list.input>
     ) => Promise<FrontendWorkspaceMetadataSchemaType[]>;
+    create: (
+      input: z.infer<typeof schemas.workspace.create.input>
+    ) => Promise<z.infer<typeof schemas.workspace.create.output>>;
     onMetadata: (
       input: z.infer<typeof schemas.workspace.onMetadata.input>,
       options?: { signal?: AbortSignal }
@@ -240,8 +244,8 @@ function buildRemoteProjectPathMap(
 ): Map<string, string> {
   const map = new Map<string, string>();
   for (const mapping of projectMappings) {
-    const remoteProjectPath = mapping.remoteProjectPath.trim();
-    const localProjectPath = mapping.localProjectPath.trim();
+    const remoteProjectPath = stripTrailingSlashes(mapping.remoteProjectPath.trim());
+    const localProjectPath = stripTrailingSlashes(mapping.localProjectPath.trim());
 
     if (!remoteProjectPath || !localProjectPath) {
       continue;
@@ -930,6 +934,98 @@ export const router = (authToken?: string) => {
             const message = error instanceof Error ? error.message : String(error);
             return Err(message);
           }
+        }),
+      workspaceCreate: t
+        .input(schemas.remoteServers.workspaceCreate.input)
+        .output(schemas.remoteServers.workspaceCreate.output)
+        .handler(async ({ context, input }) => {
+          const serverId = input.serverId.trim();
+          if (!serverId) {
+            return { success: false, error: "Remote server id is required" };
+          }
+
+          const config = context.config.loadConfigOrDefault();
+          const server = config.remoteServers?.find((entry) => entry.id === serverId) ?? null;
+          if (!server) {
+            return { success: false, error: `Remote server not found: ${serverId}` };
+          }
+
+          if (server.enabled === false) {
+            return { success: false, error: `Remote server is disabled: ${serverId}` };
+          }
+
+          const localProjectPath = stripTrailingSlashes(input.localProjectPath.trim());
+          if (!localProjectPath) {
+            return { success: false, error: "localProjectPath is required" };
+          }
+
+          const mapping =
+            server.projectMappings.find(
+              (entry) => stripTrailingSlashes(entry.localProjectPath.trim()) === localProjectPath
+            ) ?? null;
+          if (!mapping) {
+            return {
+              success: false,
+              error: `No remote project mapping found for local project: ${localProjectPath}`,
+            };
+          }
+
+          const remoteProjectPath = stripTrailingSlashes(mapping.remoteProjectPath.trim());
+          if (!remoteProjectPath) {
+            return {
+              success: false,
+              error: `Remote project mapping for ${localProjectPath} has empty remoteProjectPath`,
+            };
+          }
+
+          const authToken =
+            context.remoteServersService.getAuthToken({ id: serverId }) ?? undefined;
+
+          let client: RemoteMuxOrpcClient;
+          try {
+            client = createRemoteClient<RemoteMuxOrpcClient>({
+              baseUrl: server.baseUrl,
+              authToken,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { success: false, error: message };
+          }
+
+          let result: z.infer<typeof schemas.workspace.create.output>;
+          try {
+            result = await client.workspace.create({
+              projectPath: remoteProjectPath,
+              branchName: input.branchName,
+              trunkBranch: input.trunkBranch,
+              title: input.title,
+              runtimeConfig: input.runtimeConfig,
+              sectionId: input.sectionId,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { success: false, error: message };
+          }
+
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+
+          const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+          const rewritten = rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
+            result.metadata,
+            serverId,
+            remoteProjectPathMap
+          );
+
+          if (!rewritten) {
+            return {
+              success: false,
+              error: `Remote workspace created for unmapped project path: ${result.metadata.projectPath}`,
+            };
+          }
+
+          return { success: true, metadata: rewritten };
         }),
     },
     features: {

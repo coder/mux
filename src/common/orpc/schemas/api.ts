@@ -1331,6 +1331,20 @@ export const remoteServers = {
         .strict()
     ),
   },
+  workspaceCreate: {
+    input: z
+      .object({
+        serverId: z.string(),
+        localProjectPath: z.string(),
+        branchName: z.string(),
+        trunkBranch: z.string().optional(),
+        title: z.string().optional(),
+        runtimeConfig: RuntimeConfigSchema.optional(),
+        sectionId: z.string().optional(),
+      })
+      .strict(),
+    output: workspace.create.output,
+  },
 };
 
 // Config (global settings)
