@@ -540,25 +540,38 @@ export function CreationControls(props: CreationControlsProps) {
     setRemoteServersStatus("loading");
     setRemoteServersError(null);
 
-    api.remoteServers
-      .list()
-      .then((result) => {
-        if (remoteServersRequestIdRef.current !== requestId) {
-          return;
-        }
+    try {
+      api.remoteServers
+        .list()
+        .then((result) => {
+          if (remoteServersRequestIdRef.current !== requestId) {
+            return;
+          }
 
-        setRemoteServers(result as RemoteMuxServerListEntry[]);
-        setRemoteServersStatus("loaded");
-      })
-      .catch((error: unknown) => {
-        if (remoteServersRequestIdRef.current !== requestId) {
-          return;
-        }
+          setRemoteServers(result as RemoteMuxServerListEntry[]);
+          setRemoteServersStatus("loaded");
+        })
+        .catch((error: unknown) => {
+          if (remoteServersRequestIdRef.current !== requestId) {
+            return;
+          }
 
-        setRemoteServers([]);
-        setRemoteServersStatus("error");
-        setRemoteServersError(error instanceof Error ? error.message : String(error));
-      });
+          setRemoteServers([]);
+          setRemoteServersStatus("error");
+          setRemoteServersError(error instanceof Error ? error.message : String(error));
+        });
+    } catch {
+      // Storybook mocks (and older backends) may not expose remoteServers yet.
+      // Treat "remote servers unsupported" the same as "no remote servers configured":
+      // empty list + disable remote creation option.
+      if (remoteServersRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setRemoteServers([]);
+      setRemoteServersStatus("loaded");
+      setRemoteServersError(null);
+    }
   }, [api]);
 
   const enabledRemoteServers = remoteServers.filter((entry) => entry.config.enabled !== false);

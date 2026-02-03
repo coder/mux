@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle, Loader2, Pencil, Plus, Trash2, X, XCircle } from "lucide-react";
 
-import { useAPI } from "@/browser/contexts/API";
+import { useAPI, type APIClient } from "@/browser/contexts/API";
 import { Button } from "@/browser/components/ui/button";
 import { Input } from "@/browser/components/ui/input";
 import { Switch } from "@/browser/components/ui/switch";
@@ -121,7 +121,17 @@ export function RemoteServersSection() {
     setLoadError(null);
 
     try {
-      const result = (await api.remoteServers.list()) as RemoteMuxServerListEntry[];
+      const remoteServersApi: Partial<APIClient>["remoteServers"] = api.remoteServers;
+      if (!remoteServersApi) {
+        if (requestIdRef.current !== requestId) {
+          return;
+        }
+
+        setServers([]);
+        return;
+      }
+
+      const result = (await remoteServersApi.list()) as RemoteMuxServerListEntry[];
       if (requestIdRef.current !== requestId) {
         return;
       }
@@ -181,9 +191,23 @@ export function RemoteServersSection() {
 
       setEditorNotice(null);
 
-      const result = await api.remoteServers.remove({ id });
-      if (!result.success) {
-        setEditorNotice({ type: "error", message: result.error });
+      const remoteServersApi: Partial<APIClient>["remoteServers"] = api.remoteServers;
+      if (!remoteServersApi) {
+        setEditorNotice({
+          type: "error",
+          message: "Remote servers are not supported by this backend.",
+        });
+        return;
+      }
+
+      try {
+        const result = await remoteServersApi.remove({ id });
+        if (!result.success) {
+          setEditorNotice({ type: "error", message: result.error });
+          return;
+        }
+      } catch (error) {
+        setEditorNotice({ type: "error", message: getErrorMessage(error) });
         return;
       }
 
@@ -207,17 +231,36 @@ export function RemoteServersSection() {
         [id]: { status: "loading" },
       }));
 
-      const result = await api.remoteServers.ping({ id });
-
-      if (result.success) {
+      const remoteServersApi: Partial<APIClient>["remoteServers"] = api.remoteServers;
+      if (!remoteServersApi) {
         setPingById((prev) => ({
           ...prev,
-          [id]: { status: "success", message: formatPingPayload(result.data.version) },
+          [id]: {
+            status: "error",
+            message: "Remote servers are not supported by this backend.",
+          },
         }));
-      } else {
+        return;
+      }
+
+      try {
+        const result = await remoteServersApi.ping({ id });
+
+        if (result.success) {
+          setPingById((prev) => ({
+            ...prev,
+            [id]: { status: "success", message: formatPingPayload(result.data.version) },
+          }));
+        } else {
+          setPingById((prev) => ({
+            ...prev,
+            [id]: { status: "error", message: result.error },
+          }));
+        }
+      } catch (error) {
         setPingById((prev) => ({
           ...prev,
-          [id]: { status: "error", message: result.error },
+          [id]: { status: "error", message: getErrorMessage(error) },
         }));
       }
     },
@@ -226,6 +269,15 @@ export function RemoteServersSection() {
 
   const handleSave = useCallback(async () => {
     if (!api) {
+      return;
+    }
+
+    const remoteServersApi: Partial<APIClient>["remoteServers"] = api.remoteServers;
+    if (!remoteServersApi) {
+      setEditorNotice({
+        type: "error",
+        message: "Remote servers are not supported by this backend.",
+      });
       return;
     }
 
@@ -247,7 +299,7 @@ export function RemoteServersSection() {
     const tokenToSend = clearAuthTokenOnSave ? "" : authToken.trim() ? authToken : undefined;
 
     try {
-      const result = await api.remoteServers.upsert({
+      const result = await remoteServersApi.upsert({
         config: {
           ...draftConfig,
           label: trimmedLabel,
