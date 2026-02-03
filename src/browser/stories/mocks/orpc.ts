@@ -25,7 +25,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
-import type { MCPServerInfo } from "@/common/types/mcp";
+import type { MCPHttpServerInfo, MCPServerInfo } from "@/common/types/mcp";
 import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
 import type { ChatStats } from "@/common/types/chatStats";
 import {
@@ -396,7 +396,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let muxGatewayModels: string[] | undefined = undefined;
 
   let globalSecretsState: Secret[] = [...globalSecrets];
-  let globalMcpServersState: MockMcpServers = { ...globalMcpServers };
+  const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
   const deriveSubagentAiDefaults = () => {
     const raw: Record<string, unknown> = {};
@@ -667,7 +667,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         transport?: "stdio" | "http" | "sse" | "auto";
         command?: string;
         url?: string;
-        headers?: Record<string, unknown>;
+        headers?: MCPHttpServerInfo["headers"];
       }) => {
         const transport = input.transport ?? "stdio";
 
@@ -681,7 +681,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           globalMcpServersState[input.name] = {
             transport,
             url: input.url ?? "",
-            headers: input.headers as any,
+            headers: input.headers,
             disabled: false,
           };
         }
@@ -703,17 +703,23 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       setEnabled: (input: { name: string; enabled: boolean }) => {
         const server = globalMcpServersState[input.name];
         if (server) {
-          globalMcpServersState[input.name] = { ...server, disabled: !input.enabled } as any;
+          const disabled = !input.enabled;
+          if (server.transport === "stdio") {
+            globalMcpServersState[input.name] = { ...server, disabled };
+          } else {
+            globalMcpServersState[input.name] = { ...server, disabled };
+          }
         }
         return Promise.resolve({ success: true, data: undefined });
       },
       setToolAllowlist: (input: { name: string; toolAllowlist: string[] }) => {
         const server = globalMcpServersState[input.name];
         if (server) {
-          globalMcpServersState[input.name] = {
-            ...server,
-            toolAllowlist: input.toolAllowlist,
-          } as any;
+          if (server.transport === "stdio") {
+            globalMcpServersState[input.name] = { ...server, toolAllowlist: input.toolAllowlist };
+          } else {
+            globalMcpServersState[input.name] = { ...server, toolAllowlist: input.toolAllowlist };
+          }
         }
         return Promise.resolve({ success: true, data: undefined });
       },
