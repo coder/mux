@@ -989,6 +989,142 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("off");
   }, 20_000);
 
+  test("inherits agentAiDefaults from base chain on task create", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    // Custom agent definition stored in the project workspace (.mux/agents).
+    const agentsDir = path.join(projectPath, ".mux", "agents");
+    await fsPromises.mkdir(agentsDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(agentsDir, "custom.md"),
+      `---\nname: Custom\ndescription: Exec-derived custom agent for tests\nbase: exec\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+      "utf-8"
+    );
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: projectPath,
+                id: parentId,
+                name: "parent",
+                createdAt: new Date().toISOString(),
+                runtimeConfig: { type: "local" },
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      agentAiDefaults: {
+        exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "custom",
+      prompt: "run task with custom agent",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
+      model: "anthropic:claude-haiku-4-5",
+      agentId: "custom",
+      thinkingLevel: "off",
+      experiments: undefined,
+    });
+
+    const postCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === created.data.taskId);
+    expect(childEntry).toBeTruthy();
+    expect(childEntry?.aiSettings).toEqual({
+      model: "anthropic:claude-haiku-4-5",
+      thinkingLevel: "off",
+    });
+    expect(childEntry?.taskModelString).toBe("anthropic:claude-haiku-4-5");
+    expect(childEntry?.taskThinkingLevel).toBe("off");
+  }, 20_000);
+
+  test("does not apply agentAiDefaults base fallback when workspace overrides exist", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    // Custom agent definition stored in the project workspace (.mux/agents).
+    const agentsDir = path.join(projectPath, ".mux", "agents");
+    await fsPromises.mkdir(agentsDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(agentsDir, "custom.md"),
+      `---\nname: Custom\ndescription: Exec-derived custom agent for tests\nbase: exec\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+      "utf-8"
+    );
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: projectPath,
+                id: parentId,
+                name: "parent",
+                createdAt: new Date().toISOString(),
+                runtimeConfig: { type: "local" },
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+                aiSettingsByAgent: {
+                  custom: { model: "openai:gpt-5.2-pro", thinkingLevel: "medium" },
+                },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      agentAiDefaults: {
+        exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "custom",
+      prompt: "run task with custom agent",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
+      model: "openai:gpt-5.2-pro",
+      agentId: "custom",
+      thinkingLevel: "medium",
+      experiments: undefined,
+    });
+  }, 20_000);
   test("auto-resumes a parent workspace until background tasks finish", async () => {
     const config = await createTestConfig(rootDir);
 

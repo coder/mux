@@ -541,20 +541,20 @@ export class TaskService {
     }
 
     const parentAiSettings = this.resolveWorkspaceAISettings(parentMeta, agentId);
-    const inheritedModelString =
-      typeof args.modelString === "string" && args.modelString.trim().length > 0
+
+    // If the parent workspace has an explicit per-agent override for this agentId,
+    // prefer it over the model/thinking inherited from the calling workspace.
+    const hasWorkspaceOverrideForAgent = Boolean(parentMeta.aiSettingsByAgent?.[agentId]);
+
+    const inheritedModelString = hasWorkspaceOverrideForAgent
+      ? (parentAiSettings?.model ?? defaultModel)
+      : typeof args.modelString === "string" && args.modelString.trim().length > 0
         ? args.modelString.trim()
         : (parentAiSettings?.model ?? defaultModel);
-    const inheritedThinkingLevel: ThinkingLevel =
-      args.thinkingLevel ?? parentAiSettings?.thinkingLevel ?? "off";
 
-    const subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
-
-    const taskModelString = subagentDefaults?.modelString ?? inheritedModelString;
-    const canonicalModel = normalizeGatewayModel(taskModelString).trim();
-
-    const requestedThinkingLevel = subagentDefaults?.thinkingLevel ?? inheritedThinkingLevel;
-    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
+    const inheritedThinkingLevel: ThinkingLevel = hasWorkspaceOverrideForAgent
+      ? (parentAiSettings?.thinkingLevel ?? "off")
+      : (args.thinkingLevel ?? parentAiSettings?.thinkingLevel ?? "off");
 
     const parentRuntimeConfig = parentMeta.runtimeConfig;
     const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
@@ -570,6 +570,43 @@ export class TaskService {
     const parentWorkspacePath = isInPlace
       ? parentMeta.projectPath
       : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+
+    let subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
+
+    // Base fallback: if the selected agent has no explicit defaults, inherit cfg.agentAiDefaults
+    // from its base chain (e.g. `base: exec` → agentAiDefaults.exec).
+    //
+    // IMPORTANT: Only apply base fallback when the parent workspace hasn't explicitly overridden
+    // AI settings for this agentId, so workspace-specific overrides keep winning.
+    if (!subagentDefaults && !hasWorkspaceOverrideForAgent) {
+      try {
+        const agentDefinition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
+        const chain = await resolveAgentInheritanceChain({
+          runtime,
+          workspacePath: parentWorkspacePath,
+          agentId,
+          agentDefinition,
+          workspaceId: parentWorkspaceId,
+        });
+
+        const inheritedDefaults = chain
+          .slice(1)
+          .map((entry) => cfg.agentAiDefaults?.[entry.id])
+          .find((entry) => entry !== undefined);
+
+        if (inheritedDefaults) {
+          subagentDefaults = inheritedDefaults;
+        }
+      } catch {
+        // Ignore: base fallback is best-effort. Validation happens below.
+      }
+    }
+
+    const taskModelString = subagentDefaults?.modelString ?? inheritedModelString;
+    const canonicalModel = normalizeGatewayModel(taskModelString).trim();
+
+    const requestedThinkingLevel = subagentDefaults?.thinkingLevel ?? inheritedThinkingLevel;
+    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
 
     // Helper to build error hint with all available runnable agents.
     // NOTE: This resolves frontmatter inheritance so same-name overrides (e.g. project exec.md
