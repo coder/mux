@@ -12,6 +12,12 @@ interface Particle {
   color: string;
 }
 
+export type PowerModeBurstKind = "insert" | "delete";
+
+interface BurstOptions {
+  kind?: PowerModeBurstKind;
+}
+
 export class PowerModeEngine {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
@@ -71,11 +77,12 @@ export class PowerModeEngine {
     this.gunIndex = 0;
   }
 
-  burst(x: number, y: number, intensity = 1): void {
+  burst(x: number, y: number, intensity = 1, options?: BurstOptions): void {
     const normalizedIntensity = Math.max(1, Math.min(12, Math.floor(intensity)));
+    const kind = options?.kind ?? "insert";
 
     this.maybeShake(normalizedIntensity);
-    this.maybePlaySounds(normalizedIntensity);
+    this.maybePlaySounds(normalizedIntensity, kind);
 
     if (!this.ctx || !this.canvas) {
       return;
@@ -87,10 +94,16 @@ export class PowerModeEngine {
       const speed = (70 + Math.random() * 140) * (0.6 + normalizedIntensity * 0.12);
 
       const vx = Math.cos(angle) * speed;
-      const vy = Math.sin(angle) * speed - (60 + Math.random() * 80);
+      const verticalKick = 60 + Math.random() * 80;
+      const vy =
+        kind === "delete"
+          ? Math.sin(angle) * speed + verticalKick
+          : Math.sin(angle) * speed - verticalKick;
 
       const ttlMs = 240 + Math.random() * 260;
-      const hue = Math.floor(Math.random() * 360);
+      const hue =
+        kind === "delete" ? Math.floor(10 + Math.random() * 40) : Math.floor(Math.random() * 360);
+      const lightness = kind === "delete" ? 60 : 70;
 
       this.particles.push({
         x,
@@ -100,7 +113,7 @@ export class PowerModeEngine {
         size: 2 + Math.random() * 2.5,
         ttlMs,
         lifeMs: ttlMs,
-        color: `hsl(${hue}, 100%, 70%)`,
+        color: `hsl(${hue}, 100%, ${lightness}%)`,
       });
     }
 
@@ -257,17 +270,19 @@ export class PowerModeEngine {
     this.shakePrevTransform = null;
   }
 
-  private maybePlaySounds(intensity: number): void {
+  private maybePlaySounds(intensity: number, kind: PowerModeBurstKind): void {
     // Typing audio should feel subtle; avoid errors if autoplay is blocked.
     if (this.typewriterPool.length > 0) {
-      const typeChance = Math.min(0.95, 0.55 + intensity * 0.06);
+      const base = kind === "delete" ? 0.35 : 0.55;
+      const typeChance = Math.min(0.95, base + intensity * 0.06);
       if (Math.random() <= typeChance) {
         this.playFromPool(this.typewriterPool, "typewriter");
       }
     }
 
     if (this.gunPool.length > 0) {
-      const gunChance = Math.min(0.12, 0.015 * intensity);
+      const cap = kind === "delete" ? 0.2 : 0.12;
+      const gunChance = Math.min(cap, (kind === "delete" ? 0.03 : 0.015) * intensity);
       if (Math.random() <= gunChance) {
         this.playFromPool(this.gunPool, "gun");
       }

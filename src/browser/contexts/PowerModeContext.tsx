@@ -12,12 +12,19 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { POWER_MODE_ENABLED_KEY } from "@/common/constants/storage";
-import { PowerModeEngine } from "@/browser/utils/powerMode/PowerModeEngine";
+import {
+  PowerModeEngine,
+  type PowerModeBurstKind,
+} from "@/browser/utils/powerMode/PowerModeEngine";
 import { PowerModeOverlay } from "@/browser/components/PowerMode/PowerModeOverlay";
 
 interface PowerModeContextValue {
   enabled: boolean;
-  burstFromTextarea: (textarea: HTMLTextAreaElement, intensity?: number) => void;
+  burstFromTextarea: (
+    textarea: HTMLTextAreaElement,
+    intensity?: number,
+    kind?: PowerModeBurstKind
+  ) => void;
 }
 
 const PowerModeContext = createContext<PowerModeContextValue | null>(null);
@@ -172,7 +179,7 @@ export function PowerModeProvider(props: { children: ReactNode }) {
   }, []);
 
   const burstFromTextarea = useCallback<PowerModeContextValue["burstFromTextarea"]>(
-    (textarea, intensity = 1) => {
+    (textarea, intensity = 1, kind: PowerModeBurstKind = "insert") => {
       if (!enabled) return;
 
       const engine = engineRef.current;
@@ -186,7 +193,7 @@ export function PowerModeProvider(props: { children: ReactNode }) {
       const mirror = ensureMirror(mirrorRef);
       const caretPos = getCaretViewportPosition(textarea, mirror) ?? fallback;
 
-      engine.burst(caretPos.x, caretPos.y, intensity);
+      engine.burst(caretPos.x, caretPos.y, intensity, { kind });
     },
     [enabled]
   );

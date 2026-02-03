@@ -339,10 +339,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     (next: string) => {
       if (powerMode.enabled) {
         const delta = next.length - input.length;
-        if (delta > 0) {
-          const el = inputRef.current;
-          if (el) {
+        const el = inputRef.current;
+
+        if (el && delta !== 0) {
+          // Power Mode should feel responsive on backspace/delete too.
+          if (delta > 0) {
             powerMode.burstFromTextarea(el, Math.min(6, delta));
+          } else {
+            powerMode.burstFromTextarea(el, Math.min(6, -delta), "delete");
           }
         }
       }
