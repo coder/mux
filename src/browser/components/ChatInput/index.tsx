@@ -2192,10 +2192,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               </div>
             )}
 
-            <div className="@container flex min-w-[340px] flex-nowrap items-center gap-2">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 <div
-                  className="flex min-w-0 items-center gap-2"
+                  className="flex min-w-0 items-center gap-1.5"
                   data-component="ModelSelectorGroup"
                   data-tutorial="model-selector"
                 >
@@ -2211,7 +2211,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     onOpenSettings={() => open("models")}
                     className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
                   />
-                  <div className="hidden [@media(hover:hover)_and_(pointer:fine)]:block">
+                  <div className="hidden [@container(min-width:500px)]:[@media(hover:hover)_and_(pointer:fine)]:block">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <HelpIndicator>?</HelpIndicator>
@@ -2240,11 +2240,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   </div>
                 </div>
 
-                {/* Thinking: paddles hidden on narrow containers, label stays usable */}
-                <div
-                  className="flex shrink-0 items-center [&_[data-thinking-paddle]]:[@container(max-width:550px)]:hidden"
-                  data-component="ThinkingSliderGroup"
-                >
+                <div className="flex shrink-0 items-center" data-component="ThinkingSliderGroup">
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
 
@@ -2254,18 +2250,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               </div>
 
               <div
-                className="flex min-w-0 items-center justify-end gap-2"
+                className="flex min-w-0 items-center justify-end gap-1.5"
                 data-component="ModelControls"
                 data-tutorial="mode-selector"
               >
                 {variant === "workspace" && (
-                  <div className="shrink">
-                    <ContextUsageIndicatorButton
-                      data={contextUsageData}
-                      autoCompaction={autoCompactionProps}
-                      idleCompaction={idleCompactionProps}
-                    />
-                  </div>
+                  <ContextUsageIndicatorButton
+                    data={contextUsageData}
+                    autoCompaction={autoCompactionProps}
+                    idleCompaction={idleCompactionProps}
+                  />
                 )}
 
                 <div className="min-w-0 [@container(max-width:340px)]:hidden">
@@ -2282,13 +2276,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                       onClick={() => void handleSend()}
                       disabled={!canSend}
                       aria-label="Send message"
-                      style={{ backgroundColor: focusBorderColor }}
                       size="xs"
+                      variant="ghost"
                       className={cn(
-                        "border-border-light inline-flex items-center justify-center rounded-sm border px-1.5 py-0.5 font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
+                        "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
                         // Touch: wider tap target, keep icon centered.
-                        "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm",
-                        currentAgent?.uiColor ? "text-white" : "text-text"
+                        "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
                       )}
                     >
                       <SendHorizontal

@@ -409,16 +409,15 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
 
   // Resolve display properties for the trigger pill
   const activeDisplayName = activeOption?.name ?? formatAgentIdLabel(normalizedAgentId);
+  // Use subtle border with agent color, but keep text/caret colors matching ModelSelector
   const activeStyle: React.CSSProperties | undefined = activeOption?.uiColor
-    ? { backgroundColor: activeOption.uiColor }
+    ? { borderColor: activeOption.uiColor }
     : undefined;
-  const activeClassName = activeOption?.uiColor
-    ? "text-white"
-    : "bg-exec-mode text-white hover:bg-exec-mode-hover";
+  const activeClassName = activeOption?.uiColor ? "" : "border-exec-mode";
 
   return (
     <div ref={containerRef} className={cn("relative flex items-center gap-1.5", props.className)}>
-      {/* Dropdown trigger - pill style button */}
+      {/* Dropdown trigger - styled to match ModelSelector */}
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
@@ -426,6 +425,7 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             aria-label="Select agent"
             aria-expanded={isPickerOpen}
             size="xs"
+            variant="ghost"
             onClick={() => {
               if (isPickerOpen) {
                 closePicker();
@@ -435,14 +435,14 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
             }}
             style={activeStyle}
             className={cn(
-              "flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
+              "text-foreground hover:bg-hover flex items-center gap-1 rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition-all duration-150",
               activeClassName
             )}
           >
             <span className="max-w-[clamp(4.5rem,30vw,130px)] truncate">{activeDisplayName}</span>
             <ChevronDown
               className={cn(
-                "h-3 w-3 transition-transform duration-150",
+                "text-muted h-3 w-3 transition-transform duration-150",
                 isPickerOpen && "rotate-180"
               )}
             />
