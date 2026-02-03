@@ -1018,7 +1018,7 @@ describe("WorkspaceService archiveMergedInProject", () => {
 
     const { workspaceService, executeBashMock, archiveMock } = createServiceHarness(
       allMetadata,
-      async (workspaceId, script, options) => {
+      (workspaceId, script, options) => {
         expect(script).toContain("gh pr view --json state");
         expect(options?.timeout_secs).toBe(15);
 
@@ -1026,9 +1026,9 @@ describe("WorkspaceService archiveMergedInProject", () => {
         if (!result) {
           throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
         }
-        return result;
+        return Promise.resolve(result);
       },
-      async () => ({ success: true, data: undefined })
+      () => Promise.resolve({ success: true, data: undefined })
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
@@ -1063,14 +1063,14 @@ describe("WorkspaceService archiveMergedInProject", () => {
 
     const { workspaceService, archiveMock } = createServiceHarness(
       allMetadata,
-      async (workspaceId) => {
+      (workspaceId) => {
         const result = ghResultsByWorkspaceId[workspaceId];
         if (!result) {
           throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
         }
-        return result;
+        return Promise.resolve(result);
       },
-      async () => ({ success: true, data: undefined })
+      () => Promise.resolve({ success: true, data: undefined })
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
@@ -1102,14 +1102,14 @@ describe("WorkspaceService archiveMergedInProject", () => {
 
     const { workspaceService, archiveMock } = createServiceHarness(
       allMetadata,
-      async (workspaceId) => {
+      (workspaceId) => {
         const result = ghResultsByWorkspaceId[workspaceId];
         if (!result) {
           throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
         }
-        return result;
+        return Promise.resolve(result);
       },
-      async () => ({ success: true, data: undefined })
+      () => Promise.resolve({ success: true, data: undefined })
     );
 
     const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);

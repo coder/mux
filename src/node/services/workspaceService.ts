@@ -125,11 +125,11 @@ interface FileCompletionsCacheEntry {
   refreshing?: Promise<void>;
 }
 
-type ArchiveMergedInProjectResult = {
+interface ArchiveMergedInProjectResult {
   archivedWorkspaceIds: string[];
   skippedWorkspaceIds: string[];
   errors: Array<{ workspaceId: string; error: string }>;
-};
+}
 
 /**
  * Checks if an error indicates a workspace name collision
@@ -2000,7 +2000,7 @@ export class WorkspaceService extends EventEmitter {
         try {
           const result = await this.executeBash(
             workspaceId,
-            `gh pr view --json state 2>/dev/null || echo '{\"no_pr\":true}'`,
+            `gh pr view --json state 2>/dev/null || echo '{"no_pr":true}'`,
             { timeout_secs: GH_TIMEOUT_SECS }
           );
 
