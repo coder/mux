@@ -1,7 +1,3 @@
-// Inspired by Joel Besada's "activate-power-mode" (MIT).
-// The original project uses pre-recorded WAVs; we synthesize similar clicks/pops via the Web Audio API
-// to keep latency low and avoid shipping audio assets.
-
 interface Particle {
   x: number;
   y: number;
