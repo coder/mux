@@ -142,6 +142,16 @@ function parseRemoteMuxServerConfig(value: unknown): RemoteMuxServerConfig | nul
     return null;
   }
 
+  // Defensive: avoid persisting invalid base URLs that would later break ORPC output validation.
+  try {
+    const url = new URL(baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   return {
     id,
     label,
