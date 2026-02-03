@@ -21,6 +21,28 @@ describe("checkContextSwitch", () => {
     expect(warning).toBeNull();
   });
 
+  test("allows same-model warnings when the effective limit changes", () => {
+    const targetModel = "anthropic:claude-sonnet-4-5";
+    const baseLimit = getEffectiveContextLimit(targetModel, false);
+    const expandedLimit = getEffectiveContextLimit(targetModel, true);
+    expect(baseLimit).not.toBeNull();
+    expect(expandedLimit).not.toBeNull();
+    if (!baseLimit || !expandedLimit) return;
+
+    expect(expandedLimit).toBeGreaterThan(baseLimit);
+
+    const warning = checkContextSwitch(
+      Math.floor(baseLimit * 0.95),
+      targetModel,
+      targetModel,
+      false,
+      OPTIONS,
+      { allowSameModel: true }
+    );
+    expect(warning).not.toBeNull();
+    expect(warning?.targetModel).toBe(targetModel);
+  });
+
   test("returns warning when switching to a smaller context model", () => {
     const targetModel = "openai:gpt-5.2-codex";
     const limit = getEffectiveContextLimit(targetModel, false);

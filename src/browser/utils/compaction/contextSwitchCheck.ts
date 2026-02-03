@@ -87,10 +87,12 @@ export function checkContextSwitch(
   targetModel: string,
   previousModel: string | null,
   use1M: boolean,
-  options: ContextSwitchOptions
+  options: ContextSwitchOptions,
+  opts?: { allowSameModel?: boolean }
 ): ContextSwitchWarning | null {
-  // Only warn when the user actually switches models; workspace entry shouldn't trigger this.
-  if (previousModel && targetModel === previousModel) {
+  // Only warn on same-model changes when the caller knows the effective limit changed
+  // (ex: 1M context toggle). Otherwise, workspace entry/sync should stay silent.
+  if (!opts?.allowSameModel && previousModel && targetModel === previousModel) {
     return null;
   }
 

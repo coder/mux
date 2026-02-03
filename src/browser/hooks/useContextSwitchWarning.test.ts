@@ -8,6 +8,7 @@ import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { useContextSwitchWarning } from "./useContextSwitchWarning";
+import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
 
 function createStubApiClient(): APIClient {
   // Avoid mock.module (global) by injecting a minimal client through providers.
@@ -158,6 +159,74 @@ describe("useContextSwitchWarning", () => {
         ...props,
         pendingModel: nextModel,
         pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+  });
+
+  test("warns when 1M is toggled off and context no longer fits", async () => {
+    const model = "anthropic:claude-sonnet-4-5";
+    const baseLimit = getEffectiveContextLimit(model, false);
+    expect(baseLimit).not.toBeNull();
+    if (!baseLimit) return;
+
+    const tokens = Math.floor(baseLimit * 1.05);
+    const props = {
+      workspaceId: "workspace-4",
+      messages: [buildAssistantMessage(model)],
+      pendingModel: model,
+      use1M: true,
+      workspaceUsage: buildUsage(tokens, model),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(model),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        use1M: false,
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(model));
+  });
+
+  test("does not warn when 1M toggle does not change the limit", async () => {
+    const model = "openai:gpt-5.2-codex";
+    const limit = getEffectiveContextLimit(model, false);
+    expect(limit).not.toBeNull();
+    if (!limit) return;
+
+    const tokens = Math.floor(limit * 0.95);
+    const props = {
+      workspaceId: "workspace-5",
+      messages: [buildAssistantMessage(model)],
+      pendingModel: model,
+      use1M: false,
+      workspaceUsage: buildUsage(tokens, model),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(model),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        use1M: true,
       });
     });
 

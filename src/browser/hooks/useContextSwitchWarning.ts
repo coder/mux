@@ -198,13 +198,27 @@ export function useContextSwitchWarning(
     // ON → OFF: may show warning if context no longer fits
     if (wasEnabled !== use1M) {
       const tokens = getCurrentTokens();
+      const previousLimit = getEffectiveContextLimit(pendingModel, wasEnabled);
+      const nextLimit = getEffectiveContextLimit(pendingModel, use1M);
+
+      // Only surface same-model warnings if the effective limit actually changed.
+      if (previousLimit === nextLimit) {
+        if (use1M && tokens === 0) {
+          // No tokens but toggled ON - clear any stale warning
+          setWarning(null);
+        }
+        return;
+      }
+
       if (tokens > 0) {
+        const previousModel = findPreviousModel(messages);
         const result = checkContextSwitch(
           tokens,
           pendingModel,
-          findPreviousModel(messages),
+          previousModel,
           use1M,
-          checkOptions
+          checkOptions,
+          { allowSameModel: true }
         );
         setWarning(enhanceWarning(result));
       } else if (use1M) {
