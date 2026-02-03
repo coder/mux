@@ -213,12 +213,16 @@ export function GovernorSection() {
         return;
       }
 
-      if (typeof json.authorizeUrl !== "string") {
+      if (typeof json.authorizeUrl !== "string" || typeof json.state !== "string") {
         popup.close();
         setEnrollStatus("error");
         setEnrollError("Invalid response from start endpoint");
         return;
       }
+
+      const oauthState = json.state;
+      // Origin for callback validation (same origin as current page)
+      const backendOrigin = window.location.origin;
 
       // Navigate popup to the authorize URL
       popup.location.href = json.authorizeUrl;
@@ -227,6 +231,7 @@ export function GovernorSection() {
       interface GovernorOAuthMessage {
         type: "mux-governor-oauth";
         ok: boolean;
+        state?: string;
         error?: string | null;
       }
 
@@ -240,7 +245,11 @@ export function GovernorSection() {
 
       // Listen for postMessage from callback page
       const handleMessage = (event: MessageEvent<unknown>) => {
+        // Validate origin to prevent cross-origin attacks
+        if (event.origin !== backendOrigin) return;
         if (!isGovernorOAuthMessage(event.data)) return;
+        // Validate state to prevent CSRF
+        if (event.data.state !== oauthState) return;
 
         window.removeEventListener("message", handleMessage);
 
