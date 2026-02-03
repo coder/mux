@@ -51,6 +51,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
 
 // Disable AI SDK warning logging (e.g., "setting `toolChoice` to `none` is not supported")
@@ -1766,6 +1767,18 @@ export class StreamManager extends EventEmitter {
       errorMessage = `Model '${modelName || streamInfo.model}' does not exist or is not available. Please check your model selection.`;
     }
 
+    const muxGatewayUnauthorized =
+      streamInfo.model.startsWith("mux-gateway:") &&
+      ((APICallError.isInstance(actualError) && actualError.statusCode === 401) ||
+        (RetryError.isInstance(actualError) &&
+          actualError.lastError &&
+          APICallError.isInstance(actualError.lastError) &&
+          actualError.lastError.statusCode === 401));
+
+    if (muxGatewayUnauthorized) {
+      // Friendly normalization for expired mux-gateway sessions.
+      errorMessage = MUX_GATEWAY_SESSION_EXPIRED_MESSAGE;
+    }
     errorType = coerceStreamErrorTypeForMessage(errorType, errorMessage);
 
     return {

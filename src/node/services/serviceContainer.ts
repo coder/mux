@@ -133,11 +133,13 @@ export class ServiceContainer {
     );
     this.mcpServerManager = new MCPServerManager(this.mcpConfigService);
     this.sessionUsageService = new SessionUsageService(config, this.historyService);
+    this.providerService = new ProviderService(config);
     this.aiService = new AIService(
       config,
       this.historyService,
       this.partialService,
       this.initStateManager,
+      this.providerService,
       this.backgroundProcessManager,
       this.sessionUsageService,
       this.workspaceMcpOverridesService
@@ -175,7 +177,6 @@ export class ServiceContainer {
     this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
 
     this.policyService = new PolicyService(config);
-    this.providerService = new ProviderService(config);
     this.muxGatewayOauthService = new MuxGatewayOauthService(
       this.providerService,
       this.windowService

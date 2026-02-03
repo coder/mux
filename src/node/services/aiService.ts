@@ -53,6 +53,7 @@ import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/con
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { PolicyService } from "@/node/services/policyService";
+import type { ProviderService } from "@/node/services/providerService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -284,6 +285,37 @@ function wrapFetchWithAnthropicCacheControl(baseFetch: typeof fetch): typeof fet
   };
 
   return Object.assign(cachingFetch, baseFetch) as typeof fetch;
+}
+
+/**
+ * Wrap fetch so any mux-gateway 401 response clears local credentials (best-effort).
+ *
+ * This ensures the UI immediately reflects that the user has been logged out
+ * when the gateway session expires.
+ */
+function wrapFetchWithMuxGatewayAutoLogout(
+  baseFetch: typeof fetch,
+  providerService: ProviderService
+): typeof fetch {
+  const wrappedFetch = async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1]
+  ): Promise<Response> => {
+    const response = await baseFetch(input, init);
+
+    if (response.status === 401) {
+      try {
+        providerService.setConfig("mux-gateway", ["couponCode"], "");
+        providerService.setConfig("mux-gateway", ["voucher"], "");
+      } catch {
+        // Ignore failures clearing local credentials
+      }
+    }
+
+    return response;
+  };
+
+  return Object.assign(wrappedFetch, baseFetch) as typeof fetch;
 }
 
 /**
@@ -519,6 +551,7 @@ export class AIService extends EventEmitter {
   private readonly historyService: HistoryService;
   private readonly partialService: PartialService;
   private readonly config: Config;
+  private readonly providerService: ProviderService;
   private readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   private mcpServerManager?: MCPServerManager;
   private policyService?: PolicyService;
@@ -546,6 +579,7 @@ export class AIService extends EventEmitter {
     historyService: HistoryService,
     partialService: PartialService,
     initStateManager: InitStateManager,
+    providerService: ProviderService,
     backgroundProcessManager?: BackgroundProcessManager,
     sessionUsageService?: SessionUsageService,
     workspaceMcpOverridesService?: WorkspaceMcpOverridesService
@@ -557,6 +591,7 @@ export class AIService extends EventEmitter {
     this.workspaceMcpOverridesService =
       workspaceMcpOverridesService ?? new WorkspaceMcpOverridesService(config);
     this.config = config;
+    this.providerService = providerService;
     this.historyService = historyService;
     this.partialService = partialService;
     this.initStateManager = initStateManager;
@@ -1143,13 +1178,17 @@ export class AIService extends EventEmitter {
         const fetchWithCacheControl = isAnthropicModel
           ? wrapFetchWithAnthropicCacheControl(baseFetch)
           : baseFetch;
+        const fetchWithAutoLogout = wrapFetchWithMuxGatewayAutoLogout(
+          fetchWithCacheControl,
+          this.providerService
+        );
         // Use configured baseURL or fall back to default gateway URL
         const gatewayBaseURL =
           providerConfig.baseURL ?? "https://gateway.mux.coder.com/api/v1/ai-gateway/v1/ai";
         const gateway = createGateway({
           apiKey: couponCode,
           baseURL: gatewayBaseURL,
-          fetch: fetchWithCacheControl,
+          fetch: fetchWithAutoLogout,
         });
         return Ok(gateway(modelId));
       }

@@ -1,7 +1,10 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
-import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
+import {
+  MUX_GATEWAY_ORIGIN,
+  MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
+} from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
@@ -934,6 +937,18 @@ export const router = (authToken?: string) => {
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return Err(`Mux Gateway balance request failed: ${message}`);
+          }
+
+          if (response.status === 401) {
+            try {
+              // Best-effort auto-logout: clear local mux-gateway creds on session expiry.
+              context.providerService.setConfig("mux-gateway", ["couponCode"], "");
+              context.providerService.setConfig("mux-gateway", ["voucher"], "");
+            } catch {
+              // Ignore failures clearing local credentials
+            }
+
+            return Err(MUX_GATEWAY_SESSION_EXPIRED_MESSAGE);
           }
 
           if (!response.ok) {

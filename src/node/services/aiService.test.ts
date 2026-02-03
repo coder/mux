@@ -18,6 +18,7 @@ import {
 import { HistoryService } from "./historyService";
 import { PartialService } from "./partialService";
 import { InitStateManager } from "./initStateManager";
+import { ProviderService } from "./providerService";
 import { Config } from "@/node/config";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -35,7 +36,14 @@ describe("AIService", () => {
     const historyService = new HistoryService(config);
     const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
-    service = new AIService(config, historyService, partialService, initStateManager);
+    const providerService = new ProviderService(config);
+    service = new AIService(
+      config,
+      historyService,
+      partialService,
+      initStateManager,
+      providerService
+    );
   });
 
   // Note: These tests are placeholders as Bun doesn't support Jest mocking
