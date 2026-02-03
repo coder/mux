@@ -176,11 +176,14 @@ export function useContextSwitchWarning(
     } else if (checkOptionsChanged && warning) {
       // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
       // Only update active warnings to avoid resurrecting dismissed banners.
+      // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
       const previousModel = prevWarningPreviousModelRef.current ?? findPreviousModel(messages);
       prevWarningPreviousModelRef.current = previousModel;
       const result =
         tokens > 0
-          ? checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions)
+          ? checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions, {
+              allowSameModel: true,
+            })
           : null;
       setWarning(enhanceWarning(result));
     }
