@@ -269,7 +269,7 @@ export const mcpOauth = {
   startDesktopFlow: {
     input: z
       .object({
-        projectPath: z.string(),
+        projectPath: z.string().optional(),
         serverName: z.string(),
         pendingServer: MCPOAuthPendingServerSchema.optional(),
       })
@@ -299,7 +299,7 @@ export const mcpOauth = {
   startServerFlow: {
     input: z
       .object({
-        projectPath: z.string(),
+        projectPath: z.string().optional(),
         serverName: z.string(),
         pendingServer: MCPOAuthPendingServerSchema.optional(),
       })

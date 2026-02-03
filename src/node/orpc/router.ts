@@ -1474,7 +1474,11 @@ export const router = (authToken?: string) => {
         .input(schemas.mcpOauth.startDesktopFlow.input)
         .output(schemas.mcpOauth.startDesktopFlow.output)
         .handler(async ({ context, input }) => {
-          return context.mcpOauthService.startDesktopFlow(input);
+          // Global MCP settings can start OAuth without selecting a project.
+          // Use mux home as a stable fallback so existing flow codepaths remain unchanged.
+          const projectPath = input.projectPath ?? context.config.rootDir;
+
+          return context.mcpOauthService.startDesktopFlow({ ...input, projectPath });
         }),
       waitForDesktopFlow: t
         .input(schemas.mcpOauth.waitForDesktopFlow.input)
@@ -1494,13 +1498,21 @@ export const router = (authToken?: string) => {
         .input(schemas.mcpOauth.startServerFlow.input)
         .output(schemas.mcpOauth.startServerFlow.output)
         .handler(async ({ context, input }) => {
+          // Global MCP settings can start OAuth without selecting a project.
+          // Use mux home as a stable fallback so existing flow codepaths remain unchanged.
+          const projectPath = input.projectPath ?? context.config.rootDir;
+
           const headers = context.headers;
 
           const origin = typeof headers?.origin === "string" ? headers.origin.trim() : "";
           if (origin) {
             try {
               const redirectUri = new URL("/auth/mcp-oauth/callback", origin).toString();
-              return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
+              return context.mcpOauthService.startServerFlow({
+                ...input,
+                projectPath,
+                redirectUri,
+              });
             } catch {
               // Fall back to Host header.
             }
@@ -1519,7 +1531,11 @@ export const router = (authToken?: string) => {
 
           const redirectUri = `${proto}://${host}/auth/mcp-oauth/callback`;
 
-          return context.mcpOauthService.startServerFlow({ ...input, redirectUri });
+          return context.mcpOauthService.startServerFlow({
+            ...input,
+            projectPath,
+            redirectUri,
+          });
         }),
       waitForServerFlow: t
         .input(schemas.mcpOauth.waitForServerFlow.input)
