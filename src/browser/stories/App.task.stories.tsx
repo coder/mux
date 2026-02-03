@@ -693,29 +693,40 @@ export const TaskApplyGitPatchCommitList: AppStory = {
     const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
     const messageCanvas = within(messageWindow);
 
-    const toolHeader = await waitFor(
-      () => {
-        const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
-          (candidate) => candidate.textContent?.includes("Apply patch")
-        );
+    const getToolHeader = (): HTMLElement => {
+      const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
+        (candidate) =>
+          candidate.textContent?.includes("Apply patch") &&
+          candidate.textContent?.includes("task-fe-001")
+      );
 
-        if (!(header instanceof HTMLElement)) {
-          throw new Error("Apply patch tool header not found");
-        }
+      if (!(header instanceof HTMLElement)) {
+        throw new Error("Apply patch tool header not found");
+      }
 
-        return header;
-      },
-      { timeout: 8000 }
-    );
+      return header;
+    };
 
-    // Tool cards are collapsed by default; expand the card so the commit list is visible.
-    if (!messageCanvas.queryByText("Patch source")) {
+    const toolHeader = await waitFor(getToolHeader, { timeout: 8000 });
+
+    const isExpanded = (header: HTMLElement): boolean =>
+      header.querySelector("span.rotate-90") !== null;
+
+    // Tool cards are collapsed by default; ensure the card is expanded so the commit subjects render.
+    if (!isExpanded(toolHeader)) {
       await userEvent.click(toolHeader);
+      await waitFor(
+        () => {
+          if (!isExpanded(getToolHeader())) {
+            throw new Error("Apply patch tool did not expand");
+          }
+        },
+        { timeout: 8000 }
+      );
     }
 
-    await messageCanvas.findByText("Patch source", {}, { timeout: 8000 });
-    await messageCanvas.findByText("Commits", {}, { timeout: 8000 });
     await messageCanvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
+    await messageCanvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
   },
 };
 
@@ -762,28 +773,39 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
     const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
     const messageCanvas = within(messageWindow);
 
-    const toolHeader = await waitFor(
-      () => {
-        const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
-          (candidate) => candidate.textContent?.includes("Apply patch")
-        );
+    const getToolHeader = (): HTMLElement => {
+      const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
+        (candidate) =>
+          candidate.textContent?.includes("Apply patch") &&
+          candidate.textContent?.includes("task-fe-001")
+      );
 
-        if (!(header instanceof HTMLElement)) {
-          throw new Error("Apply patch tool header not found");
-        }
+      if (!(header instanceof HTMLElement)) {
+        throw new Error("Apply patch tool header not found");
+      }
 
-        return header;
-      },
-      { timeout: 8000 }
-    );
+      return header;
+    };
 
-    // Tool cards are collapsed by default; expand the card so the commit list is visible.
-    if (!messageCanvas.queryByText("Patch source")) {
+    const toolHeader = await waitFor(getToolHeader, { timeout: 8000 });
+
+    const isExpanded = (header: HTMLElement): boolean =>
+      header.querySelector("span.rotate-90") !== null;
+
+    // Tool cards are collapsed by default; ensure the card is expanded so the commit subjects render.
+    if (!isExpanded(toolHeader)) {
       await userEvent.click(toolHeader);
+      await waitFor(
+        () => {
+          if (!isExpanded(getToolHeader())) {
+            throw new Error("Apply patch tool did not expand");
+          }
+        },
+        { timeout: 8000 }
+      );
     }
 
-    await messageCanvas.findByText("Patch source", {}, { timeout: 8000 });
-    await messageCanvas.findByText("Commits", {}, { timeout: 8000 });
+    await messageCanvas.findByText("feat: add Apply Patch tool UI", {}, { timeout: 8000 });
     await messageCanvas.findByText("fix: render applied commit list", {}, { timeout: 8000 });
   },
 };
