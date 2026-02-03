@@ -99,19 +99,33 @@ export function SettingsModal() {
   const { isOpen, close, activeSection, setActiveSection } = useSettings();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
   const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
+  const remoteMuxServersEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
 
   // Reset activeSection if the experiment is disabled
   React.useEffect(() => {
+    const fallbackSectionId = BASE_SECTIONS[0]?.id ?? "general";
+
     if (!system1Enabled && activeSection === "system1") {
-      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
+      setActiveSection(fallbackSectionId);
+      return;
     }
+
     if (!governorEnabled && activeSection === "governor") {
-      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
+      setActiveSection(fallbackSectionId);
+      return;
     }
-  }, [activeSection, setActiveSection, system1Enabled, governorEnabled]);
+
+    if (!remoteMuxServersEnabled && activeSection === "remoteServers") {
+      setActiveSection(fallbackSectionId);
+    }
+  }, [activeSection, setActiveSection, system1Enabled, governorEnabled, remoteMuxServersEnabled]);
+
+  const visibleBaseSections = remoteMuxServersEnabled
+    ? BASE_SECTIONS
+    : BASE_SECTIONS.filter((section) => section.id !== "remoteServers");
 
   // Build sections list based on enabled experiments
-  let sections: SettingsSection[] = BASE_SECTIONS;
+  let sections: SettingsSection[] = visibleBaseSections;
   if (system1Enabled) {
     sections = [
       ...sections,
