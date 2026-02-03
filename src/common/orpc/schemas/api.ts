@@ -264,6 +264,84 @@ const MCPOAuthPendingServerSchema = z
   })
   .strict();
 
+// MCP OAuth
+export const mcpOauth = {
+  startDesktopFlow: {
+    input: z
+      .object({
+        projectPath: z.string(),
+        serverName: z.string(),
+        pendingServer: MCPOAuthPendingServerSchema.optional(),
+      })
+      .strict(),
+    output: ResultSchema(
+      z.object({
+        flowId: z.string(),
+        authorizeUrl: z.string(),
+        redirectUri: z.string(),
+      }),
+      z.string()
+    ),
+  },
+  waitForDesktopFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelDesktopFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+  startServerFlow: {
+    input: z
+      .object({
+        projectPath: z.string(),
+        serverName: z.string(),
+        pendingServer: MCPOAuthPendingServerSchema.optional(),
+      })
+      .strict(),
+    output: ResultSchema(
+      z.object({
+        flowId: z.string(),
+        authorizeUrl: z.string(),
+        redirectUri: z.string(),
+      }),
+      z.string()
+    ),
+  },
+  waitForServerFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelServerFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+  getAuthStatus: {
+    input: z.object({ serverUrl: z.string() }).strict(),
+    output: z.object({
+      serverUrl: z.string().optional(),
+      isLoggedIn: z.boolean(),
+      hasRefreshToken: z.boolean(),
+      scope: z.string().optional(),
+      updatedAtMs: z.number().optional(),
+    }),
+  },
+  logout: {
+    input: z.object({ serverUrl: z.string() }).strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+};
+
 // Projects
 export const projects = {
   create: {

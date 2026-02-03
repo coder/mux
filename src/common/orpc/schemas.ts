@@ -180,6 +180,7 @@ export {
   agents,
   nameGeneration,
   projects,
+  mcpOauth,
   mcp,
   secrets,
   ProviderConfigInfoSchema,
