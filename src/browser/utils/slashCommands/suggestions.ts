@@ -46,10 +46,6 @@ function buildTopLevelSuggestions(
 ): SlashSuggestion[] {
   const isCreation = context.variant === "creation";
 
-  const mcpDisabledByPolicy = Boolean(
-    context.mcpAllowUserDefined?.stdio === false && context.mcpAllowUserDefined.remote === false
-  );
-
   const commandSuggestions = filterAndMapSuggestions(
     COMMAND_DEFINITIONS,
     partial,
@@ -65,10 +61,6 @@ function buildTopLevelSuggestions(
     },
     (definition) => {
       if (isCreation && WORKSPACE_ONLY_COMMAND_KEYS.has(definition.key)) {
-        return false;
-      }
-
-      if (mcpDisabledByPolicy && definition.key === "mcp") {
         return false;
       }
 

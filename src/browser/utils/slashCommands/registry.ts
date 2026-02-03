@@ -411,25 +411,6 @@ const newCommandDefinition: SlashCommandDefinition = {
   },
 };
 
-/**
- * Parse MCP subcommand that takes name + command (add/edit).
- * Returns { name, command } or null if invalid.
- */
-function parseMCPNameCommand(
-  subcommand: string,
-  tokens: string[],
-  rawInput: string
-): { name: string; command: string } | null {
-  const name = tokens[1];
-  // Extract command text after "subcommand name"
-  const command = rawInput
-    .trim()
-    .replace(new RegExp(`^${subcommand}\\s+[^\\s]+\\s*`, "i"), "")
-    .trim();
-  if (!name || !command) return null;
-  return { name, command };
-}
-
 const IDLE_USAGE = "/idle <hours> or /idle off";
 
 const idleCommandDefinition: SlashCommandDefinition = {
@@ -473,44 +454,6 @@ const debugLlmRequestCommandDefinition: SlashCommandDefinition = {
   handler: (): ParsedCommand => ({ type: "debug-llm-request" }),
 };
 
-const mcpCommandDefinition: SlashCommandDefinition = {
-  key: "mcp",
-  description: "Manage MCP servers for this project",
-  handler: ({ cleanRemainingTokens, rawInput }) => {
-    if (cleanRemainingTokens.length === 0) {
-      return { type: "mcp-open" };
-    }
-
-    const sub = cleanRemainingTokens[0];
-
-    if (sub === "add" || sub === "edit") {
-      const parsed = parseMCPNameCommand(sub, cleanRemainingTokens, rawInput);
-      if (!parsed) {
-        return {
-          type: "command-missing-args",
-          command: `mcp ${sub}`,
-          usage: `/mcp ${sub} <name> <command>`,
-        };
-      }
-      return { type: sub === "add" ? "mcp-add" : "mcp-edit", ...parsed };
-    }
-
-    if (sub === "remove") {
-      const name = cleanRemainingTokens[1];
-      if (!name) {
-        return {
-          type: "command-missing-args",
-          command: "mcp remove",
-          usage: "/mcp remove <server-name>",
-        };
-      }
-      return { type: "mcp-remove", name };
-    }
-
-    return { type: "unknown-command", command: "mcp", subcommand: sub };
-  },
-};
-
 export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   clearCommandDefinition,
   truncateCommandDefinition,
@@ -521,7 +464,6 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   forkCommandDefinition,
   newCommandDefinition,
   vimCommandDefinition,
-  mcpCommandDefinition,
   idleCommandDefinition,
   debugLlmRequestCommandDefinition,
 ];

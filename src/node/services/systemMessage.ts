@@ -166,7 +166,7 @@ MCP (Model Context Protocol) servers provide additional tools. Configured global
 
 ${serverList}
 
-Use /mcp add|edit|remove or Settings → MCP to manage servers.
+Manage servers in Settings → MCP.
 </mcp>
 `;
 }

@@ -163,7 +163,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
-  const mcpAllowUserDefined = effectivePolicy?.mcp.allowUserDefined;
   const runtimePolicy = useMemo(
     () => getAllowedRuntimeModesForUi(effectivePolicy),
     [effectivePolicy]
@@ -1148,11 +1147,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
       variant,
-      mcpAllowUserDefined,
     });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, agentSkillDescriptors, variant, mcpAllowUserDefined]);
+  }, [input, agentSkillDescriptors, variant]);
 
   // Load agent skills for suggestions
   useEffect(() => {

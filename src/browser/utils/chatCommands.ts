@@ -297,75 +297,10 @@ export async function processSlashCommand(
     return { clearInput: false, toastShown: true };
   }
 
-  if (parsed.type === "mcp-open") {
-    setInput("");
-    context.openSettings?.("mcp");
-    return { clearInput: true, toastShown: false };
-  }
-
   if (parsed.type === "debug-llm-request") {
     setInput("");
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST));
     return { clearInput: true, toastShown: false };
-  }
-
-  if (parsed.type === "mcp-add" || parsed.type === "mcp-edit" || parsed.type === "mcp-remove") {
-    const activeClient = requireClient();
-    if (!activeClient) {
-      return { clearInput: false, toastShown: true };
-    }
-
-    if (!context.projectPath) {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: "Select a workspace to manage MCP servers",
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    setSendingState(true);
-    setInput("");
-
-    try {
-      const projectPath = context.projectPath;
-      const result =
-        parsed.type === "mcp-add" || parsed.type === "mcp-edit"
-          ? await activeClient.projects.mcp.add({
-              projectPath,
-              name: parsed.name,
-              command: parsed.command,
-            })
-          : await activeClient.projects.mcp.remove({ projectPath, name: parsed.name });
-
-      if (!result.success) {
-        setToast({
-          id: Date.now().toString(),
-          type: "error",
-          message: result.error ?? "Failed to update MCP servers",
-        });
-        return { clearInput: false, toastShown: true };
-      }
-
-      const successMessage =
-        parsed.type === "mcp-add"
-          ? `Added MCP server ${parsed.name}`
-          : parsed.type === "mcp-edit"
-            ? `Updated MCP server ${parsed.name}`
-            : `Removed MCP server ${parsed.name}`;
-      setToast({ id: Date.now().toString(), type: "success", message: successMessage });
-      return { clearInput: true, toastShown: true };
-    } catch (error) {
-      console.error("Failed to update MCP servers", error);
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to update MCP servers",
-      });
-      return { clearInput: false, toastShown: true };
-    } finally {
-      setSendingState(false);
-    }
   }
 
   if (parsed.type === "idle-compaction") {

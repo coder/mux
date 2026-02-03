@@ -857,8 +857,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           </div>
 
           <p className="mt-3">
-            Manage servers in <span className="text-foreground">Settings → MCP</span> or via{" "}
-            <code className="text-accent">/mcp</code>.
+            Manage servers in <span className="text-foreground">Settings → MCP</span>.
           </p>
         </>
       ),
