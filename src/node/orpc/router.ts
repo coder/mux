@@ -784,7 +784,7 @@ export const router = (authToken?: string) => {
       onConfigChanged: t
         .input(schemas.providers.onConfigChanged.input)
         .output(schemas.providers.onConfigChanged.output)
-        .handler(async function* ({ context }) {
+        .handler(async function* ({ context, signal }) {
           let resolveNext: (() => void) | null = null;
           let pendingNotification = false;
           let ended = false;
@@ -804,22 +804,51 @@ export const router = (authToken?: string) => {
 
           const unsubscribe = context.providerService.onConfigChanged(push);
 
+          // Consumers often cancel this subscription while there are no pending provider changes.
+          // If we block on a never-resolving Promise, AbortSignal cancellation can't unwind the
+          // generator, and we leak EventEmitter listeners across tests.
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+            // Wake up the iterator if it's currently waiting.
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            } else {
+              pendingNotification = true;
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
           try {
             while (!ended) {
               // If notification arrived before we started waiting, yield immediately
               if (pendingNotification) {
                 pendingNotification = false;
+                if (ended) break;
                 yield undefined;
                 continue;
               }
-              // Wait for next notification
+
+              // Wait for next notification (or abort)
               await new Promise<void>((resolve) => {
                 resolveNext = resolve;
               });
+
+              if (ended) break;
               yield undefined;
             }
           } finally {
             ended = true;
+            signal?.removeEventListener("abort", onAbort);
             unsubscribe();
           }
         }),
@@ -832,7 +861,7 @@ export const router = (authToken?: string) => {
       onChanged: t
         .input(schemas.policy.onChanged.input)
         .output(schemas.policy.onChanged.output)
-        .handler(async function* ({ context }) {
+        .handler(async function* ({ context, signal }) {
           let resolveNext: (() => void) | null = null;
           let pendingNotification = false;
           let ended = false;
@@ -850,20 +879,45 @@ export const router = (authToken?: string) => {
 
           const unsubscribe = context.policyService.onPolicyChanged(push);
 
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve();
+            } else {
+              pendingNotification = true;
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
           try {
             while (!ended) {
               if (pendingNotification) {
                 pendingNotification = false;
+                if (ended) break;
                 yield undefined;
                 continue;
               }
+
               await new Promise<void>((resolve) => {
                 resolveNext = resolve;
               });
+
+              if (ended) break;
               yield undefined;
             }
           } finally {
             ended = true;
+            signal?.removeEventListener("abort", onAbort);
             unsubscribe();
           }
         }),
@@ -2013,25 +2067,19 @@ export const router = (authToken?: string) => {
       onMetadata: t
         .input(schemas.workspace.onMetadata.input)
         .output(schemas.workspace.onMetadata.output)
-        .handler(async function* ({ context }) {
+        .handler(async function* ({ context, signal }) {
           const service = context.workspaceService;
 
-          let resolveNext:
-            | ((value: {
-                workspaceId: string;
-                metadata: FrontendWorkspaceMetadataSchemaType | null;
-              }) => void)
-            | null = null;
-          const queue: Array<{
+          interface MetadataEvent {
             workspaceId: string;
             metadata: FrontendWorkspaceMetadataSchemaType | null;
-          }> = [];
+          }
+
+          let resolveNext: ((value: MetadataEvent | null) => void) | null = null;
+          const queue: MetadataEvent[] = [];
           let ended = false;
 
-          const push = (event: {
-            workspaceId: string;
-            metadata: FrontendWorkspaceMetadataSchemaType | null;
-          }) => {
+          const push = (event: MetadataEvent) => {
             if (ended) return;
             if (resolveNext) {
               const resolve = resolveNext;
@@ -2042,31 +2090,51 @@ export const router = (authToken?: string) => {
             }
           };
 
-          const onMetadata = (event: {
-            workspaceId: string;
-            metadata: FrontendWorkspaceMetadataSchemaType | null;
-          }) => {
+          const onMetadata = (event: MetadataEvent) => {
             push(event);
           };
 
           service.on("metadata", onMetadata);
 
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
           try {
             while (!ended) {
               if (queue.length > 0) {
                 yield queue.shift()!;
-              } else {
-                const event = await new Promise<{
-                  workspaceId: string;
-                  metadata: FrontendWorkspaceMetadataSchemaType | null;
-                }>((resolve) => {
-                  resolveNext = resolve;
-                });
-                yield event;
+                continue;
               }
+
+              const event = await new Promise<MetadataEvent | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (event === null || ended) {
+                break;
+              }
+
+              yield event;
             }
           } finally {
             ended = true;
+            signal?.removeEventListener("abort", onAbort);
             service.off("metadata", onMetadata);
           }
         }),
@@ -2080,25 +2148,19 @@ export const router = (authToken?: string) => {
         subscribe: t
           .input(schemas.workspace.activity.subscribe.input)
           .output(schemas.workspace.activity.subscribe.output)
-          .handler(async function* ({ context }) {
+          .handler(async function* ({ context, signal }) {
             const service = context.workspaceService;
 
-            let resolveNext:
-              | ((value: {
-                  workspaceId: string;
-                  activity: WorkspaceActivitySnapshot | null;
-                }) => void)
-              | null = null;
-            const queue: Array<{
+            interface ActivityEvent {
               workspaceId: string;
               activity: WorkspaceActivitySnapshot | null;
-            }> = [];
+            }
+
+            let resolveNext: ((value: ActivityEvent | null) => void) | null = null;
+            const queue: ActivityEvent[] = [];
             let ended = false;
 
-            const push = (event: {
-              workspaceId: string;
-              activity: WorkspaceActivitySnapshot | null;
-            }) => {
+            const push = (event: ActivityEvent) => {
               if (ended) return;
               if (resolveNext) {
                 const resolve = resolveNext;
@@ -2109,31 +2171,51 @@ export const router = (authToken?: string) => {
               }
             };
 
-            const onActivity = (event: {
-              workspaceId: string;
-              activity: WorkspaceActivitySnapshot | null;
-            }) => {
+            const onActivity = (event: ActivityEvent) => {
               push(event);
             };
 
             service.on("activity", onActivity);
 
+            const onAbort = () => {
+              if (ended) return;
+              ended = true;
+
+              if (resolveNext) {
+                const resolve = resolveNext;
+                resolveNext = null;
+                resolve(null);
+              }
+            };
+
+            if (signal) {
+              if (signal.aborted) {
+                onAbort();
+              } else {
+                signal.addEventListener("abort", onAbort, { once: true });
+              }
+            }
+
             try {
               while (!ended) {
                 if (queue.length > 0) {
                   yield queue.shift()!;
-                } else {
-                  const event = await new Promise<{
-                    workspaceId: string;
-                    activity: WorkspaceActivitySnapshot | null;
-                  }>((resolve) => {
-                    resolveNext = resolve;
-                  });
-                  yield event;
+                  continue;
                 }
+
+                const event = await new Promise<ActivityEvent | null>((resolve) => {
+                  resolveNext = resolve;
+                });
+
+                if (event === null || ended) {
+                  break;
+                }
+
+                yield event;
               }
             } finally {
               ended = true;
+              signal?.removeEventListener("abort", onAbort);
               service.off("activity", onActivity);
             }
           }),
@@ -2167,9 +2249,13 @@ export const router = (authToken?: string) => {
         subscribe: t
           .input(schemas.workspace.backgroundBashes.subscribe.input)
           .output(schemas.workspace.backgroundBashes.subscribe.output)
-          .handler(async function* ({ context, input }) {
+          .handler(async function* ({ context, input, signal }) {
             const service = context.workspaceService;
             const { workspaceId } = input;
+
+            if (signal?.aborted) {
+              return;
+            }
 
             const getState = async () => ({
               processes: await service.listBackgroundProcesses(workspaceId),
@@ -2177,6 +2263,14 @@ export const router = (authToken?: string) => {
             });
 
             const queue = createAsyncEventQueue<Awaited<ReturnType<typeof getState>>>();
+
+            const onAbort = () => {
+              queue.end();
+            };
+
+            if (signal) {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
 
             const onChange = (changedWorkspaceId: string) => {
               if (changedWorkspaceId === workspaceId) {
@@ -2191,6 +2285,7 @@ export const router = (authToken?: string) => {
               yield await getState();
               yield* queue.iterate();
             } finally {
+              signal?.removeEventListener("abort", onAbort);
               queue.end();
               service.offBackgroundBashChange(onChange);
             }
@@ -2265,8 +2360,12 @@ export const router = (authToken?: string) => {
         subscribe: t
           .input(schemas.workspace.stats.subscribe.input)
           .output(schemas.workspace.stats.subscribe.output)
-          .handler(async function* ({ context, input }) {
+          .handler(async function* ({ context, input, signal }) {
             const workspaceId = input.workspaceId;
+
+            if (signal?.aborted) {
+              return;
+            }
 
             context.sessionTimingService.addSubscriber(workspaceId);
 
@@ -2341,6 +2440,21 @@ export const router = (authToken?: string) => {
             let pendingTimer: ReturnType<typeof setTimeout> | undefined;
             let pendingSnapshot = false;
             let closed = false;
+
+            const onAbort = () => {
+              closed = true;
+
+              if (pendingTimer) {
+                clearTimeout(pendingTimer);
+                pendingTimer = undefined;
+              }
+
+              queue.end();
+            };
+
+            if (signal) {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
 
             const pushSnapshot = async () => {
               if (closed) return;
@@ -2436,6 +2550,7 @@ export const router = (authToken?: string) => {
               yield* queue.iterate();
             } finally {
               closed = true;
+              signal?.removeEventListener("abort", onAbort);
               if (pendingTimer) {
                 clearTimeout(pendingTimer);
               }
@@ -2561,8 +2676,12 @@ export const router = (authToken?: string) => {
       onOutput: t
         .input(schemas.terminal.onOutput.input)
         .output(schemas.terminal.onOutput.output)
-        .handler(async function* ({ context, input }) {
-          let resolveNext: ((value: string) => void) | null = null;
+        .handler(async function* ({ context, input, signal }) {
+          if (signal?.aborted) {
+            return;
+          }
+
+          let resolveNext: ((value: string | null) => void) | null = null;
           const queue: string[] = [];
           let ended = false;
 
@@ -2579,31 +2698,57 @@ export const router = (authToken?: string) => {
 
           const unsubscribe = context.terminalService.onOutput(input.sessionId, push);
 
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
+
           try {
             while (!ended) {
               if (queue.length > 0) {
                 yield queue.shift()!;
-              } else {
-                const data = await new Promise<string>((resolve) => {
-                  resolveNext = resolve;
-                });
-                yield data;
+                continue;
               }
+
+              const data = await new Promise<string | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (data === null || ended) {
+                break;
+              }
+
+              yield data;
             }
           } finally {
             ended = true;
+            signal?.removeEventListener("abort", onAbort);
             unsubscribe();
           }
         }),
       attach: t
         .input(schemas.terminal.attach.input)
         .output(schemas.terminal.attach.output)
-        .handler(async function* ({ context, input }) {
+        .handler(async function* ({ context, input, signal }) {
+          if (signal?.aborted) {
+            return;
+          }
+
           type AttachMessage =
             | { type: "screenState"; data: string }
             | { type: "output"; data: string };
 
-          let resolveNext: ((value: AttachMessage) => void) | null = null;
+          let resolveNext: ((value: AttachMessage | null) => void) | null = null;
           const queue: AttachMessage[] = [];
           let ended = false;
 
@@ -2624,6 +2769,21 @@ export const router = (authToken?: string) => {
             push({ type: "output", data });
           });
 
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
+
           try {
             // Capture screen state AFTER subscription is set up - guarantees no missed output
             const screenState = context.terminalService.getScreenState(input.sessionId);
@@ -2635,23 +2795,34 @@ export const router = (authToken?: string) => {
             while (!ended) {
               if (queue.length > 0) {
                 yield queue.shift()!;
-              } else {
-                const msg = await new Promise<AttachMessage>((resolve) => {
-                  resolveNext = resolve;
-                });
-                yield msg;
+                continue;
               }
+
+              const msg = await new Promise<AttachMessage | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (msg === null || ended) {
+                break;
+              }
+
+              yield msg;
             }
           } finally {
             ended = true;
+            signal?.removeEventListener("abort", onAbort);
             unsubscribe();
           }
         }),
       onExit: t
         .input(schemas.terminal.onExit.input)
         .output(schemas.terminal.onExit.output)
-        .handler(async function* ({ context, input }) {
-          let resolveNext: ((value: number) => void) | null = null;
+        .handler(async function* ({ context, input, signal }) {
+          if (signal?.aborted) {
+            return;
+          }
+
+          let resolveNext: ((value: number | null) => void) | null = null;
           const queue: number[] = [];
           let ended = false;
 
@@ -2668,22 +2839,43 @@ export const router = (authToken?: string) => {
 
           const unsubscribe = context.terminalService.onExit(input.sessionId, push);
 
+          const onAbort = () => {
+            if (ended) return;
+            ended = true;
+
+            if (resolveNext) {
+              const resolve = resolveNext;
+              resolveNext = null;
+              resolve(null);
+            }
+          };
+
+          if (signal) {
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
+
           try {
             while (!ended) {
               if (queue.length > 0) {
                 yield queue.shift()!;
                 // Terminal only exits once, so we can finish the stream
                 break;
-              } else {
-                const code = await new Promise<number>((resolve) => {
-                  resolveNext = resolve;
-                });
-                yield code;
+              }
+
+              const code = await new Promise<number | null>((resolve) => {
+                resolveNext = resolve;
+              });
+
+              if (code === null || ended) {
                 break;
               }
+
+              yield code;
+              break;
             }
           } finally {
             ended = true;
+            signal?.removeEventListener("abort", onAbort);
             unsubscribe();
           }
         }),
@@ -2734,13 +2926,26 @@ export const router = (authToken?: string) => {
       onStatus: t
         .input(schemas.update.onStatus.input)
         .output(schemas.update.onStatus.output)
-        .handler(async function* ({ context }) {
+        .handler(async function* ({ context, signal }) {
+          if (signal?.aborted) {
+            return;
+          }
+
           const queue = createAsyncEventQueue<UpdateStatus>();
           const unsubscribe = context.updateService.onStatus(queue.push);
+
+          const onAbort = () => {
+            queue.end();
+          };
+
+          if (signal) {
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
 
           try {
             yield* queue.iterate();
           } finally {
+            signal?.removeEventListener("abort", onAbort);
             queue.end();
             unsubscribe();
           }
@@ -2750,16 +2955,29 @@ export const router = (authToken?: string) => {
       onOpenSettings: t
         .input(schemas.menu.onOpenSettings.input)
         .output(schemas.menu.onOpenSettings.output)
-        .handler(async function* ({ context }) {
+        .handler(async function* ({ context, signal }) {
+          if (signal?.aborted) {
+            return;
+          }
+
           // Use a sentinel value to signal events since void/undefined can't be queued
           const queue = createAsyncEventQueue<true>();
           const unsubscribe = context.menuEventService.onOpenSettings(() => queue.push(true));
+
+          const onAbort = () => {
+            queue.end();
+          };
+
+          if (signal) {
+            signal.addEventListener("abort", onAbort, { once: true });
+          }
 
           try {
             for await (const _ of queue.iterate()) {
               yield undefined;
             }
           } finally {
+            signal?.removeEventListener("abort", onAbort);
             queue.end();
             unsubscribe();
           }
