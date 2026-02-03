@@ -5,7 +5,7 @@
  * Handles model changes, 1M toggle changes, and provides compact/dismiss actions.
  */
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useReducer, useRef, useEffect, useCallback, useMemo } from "react";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { SendMessageOptions } from "@/common/orpc/types";
@@ -40,19 +40,75 @@ interface UseContextSwitchWarningResult {
   handleDismiss: () => void;
 }
 
+interface PendingSwitch {
+  model: string;
+  previousModel: string | null;
+  deferred: boolean;
+}
+
+interface SwitchState {
+  currentModel: string;
+  pending: PendingSwitch | null;
+  warning: ContextSwitchWarning | null;
+}
+
+type SwitchAction =
+  | { type: "RESET"; model: string }
+  | { type: "USER_REQUESTED_MODEL"; pending: PendingSwitch }
+  | { type: "MODEL_APPLIED"; model: string }
+  | { type: "WARNING_EVALUATED"; warning: ContextSwitchWarning | null }
+  | { type: "WARNING_UPDATED"; warning: ContextSwitchWarning | null }
+  | { type: "CLEAR_WARNING" }
+  | { type: "CLEAR_PENDING" };
+
+const createSwitchState = (model: string): SwitchState => ({
+  currentModel: model,
+  pending: null,
+  warning: null,
+});
+
+// User request: track explicit model-change origin so deferred switches
+// (tokens === 0) can't leak into sync-driven model updates.
+function switchReducer(state: SwitchState, action: SwitchAction): SwitchState {
+  switch (action.type) {
+    case "RESET":
+      return createSwitchState(action.model);
+    case "USER_REQUESTED_MODEL":
+      return { ...state, pending: action.pending };
+    case "MODEL_APPLIED": {
+      if (state.pending && state.pending.model !== action.model) {
+        return { currentModel: action.model, pending: null, warning: null };
+      }
+      if (state.pending && !state.pending.deferred && state.pending.model === action.model) {
+        return { ...state, currentModel: action.model, pending: null };
+      }
+      if (!state.pending && state.warning) {
+        return { currentModel: action.model, pending: null, warning: null };
+      }
+      return { ...state, currentModel: action.model };
+    }
+    case "WARNING_EVALUATED":
+      return { ...state, warning: action.warning, pending: null };
+    case "WARNING_UPDATED":
+      return { ...state, warning: action.warning };
+    case "CLEAR_WARNING":
+      return { ...state, warning: null };
+    case "CLEAR_PENDING":
+      return { ...state, pending: null };
+    default:
+      return state;
+  }
+}
+
 export function useContextSwitchWarning(
   props: UseContextSwitchWarningProps
 ): UseContextSwitchWarningResult {
   const { workspaceId, messages, pendingModel, use1M, workspaceUsage, api, pendingSendOptions } =
     props;
 
-  const [warning, setWarning] = useState<ContextSwitchWarning | null>(null);
+  const [switchState, dispatch] = useReducer(switchReducer, pendingModel, createSwitchState);
+  const warning = switchState.warning;
   const prevUse1MRef = useRef(use1M);
-  // Track previous model so we can use it as compaction fallback on switch.
-  // Initialize to null so first render triggers check (handles page reload after model switch).
-  const prevPendingModelRef = useRef<string | null>(null);
-  // Track user-initiated model switches so workspace entry/sync doesn't show warnings.
-  const pendingUserSwitchRef = useRef<{ model: string; previousModel: string | null } | null>(null);
   const { config: providersConfig } = useProvidersConfig();
   const policyState = usePolicy();
   const effectivePolicy =
@@ -72,20 +128,18 @@ export function useContextSwitchWarning(
   // if mount behavior changes or localStorage sync reuses this hook instance.
   if (prevWorkspaceIdRef.current !== workspaceId) {
     prevWorkspaceIdRef.current = workspaceId;
-    prevPendingModelRef.current = null;
-    pendingUserSwitchRef.current = null;
     prevUse1MRef.current = use1M;
     prevCheckOptionsRef.current = checkOptions;
     prevWarningPreviousModelRef.current = null;
-    if (warning) {
-      setWarning(null);
-    }
+    dispatch({ type: "RESET", model: pendingModel });
   }
 
   const getCurrentTokens = useCallback(() => {
     const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
     return usage ? usage.input.tokens + usage.cached.tokens + usage.cacheCreate.tokens : 0;
   }, [workspaceUsage]);
+
+  const tokens = getCurrentTokens();
 
   // Enhance warning with smarter model suggestion when basic resolution fails.
   // Searches all known models for one with larger context that user can access.
@@ -110,15 +164,65 @@ export function useContextSwitchWarning(
     [providersConfig, effectivePolicy, use1M]
   );
 
-  const handleModelChange = useCallback((newModel: string) => {
-    // Use the model user was just on (not last assistant message's model)
-    // so compaction fallback works even if user switches without sending.
-    const previousModel = prevPendingModelRef.current;
-    // User request: only show warnings for explicit model switches, not workspace entry/sync.
-    pendingUserSwitchRef.current = { model: newModel, previousModel };
-    prevWarningPreviousModelRef.current = previousModel;
-    prevPendingModelRef.current = newModel;
-  }, []);
+  const evaluateWarning = useCallback(
+    (options: {
+      tokens: number;
+      targetModel: string;
+      previousModel: string | null;
+      allowSameModel?: boolean;
+    }): ContextSwitchWarning | null => {
+      if (options.tokens === 0) {
+        return null;
+      }
+
+      const previousModel = options.previousModel ?? findPreviousModel(messages);
+      prevWarningPreviousModelRef.current = previousModel;
+      const result = checkContextSwitch(
+        options.tokens,
+        options.targetModel,
+        previousModel,
+        use1M,
+        checkOptions,
+        { allowSameModel: options.allowSameModel }
+      );
+      return enhanceWarning(result);
+    },
+    [checkOptions, enhanceWarning, messages, use1M]
+  );
+
+  const handleModelChange = useCallback(
+    (newModel: string) => {
+      // Use the model user was just on (not last assistant message's model)
+      // so compaction fallback works even if user switches without sending.
+      const previousModel = pendingModel;
+
+      if (previousModel === newModel) {
+        dispatch({ type: "CLEAR_PENDING" });
+        return;
+      }
+
+      const pendingSwitch: PendingSwitch = {
+        model: newModel,
+        previousModel,
+        deferred: tokens === 0,
+      };
+
+      dispatch({ type: "USER_REQUESTED_MODEL", pending: pendingSwitch });
+
+      if (pendingSwitch.deferred) {
+        dispatch({ type: "CLEAR_WARNING" });
+        return;
+      }
+
+      const nextWarning = evaluateWarning({
+        tokens,
+        targetModel: newModel,
+        previousModel,
+      });
+      dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
+    },
+    [pendingModel, tokens, evaluateWarning]
+  );
 
   const handleCompact = useCallback(() => {
     if (!api || !warning?.compactionModel) return;
@@ -129,69 +233,64 @@ export function useContextSwitchWarning(
       model: warning.compactionModel,
       sendMessageOptions: pendingSendOptions,
     });
-    setWarning(null);
+    dispatch({ type: "CLEAR_WARNING" });
   }, [api, workspaceId, pendingSendOptions, warning]);
 
   const handleDismiss = useCallback(() => {
-    setWarning(null);
+    dispatch({ type: "CLEAR_WARNING" });
   }, []);
 
   // Sync with indirect model changes (e.g., WorkspaceModeAISync updating model on mode/agent change).
   // Effect is appropriate: pendingModel comes from usePersistedState (localStorage).
   // Only user-initiated switches should surface warnings; sync just updates refs.
-  const tokens = getCurrentTokens();
   useEffect(() => {
-    const prevModel = prevPendingModelRef.current;
+    if (switchState.currentModel !== pendingModel) {
+      dispatch({ type: "MODEL_APPLIED", model: pendingModel });
+    }
+  }, [pendingModel, switchState.currentModel]);
+
+  useEffect(() => {
+    if (tokens === 0) {
+      return;
+    }
+
+    const pendingSwitch = switchState.pending;
+    if (!pendingSwitch?.deferred) {
+      return;
+    }
+
+    if (pendingSwitch.model !== pendingModel) {
+      return;
+    }
+
+    const nextWarning = evaluateWarning({
+      tokens,
+      targetModel: pendingSwitch.model,
+      previousModel: pendingSwitch.previousModel,
+    });
+    dispatch({ type: "WARNING_EVALUATED", warning: nextWarning });
+  }, [pendingModel, tokens, switchState.pending, evaluateWarning]);
+
+  useEffect(() => {
     const prevCheckOptions = prevCheckOptionsRef.current;
     const checkOptionsChanged = prevCheckOptions !== checkOptions;
     prevCheckOptionsRef.current = checkOptions;
 
-    const pendingUserSwitch = pendingUserSwitchRef.current;
-    const shouldHandleUserSwitch = pendingUserSwitch?.model === pendingModel;
-
-    if (shouldHandleUserSwitch) {
-      const previousModel = pendingUserSwitch?.previousModel ?? findPreviousModel(messages);
-      prevWarningPreviousModelRef.current = previousModel;
-
-      if (previousModel && previousModel === pendingModel) {
-        pendingUserSwitchRef.current = null;
-        return;
-      }
-
-      if (tokens === 0) {
-        if (warning) {
-          // Clear stale warnings when a user switch happens before usage loads.
-          setWarning(null);
-        }
-        return;
-      }
-
-      const result = checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions);
-      setWarning(enhanceWarning(result));
-      pendingUserSwitchRef.current = null;
+    if (!checkOptionsChanged || !warning) {
       return;
     }
 
-    if (prevModel !== pendingModel) {
-      prevPendingModelRef.current = pendingModel;
-      if (warning) {
-        setWarning(null);
-      }
-    } else if (checkOptionsChanged && warning) {
-      // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
-      // Only update active warnings to avoid resurrecting dismissed banners.
-      // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
-      const previousModel = prevWarningPreviousModelRef.current ?? findPreviousModel(messages);
-      prevWarningPreviousModelRef.current = previousModel;
-      const result =
-        tokens > 0
-          ? checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions, {
-              allowSameModel: true,
-            })
-          : null;
-      setWarning(enhanceWarning(result));
-    }
-  }, [pendingModel, tokens, use1M, checkOptions, warning, messages, enhanceWarning]);
+    // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
+    // Only update active warnings to avoid resurrecting dismissed banners.
+    // Preserve same-model warnings (like 1M toggle) when refreshing for policy/config updates.
+    const nextWarning = evaluateWarning({
+      tokens,
+      targetModel: pendingModel,
+      previousModel: prevWarningPreviousModelRef.current,
+      allowSameModel: true,
+    });
+    dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
+  }, [checkOptions, warning, tokens, pendingModel, evaluateWarning]);
 
   // Sync with 1M toggle changes from ProviderOptionsContext.
   // Effect is appropriate here: we're syncing with an external context (not our own state),
@@ -204,7 +303,6 @@ export function useContextSwitchWarning(
     // OFF → ON: may clear warning if context now fits
     // ON → OFF: may show warning if context no longer fits
     if (wasEnabled !== use1M) {
-      const tokens = getCurrentTokens();
       const previousLimit = getEffectiveContextLimit(pendingModel, wasEnabled);
       const nextLimit = getEffectiveContextLimit(pendingModel, use1M);
 
@@ -212,28 +310,25 @@ export function useContextSwitchWarning(
       if (previousLimit === nextLimit) {
         if (use1M && tokens === 0) {
           // No tokens but toggled ON - clear any stale warning
-          setWarning(null);
+          dispatch({ type: "CLEAR_WARNING" });
         }
         return;
       }
 
       if (tokens > 0) {
-        const previousModel = findPreviousModel(messages);
-        const result = checkContextSwitch(
+        const nextWarning = evaluateWarning({
           tokens,
-          pendingModel,
-          previousModel,
-          use1M,
-          checkOptions,
-          { allowSameModel: true }
-        );
-        setWarning(enhanceWarning(result));
+          targetModel: pendingModel,
+          previousModel: findPreviousModel(messages),
+          allowSameModel: true,
+        });
+        dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
       } else if (use1M) {
         // No tokens but toggled ON - clear any stale warning
-        setWarning(null);
+        dispatch({ type: "CLEAR_WARNING" });
       }
     }
-  }, [use1M, getCurrentTokens, pendingModel, messages, checkOptions, enhanceWarning]);
+  }, [use1M, pendingModel, tokens, messages, evaluateWarning]);
 
   return { warning, handleModelChange, handleCompact, handleDismiss };
 }

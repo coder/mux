@@ -199,6 +199,15 @@ describe("useContextSwitchWarning", () => {
     await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
 
     act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        workspaceUsage: buildUsage(0, nextModel),
+      });
+    });
+
+    act(() => {
       result.current.handleModelChange(finalModel);
     });
 
@@ -208,6 +217,114 @@ describe("useContextSwitchWarning", () => {
         pendingModel: finalModel,
         pendingSendOptions: buildSendOptions(finalModel),
         workspaceUsage: buildUsage(0, finalModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+  });
+
+  test("warns after deferred switch once usage loads", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:gpt-5.2-codex";
+    const limit = getEffectiveContextLimit(nextModel, false);
+    expect(limit).not.toBeNull();
+    if (!limit) return;
+
+    const tokens = Math.floor(limit * 1.05);
+    const props = {
+      workspaceId: "workspace-7",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(0, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      result.current.handleModelChange(nextModel);
+    });
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        workspaceUsage: buildUsage(tokens, previousModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+  });
+
+  test("does not warn when deferred switch diverges on sync update", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:gpt-5.2-codex";
+    const limit = getEffectiveContextLimit(nextModel, false);
+    expect(limit).not.toBeNull();
+    if (!limit) return;
+
+    const tokens = Math.floor(limit * 1.05);
+    const props = {
+      workspaceId: "workspace-8",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(0, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      result.current.handleModelChange(nextModel);
+    });
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: previousModel,
+        pendingSendOptions: buildSendOptions(previousModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+        workspaceUsage: buildUsage(tokens, nextModel),
       });
     });
 
