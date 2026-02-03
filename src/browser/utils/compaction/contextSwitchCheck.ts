@@ -89,6 +89,11 @@ export function checkContextSwitch(
   use1M: boolean,
   options: ContextSwitchOptions
 ): ContextSwitchWarning | null {
+  // Only warn when the user actually switches models; workspace entry shouldn't trigger this.
+  if (previousModel && targetModel === previousModel) {
+    return null;
+  }
+
   const targetLimit = getEffectiveContextLimit(targetModel, use1M);
 
   // Unknown model or context fits with 10% buffer - no warning

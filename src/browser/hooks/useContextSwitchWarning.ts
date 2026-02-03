@@ -48,11 +48,11 @@ export function useContextSwitchWarning(
 
   const [warning, setWarning] = useState<ContextSwitchWarning | null>(null);
   const prevUse1MRef = useRef(use1M);
-  // Track token availability so dismissals don't immediately retrigger the warning.
-  const prevTokensRef = useRef(0);
   // Track previous model so we can use it as compaction fallback on switch.
   // Initialize to null so first render triggers check (handles page reload after model switch).
   const prevPendingModelRef = useRef<string | null>(null);
+  // Track user-initiated model switches so workspace entry/sync doesn't show warnings.
+  const pendingUserSwitchRef = useRef<{ model: string; previousModel: string | null } | null>(null);
   const { config: providersConfig } = useProvidersConfig();
   const policyState = usePolicy();
   const effectivePolicy =
@@ -68,12 +68,12 @@ export function useContextSwitchWarning(
   const prevWarningPreviousModelRef = useRef<string | null>(null);
   const prevWorkspaceIdRef = useRef(workspaceId);
 
-  // ChatPane stays mounted across workspace switches, so reset per-workspace state when
-  // the workspace changes to avoid carrying the previous model into the next workspace.
+  // ChatPane is keyed by workspaceId today; keep a defensive reset to avoid stale warnings
+  // if mount behavior changes or localStorage sync reuses this hook instance.
   if (prevWorkspaceIdRef.current !== workspaceId) {
     prevWorkspaceIdRef.current = workspaceId;
     prevPendingModelRef.current = null;
-    prevTokensRef.current = 0;
+    pendingUserSwitchRef.current = null;
     prevUse1MRef.current = use1M;
     prevCheckOptionsRef.current = checkOptions;
     prevWarningPreviousModelRef.current = null;
@@ -110,22 +110,15 @@ export function useContextSwitchWarning(
     [providersConfig, effectivePolicy, use1M]
   );
 
-  const handleModelChange = useCallback(
-    (newModel: string) => {
-      const tokens = getCurrentTokens();
-      // Use the model user was just on (not last assistant message's model)
-      // so compaction fallback works even if user switches without sending
-      const previousModel = prevPendingModelRef.current;
-      prevWarningPreviousModelRef.current = previousModel;
-      prevPendingModelRef.current = newModel;
-      const result =
-        tokens > 0
-          ? checkContextSwitch(tokens, newModel, previousModel, use1M, checkOptions)
-          : null;
-      setWarning(enhanceWarning(result));
-    },
-    [getCurrentTokens, use1M, checkOptions, enhanceWarning]
-  );
+  const handleModelChange = useCallback((newModel: string) => {
+    // Use the model user was just on (not last assistant message's model)
+    // so compaction fallback works even if user switches without sending.
+    const previousModel = prevPendingModelRef.current;
+    // User request: only show warnings for explicit model switches, not workspace entry/sync.
+    pendingUserSwitchRef.current = { model: newModel, previousModel };
+    prevWarningPreviousModelRef.current = previousModel;
+    prevPendingModelRef.current = newModel;
+  }, []);
 
   const handleCompact = useCallback(() => {
     if (!api || !warning?.compactionModel) return;
@@ -144,39 +137,42 @@ export function useContextSwitchWarning(
   }, []);
 
   // Sync with indirect model changes (e.g., WorkspaceModeAISync updating model on mode/agent change).
-  // Effect is appropriate: pendingModel comes from usePersistedState (localStorage), and external
-  // components like WorkspaceModeAISync can update it without going through handleModelChange.
-  // Also re-check when workspaceUsage changes (tokens may not be available on first render).
+  // Effect is appropriate: pendingModel comes from usePersistedState (localStorage).
+  // Only user-initiated switches should surface warnings; sync just updates refs.
   const tokens = getCurrentTokens();
   useEffect(() => {
-    const prevTokens = prevTokensRef.current;
-    prevTokensRef.current = tokens;
     const prevModel = prevPendingModelRef.current;
     const prevCheckOptions = prevCheckOptionsRef.current;
     const checkOptionsChanged = prevCheckOptions !== checkOptions;
     prevCheckOptionsRef.current = checkOptions;
 
+    const pendingUserSwitch = pendingUserSwitchRef.current;
+    const shouldHandleUserSwitch = pendingUserSwitch?.model === pendingModel;
+
+    if (shouldHandleUserSwitch) {
+      const previousModel = pendingUserSwitch?.previousModel ?? findPreviousModel(messages);
+      prevWarningPreviousModelRef.current = previousModel;
+
+      if (previousModel && previousModel === pendingModel) {
+        pendingUserSwitchRef.current = null;
+        return;
+      }
+
+      if (tokens === 0) {
+        return;
+      }
+
+      const result = checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions);
+      setWarning(enhanceWarning(result));
+      pendingUserSwitchRef.current = null;
+      return;
+    }
+
     if (prevModel !== pendingModel) {
       prevPendingModelRef.current = pendingModel;
-      // On first render (prevModel is null), fall back to the most recent assistant model
-      // so the warning can offer a compaction suggestion after reloads.
-      const previousModel = prevModel ?? findPreviousModel(messages);
-      prevWarningPreviousModelRef.current = previousModel;
-      const result =
-        tokens > 0
-          ? checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions)
-          : null;
-      setWarning(enhanceWarning(result));
-    } else if (prevTokens === 0 && tokens > 0 && !warning) {
-      // Re-check if tokens became available after initial render (usage data loaded).
-      // Gate on 0 -> >0 so a dismissal doesn't immediately recreate the warning.
-      // Run the check even without a prior assistant model so late usage data still
-      // triggers warnings for lower-context switches (fresh chats can lack model metadata).
-      const previousModel = findPreviousModel(messages);
-      prevWarningPreviousModelRef.current = previousModel;
-      setWarning(
-        enhanceWarning(checkContextSwitch(tokens, pendingModel, previousModel, use1M, checkOptions))
-      );
+      if (warning) {
+        setWarning(null);
+      }
     } else if (checkOptionsChanged && warning) {
       // Refresh existing warnings when policy/config arrives so compaction suggestions appear.
       // Only update active warnings to avoid resurrecting dismissed banners.
