@@ -728,6 +728,22 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  archiveMergedInProject: {
+    input: z.object({ projectPath: z.string() }),
+    output: ResultSchema(
+      z.object({
+        archivedWorkspaceIds: z.array(z.string()),
+        skippedWorkspaceIds: z.array(z.string()),
+        errors: z.array(
+          z.object({
+            workspaceId: z.string(),
+            error: z.string(),
+          })
+        ),
+      }),
+      z.string()
+    ),
+  },
   fork: {
     input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
     output: z.discriminatedUnion("success", [

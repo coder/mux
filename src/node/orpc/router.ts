@@ -2215,6 +2215,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.unarchive(input.workspaceId);
         }),
+      archiveMergedInProject: t
+        .input(schemas.workspace.archiveMergedInProject.input)
+        .output(schemas.workspace.archiveMergedInProject.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.archiveMergedInProject(input.projectPath);
+        }),
       fork: t
         .input(schemas.workspace.fork.input)
         .output(schemas.workspace.fork.output)
