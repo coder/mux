@@ -144,6 +144,10 @@ export const providers = {
     }),
     output: ResultSchema(z.void(), z.string()),
   },
+  list: {
+    input: z.void(),
+    output: z.array(z.string()),
+  },
   // Subscription: emits when provider config changes (API keys, models, etc.)
   onConfigChanged: {
     input: z.void(),

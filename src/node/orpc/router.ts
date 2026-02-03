@@ -761,6 +761,10 @@ export const router = (authToken?: string) => {
         }),
     },
     providers: {
+      list: t
+        .input(schemas.providers.list.input)
+        .output(schemas.providers.list.output)
+        .handler(({ context }) => context.providerService.list()),
       getConfig: t
         .input(schemas.providers.getConfig.input)
         .output(schemas.providers.getConfig.output)
