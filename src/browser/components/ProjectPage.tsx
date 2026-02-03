@@ -9,6 +9,9 @@ import type { ChatInputAPI, WorkspaceCreatedOptions } from "./ChatInput/types";
 import { ProjectMCPOverview } from "./ProjectMCPOverview";
 import { ArchivedWorkspaces } from "./ArchivedWorkspaces";
 import { useAPI } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { isRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { GitInitBanner } from "./GitInitBanner";
 import { ConfiguredProvidersBar } from "./ConfiguredProvidersBar";
@@ -79,12 +82,25 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   onWorkspaceCreated,
 }) => {
   const { api } = useAPI();
+  const remoteMuxServersEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
   const chatInputRef = useRef<ChatInputAPI | null>(null);
   const pendingAgentsInitSendRef = useRef(false);
-  // Initialize from localStorage cache to avoid flash when archived workspaces appear
-  const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>(() =>
-    readPersistedState<FrontendWorkspaceMetadata[]>(getArchivedWorkspacesKey(projectPath), [])
-  );
+  // Initialize from localStorage cache to avoid flash when archived workspaces appear.
+  //
+  // IMPORTANT: Respect REMOTE_MUX_SERVERS even for cached state so remote archived
+  // workspaces never flash in the UI when the experiment is disabled.
+  const [archivedWorkspaces, setArchivedWorkspaces] = useState<FrontendWorkspaceMetadata[]>(() => {
+    const cached = readPersistedState<FrontendWorkspaceMetadata[]>(
+      getArchivedWorkspacesKey(projectPath),
+      []
+    );
+
+    if (remoteMuxServersEnabled) {
+      return cached;
+    }
+
+    return cached.filter((w) => !isRemoteWorkspaceId(w.id));
+  });
   const [showAgentsInitNudge, setShowAgentsInitNudge] = usePersistedState<boolean>(
     getAgentsInitNudgeKey(projectPath),
     false,
@@ -139,14 +155,18 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   const archivedMapRef = useRef<Map<string, FrontendWorkspaceMetadata>>(new Map());
 
   const syncArchivedState = useCallback(() => {
-    const next = Array.from(archivedMapRef.current.values());
+    const next = Array.from(archivedMapRef.current.values()).filter((w) => {
+      if (remoteMuxServersEnabled) return true;
+      return !isRemoteWorkspaceId(w.id);
+    });
+
     setArchivedWorkspaces((prev) => {
       if (archivedListsEqual(prev, next)) return prev;
       // Persist to localStorage for optimistic cache on next load
       updatePersistedState(getArchivedWorkspacesKey(projectPath), next);
       return next;
     });
-  }, [projectPath]);
+  }, [projectPath, remoteMuxServersEnabled]);
 
   // Fetch archived workspaces for this project on mount
   useEffect(() => {
@@ -157,7 +177,12 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
       try {
         const allArchived = await api.workspace.list({ archived: true });
         if (cancelled) return;
-        const projectArchived = allArchived.filter((w) => w.projectPath === projectPath);
+
+        let projectArchived = allArchived.filter((w) => w.projectPath === projectPath);
+        if (!remoteMuxServersEnabled) {
+          projectArchived = projectArchived.filter((w) => !isRemoteWorkspaceId(w.id));
+        }
+
         archivedMapRef.current = new Map(projectArchived.map((w) => [w.id, w]));
         syncArchivedState();
       } catch (error) {
@@ -169,7 +194,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [api, projectPath, syncArchivedState]);
+  }, [api, projectPath, remoteMuxServersEnabled, syncArchivedState]);
 
   // Subscribe to metadata events to reactively update archived list
   useEffect(() => {
@@ -181,6 +206,11 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
         const iterator = await api.workspace.onMetadata(undefined, { signal: controller.signal });
         for await (const event of iterator) {
           if (controller.signal.aborted) break;
+
+          // Hide remote workspaces unless the experiment is explicitly enabled.
+          if (!remoteMuxServersEnabled && isRemoteWorkspaceId(event.workspaceId)) {
+            continue;
+          }
 
           const meta = event.metadata;
           // Only care about workspaces in this project
@@ -206,7 +236,7 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
     })();
 
     return () => controller.abort();
-  }, [api, projectPath, syncArchivedState]);
+  }, [api, projectPath, remoteMuxServersEnabled, syncArchivedState]);
 
   const didAutoFocusRef = useRef(false);
 
@@ -331,6 +361,23 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       pendingDraftId={pendingDraftId}
                       onReady={handleChatReady}
                       onWorkspaceCreated={onWorkspaceCreated}
+                      workspaces={archivedWorkspaces}
+                      onWorkspacesChanged={() => {
+                        // Refresh archived list after unarchive/delete
+                        if (!api) return;
+
+                        void api.workspace.list({ archived: true }).then((all) => {
+                          let projectArchived = all.filter((w) => w.projectPath === projectPath);
+                          if (!remoteMuxServersEnabled) {
+                            projectArchived = projectArchived.filter(
+                              (w) => !isRemoteWorkspaceId(w.id)
+                            );
+                          }
+
+                          archivedMapRef.current = new Map(projectArchived.map((w) => [w.id, w]));
+                          syncArchivedState();
+                        });
+                      }}
                     />
                   </>
                 )}
