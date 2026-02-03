@@ -93,7 +93,6 @@ import { SortableContext, rectSortingStrategy } from "@dnd-kit/sortable";
 // Re-export for consumers
 export type { ReviewStats };
 
-
 interface SidebarContainerProps {
   collapsed: boolean;
   /** Custom width from drag-resize (unified across all tabs) */
