@@ -87,6 +87,40 @@ export const SecretsGlobal: AppStory = {
   },
 };
 
+export const SecretsGlobalPopulated: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSecretsStory({
+          globalSecrets: [
+            { key: "OPENAI_API_KEY", value: "sk-openai" },
+            { key: "ANTHROPIC_API_KEY", value: "sk-anthropic" },
+            { key: "GITHUB_TOKEN", value: "ghp_123" },
+            { key: "SENTRY_AUTH_TOKEN", value: "sentry" },
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSecrets(canvasElement);
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
+    const dialogCanvas = within(dialog);
+
+    // Radix ToggleGroup (type="single") items render with role="radio".
+    const globalScopeToggle = await dialogCanvas.findByRole("radio", { name: /^Global$/i });
+    await userEvent.click(globalScopeToggle);
+
+    await dialogCanvas.findByText(/secrets are stored in/i);
+    await dialogCanvas.findByDisplayValue("OPENAI_API_KEY");
+    await dialogCanvas.findByDisplayValue("ANTHROPIC_API_KEY");
+    await dialogCanvas.findByDisplayValue("GITHUB_TOKEN");
+    await dialogCanvas.findByDisplayValue("SENTRY_AUTH_TOKEN");
+  },
+};
+
 export const SecretsProject: AppStory = {
   render: () => <AppWithMocks setup={() => setupSecretsStory({})} />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
