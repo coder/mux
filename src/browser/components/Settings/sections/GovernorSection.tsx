@@ -11,6 +11,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/comp
 import { useAPI } from "@/browser/contexts/API";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { JsonHighlight } from "@/browser/components/tools/shared/HighlightedCode";
+import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+
+/** Get server auth token from URL query param or localStorage. */
+function getServerAuthToken(): string | null {
+  const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
+  return urlToken?.length ? urlToken : getStoredAuthToken();
+}
 
 type EnrollStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
@@ -174,9 +181,12 @@ export function GovernorSection() {
 
       // Fetch the authorize URL from the start endpoint
       const startUrl = `/auth/mux-governor/start?governorUrl=${encodeURIComponent(governorOrigin)}`;
+      const authToken = getServerAuthToken();
       let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };
       try {
-        const res = await fetch(startUrl);
+        const res = await fetch(startUrl, {
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        });
         const contentType = res.headers.get("content-type") ?? "";
         if (!contentType.includes("application/json")) {
           const body = await res.text();
