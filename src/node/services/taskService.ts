@@ -14,8 +14,10 @@ import { log } from "@/node/services/log";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import {
   discoverAgentDefinitions,
+  readAgentDefinition,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
@@ -33,6 +35,7 @@ import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
+import { isToolEnabledInResolvedChain } from "@/common/utils/agentTools";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ToolCallEndEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -2378,11 +2381,75 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const childEntry = this.findWorkspaceEntry(cfg, childWorkspaceId);
 
-    // Only exec subagents are expected to make commits that should be handed back to the parent.
-    const childAgentId = coerceNonEmptyString(
+    // Only exec-like subagents are expected to make commits that should be handed back to the parent.
+    // NOTE: Custom agents can inherit from exec (base: exec). Those should also generate patches,
+    // but read-only subagents (e.g. explore) should not.
+    const childAgentIdRaw = coerceNonEmptyString(
       childEntry?.workspace.agentId ?? childEntry?.workspace.agentType
     );
-    if (childAgentId !== "exec") {
+    const childAgentId = childAgentIdRaw?.toLowerCase();
+    if (!childAgentId) {
+      return;
+    }
+
+    let shouldGeneratePatch = childAgentId === "exec";
+
+    if (!shouldGeneratePatch) {
+      const parsedChildAgentId = AgentIdSchema.safeParse(childAgentId);
+      if (parsedChildAgentId.success) {
+        const agentId = parsedChildAgentId.data;
+
+        // Prefer resolving agent inheritance from the parent workspace: project agents may be untracked
+        // (and therefore absent from child worktrees), but they are always present in the parent that
+        // spawned the task.
+        const agentDiscoveryEntry = this.findWorkspaceEntry(cfg, parentWorkspaceId) ?? childEntry;
+        const agentDiscoveryWs = agentDiscoveryEntry?.workspace;
+
+        const agentWorkspacePath = coerceNonEmptyString(agentDiscoveryWs?.path);
+        const runtimeConfig = agentDiscoveryWs?.runtimeConfig;
+
+        if (agentDiscoveryEntry && agentWorkspacePath && runtimeConfig) {
+          const fallbackName =
+            agentWorkspacePath.split("/").pop() ?? agentWorkspacePath.split("\\").pop() ?? "";
+          const workspaceName =
+            coerceNonEmptyString(agentDiscoveryWs?.name) ?? coerceNonEmptyString(fallbackName);
+
+          if (workspaceName) {
+            const runtime = createRuntimeForWorkspace({
+              runtimeConfig,
+              projectPath: agentDiscoveryEntry.projectPath,
+              name: workspaceName,
+            });
+
+            try {
+              const agentDefinition = await readAgentDefinition(
+                runtime,
+                agentWorkspacePath,
+                agentId
+              );
+              const chain = await resolveAgentInheritanceChain({
+                runtime,
+                workspacePath: agentWorkspacePath,
+                agentId,
+                agentDefinition,
+                workspaceId: childWorkspaceId,
+              });
+
+              const inheritsExec = chain.some((agent) => agent.id === "exec");
+              const canEdit =
+                isToolEnabledInResolvedChain("file_edit_insert", chain) ||
+                isToolEnabledInResolvedChain("file_edit_replace_string", chain);
+
+              shouldGeneratePatch = inheritsExec && canEdit;
+            } catch {
+              // ignore - treat as non-exec-like
+            }
+          }
+        }
+      }
+    }
+
+    if (!shouldGeneratePatch) {
       return;
     }
 
