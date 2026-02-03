@@ -626,6 +626,8 @@ export const router = (authToken?: string) => {
             const { muxGovernorUrl: _url, muxGovernorToken: _token, ...rest } = config;
             return rest;
           });
+
+          await context.policyService.refreshNow();
         }),
     },
     uiLayouts: {
@@ -893,6 +895,16 @@ export const router = (authToken?: string) => {
             ended = true;
             unsubscribe();
           }
+        }),
+      refreshNow: t
+        .input(schemas.policy.refreshNow.input)
+        .output(schemas.policy.refreshNow.output)
+        .handler(async ({ context }) => {
+          const result = await context.policyService.refreshNow();
+          if (!result.success) {
+            return Err(result.error);
+          }
+          return Ok(context.policyService.getPolicyGetResponse());
         }),
     },
     muxGateway: {

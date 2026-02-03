@@ -76,6 +76,7 @@ export { SecretSchema } from "./schemas/secrets";
 // Policy schemas
 export {
   PolicyFileSchema,
+  PolicySourceSchema,
   PolicyStatusSchema,
   EffectivePolicySchema,
   PolicyGetResponseSchema,

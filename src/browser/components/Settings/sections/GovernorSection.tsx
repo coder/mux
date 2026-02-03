@@ -9,6 +9,8 @@ import { Button } from "@/browser/components/ui/button";
 import { Input } from "@/browser/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
 import { useAPI } from "@/browser/contexts/API";
+import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { JsonHighlight } from "@/browser/components/tools/shared/HighlightedCode";
 
 type EnrollStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
@@ -16,10 +18,16 @@ export function GovernorSection() {
   const { api } = useAPI();
   const isDesktop = !!window.api;
 
+  const policyState = usePolicy();
+
   // Enrollment state from config
   const [enrolled, setEnrolled] = useState<boolean | null>(null);
   const [governorUrl, setGovernorUrl] = useState<string | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(true);
+
+  // Policy refresh (enrolled only)
+  const [refreshingPolicy, setRefreshingPolicy] = useState(false);
+  const [refreshPolicyError, setRefreshPolicyError] = useState<string | null>(null);
 
   // URL prompt dialog
   const [showUrlDialog, setShowUrlDialog] = useState(false);
@@ -257,6 +265,24 @@ export function GovernorSection() {
     }
   };
 
+  const handleRefreshPolicy = async () => {
+    if (!api) return;
+
+    setRefreshingPolicy(true);
+    setRefreshPolicyError(null);
+
+    try {
+      const result = await api.policy.refreshNow();
+      if (!result.success) {
+        setRefreshPolicyError(result.error);
+      }
+    } catch (error) {
+      setRefreshPolicyError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRefreshingPolicy(false);
+    }
+  };
+
   const handleUnenroll = async () => {
     if (!api) return;
 
@@ -264,6 +290,7 @@ export function GovernorSection() {
       await api.config.unenrollMuxGovernor();
       setEnrolled(false);
       setGovernorUrl(null);
+      setRefreshPolicyError(null);
     } catch (error) {
       // Show error but don't crash
       console.error("Failed to unenroll from Governor:", error);
@@ -299,11 +326,53 @@ export function GovernorSection() {
           <div className="flex items-center gap-2 text-sm">
             <ShieldCheck className="h-4 w-4 text-green-500" />
             <span className="font-medium">Governor URL:</span>
-            <code className="bg-muted rounded px-2 py-0.5">{governorUrl}</code>
+            <code className="rounded bg-zinc-700/50 px-2 py-0.5">{governorUrl}</code>
           </div>
-          <Button variant="destructive" size="sm" onClick={() => void handleUnenroll()}>
-            Unenroll from Mux Governor
-          </Button>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleRefreshPolicy()}
+              disabled={refreshingPolicy}
+            >
+              {refreshingPolicy ? "Refreshing..." : "Refresh policy"}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={() => void handleUnenroll()}>
+              Unenroll from Mux Governor
+            </Button>
+          </div>
+
+          {refreshPolicyError && (
+            <div className="text-destructive flex items-start gap-2 text-sm">
+              <X className="mt-0.5 h-4 w-4" />
+              <span>{refreshPolicyError}</span>
+            </div>
+          )}
+
+          {/* Current policy display */}
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium">Policy source:</span>
+              <code className="rounded bg-zinc-700/50 px-2 py-0.5">{policyState.source}</code>
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium">Policy status:</span>
+              <code className="rounded bg-zinc-700/50 px-2 py-0.5">{policyState.status.state}</code>
+              {policyState.status.state === "blocked" && policyState.status.reason && (
+                <span className="text-destructive text-xs">({policyState.status.reason})</span>
+              )}
+            </div>
+
+            {policyState.policy && (
+              <div className="space-y-1">
+                <span className="text-sm font-medium">Effective policy:</span>
+                <div className="rounded-md border border-zinc-700 p-2">
+                  <JsonHighlight value={policyState.policy} />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       ) : enrollStatus === "idle" || enrollStatus === "success" ? (
         // Not enrolled - show enroll button

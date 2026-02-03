@@ -173,6 +173,11 @@ export const policy = {
     input: z.void(),
     output: eventIterator(z.void()),
   },
+  // Force a refresh of the effective policy (re-reads MUX_POLICY_FILE or Governor policy)
+  refreshNow: {
+    input: z.void(),
+    output: ResultSchema(PolicyGetResponseSchema, z.string()),
+  },
 };
 
 // Mux Gateway OAuth (desktop login flow)

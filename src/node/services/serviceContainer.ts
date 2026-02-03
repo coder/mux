@@ -173,12 +173,18 @@ export class ServiceContainer {
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(config, this.mcpConfigService, this.windowService);
     this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
+
+    this.policyService = new PolicyService(config);
     this.providerService = new ProviderService(config);
     this.muxGatewayOauthService = new MuxGatewayOauthService(
       this.providerService,
       this.windowService
     );
-    this.muxGovernorOauthService = new MuxGovernorOauthService(config, this.windowService);
+    this.muxGovernorOauthService = new MuxGovernorOauthService(
+      config,
+      this.windowService,
+      this.policyService
+    );
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
     this.terminalService = new TerminalService(config, this.ptyService);
@@ -204,8 +210,6 @@ export class ServiceContainer {
     this.workspaceService.setSessionTimingService(this.sessionTimingService);
     this.signingService = getSigningService();
     this.coderService = coderService;
-
-    this.policyService = new PolicyService();
 
     // PolicyService is a cross-cutting dependency; use setter injection to avoid
     // constructor cycles between services.

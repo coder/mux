@@ -17,6 +17,7 @@ import {
   normalizeGovernorUrl,
 } from "@/common/constants/muxGovernorOAuth";
 import type { Config } from "@/node/config";
+import type { PolicyService } from "@/node/services/policyService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
 
@@ -63,7 +64,8 @@ export class MuxGovernorOauthService {
 
   constructor(
     private readonly config: Config,
-    private readonly windowService?: WindowService
+    private readonly windowService?: WindowService,
+    private readonly policyService?: PolicyService
   ) {}
 
   async startDesktopFlow(input: {
@@ -403,6 +405,12 @@ export class MuxGovernorOauthService {
 
     this.windowService?.focusMainWindow();
 
+    const refreshResult = await this.policyService?.refreshNow();
+    if (refreshResult && !refreshResult.success) {
+      log.warn("Policy refresh after Governor enrollment failed", {
+        error: refreshResult.error,
+      });
+    }
     return Ok(undefined);
   }
 

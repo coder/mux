@@ -1,11 +1,14 @@
 import { EventEmitter } from "events";
 import { readFile } from "node:fs/promises";
 import { log } from "@/node/services/log";
+import type { Config } from "@/node/config";
+import { Err, Ok, type Result } from "@/common/types/result";
 import {
   PolicyFileSchema,
   type EffectivePolicy,
   type PolicyGetResponse,
   type PolicyRuntimeId,
+  type PolicySource,
 } from "@/common/orpc/schemas/policy";
 import type { ProviderName } from "@/common/constants/providers";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -17,6 +20,11 @@ import packageJson from "../../../package.json";
 const POLICY_FETCH_TIMEOUT_MS = 10 * 1000;
 const POLICY_MAX_BYTES = 1024 * 1024;
 const POLICY_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+
+type ActivePolicySource =
+  | { kind: "env"; value: string }
+  | { kind: "governor"; origin: string; token: string }
+  | { kind: "none" };
 
 function stableNormalize(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -115,6 +123,45 @@ async function loadPolicyText(source: string): Promise<string> {
     clearTimeout(timeout);
   }
 }
+
+async function loadGovernorPolicyText(input: {
+  governorOrigin: string;
+  token: string;
+}): Promise<string> {
+  const policyUrl = new URL("/api/v1/policy.json", input.governorOrigin).toString();
+
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), POLICY_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(policyUrl, {
+      signal: abortController.signal,
+      headers: {
+        accept: "application/json",
+        "Mux-Governor-Session-Token": input.token,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > POLICY_MAX_BYTES) {
+      throw new Error(`Response too large (${bytes} bytes)`);
+    }
+
+    return text;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to fetch Governor policy (${formatPolicySourceForLog(policyUrl)}): ${message}`
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 function normalizeForcedBaseUrl(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -137,14 +184,18 @@ export class PolicyService {
   private readonly emitter = new EventEmitter();
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
+  private source: PolicySource = "none";
+  private refreshInFlight: Promise<Result<void, string>> | null = null;
+
   private status: PolicyStatus = { state: "disabled" };
   private effectivePolicy: EffectivePolicy | null = null;
   private signature: string = stableStringify({
+    source: this.source,
     status: this.status,
     policy: this.effectivePolicy,
   });
 
-  constructor() {
+  constructor(private readonly config: Config) {
     // Multiple windows can subscribe.
     this.emitter.setMaxListeners(50);
   }
@@ -167,6 +218,9 @@ export class PolicyService {
     }
   }
 
+  async refreshNow(): Promise<Result<void, string>> {
+    return await this.refreshPolicy({ isStartup: false });
+  }
   onPolicyChanged(callback: () => void): () => void {
     this.emitter.on("policyChanged", callback);
     return () => this.emitter.off("policyChanged", callback);
@@ -178,6 +232,7 @@ export class PolicyService {
 
   getPolicyGetResponse(): PolicyGetResponse {
     return {
+      source: this.source,
       status: this.toSchemaStatus(this.status),
       policy: this.effectivePolicy,
     };
@@ -288,18 +343,55 @@ export class PolicyService {
     return runtimeConfig.type;
   }
 
-  private async refreshPolicy(options: { isStartup: boolean }): Promise<void> {
+  private getActivePolicySource(): ActivePolicySource {
     const filePath = process.env.MUX_POLICY_FILE?.trim();
-    if (!filePath) {
-      // Policy is opt-in.
-      this.updateState({ state: "disabled" }, null);
-      return;
+    if (filePath) {
+      return { kind: "env", value: filePath };
     }
+
+    const config = this.config.loadConfigOrDefault();
+    const governorOrigin = config.muxGovernorUrl?.trim();
+    const governorToken = config.muxGovernorToken?.trim();
+
+    if (governorOrigin && governorToken) {
+      return { kind: "governor", origin: governorOrigin, token: governorToken };
+    }
+
+    return { kind: "none" };
+  }
+
+  private async refreshPolicy(options: { isStartup: boolean }): Promise<Result<void, string>> {
+    if (this.refreshInFlight) {
+      return this.refreshInFlight;
+    }
+
+    const promise = this.refreshPolicyOnce(options).finally(() => {
+      this.refreshInFlight = null;
+    });
+
+    this.refreshInFlight = promise;
+    return promise;
+  }
+
+  private async refreshPolicyOnce(options: { isStartup: boolean }): Promise<Result<void, string>> {
+    const policySource = this.getActivePolicySource();
+    if (policySource.kind === "none") {
+      // Policy is opt-in.
+      this.updateState({ source: "none", status: { state: "disabled" }, policy: null });
+      return Ok(undefined);
+    }
+
+    const schemaSource: PolicySource = policySource.kind === "env" ? "env" : "governor";
 
     try {
       const [clientVersion, fileText] = await Promise.all([
         getClientVersion(),
-        loadPolicyText(filePath),
+        policySource.kind === "env"
+          ? loadPolicyText(policySource.value)
+          : loadGovernorPolicyText({
+              governorOrigin: policySource.origin,
+              token: policySource.token,
+            }),
       ]);
 
       const raw = parsePolicyFile(fileText);
@@ -309,14 +401,15 @@ export class PolicyService {
       if (parsed.minimum_client_version) {
         const min = parsed.minimum_client_version;
         if (compareVersions(clientVersion, min) < 0) {
-          this.updateState(
-            {
+          this.updateState({
+            source: schemaSource,
+            status: {
               state: "blocked",
               reason: `Mux ${clientVersion} is below required minimum_client_version ${min}`,
             },
-            null
-          );
-          return;
+            policy: null,
+          });
+          return Ok(undefined);
         }
       }
 
@@ -363,29 +456,39 @@ export class PolicyService {
           parsed.runtimes && parsed.runtimes.length > 0 ? parsed.runtimes.map((r) => r.id) : null,
       };
 
-      this.updateState({ state: "enforced" }, effective);
+      this.updateState({ source: schemaSource, status: { state: "enforced" }, policy: effective });
+      return Ok(undefined);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
       if (options.isStartup) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.updateState({ state: "blocked", reason: `Failed to load policy: ${message}` }, null);
-        return;
+        this.updateState({
+          source: schemaSource,
+          status: { state: "blocked", reason: `Failed to load policy: ${message}` },
+          policy: null,
+        });
+        return Err(message);
       }
 
       // Refresh failures should not unlock the user; keep last-known-good.
-      log.warn("Policy refresh failed; keeping last-known-good policy", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      log.warn("Policy refresh failed; keeping last-known-good policy", { error: message });
+      return Err(message);
     }
   }
 
-  private updateState(status: PolicyStatus, policy: EffectivePolicy | null): void {
-    const nextSignature = stableStringify({ status, policy });
+  private updateState(next: {
+    source: PolicySource;
+    status: PolicyStatus;
+    policy: EffectivePolicy | null;
+  }): void {
+    const nextSignature = stableStringify(next);
     if (nextSignature === this.signature) {
       return;
     }
 
-    this.status = status;
-    this.effectivePolicy = policy;
+    this.source = next.source;
+    this.status = next.status;
+    this.effectivePolicy = next.policy;
     this.signature = nextSignature;
     this.emitPolicyChanged();
   }

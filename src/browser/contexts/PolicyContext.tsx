@@ -1,8 +1,14 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import type { EffectivePolicy, PolicyGetResponse, PolicyStatus } from "@/common/orpc/types";
+import type {
+  EffectivePolicy,
+  PolicyGetResponse,
+  PolicySource,
+  PolicyStatus,
+} from "@/common/orpc/types";
 import { useAPI } from "@/browser/contexts/API";
 
 interface PolicyContextValue {
+  source: PolicySource;
   status: PolicyStatus;
   policy: EffectivePolicy | null;
   loading: boolean;
@@ -63,11 +69,12 @@ export function PolicyProvider(props: { children: React.ReactNode }) {
     return () => abortController.abort();
   }, [api, refresh]);
 
+  const source: PolicySource = response?.source ?? "none";
   const status: PolicyStatus = response?.status ?? { state: "disabled" };
   const policy = response?.policy ?? null;
 
   return (
-    <PolicyContext.Provider value={{ status, policy, loading, refresh }}>
+    <PolicyContext.Provider value={{ source, status, policy, loading, refresh }}>
       {props.children}
     </PolicyContext.Provider>
   );
