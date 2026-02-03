@@ -23,6 +23,8 @@ import {
   setWorkspaceDrafts,
 } from "./storyHelpers";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
+import { encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { within, userEvent, waitFor } from "@storybook/test";
 
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
@@ -147,6 +149,59 @@ export const SingleProject: AppStory = {
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
+        });
+      }}
+    />
+  ),
+};
+
+/** Sidebar showing a remote workspace (experiment gated) */
+export const WithRemoteWorkspace: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        window.localStorage.setItem(
+          getExperimentKey(EXPERIMENT_IDS.REMOTE_MUX_SERVERS),
+          JSON.stringify(true)
+        );
+
+        const projectPath = "/home/user/projects/my-app";
+        const serverId = "server-work";
+        const remoteWorkspaceId = encodeRemoteWorkspaceId(serverId, "ws-remote-123");
+
+        const workspaces = [
+          createWorkspace({ id: "ws-local", name: "main", projectName: "my-app", projectPath }),
+          createWorkspace({
+            id: remoteWorkspaceId,
+            name: "feature/remote",
+            title: "Remote: feature/remote",
+            projectName: "my-app",
+            projectPath,
+          }),
+        ];
+
+        expandProjects([projectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          remoteServers: [
+            {
+              config: {
+                id: serverId,
+                label: "Work desktop",
+                baseUrl: "https://mux-work.example.com",
+                enabled: true,
+                projectMappings: [
+                  {
+                    localProjectPath: projectPath,
+                    remoteProjectPath: "/Users/alex/projects/my-app",
+                  },
+                ],
+              },
+              hasAuthToken: true,
+            },
+          ],
         });
       }}
     />
