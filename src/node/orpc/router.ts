@@ -1883,13 +1883,27 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcpOauth.getAuthStatus.input)
           .output(schemas.projects.mcpOauth.getAuthStatus.output)
           .handler(async ({ context, input }) => {
-            return context.mcpOauthService.getAuthStatus(input.projectPath, input.serverName);
+            const servers = await context.mcpConfigService.listServers(input.projectPath);
+            const server = servers[input.serverName];
+
+            if (!server || server.transport === "stdio") {
+              return { isLoggedIn: false, hasRefreshToken: false };
+            }
+
+            return context.mcpOauthService.getAuthStatus({ serverUrl: server.url });
           }),
         logout: t
           .input(schemas.projects.mcpOauth.logout.input)
           .output(schemas.projects.mcpOauth.logout.output)
           .handler(async ({ context, input }) => {
-            return context.mcpOauthService.logout(input.projectPath, input.serverName);
+            const servers = await context.mcpConfigService.listServers(input.projectPath);
+            const server = servers[input.serverName];
+
+            if (!server || server.transport === "stdio") {
+              return Ok(undefined);
+            }
+
+            return context.mcpOauthService.logout({ serverUrl: server.url });
           }),
       },
       idleCompaction: {
