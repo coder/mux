@@ -358,19 +358,25 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
     const isModified = state.gitStatus.modified.has(node.path);
     const isUntracked = state.gitStatus.untracked.has(node.path);
 
-    // Determine text color based on git status (modified takes precedence over untracked)
-    const textColor = isModified
-      ? "var(--color-git-modified)"
+    const statusTextClass = isModified
+      ? "text-[var(--color-git-modified)]"
       : isUntracked
-        ? "var(--color-git-untracked)"
+        ? "text-[var(--color-git-untracked)]"
         : undefined;
+
+    // Git status colors can lose contrast against focus/hover row backgrounds in light themes
+    // (notably Flexoki light). Override to the normal foreground color when highlighted so
+    // the selected row stays readable.
+    const statusTextHighlightOverrideClass = statusTextClass
+      ? "group-hover:text-foreground group-focus:text-foreground"
+      : undefined;
 
     return (
       <div key={key}>
         <button
           type="button"
           className={cn(
-            "flex w-full cursor-pointer items-center gap-1 px-2 py-0.5 text-left text-sm hover:bg-accent/50",
+            "group flex w-full cursor-pointer items-center gap-1 px-2 py-0.5 text-left text-sm hover:bg-accent/50",
             "focus:bg-accent/50 focus:outline-none",
             isIgnored && "opacity-50"
           )}
@@ -404,7 +410,7 @@ export const ExplorerTab: React.FC<ExplorerTabProps> = (props) => {
               <FileIcon fileName={node.name} style={{ fontSize: 18 }} className="h-4 w-4" />
             </>
           )}
-          <span className="truncate" style={textColor ? { color: textColor } : undefined}>
+          <span className={cn("truncate", statusTextClass, statusTextHighlightOverrideClass)}>
             {node.name}
           </span>
         </button>
