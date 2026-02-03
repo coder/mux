@@ -270,11 +270,20 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
         </button>
 
         <DialogFooter>
-          <Button variant="secondary" type="button" onClick={handleCancel} disabled={isLoading}>
+          <Button
+            variant="secondary"
+            type="button"
+            onClick={handleCancel}
+            disabled={isLoading || isImporting}
+          >
             Cancel
           </Button>
-          <Button type="button" onClick={() => void handleSave()} disabled={isLoading}>
-            {isLoading ? "Saving..." : "Save"}
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={isLoading || isImporting}
+          >
+            {isLoading ? "Saving..." : isImporting ? "Importing..." : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>
