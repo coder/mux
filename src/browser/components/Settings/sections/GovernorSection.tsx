@@ -148,18 +148,62 @@ export function GovernorSection() {
         setEnrollError(waitResult.error);
       }
     } else {
-      // Server/browser flow: use popup + postMessage
-      const startUrl = `/auth/mux-governor/start?governorUrl=${encodeURIComponent(governorOrigin)}`;
-
-      setEnrollStatus("waiting");
-
-      const popup = window.open(startUrl, "mux-governor-oauth", "width=600,height=700,popup=1");
+      // Server/browser flow: open popup, fetch start URL, then navigate popup to authorize URL
+      // (Matches gateway pattern - popup must be opened synchronously before async fetch)
+      const popup = window.open(
+        "about:blank",
+        "mux-governor-oauth",
+        "width=600,height=700,popup=1"
+      );
 
       if (!popup) {
         setEnrollStatus("error");
         setEnrollError("Failed to open popup. Please allow popups for this site.");
         return;
       }
+
+      setEnrollStatus("waiting");
+
+      // Fetch the authorize URL from the start endpoint
+      const startUrl = `/auth/mux-governor/start?governorUrl=${encodeURIComponent(governorOrigin)}`;
+      let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };
+      try {
+        const res = await fetch(startUrl);
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          const body = await res.text();
+          const prefix = body.trim().slice(0, 80);
+          throw new Error(
+            `Unexpected response (expected JSON, got ${contentType || "unknown"}): ${prefix}`
+          );
+        }
+        json = (await res.json()) as typeof json;
+        if (!res.ok) {
+          const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+          throw new Error(message);
+        }
+      } catch (err) {
+        popup.close();
+        if (currentAttempt !== enrollAttemptRef.current) return;
+        setEnrollStatus("error");
+        setEnrollError(err instanceof Error ? err.message : String(err));
+        return;
+      }
+
+      if (currentAttempt !== enrollAttemptRef.current) {
+        popup.close();
+        return;
+      }
+
+      if (typeof json.authorizeUrl !== "string") {
+        popup.close();
+        setEnrollStatus("error");
+        setEnrollError("Invalid response from start endpoint");
+        return;
+      }
+
+      // Navigate popup to the authorize URL
+      popup.location.href = json.authorizeUrl;
 
       // Type for OAuth callback message
       interface GovernorOAuthMessage {
