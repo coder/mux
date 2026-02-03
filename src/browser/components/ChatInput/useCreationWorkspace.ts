@@ -11,6 +11,7 @@ import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import { buildRuntimeConfig, RUNTIME_MODE } from "@/common/types/runtime";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { useDraftWorkspaceSettings } from "@/browser/hooks/useDraftWorkspaceSettings";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
@@ -70,7 +71,7 @@ function syncCreationPreferences(projectPath: string, workspaceId: string): void
   // This ensures the model used for creation is persisted for future resumes
   const projectModel = readPersistedState<string | null>(getModelKey(projectScopeId), null);
   if (projectModel) {
-    updatePersistedState(getModelKey(workspaceId), projectModel);
+    setWorkspaceModelWithOrigin(workspaceId, projectModel, "sync");
   }
 
   const projectAgentId = readPersistedState<string | null>(getAgentIdKey(projectScopeId), null);

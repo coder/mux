@@ -12,6 +12,7 @@ import {
   AGENT_AI_DEFAULTS_KEY,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 
@@ -85,7 +86,7 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
     if (existingModel !== resolvedModel) {
-      updatePersistedState(modelKey, resolvedModel);
+      setWorkspaceModelWithOrigin(workspaceId, resolvedModel, "agent");
     }
 
     if (existingThinking !== resolvedThinking) {

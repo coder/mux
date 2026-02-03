@@ -20,6 +20,10 @@ import {
 } from "@/browser/utils/compaction/contextSwitchCheck";
 import { getHigherContextCompactionSuggestion } from "@/browser/utils/compaction/suggestion";
 import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import {
+  consumeWorkspaceModelChange,
+  setWorkspaceModelWithOrigin,
+} from "@/browser/utils/modelChange";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 
@@ -67,8 +71,8 @@ const createSwitchState = (model: string): SwitchState => ({
   warning: null,
 });
 
-// User request: track explicit model-change origin so deferred switches
-// (tokens === 0) can't leak into sync-driven model updates.
+// User request: keep explicit model switches isolated so deferred switches
+// (tokens === 0) don't leak into background updates.
 function switchReducer(state: SwitchState, action: SwitchAction): SwitchState {
   switch (action.type) {
     case "RESET":
@@ -190,20 +194,16 @@ export function useContextSwitchWarning(
     [checkOptions, enhanceWarning, messages, use1M]
   );
 
-  const handleModelChange = useCallback(
-    (newModel: string) => {
-      // Use the model user was just on (not last assistant message's model)
-      // so compaction fallback works even if user switches without sending.
-      const previousModel = pendingModel;
-
-      if (previousModel === newModel) {
+  const queueExplicitSwitch = useCallback(
+    (options: { model: string; previousModel: string | null }) => {
+      if (options.previousModel === options.model) {
         dispatch({ type: "CLEAR_PENDING" });
         return;
       }
 
       const pendingSwitch: PendingSwitch = {
-        model: newModel,
-        previousModel,
+        model: options.model,
+        previousModel: options.previousModel,
         deferred: tokens === 0,
       };
 
@@ -216,12 +216,24 @@ export function useContextSwitchWarning(
 
       const nextWarning = evaluateWarning({
         tokens,
-        targetModel: newModel,
-        previousModel,
+        targetModel: options.model,
+        previousModel: options.previousModel,
       });
       dispatch({ type: "WARNING_UPDATED", warning: nextWarning });
     },
-    [pendingModel, tokens, evaluateWarning]
+    [evaluateWarning, tokens]
+  );
+
+  const handleModelChange = useCallback(
+    (newModel: string) => {
+      if (newModel === pendingModel) {
+        return;
+      }
+
+      // User request: record explicit model switches so warnings only follow user actions.
+      setWorkspaceModelWithOrigin(workspaceId, newModel, "user");
+    },
+    [pendingModel, workspaceId]
   );
 
   const handleCompact = useCallback(() => {
@@ -242,12 +254,22 @@ export function useContextSwitchWarning(
 
   // Sync with indirect model changes (e.g., WorkspaceModeAISync updating model on mode/agent change).
   // Effect is appropriate: pendingModel comes from usePersistedState (localStorage).
-  // Only user-initiated switches should surface warnings; sync just updates refs.
+  // Only explicit user/agent switches should surface warnings; background updates just update refs.
   useEffect(() => {
-    if (switchState.currentModel !== pendingModel) {
-      dispatch({ type: "MODEL_APPLIED", model: pendingModel });
+    if (switchState.currentModel === pendingModel) {
+      return;
     }
-  }, [pendingModel, switchState.currentModel]);
+
+    const origin = consumeWorkspaceModelChange(workspaceId, pendingModel);
+    if (origin === "user" || origin === "agent") {
+      queueExplicitSwitch({
+        model: pendingModel,
+        previousModel: switchState.currentModel,
+      });
+    }
+
+    dispatch({ type: "MODEL_APPLIED", model: pendingModel });
+  }, [pendingModel, queueExplicitSwitch, switchState.currentModel, workspaceId]);
 
   useEffect(() => {
     if (tokens === 0) {

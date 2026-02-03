@@ -169,7 +169,6 @@ export async function processSlashCommand(
     variant,
     setVimEnabled,
     setPreferredModel,
-    onModelChange,
   } = context;
 
   const requireClient = (): RouterClient<AppRouter> | null => {
@@ -297,7 +296,6 @@ export async function processSlashCommand(
 
       setInput("");
       setPreferredModel(modelString);
-      onModelChange?.(modelString);
       trackCommandUsed("model");
       setToast({
         id: Date.now().toString(),

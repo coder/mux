@@ -9,6 +9,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { useContextSwitchWarning } from "./useContextSwitchWarning";
 import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
+import { recordWorkspaceModelChange } from "@/browser/utils/modelChange";
 
 function createStubApiClient(): APIClient {
   // Avoid mock.module (global) by injecting a minimal client through providers.
@@ -122,10 +123,7 @@ describe("useContextSwitchWarning", () => {
     );
 
     act(() => {
-      result.current.handleModelChange(nextModel);
-    });
-
-    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
       rerender({
         ...props,
         pendingModel: nextModel,
@@ -136,6 +134,40 @@ describe("useContextSwitchWarning", () => {
     await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
   });
 
+  test("warns when an agent-driven model change overflows context", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:gpt-5.2-codex";
+    const limit = getEffectiveContextLimit(nextModel, false);
+    expect(limit).not.toBeNull();
+    if (!limit) return;
+
+    const tokens = Math.floor(limit * 1.05);
+    const props = {
+      workspaceId: "workspace-9",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(tokens, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "agent");
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+  });
   test("does not warn when the model changes via sync", async () => {
     const previousModel = "anthropic:claude-sonnet-4-5";
     const nextModel = "openai:gpt-5.2-codex";
@@ -165,6 +197,55 @@ describe("useContextSwitchWarning", () => {
     await waitFor(() => expect(result.current.warning).toBeNull());
   });
 
+  test("does not re-warn without a new explicit change entry", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:gpt-5.2-codex";
+    const props = {
+      workspaceId: "workspace-10",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(260_000, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: previousModel,
+        pendingSendOptions: buildSendOptions(previousModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+  });
   test("clears stale warning when user switches with zero tokens", async () => {
     const previousModel = "anthropic:claude-sonnet-4-5";
     const nextModel = "openai:gpt-5.2-codex";
@@ -185,10 +266,7 @@ describe("useContextSwitchWarning", () => {
     );
 
     act(() => {
-      result.current.handleModelChange(nextModel);
-    });
-
-    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
       rerender({
         ...props,
         pendingModel: nextModel,
@@ -208,10 +286,7 @@ describe("useContextSwitchWarning", () => {
     });
 
     act(() => {
-      result.current.handleModelChange(finalModel);
-    });
-
-    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, finalModel, "user");
       rerender({
         ...props,
         pendingModel: finalModel,
@@ -247,10 +322,7 @@ describe("useContextSwitchWarning", () => {
     );
 
     act(() => {
-      result.current.handleModelChange(nextModel);
-    });
-
-    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
       rerender({
         ...props,
         pendingModel: nextModel,
@@ -296,10 +368,7 @@ describe("useContextSwitchWarning", () => {
     );
 
     act(() => {
-      result.current.handleModelChange(nextModel);
-    });
-
-    act(() => {
+      recordWorkspaceModelChange(props.workspaceId, nextModel, "user");
       rerender({
         ...props,
         pendingModel: nextModel,
