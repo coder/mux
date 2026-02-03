@@ -135,10 +135,17 @@ export class RemoteServersService {
     }));
   }
 
-  async upsert(params: {
-    config: RemoteMuxServerConfig;
-    authToken?: string;
-  }): Promise<void> {
+  getAuthToken(params: { id: string }): string | null {
+    const id = normalizeRemoteMuxServerId(params.id);
+    const secretsConfig = this.config.loadSecretsConfig();
+    const secretsKey = getRemoteMuxServerSecretsKey(id);
+    return getAuthTokenFromSecrets(secretsConfig[secretsKey]);
+  }
+
+  hasAuthToken(params: { id: string }): boolean {
+    return Boolean(this.getAuthToken(params));
+  }
+  async upsert(params: { config: RemoteMuxServerConfig; authToken?: string }): Promise<void> {
     const normalizedConfig = normalizeRemoteMuxServerConfig(params.config);
 
     await this.config.editConfig((config) => {
