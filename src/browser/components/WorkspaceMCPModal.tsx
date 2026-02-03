@@ -313,6 +313,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                           onCheckedChange={(checked) =>
                             toggleServerEnabled(name, checked, projectDisabled)
                           }
+                          aria-label={`Toggle ${name} MCP server`}
                         />
                         <div>
                           <div className="font-medium">{name}</div>

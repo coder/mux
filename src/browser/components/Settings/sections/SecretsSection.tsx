@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import type { Secret } from "@/common/types/secrets";
 import { useAPI } from "@/browser/contexts/API";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
@@ -150,10 +150,18 @@ export const SecretsSection: React.FC = () => {
   const removeSecret = useCallback((index: number) => {
     setSecrets((prev) => prev.filter((_, i) => i !== index));
 
-    // Clean up visibility state.
+    // Keep visibility state aligned with the remaining rows.
+    //
+    // Visibility is tracked by array index; deleting a row shifts later indices.
+    // If we don't shift the visibility set too, we can end up revealing a different secret.
     setVisibleSecrets((prev) => {
-      const next = new Set(prev);
-      next.delete(index);
+      const next = new Set<number>();
+      for (const visibleIndex of prev) {
+        if (visibleIndex === index) {
+          continue;
+        }
+        next.add(visibleIndex > index ? visibleIndex - 1 : visibleIndex);
+      }
       return next;
     });
   }, []);
@@ -340,7 +348,7 @@ export const SecretsSection: React.FC = () => {
                 className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
                 aria-label="Remove secret"
               >
-                ×
+                <Trash2 className="h-4 w-4" />
               </button>
             </React.Fragment>
           ))}
