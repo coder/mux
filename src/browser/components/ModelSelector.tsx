@@ -354,7 +354,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
           <div
             className={cn(
               menuSurfaceClassName,
-              "absolute bottom-full left-0 h-50 mb-1 w-82 overflow-hidden"
+              "absolute bottom-full left-0 mb-1 w-82 overflow-hidden"
             )}
           >
             {/* Search input */}
