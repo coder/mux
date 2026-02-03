@@ -113,6 +113,7 @@ import {
   resolveAgentBody,
   resolveAgentFrontmatter,
   discoverAgentDefinitions,
+  type AgentDefinitionsRoots,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
@@ -441,6 +442,74 @@ function appendToolNote(existing: string | undefined, extra: string): string {
   }
 
   return `${existing}\n\n${extra}`;
+}
+
+/**
+ * Discover agent definitions for tool description context.
+ *
+ * The task tool lists "Available sub-agents" by filtering on
+ * AgentDefinitionDescriptor.subagentRunnable.
+ *
+ * NOTE: discoverAgentDefinitions() sets descriptor.subagentRunnable from the agent's *own*
+ * frontmatter only, which means derived agents (e.g. `base: exec`) may incorrectly appear
+ * non-runnable if they don't repeat `subagent.runnable: true`.
+ *
+ * Re-resolve frontmatter with inheritance (base-first) so subagent.runnable is inherited.
+ */
+export async function discoverAvailableSubagentsForToolContext(args: {
+  runtime: Parameters<typeof discoverAgentDefinitions>[0];
+  workspacePath: string;
+  cfg: ReturnType<Config["loadConfigOrDefault"]>;
+  roots?: AgentDefinitionsRoots;
+}): Promise<Awaited<ReturnType<typeof discoverAgentDefinitions>>> {
+  assert(args, "discoverAvailableSubagentsForToolContext: args is required");
+  assert(args.runtime, "discoverAvailableSubagentsForToolContext: runtime is required");
+  assert(
+    args.workspacePath && args.workspacePath.length > 0,
+    "discoverAvailableSubagentsForToolContext: workspacePath is required"
+  );
+  assert(args.cfg, "discoverAvailableSubagentsForToolContext: cfg is required");
+
+  const discovered = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
+    roots: args.roots,
+  });
+
+  const resolved = await Promise.all(
+    discovered.map(async (descriptor) => {
+      try {
+        const resolvedFrontmatter = await resolveAgentFrontmatter(
+          args.runtime,
+          args.workspacePath,
+          descriptor.id,
+          { roots: args.roots }
+        );
+
+        const effectivelyDisabled = isAgentEffectivelyDisabled({
+          cfg: args.cfg,
+          agentId: descriptor.id,
+          resolvedFrontmatter,
+        });
+
+        if (effectivelyDisabled) {
+          return null;
+        }
+
+        return {
+          ...descriptor,
+          // Important: descriptor.subagentRunnable comes from the agent's own frontmatter only.
+          // Re-resolve with inheritance so derived agents inherit runnable: true from their base.
+          subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
+        };
+      } catch {
+        // Best-effort: keep the descriptor if enablement or inheritance can't be resolved.
+        return descriptor;
+      }
+    })
+  );
+
+  return resolved.filter((descriptor): descriptor is NonNullable<typeof descriptor> =>
+    Boolean(descriptor)
+  );
 }
 
 export class AIService extends EventEmitter {
@@ -1779,34 +1848,11 @@ export class AIService extends EventEmitter {
       // For tool descriptions (task tool), filter to agents that are effectively enabled.
       let agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
       if (!isSubagentWorkspace) {
-        const discovered = await discoverAgentDefinitions(runtime, agentDiscoveryPath);
-
-        const filtered = await Promise.all(
-          discovered.map(async (descriptor) => {
-            try {
-              const resolvedFrontmatter = await resolveAgentFrontmatter(
-                runtime,
-                agentDiscoveryPath,
-                descriptor.id
-              );
-
-              const effectivelyDisabled = isAgentEffectivelyDisabled({
-                cfg,
-                agentId: descriptor.id,
-                resolvedFrontmatter,
-              });
-
-              return effectivelyDisabled ? null : descriptor;
-            } catch {
-              // Best-effort: keep the descriptor if enablement can't be resolved.
-              return descriptor;
-            }
-          })
-        );
-
-        agentDefinitions = filtered.filter(
-          (descriptor): descriptor is NonNullable<typeof descriptor> => Boolean(descriptor)
-        );
+        agentDefinitions = await discoverAvailableSubagentsForToolContext({
+          runtime,
+          workspacePath: agentDiscoveryPath,
+          cfg,
+        });
       }
 
       // Discover available skills for tool description context
