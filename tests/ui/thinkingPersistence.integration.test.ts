@@ -86,7 +86,7 @@ async function selectModel(
   await waitFor(
     () => {
       const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
-      const thinkingLabel = group?.querySelector("span");
+      const thinkingLabel = group?.querySelector("[data-thinking-label]");
       if (!thinkingLabel?.textContent) {
         throw new Error("Waiting for thinking controls to stabilize");
       }
@@ -132,7 +132,7 @@ async function expectThinkingLabel(container: HTMLElement, expected: string): Pr
   await waitFor(
     () => {
       const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
-      const label = group?.querySelector("span");
+      const label = group?.querySelector("[data-thinking-label]");
       const text = label?.textContent?.trim();
       if (text !== expected) {
         throw new Error(`Expected thinking label ${expected} but got ${text ?? "<missing>"}`);
