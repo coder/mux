@@ -30,11 +30,11 @@ export function usePowerMode(): PowerModeContextValue {
   return ctx;
 }
 
-type MirrorState = {
+interface MirrorState {
   el: HTMLDivElement;
   textNode: Text;
   caretSpan: HTMLSpanElement;
-};
+}
 
 function getLineHeightPx(computed: CSSStyleDeclaration): number {
   const lineHeight = Number.parseFloat(computed.lineHeight);
@@ -161,11 +161,13 @@ export function PowerModeProvider(props: { children: ReactNode }) {
   }, [setEnabled]);
 
   useEffect(() => {
+    const engine = engineRef.current;
+
     return () => {
       mirrorRef.current?.el.remove();
       mirrorRef.current = null;
 
-      engineRef.current.stop();
+      engine.stop();
     };
   }, []);
 

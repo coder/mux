@@ -1,7 +1,7 @@
 // Inspired by Joel Besada's "activate-power-mode" (MIT).
 // Audio clips are sourced from that project (see assets/audio/activate-power-mode/LICENSE.txt).
 
-type Particle = {
+interface Particle {
   x: number;
   y: number;
   vx: number;
@@ -10,7 +10,7 @@ type Particle = {
   ttlMs: number;
   lifeMs: number;
   color: string;
-};
+}
 
 export class PowerModeEngine {
   private canvas: HTMLCanvasElement | null = null;
@@ -134,7 +134,7 @@ export class PowerModeEngine {
     }
   }
 
-  private frame = (nowMs: number) => {
+  private readonly frame = (nowMs: number) => {
     // Clear the scheduled ID immediately so stop() can safely cancel only pending frames.
     this.rafId = null;
 
@@ -144,11 +144,9 @@ export class PowerModeEngine {
       return;
     }
 
-    if (this.lastFrameTimeMs === null) {
-      this.lastFrameTimeMs = nowMs;
-    }
+    const lastFrameTimeMs = (this.lastFrameTimeMs ??= nowMs);
 
-    const dtMs = Math.min(34, Math.max(0, nowMs - this.lastFrameTimeMs));
+    const dtMs = Math.min(34, Math.max(0, nowMs - lastFrameTimeMs));
     this.lastFrameTimeMs = nowMs;
 
     this.step(dtMs);
@@ -165,9 +163,7 @@ export class PowerModeEngine {
 
     // Update particles in-place, compacting the array.
     let write = 0;
-    for (let read = 0; read < this.particles.length; read++) {
-      const p = this.particles[read]!;
-
+    for (const p of this.particles) {
       p.vy += gravity * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
@@ -232,9 +228,7 @@ export class PowerModeEngine {
       this.shakeTimeoutId = null;
     }
 
-    if (this.shakePrevTransform === null) {
-      this.shakePrevTransform = el.style.transform || "";
-    }
+    this.shakePrevTransform ??= el.style.transform || "";
 
     el.style.transform = `translate(${dx}px, ${dy}px) rotate(${rot}deg)`;
 
@@ -317,7 +311,7 @@ export class PowerModeEngine {
     window.removeEventListener("resize", this.handleResize);
   }
 
-  private handleResize = () => {
+  private readonly handleResize = () => {
     this.resizeCanvasToWindow();
   };
 
