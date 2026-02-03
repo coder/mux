@@ -80,8 +80,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       refresh: refreshMuxGatewayAccountStatus,
     } = useMuxGatewayAccountStatus();
     const [isOpen, setIsOpen] = useState(false);
-    const [gatewayTooltipOpen, setGatewayTooltipOpen] = useState(false);
-    const [triggerTooltipOpen, setTriggerTooltipOpen] = useState(false);
     const [inputValue, setInputValue] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [showAllModels, setShowAllModels] = useState(false);
@@ -274,7 +272,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     return (
       <div ref={containerRef} className={containerClassName}>
         {showGatewayIcon && (
-          <Tooltip open={!isOpen && gatewayTooltipOpen} onOpenChange={setGatewayTooltipOpen}>
+          <Tooltip {...(isOpen ? { open: false } : {})}>
             <TooltipTrigger asChild>
               <button
                 type="button"
@@ -321,10 +319,7 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
         )}
 
         {/* Trigger button */}
-        <Tooltip
-          open={!isOpen && hasValue && triggerTooltipOpen}
-          onOpenChange={setTriggerTooltipOpen}
-        >
+        <Tooltip {...(isOpen || !hasValue ? { open: false } : {})}>
           <TooltipTrigger asChild>
             <Button
               type="button"
