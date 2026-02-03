@@ -69,7 +69,7 @@ function RuntimeConfigInput(props: {
         placeholder={props.placeholder}
         disabled={props.disabled}
         className={cn(
-          "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-sm focus:outline-none disabled:opacity-50",
+          "bg-bg-dark text-foreground border-border-medium focus:border-accent h-7 w-36 rounded-md border px-2 text-xs focus:outline-none disabled:opacity-50",
           props.hasError && "border-red-500"
         )}
       />
