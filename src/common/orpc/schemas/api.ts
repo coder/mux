@@ -37,11 +37,17 @@ import {
   AgentIdSchema,
 } from "./agentDefinition";
 import {
+  MCPAddGlobalParamsSchema,
   MCPAddParamsSchema,
+  MCPListParamsSchema,
+  MCPRemoveGlobalParamsSchema,
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
+  MCPSetEnabledGlobalParamsSchema,
   MCPSetEnabledParamsSchema,
+  MCPSetToolAllowlistGlobalParamsSchema,
   MCPSetToolAllowlistParamsSchema,
+  MCPTestGlobalParamsSchema,
   MCPTestParamsSchema,
   MCPTestResultSchema,
   WorkspaceMCPOverridesSchema,
@@ -487,6 +493,58 @@ export const projects = {
       }),
       output: ResultSchema(z.void(), z.string()),
     },
+  },
+};
+
+/**
+ * MCP server configuration.
+ *
+ * Global config lives in <muxHome>/mcp.jsonc, with optional repo overrides in <projectPath>/.mux/mcp.jsonc.
+ */
+export const mcp = {
+  list: {
+    input: MCPListParamsSchema,
+    output: MCPServerMapSchema,
+  },
+  add: {
+    input: MCPAddGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+  remove: {
+    input: MCPRemoveGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+  test: {
+    input: MCPTestGlobalParamsSchema,
+    output: MCPTestResultSchema,
+  },
+  setEnabled: {
+    input: MCPSetEnabledGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+  setToolAllowlist: {
+    input: MCPSetToolAllowlistGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+};
+
+/**
+ * Secrets store.
+ *
+ * - When no projectPath is provided: global secrets
+ * - When projectPath is provided: project-only secrets
+ */
+export const secrets = {
+  get: {
+    input: z.object({ projectPath: z.string().optional() }),
+    output: z.array(SecretSchema),
+  },
+  update: {
+    input: z.object({
+      projectPath: z.string().optional(),
+      secrets: z.array(SecretSchema),
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
 };
 

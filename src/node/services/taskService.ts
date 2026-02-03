@@ -867,7 +867,7 @@ export class TaskService {
     await this.emitWorkspaceMetadata(taskId);
 
     // Kick init (best-effort, async).
-    const secrets = secretsToRecord(this.config.getProjectSecrets(parentMeta.projectPath));
+    const secrets = secretsToRecord(this.config.getEffectiveSecrets(parentMeta.projectPath));
     runBackgroundInit(
       runtimeForTaskWorkspace,
       {
@@ -1901,7 +1901,7 @@ export class TaskService {
           workspacePath,
           trunkBranch,
         });
-        const secrets = secretsToRecord(this.config.getProjectSecrets(taskEntry.projectPath));
+        const secrets = secretsToRecord(this.config.getEffectiveSecrets(taskEntry.projectPath));
         let skipInitHook = false;
         const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
         if (agentIdRaw) {

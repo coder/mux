@@ -178,4 +178,41 @@ describe("Config", () => {
       expect(workspace.createdAt).toBe("2025-01-01T00:00:00.000Z");
     });
   });
+
+  describe("secrets", () => {
+    it("supports global secrets stored under a sentinel key", async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_A", value: "1" }]);
+
+      expect(config.getGlobalSecrets()).toEqual([{ key: "GLOBAL_A", value: "1" }]);
+
+      const raw = fs.readFileSync(path.join(tempDir, "secrets.json"), "utf-8");
+      const parsed = JSON.parse(raw) as { __global__?: unknown };
+      expect(parsed.__global__).toEqual([{ key: "GLOBAL_A", value: "1" }]);
+    });
+
+    it("merges global + project secrets with project overriding by key", async () => {
+      await config.updateGlobalSecrets([
+        { key: "TOKEN", value: "global" },
+        { key: "A", value: "1" },
+      ]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: "project" },
+        { key: "B", value: "2" },
+      ]);
+
+      const effective = config.getEffectiveSecrets(projectPath);
+      const record: Record<string, string> = {};
+      for (const secret of effective) {
+        record[secret.key] = secret.value;
+      }
+
+      expect(record).toEqual({
+        TOKEN: "project",
+        A: "1",
+        B: "2",
+      });
+    });
+  });
 });

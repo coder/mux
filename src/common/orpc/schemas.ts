@@ -180,6 +180,8 @@ export {
   agents,
   nameGeneration,
   projects,
+  mcp,
+  secrets,
   ProviderConfigInfoSchema,
   muxGateway,
   muxGatewayOauth,

@@ -1143,6 +1143,332 @@ export const router = (authToken?: string) => {
           );
         }),
     },
+    secrets: {
+      get: t
+        .input(schemas.secrets.get.input)
+        .output(schemas.secrets.get.output)
+        .handler(({ context, input }) => {
+          const projectPath =
+            typeof input.projectPath === "string" && input.projectPath.trim().length > 0
+              ? input.projectPath
+              : undefined;
+
+          return projectPath
+            ? context.config.getProjectSecrets(projectPath)
+            : context.config.getGlobalSecrets();
+        }),
+      update: t
+        .input(schemas.secrets.update.input)
+        .output(schemas.secrets.update.output)
+        .handler(async ({ context, input }) => {
+          const projectPath =
+            typeof input.projectPath === "string" && input.projectPath.trim().length > 0
+              ? input.projectPath
+              : undefined;
+
+          try {
+            if (projectPath) {
+              await context.config.updateProjectSecrets(projectPath, input.secrets);
+            } else {
+              await context.config.updateGlobalSecrets(input.secrets);
+            }
+
+            return Ok(undefined);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+    },
+    mcp: {
+      list: t
+        .input(schemas.mcp.list.input)
+        .output(schemas.mcp.list.output)
+        .handler(async ({ context, input }) => {
+          const servers = await context.mcpConfigService.listServers(input.projectPath);
+
+          if (!context.policyService.isEnforced()) {
+            return servers;
+          }
+
+          const filtered: typeof servers = {};
+          for (const [name, info] of Object.entries(servers)) {
+            if (context.policyService.isMcpTransportAllowed(info.transport)) {
+              filtered[name] = info;
+            }
+          }
+
+          return filtered;
+        }),
+      add: t
+        .input(schemas.mcp.add.input)
+        .output(schemas.mcp.add.output)
+        .handler(async ({ context, input }) => {
+          const existing = await context.mcpConfigService.listServers();
+          const existingServer = existing[input.name];
+
+          const transport = input.transport ?? "stdio";
+          if (context.policyService.isEnforced()) {
+            if (!context.policyService.isMcpTransportAllowed(transport)) {
+              return { success: false, error: "MCP transport is disabled by policy" };
+            }
+          }
+
+          const hasHeaders = Boolean(input.headers && Object.keys(input.headers).length > 0);
+          const usesSecretHeaders = Boolean(
+            input.headers &&
+            Object.values(input.headers).some(
+              (v) => typeof v === "object" && v !== null && "secret" in v
+            )
+          );
+
+          const action = (() => {
+            if (!existingServer) {
+              return "add";
+            }
+
+            if (
+              existingServer.transport !== "stdio" &&
+              transport !== "stdio" &&
+              existingServer.transport === transport &&
+              existingServer.url === input.url &&
+              JSON.stringify(existingServer.headers ?? {}) !== JSON.stringify(input.headers ?? {})
+            ) {
+              return "set_headers";
+            }
+
+            return "edit";
+          })();
+
+          const result = await context.mcpConfigService.addServer(input.name, {
+            transport,
+            command: input.command,
+            url: input.url,
+            headers: input.headers,
+          });
+
+          if (result.success) {
+            context.telemetryService.capture({
+              event: "mcp_server_config_changed",
+              properties: {
+                action,
+                transport,
+                has_headers: hasHeaders,
+                uses_secret_headers: usesSecretHeaders,
+              },
+            });
+          }
+
+          return result;
+        }),
+      remove: t
+        .input(schemas.mcp.remove.input)
+        .output(schemas.mcp.remove.output)
+        .handler(async ({ context, input }) => {
+          const existing = await context.mcpConfigService.listServers();
+          const server = existing[input.name];
+
+          if (context.policyService.isEnforced() && server) {
+            if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+              return { success: false, error: "MCP transport is disabled by policy" };
+            }
+          }
+
+          const result = await context.mcpConfigService.removeServer(input.name);
+
+          if (result.success && server) {
+            const hasHeaders =
+              server.transport !== "stdio" &&
+              Boolean(server.headers && Object.keys(server.headers).length > 0);
+            const usesSecretHeaders =
+              server.transport !== "stdio" &&
+              Boolean(
+                server.headers &&
+                Object.values(server.headers).some(
+                  (v) => typeof v === "object" && v !== null && "secret" in v
+                )
+              );
+
+            context.telemetryService.capture({
+              event: "mcp_server_config_changed",
+              properties: {
+                action: "remove",
+                transport: server.transport,
+                has_headers: hasHeaders,
+                uses_secret_headers: usesSecretHeaders,
+              },
+            });
+          }
+
+          return result;
+        }),
+      test: t
+        .input(schemas.mcp.test.input)
+        .output(schemas.mcp.test.output)
+        .handler(async ({ context, input }) => {
+          const start = Date.now();
+
+          const projectPathProvided =
+            typeof input.projectPath === "string" && input.projectPath.trim().length > 0;
+          const resolvedProjectPath = projectPathProvided
+            ? input.projectPath!
+            : context.config.rootDir;
+
+          const secrets = secretsToRecord(
+            projectPathProvided
+              ? context.config.getEffectiveSecrets(resolvedProjectPath)
+              : context.config.getGlobalSecrets()
+          );
+
+          const configuredTransport = input.name
+            ? (
+                await context.mcpConfigService.listServers(
+                  projectPathProvided ? resolvedProjectPath : undefined
+                )
+              )[input.name]?.transport
+            : undefined;
+
+          const transport =
+            configuredTransport ?? (input.command ? "stdio" : (input.transport ?? "auto"));
+
+          if (context.policyService.isEnforced()) {
+            if (!context.policyService.isMcpTransportAllowed(transport)) {
+              return { success: false, error: "MCP transport is disabled by policy" };
+            }
+          }
+
+          const result = await context.mcpServerManager.test({
+            projectPath: resolvedProjectPath,
+            name: input.name,
+            command: input.command,
+            transport: input.transport,
+            url: input.url,
+            headers: input.headers,
+            projectSecrets: secrets,
+          });
+
+          const durationMs = Date.now() - start;
+
+          const categorizeError = (
+            error: string
+          ): "timeout" | "connect" | "http_status" | "unknown" => {
+            const lower = error.toLowerCase();
+            if (lower.includes("timed out")) {
+              return "timeout";
+            }
+            if (
+              lower.includes("econnrefused") ||
+              lower.includes("econnreset") ||
+              lower.includes("enotfound") ||
+              lower.includes("ehostunreach")
+            ) {
+              return "connect";
+            }
+            if (/\b(400|401|403|404|405|500|502|503)\b/.test(lower)) {
+              return "http_status";
+            }
+            return "unknown";
+          };
+
+          context.telemetryService.capture({
+            event: "mcp_server_tested",
+            properties: {
+              transport,
+              success: result.success,
+              duration_ms_b2: roundToBase2(durationMs),
+              ...(result.success ? {} : { error_category: categorizeError(result.error) }),
+            },
+          });
+
+          return result;
+        }),
+      setEnabled: t
+        .input(schemas.mcp.setEnabled.input)
+        .output(schemas.mcp.setEnabled.output)
+        .handler(async ({ context, input }) => {
+          const existing = await context.mcpConfigService.listServers();
+          const server = existing[input.name];
+
+          if (context.policyService.isEnforced() && server) {
+            if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+              return { success: false, error: "MCP transport is disabled by policy" };
+            }
+          }
+
+          const result = await context.mcpConfigService.setServerEnabled(input.name, input.enabled);
+
+          if (result.success && server) {
+            const hasHeaders =
+              server.transport !== "stdio" &&
+              Boolean(server.headers && Object.keys(server.headers).length > 0);
+            const usesSecretHeaders =
+              server.transport !== "stdio" &&
+              Boolean(
+                server.headers &&
+                Object.values(server.headers).some(
+                  (v) => typeof v === "object" && v !== null && "secret" in v
+                )
+              );
+
+            context.telemetryService.capture({
+              event: "mcp_server_config_changed",
+              properties: {
+                action: input.enabled ? "enable" : "disable",
+                transport: server.transport,
+                has_headers: hasHeaders,
+                uses_secret_headers: usesSecretHeaders,
+              },
+            });
+          }
+
+          return result;
+        }),
+      setToolAllowlist: t
+        .input(schemas.mcp.setToolAllowlist.input)
+        .output(schemas.mcp.setToolAllowlist.output)
+        .handler(async ({ context, input }) => {
+          const existing = await context.mcpConfigService.listServers();
+          const server = existing[input.name];
+
+          if (context.policyService.isEnforced() && server) {
+            if (!context.policyService.isMcpTransportAllowed(server.transport)) {
+              return { success: false, error: "MCP transport is disabled by policy" };
+            }
+          }
+
+          const result = await context.mcpConfigService.setToolAllowlist(
+            input.name,
+            input.toolAllowlist
+          );
+
+          if (result.success && server) {
+            const hasHeaders =
+              server.transport !== "stdio" &&
+              Boolean(server.headers && Object.keys(server.headers).length > 0);
+            const usesSecretHeaders =
+              server.transport !== "stdio" &&
+              Boolean(
+                server.headers &&
+                Object.values(server.headers).some(
+                  (v) => typeof v === "object" && v !== null && "secret" in v
+                )
+              );
+
+            context.telemetryService.capture({
+              event: "mcp_server_config_changed",
+              properties: {
+                action: "set_tool_allowlist",
+                transport: server.transport,
+                has_headers: hasHeaders,
+                uses_secret_headers: usesSecretHeaders,
+                tool_allowlist_size_b2: roundToBase2(input.toolAllowlist.length),
+              },
+            });
+          }
+
+          return result;
+        }),
+    },
     projects: {
       list: t
         .input(schemas.projects.list.input)
@@ -1234,7 +1560,7 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcp.add.input)
           .output(schemas.projects.mcp.add.output)
           .handler(async ({ context, input }) => {
-            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const existing = await context.mcpConfigService.listServers();
             const existingServer = existing[input.name];
 
             const transport = input.transport ?? "stdio";
@@ -1269,7 +1595,7 @@ export const router = (authToken?: string) => {
               return "edit";
             })();
 
-            const result = await context.mcpConfigService.addServer(input.projectPath, input.name, {
+            const result = await context.mcpConfigService.addServer(input.name, {
               transport,
               command: input.command,
               url: input.url,
@@ -1294,7 +1620,7 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcp.remove.input)
           .output(schemas.projects.mcp.remove.output)
           .handler(async ({ context, input }) => {
-            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const existing = await context.mcpConfigService.listServers();
             const server = existing[input.name];
 
             if (context.policyService.isEnforced() && server) {
@@ -1303,10 +1629,7 @@ export const router = (authToken?: string) => {
               }
             }
 
-            const result = await context.mcpConfigService.removeServer(
-              input.projectPath,
-              input.name
-            );
+            const result = await context.mcpConfigService.removeServer(input.name);
 
             if (result.success && server) {
               const hasHeaders =
@@ -1339,7 +1662,7 @@ export const router = (authToken?: string) => {
           .output(schemas.projects.mcp.test.output)
           .handler(async ({ context, input }) => {
             const start = Date.now();
-            const secrets = secretsToRecord(context.projectService.getSecrets(input.projectPath));
+            const secrets = secretsToRecord(context.config.getEffectiveSecrets(input.projectPath));
 
             const configuredTransport = input.name
               ? (await context.mcpConfigService.listServers(input.projectPath))[input.name]
@@ -1404,7 +1727,7 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcp.setEnabled.input)
           .output(schemas.projects.mcp.setEnabled.output)
           .handler(async ({ context, input }) => {
-            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const existing = await context.mcpConfigService.listServers();
             const server = existing[input.name];
 
             if (context.policyService.isEnforced() && server) {
@@ -1414,7 +1737,6 @@ export const router = (authToken?: string) => {
             }
 
             const result = await context.mcpConfigService.setServerEnabled(
-              input.projectPath,
               input.name,
               input.enabled
             );
@@ -1449,7 +1771,7 @@ export const router = (authToken?: string) => {
           .input(schemas.projects.mcp.setToolAllowlist.input)
           .output(schemas.projects.mcp.setToolAllowlist.output)
           .handler(async ({ context, input }) => {
-            const existing = await context.mcpConfigService.listServers(input.projectPath);
+            const existing = await context.mcpConfigService.listServers();
             const server = existing[input.name];
 
             if (context.policyService.isEnforced() && server) {
@@ -1459,7 +1781,6 @@ export const router = (authToken?: string) => {
             }
 
             const result = await context.mcpConfigService.setToolAllowlist(
-              input.projectPath,
               input.name,
               input.toolAllowlist
             );

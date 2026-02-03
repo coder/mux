@@ -1265,7 +1265,7 @@ export class WorkspaceService extends EventEmitter {
       session.emitMetadata(completeMetadata);
 
       // Background init: run postCreateSetup (if present) then initWorkspace
-      const secrets = secretsToRecord(this.config.getProjectSecrets(projectPath));
+      const secrets = secretsToRecord(this.config.getEffectiveSecrets(projectPath));
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
       runBackgroundInit(
         runtime,
@@ -2115,7 +2115,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Run init for forked workspace (fire-and-forget like create())
       // Use sourceBranch as trunk since fork is based on source workspace's branch
-      const secrets = secretsToRecord(this.config.getProjectSecrets(foundProjectPath));
+      const secrets = secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
       runBackgroundInit(
         runtime,
         {
@@ -3055,7 +3055,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Load project secrets
-      const projectSecrets = this.config.getProjectSecrets(metadata.projectPath);
+      const projectSecrets = this.config.getEffectiveSecrets(metadata.projectPath);
 
       // Create scoped temp directory for this IPC call
       using tempDir = new DisposableTempDir("mux-ipc-bash");

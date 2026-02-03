@@ -958,6 +958,8 @@ ${jsonString}`;
     }
   }
 
+  private static readonly GLOBAL_SECRETS_KEY = "__global__";
+
   /**
    * Load secrets configuration from JSON file
    * Returns empty config if file doesn't exist
@@ -993,9 +995,48 @@ ${jsonString}`;
   }
 
   /**
-   * Get secrets for a specific project
-   * @param projectPath The path to the project
-   * @returns Array of secrets for the project, or empty array if none
+   * Get global secrets (not project-scoped).
+   *
+   * Stored in <muxHome>/secrets.json under a sentinel key for backwards compatibility.
+   */
+  getGlobalSecrets(): Secret[] {
+    const config = this.loadSecretsConfig();
+    return config[Config.GLOBAL_SECRETS_KEY] ?? [];
+  }
+
+  /** Update global secrets (not project-scoped). */
+  async updateGlobalSecrets(secrets: Secret[]): Promise<void> {
+    const config = this.loadSecretsConfig();
+    config[Config.GLOBAL_SECRETS_KEY] = secrets;
+    await this.saveSecretsConfig(config);
+  }
+
+  /**
+   * Get effective secrets for a project.
+   *
+   * Merges global + project secrets with project keys overriding global keys.
+   */
+  getEffectiveSecrets(projectPath: string): Secret[] {
+    const config = this.loadSecretsConfig();
+    const globalSecrets = config[Config.GLOBAL_SECRETS_KEY] ?? [];
+    const projectSecrets = config[projectPath] ?? [];
+
+    // Merge-by-key (last writer wins).
+    const mergedByKey = new Map<string, Secret>();
+    for (const secret of globalSecrets) {
+      mergedByKey.set(secret.key, secret);
+    }
+    for (const secret of projectSecrets) {
+      mergedByKey.set(secret.key, secret);
+    }
+
+    return Array.from(mergedByKey.values());
+  }
+
+  /**
+   * Get secrets for a specific project.
+   *
+   * Note: this is project-only (does not include global secrets).
    */
   getProjectSecrets(projectPath: string): Secret[] {
     const config = this.loadSecretsConfig();

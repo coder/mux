@@ -1986,7 +1986,7 @@ export class AIService extends EventEmitter {
       const projectSecrets =
         workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
           ? []
-          : this.config.getProjectSecrets(metadata.projectPath);
+          : this.config.getEffectiveSecrets(metadata.projectPath);
 
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();

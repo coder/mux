@@ -26,10 +26,10 @@ describe("McpOauthService store", () => {
     projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-project-"));
 
     config = new Config(muxHome);
-    mcpConfigService = new MCPConfigService();
+    mcpConfigService = new MCPConfigService(config);
     service = new McpOauthService(config, mcpConfigService);
 
-    const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+    const addResult = await mcpConfigService.addServer(serverName, {
       transport: "http",
       url: serverUrl,
     });
@@ -200,7 +200,7 @@ describe("McpOauthService.startDesktopFlow", () => {
     projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-flow-project-"));
 
     config = new Config(muxHome);
-    mcpConfigService = new MCPConfigService();
+    mcpConfigService = new MCPConfigService(config);
     service = new McpOauthService(config, mcpConfigService);
   });
 
@@ -285,7 +285,7 @@ describe("McpOauthService.startDesktopFlow", () => {
 
       const serverName = "oauth-server";
 
-      const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+      const addResult = await mcpConfigService.addServer(serverName, {
         transport: "http",
         url: baseUrl,
       });
@@ -394,7 +394,7 @@ describe("McpOauthService.startDesktopFlow", () => {
 
       const serverName = "oauth-server-trailing-slash";
 
-      const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+      const addResult = await mcpConfigService.addServer(serverName, {
         transport: "http",
         url: baseUrl,
       });

@@ -257,7 +257,7 @@ program
   .option("--json", "output NDJSON for programmatic consumption")
   .option("-q, --quiet", "only output final result")
   .option("--mcp <server>", "MCP server as name=command (can be repeated)", collectMcpServers, [])
-  .option("--no-mcp-config", "ignore .mux/mcp.jsonc, use only --mcp servers")
+  .option("--no-mcp-config", "ignore global + repo MCP config files (use only --mcp servers)")
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
   .addHelpText(
@@ -454,7 +454,7 @@ async function main(): Promise<number> {
   }
 
   // Initialize MCP support
-  const mcpConfigService = new MCPConfigService();
+  const mcpConfigService = new MCPConfigService(realConfig);
   const inlineServers: Record<string, string> = {};
   for (const entry of opts.mcp) {
     inlineServers[entry.name] = entry.command;
