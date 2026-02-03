@@ -42,6 +42,7 @@ import {
 } from "@/browser/utils/mcpHeaders";
 import { ToolSelector } from "@/browser/components/ToolSelector";
 import { KebabMenu, type KebabMenuItem } from "@/browser/components/KebabMenu";
+import { ProjectSecretsSection } from "./ProjectSecretsSection";
 
 /** Component for managing tool allowlist for a single MCP server */
 const ToolAllowlistSection: React.FC<{
@@ -1203,6 +1204,12 @@ export const ProjectSettingsSection: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
+      </div>
+
+      {/* Secrets */}
+      <div>
+        <h3 className="text-foreground mb-4 text-sm font-medium">Secrets</h3>
+        <ProjectSecretsSection projectPath={selectedProject} />
       </div>
 
       {/* MCP Servers */}

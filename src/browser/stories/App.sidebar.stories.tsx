@@ -686,11 +686,11 @@ export const WorkspaceDraftSelected: AppStory = {
 };
 
 /**
- * Secrets modal with import functionality.
- * Shows the modal for managing project secrets with the ability to import from other projects.
- * Uses play function to open the modal via the key icon button on a project header.
+ * Project settings with secrets management.
+ * Shows the Settings modal → Projects section with secrets for multiple projects.
+ * Uses play function to open via the key icon button on a project header (now opens Settings → Projects).
  */
-export const SecretsModalWithImport: AppStory = {
+export const ProjectSettingsWithSecrets: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -743,26 +743,27 @@ export const SecretsModalWithImport: AppStory = {
     // Wait for the projects to load
     await waitFor(
       () => {
-        const secretsButton = canvasElement.querySelector<HTMLElement>(
+        const settingsButton = canvasElement.querySelector<HTMLElement>(
           '[aria-label="Manage secrets for target-project"]'
         );
-        if (!secretsButton) throw new Error("Secrets button not found");
+        if (!settingsButton) throw new Error("Project settings button not found");
       },
       { timeout: 5000 }
     );
 
-    // Click the secrets button (key icon) for target-project
-    const secretsButton = canvasElement.querySelector<HTMLElement>(
+    // Click the key icon for target-project (now opens Settings → Projects)
+    const settingsButton = canvasElement.querySelector<HTMLElement>(
       '[aria-label="Manage secrets for target-project"]'
     )!;
-    await userEvent.click(secretsButton);
+    await userEvent.click(settingsButton);
 
-    // Wait for modal to open (portaled to body)
+    // Wait for Settings modal to open (portaled to body)
     await waitFor(
       () => {
         const modal = document.body.querySelector<HTMLElement>('[role="dialog"]');
-        if (!modal) throw new Error("Secrets modal not found");
-        within(modal).getByText("Manage Secrets");
+        if (!modal) throw new Error("Settings modal not found");
+        // Should show Projects section with Secrets heading
+        within(modal).getByText("Secrets");
       },
       { timeout: 5000 }
     );
