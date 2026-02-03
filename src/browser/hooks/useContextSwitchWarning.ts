@@ -159,6 +159,10 @@ export function useContextSwitchWarning(
       }
 
       if (tokens === 0) {
+        if (warning) {
+          // Clear stale warnings when a user switch happens before usage loads.
+          setWarning(null);
+        }
         return;
       }
 

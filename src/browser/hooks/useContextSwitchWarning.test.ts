@@ -165,6 +165,55 @@ describe("useContextSwitchWarning", () => {
     await waitFor(() => expect(result.current.warning).toBeNull());
   });
 
+  test("clears stale warning when user switches with zero tokens", async () => {
+    const previousModel = "anthropic:claude-sonnet-4-5";
+    const nextModel = "openai:gpt-5.2-codex";
+    const finalModel = "anthropic:claude-sonnet-4-5";
+    const props = {
+      workspaceId: "workspace-6",
+      messages: [buildAssistantMessage(previousModel)],
+      pendingModel: previousModel,
+      use1M: false,
+      workspaceUsage: buildUsage(260_000, previousModel),
+      api: undefined,
+      pendingSendOptions: buildSendOptions(previousModel),
+    };
+
+    const { result, rerender } = renderHook(
+      (hookProps: typeof props) => useContextSwitchWarning(hookProps),
+      { initialProps: props, wrapper }
+    );
+
+    act(() => {
+      result.current.handleModelChange(nextModel);
+    });
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: nextModel,
+        pendingSendOptions: buildSendOptions(nextModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning?.targetModel).toBe(nextModel));
+
+    act(() => {
+      result.current.handleModelChange(finalModel);
+    });
+
+    act(() => {
+      rerender({
+        ...props,
+        pendingModel: finalModel,
+        pendingSendOptions: buildSendOptions(finalModel),
+        workspaceUsage: buildUsage(0, finalModel),
+      });
+    });
+
+    await waitFor(() => expect(result.current.warning).toBeNull());
+  });
+
   test("warns when 1M is toggled off and context no longer fits", async () => {
     const model = "anthropic:claude-sonnet-4-5";
     const baseLimit = getEffectiveContextLimit(model, false);
