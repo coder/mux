@@ -119,6 +119,7 @@ export function withHooks<TParameters, TResult>(
     const hookContext = {
       tool: toolName,
       toolInput,
+      toolInputValue: args,
       workspaceId: config.workspaceId,
       projectDir: config.cwd,
       runtimeTempDir: config.runtimeTempDir,

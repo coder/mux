@@ -27,6 +27,7 @@
 
 import * as crypto from "crypto";
 import * as path from "path";
+import { flattenToolHookValueToEnv } from "@/common/utils/tools/toolHookEnv";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 import { execBuffered, writeFileString } from "@/node/utils/runtime/helpers";
@@ -36,6 +37,8 @@ const PRE_HOOK_FILENAME = "tool_pre";
 const POST_HOOK_FILENAME = "tool_post";
 const TOOL_ENV_FILENAME = "tool_env";
 const TOOL_INPUT_ENV_LIMIT = 8_000;
+const FLATTENED_TOOL_ENV_MAX_VARS = 200;
+const FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH = 50;
 const DEFAULT_HOOK_PHASE_TIMEOUT_MS = 10_000; // 10 seconds
 const EXEC_MARKER_PREFIX = "MUX_EXEC_";
 
@@ -62,11 +65,33 @@ function joinPathLike(basePath: string, ...parts: string[]): string {
   return path.posix.join(basePath, ...parts);
 }
 
+function getToolInputValueForEnv(context: {
+  toolInput: string;
+  toolInputValue?: unknown;
+}): unknown {
+  if (context.toolInputValue !== undefined) {
+    return context.toolInputValue;
+  }
+
+  try {
+    return JSON.parse(context.toolInput) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface HookContext {
   /** Tool name (e.g., "bash", "file_edit_replace_string") */
   tool: string;
   /** Tool input as JSON string */
   toolInput: string;
+  /**
+   * Tool input as a structured value (best-effort), used for flattened env vars.
+   *
+   * Optional for backwards compatibility; when omitted we'll attempt to parse
+   * `toolInput` as JSON.
+   */
+  toolInputValue?: unknown;
   /** Workspace ID */
   workspaceId: string;
   /** Runtime temp dir for hook scratch files (paths in the runtime's context) */
@@ -275,9 +300,17 @@ export async function runWithHook<T>(
     }
   }
 
+  const toolInputValueForEnv = getToolInputValueForEnv(context);
+
   const hookEnv: Record<string, string> = {
     ...(context.env ?? {}),
     MUX_TOOL: context.tool,
+    ...flattenToolHookValueToEnv(toolInputValueForEnv, "MUX_TOOL_INPUT", {
+      maxValueLength: TOOL_INPUT_ENV_LIMIT,
+      maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
+      maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
+    }),
+    // Ensure the base JSON env var cannot be overwritten by flattened fields.
     MUX_TOOL_INPUT: toolInputEnv,
     MUX_WORKSPACE_ID: context.workspaceId,
     MUX_PROJECT_DIR: context.projectDir,
@@ -567,6 +600,13 @@ export interface SimpleHookContext {
   tool: string;
   /** Tool input as JSON string */
   toolInput: string;
+  /**
+   * Tool input as a structured value (best-effort), used for flattened env vars.
+   *
+   * Optional for backwards compatibility; when omitted we'll attempt to parse
+   * `toolInput` as JSON.
+   */
+  toolInputValue?: unknown;
   /** Workspace ID */
   workspaceId: string;
   /** Project directory */
@@ -606,9 +646,17 @@ export async function runPreHook(
     context.projectDir
   );
 
+  const toolInputValueForEnv = getToolInputValueForEnv(context);
+
   const hookEnv: Record<string, string> = {
     ...(context.env ?? {}),
     MUX_TOOL: context.tool,
+    ...flattenToolHookValueToEnv(toolInputValueForEnv, "MUX_TOOL_INPUT", {
+      maxValueLength: TOOL_INPUT_ENV_LIMIT,
+      maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
+      maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
+    }),
+    // Ensure the base JSON env var cannot be overwritten by flattened fields.
     MUX_TOOL_INPUT: toolInputEnv,
     MUX_WORKSPACE_ID: context.workspaceId,
     MUX_PROJECT_DIR: context.projectDir,
@@ -669,39 +717,59 @@ export async function runPostHook(
     context.projectDir
   );
 
-  // Prepare tool result (always write to file, truncate env var if large)
+  // Prepare tool result (best-effort file; env var placeholder if large)
   const resultPath = joinPathLike(
     context.runtimeTempDir ?? "/tmp",
     `mux-tool-result-${Date.now()}-${crypto.randomUUID()}.json`
   );
+  let resultPathForEnv: string | undefined;
   let resultEnv = resultJson;
   try {
     await writeFileString(runtime, resultPath, resultJson);
+    resultPathForEnv = resultPath;
     if (resultJson.length > TOOL_INPUT_ENV_LIMIT) {
       resultEnv = "__MUX_TOOL_RESULT_FILE__";
     }
   } catch (err) {
     log.debug("[hooks] Failed to write tool result to temp file", { error: err });
+    resultPathForEnv = undefined;
     resultEnv = resultJson.slice(0, TOOL_INPUT_ENV_LIMIT);
   }
+
+  const toolInputValueForEnv = getToolInputValueForEnv(context);
 
   const hookEnv: Record<string, string> = {
     ...(context.env ?? {}),
     MUX_TOOL: context.tool,
+    ...flattenToolHookValueToEnv(toolInputValueForEnv, "MUX_TOOL_INPUT", {
+      maxValueLength: TOOL_INPUT_ENV_LIMIT,
+      maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
+      maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
+    }),
+    ...flattenToolHookValueToEnv(toolResult, "MUX_TOOL_RESULT", {
+      maxValueLength: TOOL_INPUT_ENV_LIMIT,
+      maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
+      maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
+    }),
+    // Ensure base JSON env vars cannot be overwritten by flattened fields.
     MUX_TOOL_INPUT: toolInputEnv,
     MUX_WORKSPACE_ID: context.workspaceId,
     MUX_PROJECT_DIR: context.projectDir,
     MUX_TOOL_RESULT: resultEnv,
-    MUX_TOOL_RESULT_PATH: resultPath,
   };
   if (toolInputPath) {
     hookEnv.MUX_TOOL_INPUT_PATH = toolInputPath;
   }
+  if (resultPathForEnv) {
+    hookEnv.MUX_TOOL_RESULT_PATH = resultPathForEnv;
+  }
 
   const cleanup = async () => {
     await cleanupInput();
+    if (!resultPathForEnv) return;
+
     try {
-      await execBuffered(runtime, `rm -f ${shellEscape(resultPath)}`, {
+      await execBuffered(runtime, `rm -f ${shellEscape(resultPathForEnv)}`, {
         cwd: context.projectDir,
         timeout: 5,
       });
