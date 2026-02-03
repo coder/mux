@@ -219,7 +219,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
-  const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   // State for destructive command confirmation modal
   const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState<{
@@ -1044,36 +1043,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Watch input for slash commands
   useEffect(() => {
     const suggestions = getSlashCommandSuggestions(input, {
-      providerNames,
       agentSkills: agentSkillDescriptors,
       variant,
       mcpAllowUserDefined,
     });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames, agentSkillDescriptors, variant, mcpAllowUserDefined]);
-
-  // Load provider names for suggestions
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadProviders = async () => {
-      try {
-        const names = await api?.providers.list();
-        if (isMounted && Array.isArray(names)) {
-          setProviderNames(names);
-        }
-      } catch (error) {
-        console.error("Failed to load provider list:", error);
-      }
-    };
-
-    void loadProviders();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [api]);
+  }, [input, agentSkillDescriptors, variant, mcpAllowUserDefined]);
 
   // Load agent skills for suggestions
   useEffect(() => {
@@ -1395,7 +1371,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setAttachments,
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
       setToast,
-      onProviderConfig: props.onProviderConfig,
       onModelChange: props.onModelChange,
       setPreferredModel,
       setVimEnabled,

@@ -124,9 +124,9 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
   const getErrorMessage = (error: typeof lastError): string => {
     if (!error) return "";
     const formatted = formatSendMessageError(error);
-    // Combine message with command if available
-    return formatted.providerCommand
-      ? `${formatted.message} Configure with ${formatted.providerCommand}`
+    // Combine message with a resolution hint if available
+    return formatted.resolutionHint
+      ? `${formatted.message} ${formatted.resolutionHint}`
       : formatted.message;
   };
 

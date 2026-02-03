@@ -12,10 +12,6 @@
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
 export type ParsedCommand =
-  | { type: "providers-set"; provider: string; keyPath: string[]; value: string }
-  | { type: "providers-help" }
-  | { type: "providers-invalid-subcommand"; subcommand: string }
-  | { type: "providers-missing-args"; subcommand: string; argCount: number }
   | { type: "model-set"; modelString: string }
   | { type: "model-help" }
   | { type: "clear" }
@@ -82,7 +78,6 @@ export interface SlashSuggestion {
 
 export interface SlashSuggestionContext {
   agentSkills?: AgentSkillDescriptor[];
-  providerNames?: string[];
   /** Policy: allow/disallow user-defined MCP servers */
   mcpAllowUserDefined?: { stdio: boolean; remote: boolean };
   /** Variant determines which commands are available */

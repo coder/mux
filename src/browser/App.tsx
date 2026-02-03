@@ -808,19 +808,6 @@ function AppInner() {
     };
   }, [setSelectedWorkspace, workspaceStore]);
 
-  const handleProviderConfig = useCallback(
-    async (provider: string, keyPath: string[], value: string) => {
-      if (!api) {
-        throw new Error("API not connected");
-      }
-      const result = await api.providers.setProviderConfig({ provider, keyPath, value });
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-    },
-    [api]
-  );
-
   // Show auth modal if authentication is required
   if (status === "auth_required") {
     return <AuthTokenModal isOpen={true} onSubmit={authenticate} error={error} />;
@@ -896,7 +883,6 @@ function AppInner() {
                     onToggleLeftSidebarCollapsed={handleToggleSidebar}
                     pendingSectionId={pendingNewWorkspaceSectionId}
                     pendingDraftId={pendingNewWorkspaceDraftId}
-                    onProviderConfig={handleProviderConfig}
                     onWorkspaceCreated={(metadata, options) => {
                       // IMPORTANT: Add workspace to store FIRST (synchronous) to ensure
                       // the store knows about it before React processes the state updates.
@@ -978,12 +964,7 @@ function AppInner() {
             )}
           </div>
         </div>
-        <CommandPalette
-          getSlashContext={() => ({
-            providerNames: [],
-            workspaceId: selectedWorkspace?.workspaceId,
-          })}
-        />
+        <CommandPalette getSlashContext={() => ({ workspaceId: selectedWorkspace?.workspaceId })} />
         <ProjectCreateModal
           isOpen={isProjectCreateModalOpen}
           onClose={closeProjectCreateModal}

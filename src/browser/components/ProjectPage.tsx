@@ -44,7 +44,6 @@ interface ProjectPageProps {
   pendingDraftId?: string | null;
   /** Section ID to pre-select when creating (from sidebar section "+" button) */
   pendingSectionId?: string | null;
-  onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onWorkspaceCreated: (
     metadata: FrontendWorkspaceMetadata,
     options?: WorkspaceCreatedOptions
@@ -78,7 +77,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
   onToggleLeftSidebarCollapsed,
   pendingDraftId,
   pendingSectionId,
-  onProviderConfig,
   onWorkspaceCreated,
 }) => {
   const { api } = useAPI();
@@ -333,7 +331,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                         projectName={projectName}
                         pendingSectionId={pendingSectionId}
                         pendingDraftId={pendingDraftId}
-                        onProviderConfig={onProviderConfig}
                         onReady={handleChatReady}
                         onWorkspaceCreated={onWorkspaceCreated}
                       />

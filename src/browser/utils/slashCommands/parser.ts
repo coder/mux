@@ -9,7 +9,7 @@ export { SLASH_COMMAND_DEFINITIONS } from "./registry";
 
 /**
  * Parse a raw command string into a structured command
- * @param input The raw command string (e.g., "/providers set anthropic apiKey sk-xxx")
+ * @param input The raw command string (e.g., "/model sonnet" or "/compact -t 5000")
  * @returns Parsed command or null if not a command
  */
 export function parseCommand(input: string): ParsedCommand {
@@ -19,7 +19,7 @@ export function parseCommand(input: string): ParsedCommand {
   }
 
   // Remove leading slash and split by spaces (respecting quotes)
-  // Parse tokens from full input to support multi-line commands like /providers
+  // Parse tokens from the full input so newlines can act as whitespace between args.
   const parts = (trimmed.substring(1).match(/(?:[^\s"]+|"[^"]*")+/g) ?? []) as string[];
   if (parts.length === 0) {
     return null;

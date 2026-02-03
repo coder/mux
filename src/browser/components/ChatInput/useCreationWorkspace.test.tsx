@@ -256,7 +256,6 @@ const setupWindow = ({
     },
     providers: {
       setProviderConfig: rejectNotImplemented("providers.setProviderConfig"),
-      list: rejectNotImplemented("providers.list"),
     },
     projects: {
       create: rejectNotImplemented("projects.create"),

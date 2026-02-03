@@ -25,7 +25,6 @@ describe("getSlashCommandSuggestions", () => {
 
     expect(labels).toContain("/clear");
     expect(labels).toContain("/model");
-    expect(labels).toContain("/providers");
   });
 
   it("includes agent skills when provided in context", () => {
@@ -78,37 +77,6 @@ describe("getSlashCommandSuggestions", () => {
     const suggestions = getSlashCommandSuggestions("/cl");
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0].replacement).toBe("/clear");
-  });
-
-  it("suggests provider subcommands", () => {
-    const suggestions = getSlashCommandSuggestions("/providers ");
-    expect(suggestions.map((s) => s.display)).toContain("set");
-  });
-
-  it("suggests provider names after /providers set", () => {
-    const suggestions = getSlashCommandSuggestions("/providers set ", {
-      providerNames: ["anthropic"],
-    });
-    const labels = suggestions.map((s) => s.display);
-
-    expect(labels).toContain("anthropic");
-  });
-
-  it("suggests provider keys after selecting a provider", () => {
-    const suggestions = getSlashCommandSuggestions("/providers set anthropic ");
-    const keys = suggestions.map((s) => s.display);
-
-    expect(keys).toContain("apiKey");
-    expect(keys).toContain("baseUrl");
-  });
-
-  it("filters provider keys by partial input", () => {
-    const suggestions = getSlashCommandSuggestions("/providers set anthropic api", {
-      providerNames: ["anthropic"],
-    });
-
-    expect(suggestions).toHaveLength(1);
-    expect(suggestions[0].display).toBe("apiKey");
   });
 
   it("suggests model abbreviations after /model", () => {
