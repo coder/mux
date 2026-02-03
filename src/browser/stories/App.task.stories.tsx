@@ -586,6 +586,7 @@ export const TaskApplyGitPatchStates: AppStory = {
     <AppWithMocks
       setup={() =>
         setupSimpleChatStory({
+          workspaceId: "ws-task-apply-git-patch-states",
           messages: [
             createUserMessage("u1", "Apply the patch from task-fe-001", { historySequence: 1 }),
             createAssistantMessage("a1", "Applying the patch artifact in a few different modes:", {
@@ -646,6 +647,102 @@ export const TaskApplyGitPatchStates: AppStory = {
   ),
 };
 
+async function playTaskApplyGitPatchCommitListStory(
+  canvasElement: HTMLElement,
+  opts: { expectedAssistantText: string }
+): Promise<void> {
+  const getMessageWindow = (): HTMLElement => {
+    // `canvasElement` can be a stale reference if Storybook is in the middle of transitioning
+    // between stories. Query the iframe document directly so we always see the current story DOM.
+    const candidates = Array.from(
+      canvasElement.ownerDocument.querySelectorAll('[data-testid="message-window"]')
+    ).filter((candidate): candidate is HTMLElement => candidate instanceof HTMLElement);
+
+    const match = candidates.find((candidate) =>
+      candidate.textContent?.includes(opts.expectedAssistantText)
+    );
+
+    if (match) {
+      return match;
+    }
+
+    const debugUrl = window.location.href;
+    const debugText = candidates.at(0)?.textContent?.trim().slice(0, 200) ?? "<no text>";
+
+    throw new Error(
+      `Story not loaded yet: missing "${opts.expectedAssistantText}" (url=${debugUrl}, windows=${candidates.length}, firstText=${JSON.stringify(
+        debugText
+      )})`
+    );
+  };
+
+  const isExpanded = (header: HTMLElement): boolean =>
+    header.querySelector("span.rotate-90") !== null;
+
+  const getToolHeader = (): HTMLElement => {
+    const messageWindow = getMessageWindow();
+    const matches = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).filter(
+      (candidate) =>
+        candidate.textContent?.includes("Apply patch") &&
+        candidate.textContent?.includes("task-fe-001")
+    );
+
+    const header = matches.at(-1);
+    if (!(header instanceof HTMLElement)) {
+      throw new Error("Apply patch tool header not found");
+    }
+
+    return header;
+  };
+
+  // Storybook test-runner can race navigation between stories.
+  // Guard on a story-specific text node to ensure the intended story is rendered.
+  const toolHeader = await waitFor(
+    () => {
+      const messageWindow = getMessageWindow();
+      if (messageWindow.getAttribute("data-loaded") !== "true") {
+        throw new Error("Messages not loaded yet");
+      }
+
+      return getToolHeader();
+    },
+    // Leave headroom under the default per-story Jest timeout.
+    { timeout: 12000 }
+  );
+
+  // Tool cards are collapsed by default; ensure the card is expanded so the commit subjects render.
+  if (!isExpanded(toolHeader)) {
+    // Best-effort: direct click is less sensitive to hit-testing differences than userEvent.
+    getToolHeader().click();
+  }
+
+  await waitFor(
+    () => {
+      const currentToolHeader = getToolHeader();
+      if (!isExpanded(currentToolHeader)) {
+        throw new Error("Apply patch tool did not expand");
+      }
+
+      const text = getMessageWindow().textContent ?? "";
+      const missing: string[] = [];
+
+      if (!text.includes("feat: add Apply Patch tool UI")) {
+        missing.push("feat: add Apply Patch tool UI");
+      }
+
+      if (!text.includes("fix: render applied commit list")) {
+        missing.push("fix: render applied commit list");
+      }
+
+      if (missing.length > 0) {
+        throw new Error(`Expected commit subject not found: ${missing.join(", ")}`);
+      }
+    },
+    // Keep this below the Storybook test-runner per-story timeout.
+    { timeout: 3000 }
+  );
+}
+
 /**
  * task_apply_git_patch success: show applied commit list.
  *
@@ -656,6 +753,7 @@ export const TaskApplyGitPatchCommitList: AppStory = {
     <AppWithMocks
       setup={() =>
         setupSimpleChatStory({
+          workspaceId: "ws-task-apply-git-patch-commit-list",
           messages: [
             createUserMessage("u1", "Apply the patch from task-fe-001", { historySequence: 1 }),
             createAssistantMessage("a1", "Applied the patch.", {
@@ -687,57 +785,9 @@ export const TaskApplyGitPatchCommitList: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
-
-    const canvas = within(canvasElement);
-    const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
-
-    const getToolHeader = (): HTMLElement => {
-      const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
-        (candidate) =>
-          candidate.textContent?.includes("Apply patch") &&
-          candidate.textContent?.includes("task-fe-001")
-      );
-
-      if (!(header instanceof HTMLElement)) {
-        throw new Error("Apply patch tool header not found");
-      }
-
-      return header;
-    };
-
-    const toolHeader = await waitFor(getToolHeader, { timeout: 8000 });
-
-    const isExpanded = (header: HTMLElement): boolean =>
-      header.querySelector("span.rotate-90") !== null;
-
-    // Tool cards are collapsed by default; ensure the card is expanded so the commit subjects render.
-    if (!isExpanded(toolHeader)) {
-      await userEvent.click(toolHeader);
-      await waitFor(
-        () => {
-          if (!isExpanded(getToolHeader())) {
-            throw new Error("Apply patch tool did not expand");
-          }
-        },
-        { timeout: 8000 }
-      );
-    }
-
-    const waitForCommitSubject = async (subject: string): Promise<void> => {
-      await waitFor(
-        () => {
-          if (!messageWindow.textContent?.includes(subject)) {
-            throw new Error(`Expected commit subject not found: ${subject}`);
-          }
-        },
-        // Keep this below the Storybook test-runner per-story timeout.
-        { timeout: 8000 }
-      );
-    };
-
-    await waitForCommitSubject("feat: add Apply Patch tool UI");
-    await waitForCommitSubject("fix: render applied commit list");
+    await playTaskApplyGitPatchCommitListStory(canvasElement, {
+      expectedAssistantText: "Applied the patch.",
+    });
   },
 };
 
@@ -751,6 +801,7 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
     <AppWithMocks
       setup={() =>
         setupSimpleChatStory({
+          workspaceId: "ws-task-apply-git-patch-dry-run-commit-list",
           messages: [
             createUserMessage("u1", "Dry-run the patch from task-fe-001", { historySequence: 1 }),
             createAssistantMessage("a1", "Dry-run succeeded.", {
@@ -778,57 +829,9 @@ export const TaskApplyGitPatchDryRunCommitList: AppStory = {
     />
   ),
   play: async ({ canvasElement }) => {
-    await waitForScrollStabilization(canvasElement);
-
-    const canvas = within(canvasElement);
-    const messageWindow = await canvas.findByTestId("message-window", {}, { timeout: 8000 });
-
-    const getToolHeader = (): HTMLElement => {
-      const header = Array.from(messageWindow.querySelectorAll("div.cursor-pointer")).find(
-        (candidate) =>
-          candidate.textContent?.includes("Apply patch") &&
-          candidate.textContent?.includes("task-fe-001")
-      );
-
-      if (!(header instanceof HTMLElement)) {
-        throw new Error("Apply patch tool header not found");
-      }
-
-      return header;
-    };
-
-    const toolHeader = await waitFor(getToolHeader, { timeout: 8000 });
-
-    const isExpanded = (header: HTMLElement): boolean =>
-      header.querySelector("span.rotate-90") !== null;
-
-    // Tool cards are collapsed by default; ensure the card is expanded so the commit subjects render.
-    if (!isExpanded(toolHeader)) {
-      await userEvent.click(toolHeader);
-      await waitFor(
-        () => {
-          if (!isExpanded(getToolHeader())) {
-            throw new Error("Apply patch tool did not expand");
-          }
-        },
-        { timeout: 8000 }
-      );
-    }
-
-    const waitForCommitSubject = async (subject: string): Promise<void> => {
-      await waitFor(
-        () => {
-          if (!messageWindow.textContent?.includes(subject)) {
-            throw new Error(`Expected commit subject not found: ${subject}`);
-          }
-        },
-        // Keep this below the Storybook test-runner per-story timeout.
-        { timeout: 8000 }
-      );
-    };
-
-    await waitForCommitSubject("feat: add Apply Patch tool UI");
-    await waitForCommitSubject("fix: render applied commit list");
+    await playTaskApplyGitPatchCommitListStory(canvasElement, {
+      expectedAssistantText: "Dry-run succeeded.",
+    });
   },
 };
 
