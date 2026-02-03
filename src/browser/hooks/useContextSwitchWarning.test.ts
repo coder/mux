@@ -9,7 +9,10 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import { useContextSwitchWarning } from "./useContextSwitchWarning";
 import { getEffectiveContextLimit } from "@/browser/utils/compaction/contextLimit";
-import { recordWorkspaceModelChange } from "@/browser/utils/modelChange";
+import {
+  recordWorkspaceModelChange,
+  setWorkspaceModelWithOrigin,
+} from "@/browser/utils/modelChange";
 
 function createStubApiClient(): APIClient {
   // Avoid mock.module (global) by injecting a minimal client through providers.
@@ -158,7 +161,7 @@ describe("useContextSwitchWarning", () => {
     );
 
     act(() => {
-      recordWorkspaceModelChange(props.workspaceId, nextModel, "agent");
+      setWorkspaceModelWithOrigin(props.workspaceId, nextModel, "agent");
       rerender({
         ...props,
         pendingModel: nextModel,

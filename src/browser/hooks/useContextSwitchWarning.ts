@@ -261,6 +261,7 @@ export function useContextSwitchWarning(
     }
 
     const origin = consumeWorkspaceModelChange(workspaceId, pendingModel);
+    // Agent/mode switches call setWorkspaceModelWithOrigin, so they flow through this explicit path.
     if (origin === "user" || origin === "agent") {
       queueExplicitSwitch({
         model: pendingModel,
@@ -272,16 +273,17 @@ export function useContextSwitchWarning(
   }, [pendingModel, queueExplicitSwitch, switchState.currentModel, workspaceId]);
 
   useEffect(() => {
-    if (tokens === 0) {
-      return;
-    }
-
     const pendingSwitch = switchState.pending;
     if (!pendingSwitch?.deferred) {
       return;
     }
 
     if (pendingSwitch.model !== pendingModel) {
+      dispatch({ type: "CLEAR_PENDING" });
+      return;
+    }
+
+    if (tokens === 0) {
       return;
     }
 
