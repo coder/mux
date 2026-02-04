@@ -18,7 +18,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Menu } from "lucide-react";
+import { Pencil, Trash2, Ellipsis } from "lucide-react";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -538,7 +538,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                         aria-label={`Workspace actions for ${displayTitle}`}
                         data-workspace-id={workspaceId}
                       >
-                        <Menu className="h-3 w-3" />
+                        <Ellipsis className="h-3 w-3" />
                       </button>
                     </PopoverTrigger>
 
@@ -559,9 +559,24 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       >
                         <span className="flex items-center gap-2">
                           <Pencil className="h-3 w-3" />
-                          Edit title
+                          Edit chat title
                         </span>
                       </button>
+                      {!isMuxHelpChat && (
+                        <button
+                          className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsTitleMenuOpen(false);
+                            void onArchiveWorkspace(workspaceId, e.currentTarget);
+                          }}
+                        >
+                          <span className="flex items-center gap-2">
+                            <ArchiveIcon className="h-3 w-3" />
+                            Archive chat
+                          </span>
+                        </button>
+                      )}
                     </PopoverContent>
                   </Popover>
                 )}
