@@ -34,6 +34,7 @@ import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
+import { useAgent } from "@/browser/contexts/AgentContext";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
 interface WorkspaceHeaderProps {
@@ -61,6 +62,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   onOpenTerminal,
 }) => {
   const { api } = useAPI();
+  const { disableWorkspaceAgents } = useAgent();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
@@ -155,7 +157,10 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
     const loadSkills = async () => {
       try {
-        const diagnostics = await api.agentSkills.listDiagnostics({ workspaceId });
+        const diagnostics = await api.agentSkills.listDiagnostics({
+          workspaceId,
+          disableWorkspaceAgents: disableWorkspaceAgents || undefined,
+        });
         if (!isMounted) return;
         setAvailableSkills(Array.isArray(diagnostics.skills) ? diagnostics.skills : []);
         setInvalidSkills(Array.isArray(diagnostics.invalidSkills) ? diagnostics.invalidSkills : []);
@@ -173,7 +178,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [api, workspaceId]);
+  }, [api, workspaceId, disableWorkspaceAgents]);
 
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
