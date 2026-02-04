@@ -741,6 +741,8 @@ export const TOOL_DEFINITIONS = {
   task: {
     description:
       "Spawn a sub-agent task (child workspace). " +
+      "\n\nIMPORTANT: Subagents only see committed state. Uncommitted changes are not available. " +
+      "Commit any changes you want the sub-agent to consider before spawning a task. " +
       "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background. " +
       "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
       "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
