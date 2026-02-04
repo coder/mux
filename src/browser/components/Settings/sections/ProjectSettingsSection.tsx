@@ -1209,7 +1209,10 @@ export const ProjectSettingsSection: React.FC = () => {
       {/* Secrets */}
       <div>
         <h3 className="text-foreground mb-4 text-sm font-medium">Secrets</h3>
-        <ProjectSecretsSection projectPath={selectedProject} />
+        <ProjectSecretsSection
+          projectPath={selectedProject}
+          onSecretsChanged={setProjectSecretKeys}
+        />
       </div>
 
       {/* MCP Servers */}

@@ -18,9 +18,14 @@ import { useProjectContext } from "@/browser/contexts/ProjectContext";
 
 interface ProjectSecretsSectionProps {
   projectPath: string;
+  /** Called after secrets are successfully saved, with the new list of keys */
+  onSecretsChanged?: (keys: string[]) => void;
 }
 
-export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({ projectPath }) => {
+export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
+  projectPath,
+  onSecretsChanged,
+}) => {
   const { projects, getSecrets, updateSecrets } = useProjectContext();
   const [secrets, setSecrets] = useState<Secret[]>([]);
   const [visibleSecrets, setVisibleSecrets] = useState<Set<number>>(new Set());
@@ -82,6 +87,8 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({ pr
       setOriginalSecrets(validSecrets);
       setSecrets(validSecrets);
       setHasChanges(false);
+      // Notify parent so MCP section can update its known secret keys
+      onSecretsChanged?.(validSecrets.map((s) => s.key));
     } catch (err) {
       console.error("Failed to save secrets:", err);
     } finally {
