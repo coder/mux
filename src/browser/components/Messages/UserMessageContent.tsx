@@ -179,7 +179,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
         <HoverCardContent
           align="start"
           side="top"
-          className="w-[520px] max-w-[80vw] max-h-[360px] overflow-auto p-3"
+          className="max-h-[360px] w-[520px] max-w-[80vw] overflow-auto p-3"
         >
           <MarkdownRenderer content={snapshotMarkdown} preserveLineBreaks />
         </HoverCardContent>

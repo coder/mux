@@ -2250,7 +2250,7 @@ export class StreamingMessageAggregator {
           continue;
         }
 
-        const muxMeta = message.metadata?.muxMetadata as MuxFrontendMetadata | undefined;
+        const muxMeta = message.metadata?.muxMetadata;
         const agentSkillSnapshotKey =
           message.role === "user" && muxMeta?.type === "agent-skill"
             ? `${muxMeta.scope}:${muxMeta.skillName}`
@@ -2272,7 +2272,7 @@ export class StreamingMessageAggregator {
           cached?.version === version && cached.agentSkillSnapshotSha === agentSkillSnapshotSha;
 
         const messageDisplay = canReuse
-          ? cached!.messages
+          ? cached.messages
           : this.buildDisplayedMessagesForMessage(message, agentSkillSnapshotForDisplay);
 
         if (!canReuse) {
