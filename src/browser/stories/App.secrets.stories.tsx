@@ -13,7 +13,7 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { within, userEvent, waitFor, expect } from "@storybook/test";
+import { within, userEvent, waitFor } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -174,8 +174,16 @@ export const SecretsLightModeFilled: AppStory = {
 
     // Ensure the secret value is revealed so text color regressions (e.g. text-white) are visible.
     await waitFor(() => {
-      const valueInput = dialogCanvas.getByDisplayValue("sk-openai-visible") as HTMLInputElement;
-      expect(valueInput.type).toBe("text");
+      const valueInput = dialogCanvas.getByDisplayValue("sk-openai-visible");
+      if (!(valueInput instanceof HTMLInputElement)) {
+        throw new Error("Expected secret value to be shown in an input");
+      }
+
+      if (valueInput.type !== "text") {
+        throw new Error(
+          `Expected secret value input type to be "text" after clicking "Show secret" (got "${valueInput.type}")`
+        );
+      }
     });
   },
 };
