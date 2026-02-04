@@ -192,17 +192,52 @@ export abstract class RemoteRuntime implements Runtime {
 
     // Handle abort signal
     if (options.abortSignal) {
-      options.abortSignal.addEventListener("abort", () => {
-        aborted = true;
-        disposable[Symbol.dispose]();
-      });
+      options.abortSignal.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+
+          // For SSH/Docker, killing the local client too aggressively (SIGKILL) can leave the
+          // remote command running. Prefer SIGTERM first so the runtime can tear down cleanly,
+          // then hard-kill if it doesn't exit promptly.
+          try {
+            childProcess.kill();
+          } catch {
+            // ignore
+          }
+
+          const hardKillHandle = setTimeout(() => {
+            const hasExited = childProcess.exitCode !== null || childProcess.signalCode !== null;
+            if (hasExited) {
+              return;
+            }
+            disposable[Symbol.dispose]();
+          }, 1000);
+          hardKillHandle.unref();
+        },
+        { once: true }
+      );
     }
 
     // Handle timeout
     if (options.timeout !== undefined) {
       const timeoutHandle = setTimeout(() => {
         timedOut = true;
-        disposable[Symbol.dispose]();
+
+        try {
+          childProcess.kill();
+        } catch {
+          // ignore
+        }
+
+        const hardKillHandle = setTimeout(() => {
+          const hasExited = childProcess.exitCode !== null || childProcess.signalCode !== null;
+          if (hasExited) {
+            return;
+          }
+          disposable[Symbol.dispose]();
+        }, 1000);
+        hardKillHandle.unref();
       }, options.timeout * 1000);
 
       void exitCode.finally(() => clearTimeout(timeoutHandle));
