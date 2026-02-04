@@ -95,7 +95,8 @@ describe("AIService.resolveGatewayModelString", () => {
     const historyService = new HistoryService(config);
     const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
-    return new AIService(config, historyService, partialService, initStateManager);
+    const providerService = new ProviderService(config);
+    return new AIService(config, historyService, partialService, initStateManager, providerService);
   }
 
   it("routes allowlisted models when gateway is enabled + configured", async () => {
