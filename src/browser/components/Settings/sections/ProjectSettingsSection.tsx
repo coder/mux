@@ -745,7 +745,22 @@ export const ProjectSettingsSection: React.FC = () => {
   const [loading, setLoading] = useState(false);
 
   const [projectSecretKeys, setProjectSecretKeys] = useState<string[]>([]);
+  const [secretsHaveChanges, setSecretsHaveChanges] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Wrap setSelectedProject to warn about unsaved secrets changes
+  const handleProjectChange = useCallback(
+    (newProject: string) => {
+      if (secretsHaveChanges) {
+        const confirmed = window.confirm(
+          "You have unsaved secret changes. Switch projects and discard changes?"
+        );
+        if (!confirmed) return;
+      }
+      setSelectedProject(newProject);
+    },
+    [secretsHaveChanges]
+  );
 
   // Test state with caching
   const {
@@ -1191,7 +1206,7 @@ export const ProjectSettingsSection: React.FC = () => {
             <div className="text-foreground text-sm">Project</div>
             <div className="text-muted text-xs">Select a project to configure</div>
           </div>
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
+          <Select value={selectedProject} onValueChange={handleProjectChange}>
             <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[160px] cursor-pointer rounded-md border px-3 text-sm transition-colors">
               <SelectValue placeholder="Select project" />
             </SelectTrigger>
@@ -1212,6 +1227,7 @@ export const ProjectSettingsSection: React.FC = () => {
         <ProjectSecretsSection
           projectPath={selectedProject}
           onSecretsChanged={setProjectSecretKeys}
+          onHasChangesChange={setSecretsHaveChanges}
         />
       </div>
 

@@ -20,11 +20,14 @@ interface ProjectSecretsSectionProps {
   projectPath: string;
   /** Called after secrets are successfully saved, with the new list of keys */
   onSecretsChanged?: (keys: string[]) => void;
+  /** Called when hasChanges state changes, allowing parent to block project switching */
+  onHasChangesChange?: (hasChanges: boolean) => void;
 }
 
 export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
   projectPath,
   onSecretsChanged,
+  onHasChangesChange,
 }) => {
   const { projects, getSecrets, updateSecrets } = useProjectContext();
   const [secrets, setSecrets] = useState<Secret[]>([]);
@@ -76,7 +79,7 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
     };
   }, [getSecrets, projectPath]);
 
-  // Track changes
+  // Track changes and notify parent
   useEffect(() => {
     const changed =
       secrets.length !== originalSecrets.length ||
@@ -84,7 +87,8 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
         (s, i) => s.key !== originalSecrets[i]?.key || s.value !== originalSecrets[i]?.value
       );
     setHasChanges(changed);
-  }, [secrets, originalSecrets]);
+    onHasChangesChange?.(changed);
+  }, [secrets, originalSecrets, onHasChangesChange]);
 
   const handleSave = async () => {
     if (!projectPath) return; // Guard against empty projectPath
