@@ -1154,6 +1154,7 @@ export const config = {
       }),
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
+      stopCoderWorkspaceOnArchive: z.boolean(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
@@ -1191,6 +1192,14 @@ export const config = {
       muxGatewayEnabled: z.boolean(),
       muxGatewayModels: z.array(z.string()),
     }),
+    output: z.void(),
+  },
+  updateCoderPrefs: {
+    input: z
+      .object({
+        stopCoderWorkspaceOnArchive: z.boolean(),
+      })
+      .strict(),
     output: z.void(),
   },
   unenrollMuxGovernor: {

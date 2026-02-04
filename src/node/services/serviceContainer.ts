@@ -55,6 +55,8 @@ import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
+import { createStopCoderOnArchiveHook } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { PolicyService } from "@/node/services/policyService";
 
@@ -210,6 +212,16 @@ export class ServiceContainer {
     this.workspaceService.setSessionTimingService(this.sessionTimingService);
     this.signingService = getSigningService();
     this.coderService = coderService;
+
+    const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
+    workspaceLifecycleHooks.registerBeforeArchive(
+      createStopCoderOnArchiveHook({
+        coderService: this.coderService,
+        shouldStopOnArchive: () =>
+          this.config.loadConfigOrDefault().stopCoderWorkspaceOnArchive !== false,
+      })
+    );
+    this.workspaceService.setWorkspaceLifecycleHooks(workspaceLifecycleHooks);
 
     // PolicyService is a cross-cutting dependency; use setter injection to avoid
     // constructor cycles between services.

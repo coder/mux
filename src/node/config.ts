@@ -136,6 +136,7 @@ export class Config {
           useSSH2Transport?: unknown;
           muxGovernorUrl?: unknown;
           muxGovernorToken?: unknown;
+          stopCoderWorkspaceOnArchive?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -162,6 +163,10 @@ export class Config {
           const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
           const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
           const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
+
+          // Default ON: store `false` only so config.json stays minimal.
+          const stopCoderWorkspaceOnArchive =
+            parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
@@ -195,6 +200,7 @@ export class Config {
             useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
             muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
             muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
+            stopCoderWorkspaceOnArchive,
           };
         }
       }
@@ -236,6 +242,7 @@ export class Config {
         useSSH2Transport?: boolean;
         muxGovernorUrl?: string;
         muxGovernorToken?: string;
+        stopCoderWorkspaceOnArchive?: boolean;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -320,6 +327,11 @@ export class Config {
       const muxGovernorToken = parseOptionalNonEmptyString(config.muxGovernorToken);
       if (muxGovernorToken) {
         data.muxGovernorToken = muxGovernorToken;
+      }
+
+      // Default ON: persist `false` only.
+      if (config.stopCoderWorkspaceOnArchive === false) {
+        data.stopCoderWorkspaceOnArchive = false;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

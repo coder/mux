@@ -74,6 +74,7 @@ import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -640,6 +641,7 @@ export class WorkspaceService extends EventEmitter {
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
   private sessionTimingService?: SessionTimingService;
+  private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
 
   setPolicyService(service: PolicyService): void {
     this.policyService = service;
@@ -674,6 +676,10 @@ export class WorkspaceService extends EventEmitter {
    */
   setSessionTimingService(sessionTimingService: SessionTimingService): void {
     this.sessionTimingService = sessionTimingService;
+  }
+
+  setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
+    this.workspaceLifecycleHooks = hooks;
   }
 
   /**
@@ -1766,6 +1772,25 @@ export class WorkspaceService extends EventEmitter {
             workspaceId,
             error: stopResult.error,
           });
+        }
+      }
+
+      // Lifecycle hooks run *before* we persist archivedAt.
+      //
+      // NOTE: Archiving is typically a quick UI action, but it can fail if a hook needs to perform
+      // cleanup (e.g., stopping a dedicated mux-created Coder workspace) and that cleanup fails.
+      if (this.workspaceLifecycleHooks) {
+        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+        if (!metadataResult.success) {
+          return Err(metadataResult.error);
+        }
+
+        const hookResult = await this.workspaceLifecycleHooks.runBeforeArchive({
+          workspaceId,
+          workspaceMetadata: metadataResult.data,
+        });
+        if (!hookResult.success) {
+          return Err(hookResult.error);
         }
       }
 

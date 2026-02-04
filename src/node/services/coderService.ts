@@ -7,6 +7,8 @@ import { execAsync } from "@/node/utils/disposableExec";
 import { getBashPath } from "@/node/utils/main/bashPath";
 import { log } from "@/node/services/log";
 import { spawn, type ChildProcess } from "child_process";
+import type { Result } from "@/common/types/result";
+import { Ok, Err } from "@/common/types/result";
 import {
   CoderWorkspaceStatusSchema,
   type CoderInfo,
@@ -1126,6 +1128,35 @@ export class CoderService {
       const message = error instanceof Error ? error.message : String(error);
       log.debug("Failed to get Coder workspace status", { workspaceName, error: message });
       return { kind: "error", error: message };
+    }
+  }
+
+  /**
+   * Stop a Coder workspace.
+   *
+   * Uses spawn + timeout so callers don't hang forever on a stuck CLI invocation.
+   */
+  async stopWorkspace(
+    workspaceName: string,
+    options?: { timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<Result<void>> {
+    const timeoutMs = options?.timeoutMs ?? 60_000;
+
+    try {
+      const result = await this.runCoderCommand(["stop", workspaceName, "--yes"], {
+        timeoutMs,
+        signal: options?.signal,
+      });
+
+      const interpreted = interpretCoderResult(result);
+      if (!interpreted.ok) {
+        return Err(interpreted.error);
+      }
+
+      return Ok(undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(message);
     }
   }
 
