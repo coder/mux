@@ -138,6 +138,7 @@ describeIntegration("Secrets Import (UI)", () => {
         );
         // Use fireEvent for happy-dom stability in CI.
         await act(async () => {
+          currentImportSelect.value = sourceRepoPath;
           fireEvent.change(currentImportSelect, { target: { value: sourceRepoPath } });
         });
       } else {
