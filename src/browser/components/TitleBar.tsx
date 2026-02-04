@@ -295,7 +295,7 @@ export function TitleBar() {
             <TooltipTrigger asChild>
               <button
                 type="button"
-                onClick={() => openSettings("providers")}
+                onClick={() => openSettings("providers", { expandProvider: "mux-gateway" })}
                 onMouseEnter={() => {
                   void refreshMuxGatewayAccountStatus();
                 }}
