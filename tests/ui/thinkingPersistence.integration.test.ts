@@ -95,10 +95,10 @@ async function selectModel(
   );
 }
 
-async function setThinkingToMax(container: HTMLElement): Promise<void> {
-  // Wait for the thinking slider to render and for it to show MAX.
+async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
+  // Wait for the thinking slider to render and for it to show XHIGH.
   // We click the right paddle (second button) repeatedly to increase levels.
-  // For CODEX model the levels are: OFF → LOW → MED → HIGH → MAX
+  // For CODEX model the levels are: OFF → LOW → MED → HIGH → XHIGH
   await waitFor(
     async () => {
       const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
@@ -110,7 +110,7 @@ async function setThinkingToMax(container: HTMLElement): Promise<void> {
         .querySelector("[data-thinking-label]")
         ?.textContent?.trim()
         ?.toUpperCase();
-      if (label === "MAX") {
+      if (label === "XHIGH") {
         return; // Done!
       }
 
@@ -143,19 +143,19 @@ async function expectThinkingLabel(container: HTMLElement, expected: string): Pr
 }
 
 describeIntegration("Thinking level persistence", () => {
-  test("keeps MAX preference when switching away and back", async () => {
+  test("keeps XHIGH preference when switching away and back", async () => {
     const harness = await createAppHarness({ branchPrefix: "thinking" });
 
     try {
       await selectModel(harness.view.container, harness.workspaceId, CODEX_MODEL);
-      await setThinkingToMax(harness.view.container);
-      await expectThinkingLabel(harness.view.container, "MAX");
+      await setThinkingToXHigh(harness.view.container);
+      await expectThinkingLabel(harness.view.container, "XHIGH");
 
       await selectModel(harness.view.container, harness.workspaceId, OPUS_MODEL);
       await expectThinkingLabel(harness.view.container, "HIGH");
 
       await selectModel(harness.view.container, harness.workspaceId, CODEX_MODEL);
-      await expectThinkingLabel(harness.view.container, "MAX");
+      await expectThinkingLabel(harness.view.container, "XHIGH");
     } finally {
       await harness.dispose();
     }
