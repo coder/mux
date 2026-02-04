@@ -414,11 +414,11 @@ vscode-ext-install: ## Build and install VS Code extension locally
 
 ## Documentation
 docs-server: node_modules/.installed ## Serve documentation locally (Mintlify dev server)
-	@cd docs && npx mintlify dev
+	@cd docs && bun x mintlify dev
 
 check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
-	@cd docs && npx mintlify broken-links
+	@cd docs && bun x mintlify broken-links
 
 check-code-docs-links: ## Validate code references to docs paths
 	@./scripts/check-code-docs-links.sh
