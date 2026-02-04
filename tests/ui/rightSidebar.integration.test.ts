@@ -778,6 +778,70 @@ describeIntegration("RightSidebar (UI)", () => {
     }
   }, 60_000);
 
+  test("sidebar cannot be resized beyond available width", async () => {
+    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+      const cleanupDom = installDom();
+
+      // Force a narrow viewport so the right sidebar max clamp is exercised.
+      Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+      window.dispatchEvent(new Event("resize"));
+
+      // Clear any persisted state
+      updatePersistedState("right-sidebar:width", null);
+
+      const view = renderApp({
+        apiClient: env.orpc,
+        metadata,
+      });
+
+      try {
+        await setupWorkspaceView(view, metadata, workspaceId);
+
+        const sidebar = await waitFor(
+          () => {
+            const el = view.container.querySelector(
+              '[role="complementary"][aria-label="Workspace insights"]'
+            );
+            if (!el) throw new Error("RightSidebar not found");
+            return el as HTMLElement;
+          },
+          { timeout: 10_000 }
+        );
+
+        const resizeHandle = await waitFor(
+          () => {
+            const handle = sidebar.querySelector('[class*="cursor-col-resize"]') as HTMLElement;
+            if (!handle) throw new Error("Resize handle not found");
+            return handle;
+          },
+          { timeout: 5_000 }
+        );
+
+        const chatMinWidthPx = 384; // ChatPane uses tailwind `min-w-96`
+        const expectedMaxWidth = 900 - chatMinWidthPx;
+
+        fireEvent.mouseDown(resizeHandle, { clientX: 1000 });
+        // Move far left to try to exceed max width.
+        fireEvent.mouseMove(document, { clientX: 0 });
+        fireEvent.mouseUp(document);
+
+        await waitFor(() => {
+          const styleWidth = sidebar.style.width;
+          if (!styleWidth.endsWith("px")) {
+            throw new Error("Expected sidebar width to be set inline");
+          }
+
+          const width = parseInt(styleWidth, 10);
+          if (width > expectedMaxWidth) {
+            throw new Error(`Expected width <= ${expectedMaxWidth}, got ${width}`);
+          }
+        });
+      } finally {
+        await cleanupView(view, cleanupDom);
+      }
+    });
+  }, 60_000);
+
   test("split layout renders multiple panes with separate tablists", async () => {
     const cleanupDom = installDom();
 
