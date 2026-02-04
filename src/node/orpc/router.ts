@@ -35,6 +35,7 @@ import {
 } from "@/common/types/tasks";
 import {
   discoverAgentSkills,
+  discoverAgentSkillsDiagnostics,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
@@ -746,6 +747,17 @@ export const router = (authToken?: string) => {
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           return discoverAgentSkills(runtime, discoveryPath);
+        }),
+      listDiagnostics: t
+        .input(schemas.agentSkills.listDiagnostics.input)
+        .output(schemas.agentSkills.listDiagnostics.output)
+        .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          return discoverAgentSkillsDiagnostics(runtime, discoveryPath);
         }),
       get: t
         .input(schemas.agentSkills.get.input)

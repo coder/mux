@@ -562,6 +562,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     agentSkills: {
       list: () => Promise.resolve(agentSkills),
+      listDiagnostics: () => Promise.resolve({ skills: agentSkills, invalidSkills: [] }),
       get: () =>
         Promise.resolve({
           scope: "built-in" as const,

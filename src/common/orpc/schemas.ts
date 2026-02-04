@@ -49,6 +49,7 @@ export {
 export {
   AgentSkillDescriptorSchema,
   AgentSkillFrontmatterSchema,
+  AgentSkillIssueSchema,
   AgentSkillPackageSchema,
   AgentSkillScopeSchema,
   SkillNameSchema,

@@ -25,7 +25,12 @@ import { BashToolResultSchema, FileTreeNodeSchema } from "./tools";
 import { WorkspaceStatsSnapshotSchema } from "./workspaceStats";
 import { FrontendWorkspaceMetadataSchema, WorkspaceActivitySnapshotSchema } from "./workspace";
 import { WorkspaceAISettingsSchema } from "./workspaceAiSettings";
-import { AgentSkillDescriptorSchema, AgentSkillPackageSchema, SkillNameSchema } from "./agentSkill";
+import {
+  AgentSkillDescriptorSchema,
+  AgentSkillIssueSchema,
+  AgentSkillPackageSchema,
+  SkillNameSchema,
+} from "./agentSkill";
 import {
   AgentDefinitionDescriptorSchema,
   AgentDefinitionPackageSchema,
@@ -923,6 +928,13 @@ export const agentSkills = {
   list: {
     input: AgentDiscoveryInputSchema,
     output: z.array(AgentSkillDescriptorSchema),
+  },
+  listDiagnostics: {
+    input: AgentDiscoveryInputSchema,
+    output: z.object({
+      skills: z.array(AgentSkillDescriptorSchema),
+      invalidSkills: z.array(AgentSkillIssueSchema),
+    }),
   },
   get: {
     input: AgentDiscoveryInputSchema.and(z.object({ skillName: SkillNameSchema })),
