@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
+import { secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
   let tempDir: string;
@@ -203,10 +204,7 @@ describe("Config", () => {
       ]);
 
       const effective = config.getEffectiveSecrets(projectPath);
-      const record: Record<string, string> = {};
-      for (const secret of effective) {
-        record[secret.key] = secret.value;
-      }
+      const record = secretsToRecord(effective);
 
       expect(record).toEqual({
         TOKEN: "project",
@@ -215,6 +213,39 @@ describe("Config", () => {
       });
     });
 
+    it('resolves project secret aliases to global secrets via {secret:"KEY"}', async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "abc" }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } },
+      ]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        GLOBAL_TOKEN: "abc",
+        TOKEN: "abc",
+      });
+    });
+
+    it("omits missing referenced secrets when resolving secretsToRecord", () => {
+      const record = secretsToRecord([
+        { key: "GLOBAL", value: "1" },
+        { key: "A", value: { secret: "MISSING" } },
+      ]);
+
+      expect(record).toEqual({ GLOBAL: "1" });
+    });
+
+    it("omits cyclic secret references when resolving secretsToRecord", () => {
+      const record = secretsToRecord([
+        { key: "A", value: { secret: "B" } },
+        { key: "B", value: { secret: "A" } },
+        { key: "OK", value: "y" },
+      ]);
+
+      expect(record).toEqual({ OK: "y" });
+    });
     it("normalizes project paths so trailing slashes don't split secrets", async () => {
       const projectPath = "/repo";
       const projectPathWithSlash = "/repo/";

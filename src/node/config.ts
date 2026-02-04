@@ -964,6 +964,19 @@ ${jsonString}`;
     return stripTrailingSlashes(projectPath);
   }
 
+  private static isSecretValue(value: unknown): value is Secret["value"] {
+    if (typeof value === "string") {
+      return true;
+    }
+
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "secret" in value &&
+      typeof (value as { secret?: unknown }).secret === "string"
+    );
+  }
+
   private static isSecret(value: unknown): value is Secret {
     return (
       typeof value === "object" &&
@@ -971,7 +984,7 @@ ${jsonString}`;
       "key" in value &&
       "value" in value &&
       typeof (value as { key?: unknown }).key === "string" &&
-      typeof (value as { value?: unknown }).value === "string"
+      Config.isSecretValue((value as { value?: unknown }).value)
     );
   }
 
