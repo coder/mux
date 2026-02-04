@@ -4,6 +4,7 @@
  */
 import { shescape } from "@/node/runtime/streamUtils";
 import { execAsync } from "@/node/utils/disposableExec";
+import { getBashPath } from "@/node/utils/main/bashPath";
 import { log } from "@/node/services/log";
 import { spawn, type ChildProcess } from "child_process";
 import {
@@ -60,7 +61,7 @@ function serializeParameterDefault(value: unknown): string {
 }
 
 // Minimum supported Coder CLI version
-const MIN_CODER_VERSION = "2.31.0";
+const MIN_CODER_VERSION = "2.25.0";
 
 /**
  * Normalize a version string for comparison.
@@ -290,6 +291,36 @@ function interpretCoderResult(result: CoderCommandResult): InterpretedCoderComma
   return { ok: true, stdout: result.stdout, stderr: result.stderr };
 }
 
+function sanitizeCoderCliErrorForUi(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "Unknown error";
+  }
+
+  const err = error as Partial<{ stderr: string; message: string }>;
+  const raw = (err.stderr?.trim() ? err.stderr : err.message) ?? "";
+
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return "Unknown error";
+  }
+
+  // Coder often prints a generic "Encountered an error running..." line followed by
+  // a more actionable "error: ..." line. Prefer the latter when present.
+  const preferred =
+    [...lines].reverse().find((line) => /^error:\s*/i.test(line)) ?? lines[lines.length - 1];
+
+  return (
+    preferred
+      .replace(/^error:\s*/i, "")
+      .slice(0, 200)
+      .trim() || "Unknown error"
+  );
+}
+
 export class CoderService {
   // Ephemeral API sessions scoped to workspace provisioning.
   // This keeps token reuse explicit without persisting anything to disk.
@@ -297,6 +328,26 @@ export class CoderService {
   private cachedInfo: CoderInfo | null = null;
   // Cache whoami results so later URL lookups can reuse the last CLI response.
   private cachedWhoami: CoderWhoamiData | null = null;
+
+  private async resolveCoderBinaryPath(): Promise<string | null> {
+    let shell: string | undefined;
+    if (process.platform === "win32") {
+      try {
+        shell = getBashPath();
+      } catch {
+        // Best-effort; if Git Bash isn't available, the lookup may fail and we'll fall back to null.
+      }
+    }
+
+    try {
+      using proc = execAsync("command -v coder", shell ? { shell } : undefined);
+      const { stdout } = await proc.result;
+      const firstLine = stdout.split(/\r?\n/)[0]?.trim();
+      return firstLine || null;
+    } catch {
+      return null;
+    }
+  }
 
   /**
    * Get Coder CLI info. Caches result for the session.
@@ -308,14 +359,7 @@ export class CoderService {
     }
 
     // Resolve the Coder binary path for better error messages (helps when multiple binaries are on PATH).
-    let binaryPath: string | null = null;
-    try {
-      using whichProc = execAsync("command -v coder");
-      const { stdout } = await whichProc.result;
-      binaryPath = stdout.split("\n")[0]?.trim() || null;
-    } catch {
-      // Ignore - we'll get a better error from the version command.
-    }
+    const binaryPath = await this.resolveCoderBinaryPath();
 
     try {
       using proc = execAsync("coder version --output=json");
@@ -351,27 +395,38 @@ export class CoderService {
       } catch (error) {
         // Treat whoami failures as a blocking issue for the Coder runtime.
         // If the CLI isn't logged in, users will hit confusing failures later during provisioning.
-        const message = error instanceof Error ? error.message : "Unknown error";
+        const err = error as Partial<{ stderr: string; message: string }>;
+        const raw = (err.stderr?.trim() ? err.stderr : err.message) ?? "";
+        const normalized = raw.toLowerCase();
+
+        const isNotLoggedIn =
+          normalized.includes("not logged in") ||
+          normalized.includes("try logging in") ||
+          normalized.includes("please login") ||
+          normalized.includes("coder login");
+
         const lastLine =
-          message
-            .split("\n")
+          raw
+            .split(/\r?\n/)
             .map((line) => line.trim())
             .filter(Boolean)
-            .at(-1) ?? "Unknown error";
-        const sanitized = lastLine
-          .replace(/^error:\s*/i, "")
-          .slice(0, 200)
-          .trim();
-        const isNotLoggedIn = sanitized.toLowerCase().includes("not logged in");
+            .at(-1) ?? "";
+
+        const sanitizedLine =
+          lastLine
+            .replace(/^error:\s*/i, "")
+            .slice(0, 200)
+            .trim() || "Unknown error";
+
         const notLoggedInMessage = binaryPath
-          ? `${binaryPath} is ${sanitized.replace(/^you are\s+/i, "")}`
-          : sanitized;
+          ? `${binaryPath} is ${sanitizedLine.replace(/^you are\s+/i, "")}`
+          : sanitizedLine;
 
         log.debug("Failed to fetch Coder whoami data", { error });
 
         const result: CoderInfo = isNotLoggedIn
           ? { state: "unavailable", reason: { kind: "not-logged-in", message: notLoggedInMessage } }
-          : { state: "unavailable", reason: { kind: "error", message: sanitized } };
+          : { state: "unavailable", reason: { kind: "error", message: sanitizedLine } };
 
         // Don't cache not-logged-in state - user may log in and retry.
         if (!isNotLoggedIn) {
@@ -413,10 +468,10 @@ export class CoderService {
         return { state: "unavailable", reason: "missing" };
       }
       // Other errors: include sanitized message (single line, capped length)
-      const sanitized = error.message.split("\n")[0].slice(0, 200).trim();
+      const sanitized = sanitizeCoderCliErrorForUi(error);
       return {
         state: "unavailable",
-        reason: { kind: "error", message: sanitized || "Unknown error" },
+        reason: { kind: "error", message: sanitized },
       };
     }
     return { state: "unavailable", reason: { kind: "error", message: "Unknown error" } };
@@ -804,10 +859,7 @@ export class CoderService {
         })),
       };
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message.split("\n")[0].slice(0, 200).trim()
-          : "Unknown error";
+      const message = sanitizeCoderCliErrorForUi(error);
       // Surface CLI failures so the UI doesn't show "No templates" incorrectly.
       log.warn("Failed to list Coder templates", { error });
       return { ok: false, error: message || "Unknown error" };
@@ -852,10 +904,7 @@ export class CoderService {
         })),
       };
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message.split("\n")[0].slice(0, 200).trim()
-          : "Unknown error";
+      const message = sanitizeCoderCliErrorForUi(error);
       // Surface CLI failures so the UI doesn't show "No presets" incorrectly.
       log.warn("Failed to list Coder presets", { templateName, error });
       return { ok: false, error: message || "Unknown error" };
@@ -927,10 +976,7 @@ export class CoderService {
           })),
       };
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message.split("\n")[0].slice(0, 200).trim()
-          : "Unknown error";
+      const message = sanitizeCoderCliErrorForUi(error);
       // Users reported seeing "No workspaces found" even when the CLI failed,
       // so surface an error state instead of silently returning an empty list.
       log.warn("Failed to list Coder workspaces", { error });

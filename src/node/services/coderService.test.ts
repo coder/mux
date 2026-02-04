@@ -151,6 +151,20 @@ describe("CoderService", () => {
       });
     });
 
+    it("returns outdated state without binaryPath when lookup fails", async () => {
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.reject(new Error("lookup failed")))
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.resolve({ stdout: JSON.stringify({ version: "2.24.9" }), stderr: "" })
+        )
+      );
+
+      const info = await service.getCoderInfo();
+
+      expect(info).toEqual({ state: "outdated", version: "2.24.9", minVersion: "2.25.0" });
+    });
     it("handles version with dev suffix", async () => {
       mockVersionAndWhoami({
         version: "2.28.2-devel+903c045b9",
@@ -188,14 +202,21 @@ describe("CoderService", () => {
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({
+      expect(info).toMatchObject({
         state: "unavailable",
-        reason: {
-          kind: "not-logged-in",
-          message:
-            "/usr/local/bin/coder is not logged in. Try logging in using 'coder login <url>'.",
-        },
+        reason: { kind: "not-logged-in" },
       });
+
+      if (
+        info.state !== "unavailable" ||
+        typeof info.reason === "string" ||
+        info.reason.kind !== "not-logged-in"
+      ) {
+        throw new Error(`Expected not-logged-in unavailable state, got: ${JSON.stringify(info)}`);
+      }
+
+      expect(info.reason.message).toContain("/usr/local/bin/coder");
+      expect(info.reason.message.toLowerCase()).toContain("not logged in");
     });
 
     it("re-checks login status after not-logged-in and caches once logged in", async () => {
@@ -222,14 +243,21 @@ describe("CoderService", () => {
       mockVersionAndWhoami({ version: "2.28.2", username: "coder-user" });
 
       const first = await service.getCoderInfo();
-      expect(first).toEqual({
+      expect(first).toMatchObject({
         state: "unavailable",
-        reason: {
-          kind: "not-logged-in",
-          message:
-            "/usr/local/bin/coder is not logged in. Try logging in using 'coder login <url>'.",
-        },
+        reason: { kind: "not-logged-in" },
       });
+
+      if (
+        first.state !== "unavailable" ||
+        typeof first.reason === "string" ||
+        first.reason.kind !== "not-logged-in"
+      ) {
+        throw new Error(`Expected not-logged-in unavailable state, got: ${JSON.stringify(first)}`);
+      }
+
+      expect(first.reason.message).toContain("/usr/local/bin/coder");
+      expect(first.reason.message.toLowerCase()).toContain("not logged in");
 
       const second = await service.getCoderInfo();
       expect(second).toEqual({
@@ -239,9 +267,14 @@ describe("CoderService", () => {
         url: "https://coder.example.com",
       });
 
+      const callsAfterSecond = execAsyncSpy?.mock.calls.length ?? 0;
+
       // Third call should come from cache (no extra execAsync calls)
       await service.getCoderInfo();
-      expect(execAsyncSpy).toHaveBeenCalledTimes(6);
+      expect(execAsyncSpy?.mock.calls.length ?? 0).toBe(callsAfterSecond);
+
+      const cmds = execAsyncSpy?.mock.calls.map(([cmd]) => cmd) ?? [];
+      expect(cmds.filter((c) => c === "coder whoami --output=json")).toHaveLength(2);
     });
 
     it("returns unavailable state with reason missing when CLI not installed", async () => {
@@ -440,11 +473,18 @@ describe("CoderService", () => {
     });
 
     it("returns error result on failure", async () => {
-      mockExecError(new Error("not logged in"));
+      mockExecError(
+        new Error(
+          `Encountered an error running "coder list", see "coder list --help" for more information\nerror: You are not logged in. Try logging in using '/usr/local/bin/coder login <url>'.`
+        )
+      );
 
       const workspaces = await service.listWorkspaces();
 
-      expect(workspaces).toEqual({ ok: false, error: "not logged in" });
+      expect(workspaces).toEqual({
+        ok: false,
+        error: "You are not logged in. Try logging in using '/usr/local/bin/coder login <url>'.",
+      });
     });
   });
 
