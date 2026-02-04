@@ -138,7 +138,6 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
 
   // Global Actions
   onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
-  onModelChange?: (model: string) => void;
   setPreferredModel: (model: string) => void;
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 

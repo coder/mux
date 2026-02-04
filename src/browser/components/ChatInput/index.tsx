@@ -1416,7 +1416,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
       setToast,
       onProviderConfig: props.onProviderConfig,
-      onModelChange: props.onModelChange,
       setPreferredModel,
       setVimEnabled,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,

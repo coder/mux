@@ -46,8 +46,9 @@ export const ContextSwitchWarning: React.FC<Props> = (props) => {
           onClick={props.onDismiss}
           className="text-muted hover:text-foreground -mt-1 -mr-1 cursor-pointer p-1"
           title="Dismiss"
+          aria-label="Dismiss context limit warning"
         >
-          <X size={14} />
+          <X size={14} aria-hidden="true" />
         </button>
       </div>
       <div className="mt-2.5 flex items-center gap-3">

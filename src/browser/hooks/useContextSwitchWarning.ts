@@ -5,12 +5,13 @@
  * Handles model changes, 1M toggle changes, and provides compact/dismiss actions.
  */
 
-import { useReducer, useRef, useEffect, useCallback, useMemo } from "react";
+import { useReducer, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { WorkspaceUsageState } from "@/browser/stores/WorkspaceStore";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import {
   checkContextSwitch,
@@ -146,13 +147,15 @@ export function useContextSwitchWarning(
 
   // ChatPane is keyed by workspaceId today; keep a defensive reset to avoid stale warnings
   // if mount behavior changes or localStorage sync reuses this hook instance.
-  if (prevWorkspaceIdRef.current !== workspaceId) {
-    prevWorkspaceIdRef.current = workspaceId;
-    prevUse1MRef.current = use1M;
-    prevCheckOptionsRef.current = checkOptions;
-    prevWarningPreviousModelRef.current = null;
-    dispatch({ type: "RESET", model: pendingModel });
-  }
+  useLayoutEffect(() => {
+    if (prevWorkspaceIdRef.current !== workspaceId) {
+      prevWorkspaceIdRef.current = workspaceId;
+      prevUse1MRef.current = use1M;
+      prevCheckOptionsRef.current = checkOptions;
+      prevWarningPreviousModelRef.current = null;
+      dispatch({ type: "RESET", model: pendingModel });
+    }
+  }, [workspaceId, pendingModel, use1M, checkOptions]);
 
   const getCurrentTokens = useCallback(() => {
     const usage = workspaceUsage?.liveUsage ?? workspaceUsage?.lastContextUsage;
@@ -242,7 +245,7 @@ export function useContextSwitchWarning(
 
   const handleModelChange = useCallback(
     (newModel: string) => {
-      if (newModel === pendingModel) {
+      if (normalizeGatewayModel(newModel).trim() === normalizeGatewayModel(pendingModel).trim()) {
         return;
       }
 
