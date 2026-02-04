@@ -106,12 +106,23 @@ describeIntegration("Secrets Import (UI)", () => {
       // Find and click the import dropdown
       // Note: userEvent.click fails due to happy-dom pointer-events detection, use fireEvent
       // The import button now just says "Import" with an icon
+      // First wait for the import dropdown to appear (requires other projects to be loaded)
+      await waitFor(
+        () => {
+          const importTriggers = modal.querySelectorAll('[role="combobox"]');
+          const importTrigger = Array.from(importTriggers).find((el) =>
+            el.textContent?.includes("Import")
+          );
+          if (!importTrigger)
+            throw new Error("Import dropdown not found - other projects may not be loaded yet");
+        },
+        { timeout: 5_000 }
+      );
+
       const importTriggers = modal.querySelectorAll('[role="combobox"]');
-      // Find the import trigger (the one containing "Import")
       const importTrigger = Array.from(importTriggers).find((el) =>
         el.textContent?.includes("Import")
       ) as HTMLElement;
-      expect(importTrigger).toBeTruthy();
       fireEvent.click(importTrigger);
 
       // Select the source project from dropdown (also in portal)
@@ -134,10 +145,13 @@ describeIntegration("Secrets Import (UI)", () => {
       );
 
       // Click the source project option
+      // Use pointerDown + pointerUp to better simulate Radix Select interaction
       const options = document.body.querySelectorAll('[role="option"]');
       const sourceOption = Array.from(options).find((opt) =>
         opt.textContent?.includes(sourceProjectName)
       ) as HTMLElement;
+      fireEvent.pointerDown(sourceOption);
+      fireEvent.pointerUp(sourceOption);
       fireEvent.click(sourceOption);
 
       // Wait for import to complete - should now have 4 secrets

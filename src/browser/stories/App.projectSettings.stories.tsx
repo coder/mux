@@ -296,7 +296,7 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     // MCP_TOKEN appears in both the secrets section and the header value input,
     // so use getAllByDisplayValue to verify at least one exists in headers
     const mcpTokenInputs = body.getAllByDisplayValue("MCP_TOKEN");
-    expect(mcpTokenInputs.length).toBeGreaterThanOrEqual(1);
+    await expect(mcpTokenInputs.length).toBeGreaterThanOrEqual(1);
     await expect(body.findByDisplayValue("X-Env")).resolves.toBeInTheDocument();
     await expect(body.findByDisplayValue("prod")).resolves.toBeInTheDocument();
   },
