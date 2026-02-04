@@ -5,6 +5,7 @@ import type { FilePart } from "@/common/orpc/schemas";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { CommandPrefixText } from "../CommandHighlightOverlay";
 
 interface UserMessageContentProps {
   content: string;
@@ -77,13 +78,6 @@ const imageStyles = {
   queued: "border-border-light max-h-[300px] max-w-80 rounded border",
 } as const;
 
-/** Styled command prefix (e.g., "/compact" or "/skill-name") */
-const CommandPrefixBadge: React.FC<{ prefix: string }> = (props) => (
-  <span className="font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]">
-    {props.prefix}
-  </span>
-);
-
 /**
  * Shared content renderer for user messages (sent and queued).
  * Handles reviews, text content, and attachments.
@@ -131,11 +125,11 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const hasSpaceAfterPrefix = charAfterPrefix === " ";
     const hasNewlineAfterPrefix = charAfterPrefix === "\n";
 
-    // Newline after prefix: block layout (badge on own line)
-    // Space after prefix: inline layout (badge + content on same line)
+    // Newline after prefix: block layout (prefix on own line)
+    // Space after prefix: inline layout (prefix + content on same line)
     return (
       <div className={hasNewlineAfterPrefix ? "" : "flex flex-wrap items-baseline"}>
-        <CommandPrefixBadge prefix={shouldHighlightPrefix} />
+        <CommandPrefixText className="font-mono">{shouldHighlightPrefix}</CommandPrefixText>
         {hasSpaceAfterPrefix && <span>&nbsp;</span>}
         {remainingContent.trim() && (
           <MarkdownRenderer

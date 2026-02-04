@@ -4,7 +4,7 @@
  *
  * Keep in sync with:
  * - docs/vim-mode.md (user documentation)
- * - src/components/VimTextArea.tsx (React component integration)
+ * - src/components/RichTextInput.tsx (React component integration)
  * - src/utils/vim.test.ts (integration tests)
  */
 

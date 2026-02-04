@@ -16,7 +16,7 @@ import { migrateGatewayModel } from "mux/browser/hooks/useGatewayModels";
 import { useProviderOptions } from "mux/browser/hooks/useProviderOptions";
 import { useAutoCompactionSettings } from "mux/browser/hooks/useAutoCompactionSettings";
 
-import { VimTextArea } from "mux/browser/components/VimTextArea";
+import { RichTextInput } from "mux/browser/components/RichTextInput";
 import { ModelSelector } from "mux/browser/components/ModelSelector";
 import { ThinkingSliderComponent } from "mux/browser/components/ThinkingSlider";
 import { ContextUsageIndicatorButton } from "mux/browser/components/ContextUsageIndicatorButton";
@@ -328,12 +328,15 @@ function ChatComposerInner(props: {
     return `Type a message... (${hints.join(", ")})`;
   })();
 
+  const focusBorderColor = agentId === "plan" ? "var(--color-plan-mode)" : "var(--color-exec-mode)";
+
   return (
     <div className="flex flex-col gap-2">
-      <VimTextArea
+      <RichTextInput
         value={input}
         onChange={setInput}
         placeholder={placeholder}
+        focusBorderColor={focusBorderColor}
         disabled={props.disabled}
         onKeyDown={(e) => {
           if (matchesKeybind(e, KEYBINDS.CYCLE_MODEL)) {

@@ -60,6 +60,7 @@ import { Button } from "../ui/button";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
+import { getCaretOffset, setCaretOffset } from "@/browser/utils/contentEditableSelection";
 import {
   getSlashCommandSuggestions,
   type SlashSuggestion,
@@ -82,7 +83,7 @@ import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { ModelSelector, type ModelSelectorRef } from "../ModelSelector";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { SendHorizontal } from "lucide-react";
-import { VimTextArea } from "../VimTextArea";
+import { RichTextInput } from "../RichTextInput";
 import { ChatAttachments, type ChatAttachment } from "../ChatAttachments";
 import {
   extractAttachmentsFromClipboard,
@@ -319,7 +320,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       isMountedRef.current = false;
     };
   }, []);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
   const powerMode = usePowerMode();
   const [atMentionCursorNonce, setAtMentionCursorNonce] = useState(0);
@@ -330,7 +331,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const nextCursor = el.selectionStart ?? input.length;
+    const nextCursor = getCaretOffset(el) ?? input.length;
     if (lastAtMentionCursorRef.current === nextCursor) {
       return;
     }
@@ -813,20 +814,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const focusMessageInput = useCallback(() => {
     const element = inputRef.current;
-    if (!element || element.disabled) {
+    if (!element?.isContentEditable) {
       return;
     }
 
     element.focus();
 
     requestAnimationFrame(() => {
-      const cursor = element.value.length;
-      element.selectionStart = cursor;
-      element.selectionEnd = cursor;
+      setCaretOffset(element, input.length);
       element.style.height = "auto";
       element.style.height = Math.min(element.scrollHeight, window.innerHeight * 0.5) + "px";
     });
-  }, []);
+  }, [input.length]);
 
   // Method to restore text to input (used by compaction cancel)
   const restoreText = useCallback(
@@ -973,7 +972,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    const cursor = inputRef.current?.selectionStart ?? input.length;
+    const cursor = getCaretOffset(inputRef.current) ?? input.length;
     const match = findAtMentionAtCursor(input, cursor);
 
     if (!match) {
@@ -1323,7 +1322,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Handle paste events to extract attachments
   const handlePaste = useCallback(
-    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
       const items = e.clipboardData?.items;
       if (!items) return;
 
@@ -1454,7 +1453,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Handle drag over to allow drop
   const handleDragOver = useCallback(
-    (e: React.DragEvent<HTMLTextAreaElement>) => {
+    (e: React.DragEvent<HTMLDivElement>) => {
       // Check if drag contains files
       if (e.dataTransfer.types.includes("Files")) {
         e.preventDefault();
@@ -1466,7 +1465,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Handle drop to extract attachments
   const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLTextAreaElement>) => {
+    (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault();
 
       const attachmentFiles = extractAttachmentsFromDrop(e.dataTransfer);
@@ -1499,7 +1498,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const handleAtMentionSelect = useCallback(
     (suggestion: SlashSuggestion) => {
-      const cursor = inputRef.current?.selectionStart ?? input.length;
+      const cursor = getCaretOffset(inputRef.current) ?? input.length;
       const match = findAtMentionAtCursor(input, cursor);
       if (!match) {
         return;
@@ -1518,15 +1517,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       requestAnimationFrame(() => {
         const el = inputRef.current;
-        if (!el || el.disabled) {
+        if (!el?.isContentEditable) {
           return;
         }
 
         el.focus();
         // +1 for the trailing space we added
         const newCursor = match.startIndex + suggestion.replacement.length + 1;
-        el.selectionStart = newCursor;
-        el.selectionEnd = newCursor;
+        setCaretOffset(el, newCursor);
       });
     },
     [input, setInput]
@@ -1535,7 +1533,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     (suggestion: SlashSuggestion) => {
       setInput(suggestion.replacement);
       setShowCommandSuggestions(false);
-      inputRef.current?.focus();
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el?.isContentEditable) {
+          return;
+        }
+        el.focus();
+        setCaretOffset(el, suggestion.replacement.length);
+      });
     },
     [setInput]
   );
@@ -1615,7 +1620,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         if (isMountedRef.current) {
           setInput("");
           setAttachments([]);
-          // Height is managed by VimTextArea's useLayoutEffect - clear inline style
+          // Height is managed by RichTextInput's useLayoutEffect - clear inline style
           // to let CSS min-height take over
           if (inputRef.current) {
             inputRef.current.style.height = "";
@@ -1843,7 +1848,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         setInput("");
         setAttachments([]);
         setHideReviewsDuringSend(true);
-        // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
+        // Clear inline height style - RichTextInput's useLayoutEffect will handle sizing
         if (inputRef.current) {
           inputRef.current.style.height = "";
         }
@@ -1997,7 +2002,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    // Note: ESC handled by VimTextArea (for mode transitions) and CommandSuggestions (for dismissal)
+    // Note: ESC handled by RichTextInput (for mode transitions) and CommandSuggestions (for dismissal)
 
     const hasCommandSuggestionMenu = showCommandSuggestions && commandSuggestions.length > 0;
     const hasAtMentionSuggestionMenu = showAtMentionSuggestions && atMentionSuggestions.length > 0;
@@ -2158,7 +2163,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               />
             ) : (
               <>
-                <VimTextArea
+                <RichTextInput
                   ref={inputRef}
                   value={input}
                   isEditing={!!editingMessage}
