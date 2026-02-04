@@ -837,7 +837,8 @@ export const ProjectSettingsSection: React.FC = () => {
       clearProjectsTargetProjectPath();
 
       if (projectList.includes(target)) {
-        setSelectedProject(target);
+        // Use handleProjectChange to prompt for unsaved secrets
+        handleProjectChange(target);
       } else if (!selectedProject || !projectList.includes(selectedProject)) {
         setSelectedProject(projectList[0]);
       }
@@ -848,7 +849,13 @@ export const ProjectSettingsSection: React.FC = () => {
     if (!selectedProject || !projectList.includes(selectedProject)) {
       setSelectedProject(projectList[0]);
     }
-  }, [projectList, selectedProject, projectsTargetProjectPath, clearProjectsTargetProjectPath]);
+  }, [
+    projectList,
+    selectedProject,
+    projectsTargetProjectPath,
+    clearProjectsTargetProjectPath,
+    handleProjectChange,
+  ]);
 
   const refresh = useCallback(async () => {
     if (!api || !selectedProject) return;
