@@ -633,3 +633,129 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     expect(entry?.archivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 });
+
+describe("WorkspaceService unarchive lifecycle hooks", () => {
+  const workspaceId = "ws-unarchive";
+  const projectPath = "/tmp/project";
+  const workspacePath = "/tmp/project/ws-unarchive";
+
+  let workspaceService: WorkspaceService;
+  let configState: ProjectsConfig;
+  let editConfigSpy: ReturnType<typeof mock>;
+
+  const workspaceMetadata: FrontendWorkspaceMetadata = {
+    id: workspaceId,
+    name: "ws-unarchive",
+    projectName: "proj",
+    projectPath,
+    runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+    archivedAt: "2020-01-01T00:00:00.000Z",
+    namedWorkspacePath: workspacePath,
+  };
+
+  beforeEach(() => {
+    configState = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: workspacePath,
+                id: workspaceId,
+                archivedAt: "2020-01-01T00:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    editConfigSpy = mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
+      configState = fn(configState);
+      return Promise.resolve();
+    });
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock((id: string) => {
+        if (id !== workspaceId) {
+          return null;
+        }
+
+        return { projectPath, workspacePath };
+      }),
+      editConfig: editConfigSpy,
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([workspaceMetadata])),
+    };
+
+    const mockHistoryService: Partial<HistoryService> = {};
+    const mockPartialService: Partial<PartialService> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      mockHistoryService as HistoryService,
+      mockPartialService as PartialService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  test("persists unarchivedAt and runs afterUnarchive hooks (best-effort)", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+
+    const afterHook = mock(() => {
+      const entry = configState.projects.get(projectPath)?.workspaces[0];
+      expect(entry?.unarchivedAt).toBeTruthy();
+      return Promise.resolve(Err("hook failed"));
+    });
+    hooks.registerAfterUnarchive(afterHook);
+
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    const result = await workspaceService.unarchive(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(afterHook).toHaveBeenCalledTimes(1);
+
+    const entry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(entry?.unarchivedAt).toBeTruthy();
+    expect(entry?.unarchivedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  test("does not run afterUnarchive hooks when workspace is not archived", async () => {
+    const entry = configState.projects.get(projectPath)?.workspaces[0];
+    if (!entry) {
+      throw new Error("Missing workspace entry");
+    }
+    entry.archivedAt = undefined;
+
+    const hooks = new WorkspaceLifecycleHooks();
+    const afterHook = mock(() => Promise.resolve(Ok(undefined)));
+    hooks.registerAfterUnarchive(afterHook);
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    const result = await workspaceService.unarchive(workspaceId);
+
+    expect(result.success).toBe(true);
+    expect(afterHook).toHaveBeenCalledTimes(0);
+  });
+});

@@ -79,4 +79,46 @@ describe("WorkspaceLifecycleHooks", () => {
       expect(result.error).toBe("beforeArchive hook threw: boom");
     }
   });
+
+  it("runs afterUnarchive hooks sequentially (best-effort) even when one returns Err", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+
+    const calls: string[] = [];
+    hooks.registerAfterUnarchive(() => {
+      calls.push("first");
+      return Promise.resolve(Err("nope\nextra"));
+    });
+    hooks.registerAfterUnarchive(() => {
+      calls.push("second");
+      return Promise.resolve(Ok(undefined));
+    });
+
+    await hooks.runAfterUnarchive({
+      workspaceId: "ws",
+      workspaceMetadata: TEST_METADATA,
+    });
+
+    expect(calls).toEqual(["first", "second"]);
+  });
+
+  it("swallows thrown errors from afterUnarchive hooks and continues", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+
+    const calls: string[] = [];
+    hooks.registerAfterUnarchive(async () => {
+      calls.push("first");
+      throw new Error("boom\nstack");
+    });
+    hooks.registerAfterUnarchive(() => {
+      calls.push("second");
+      return Promise.resolve(Ok(undefined));
+    });
+
+    await hooks.runAfterUnarchive({
+      workspaceId: "ws",
+      workspaceMetadata: TEST_METADATA,
+    });
+
+    expect(calls).toEqual(["first", "second"]);
+  });
 });

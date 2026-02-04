@@ -27,6 +27,7 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
@@ -49,6 +50,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
+  WorkspaceMetadata,
 } from "@/common/types/workspace";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
@@ -1842,6 +1844,8 @@ export class WorkspaceService extends EventEmitter {
       }
       const { projectPath, workspacePath } = workspace;
 
+      let didUnarchive = false;
+
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {
@@ -1849,13 +1853,25 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.id === workspaceId) ??
             projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
-            // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt
-            // This also bumps workspace to top of recency
-            workspaceEntry.unarchivedAt = new Date().toISOString();
+            const wasArchived = isWorkspaceArchived(
+              workspaceEntry.archivedAt,
+              workspaceEntry.unarchivedAt
+            );
+            if (wasArchived) {
+              // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt.
+              // This also bumps workspace to top of recency.
+              workspaceEntry.unarchivedAt = new Date().toISOString();
+              didUnarchive = true;
+            }
           }
         }
         return config;
       });
+
+      // Only run hooks when the workspace is transitioning from archived → unarchived.
+      if (!didUnarchive) {
+        return Ok(undefined);
+      }
 
       // Emit updated metadata
       const allMetadata = await this.config.getAllWorkspaceMetadata();
@@ -1866,6 +1882,32 @@ export class WorkspaceService extends EventEmitter {
           session.emitMetadata(updatedMetadata);
         } else {
           this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        }
+      }
+
+      // Lifecycle hooks run *after* we persist unarchivedAt.
+      //
+      // Why best-effort: Unarchive is a quick UI action and should not fail permanently due to a
+      // start error (e.g., Coder workspace start).
+      if (this.workspaceLifecycleHooks) {
+        let hookMetadata: WorkspaceMetadata | undefined = updatedMetadata;
+        if (!hookMetadata) {
+          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+          if (metadataResult.success) {
+            hookMetadata = metadataResult.data;
+          } else {
+            log.debug("Failed to load workspace metadata for afterUnarchive hooks", {
+              workspaceId,
+              error: metadataResult.error,
+            });
+          }
+        }
+
+        if (hookMetadata) {
+          await this.workspaceLifecycleHooks.runAfterUnarchive({
+            workspaceId,
+            workspaceMetadata: hookMetadata,
+          });
         }
       }
 
