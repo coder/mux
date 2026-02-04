@@ -33,6 +33,7 @@ export class StreamCollector {
   private events: WorkspaceChatMessage[] = [];
   private timestampedEvents: TimestampedEvent[] = [];
   private abortController: AbortController;
+  private iterator: AsyncIterableIterator<WorkspaceChatMessage> | null = null;
   private iteratorPromise: Promise<void> | null = null;
   private started = false;
   private stopped = false;
@@ -108,6 +109,16 @@ export class StreamCollector {
     this.stopped = true;
     this.abortController.abort();
 
+    // Best-effort: close the subscription iterator immediately so the server can
+    // tear down heartbeats without waiting for the next event.
+    const returned = this.iterator?.return?.();
+    if (returned) {
+      returned.catch(() => {
+        // Ignore iterator close errors (abort races are expected in tests)
+      });
+    }
+    this.iterator = null;
+
     // Resolve any pending waiters with null
     for (const waiter of this.waiters) {
       clearTimeout(waiter.timer);
@@ -137,7 +148,11 @@ export class StreamCollector {
   private async collectLoop(): Promise<void> {
     try {
       // ORPC returns an async iterator from the subscription
-      const iterator = await this.client.workspace.onChat({ workspaceId: this.workspaceId });
+      const iterator = await this.client.workspace.onChat(
+        { workspaceId: this.workspaceId },
+        { signal: this.abortController.signal }
+      );
+      this.iterator = iterator;
 
       for await (const message of iterator) {
         if (this.stopped) break;
@@ -175,6 +190,8 @@ export class StreamCollector {
       if (!this.stopped) {
         console.error("[StreamCollector] Error in collect loop:", error);
       }
+    } finally {
+      this.iterator = null;
     }
   }
 

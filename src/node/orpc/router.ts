@@ -2035,9 +2035,23 @@ export const router = (authToken?: string) => {
       onChat: t
         .input(schemas.workspace.onChat.input)
         .output(schemas.workspace.onChat.output)
-        .handler(async function* ({ context, input }) {
+        .handler(async function* ({ context, input, signal }) {
           const session = context.workspaceService.getOrCreateSession(input.workspaceId);
           const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
+
+          const onAbort = () => {
+            // Ensure we tear down the async generator even if the client stops iterating without
+            // calling iterator.return(). This prevents orphaned heartbeat intervals.
+            end();
+          };
+
+          if (signal) {
+            if (signal.aborted) {
+              onAbort();
+            } else {
+              signal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
 
           // 1. Subscribe to new events (including those triggered by replay)
           const unsubscribe = session.onChatEvent(({ message }) => {
@@ -2060,6 +2074,7 @@ export const router = (authToken?: string) => {
             yield* iterate();
           } finally {
             clearInterval(heartbeatInterval);
+            signal?.removeEventListener("abort", onAbort);
             end();
             unsubscribe();
           }
