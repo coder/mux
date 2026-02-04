@@ -381,6 +381,11 @@ export interface MuxMetadata {
     skillName: string;
     scope: AgentSkillScope;
     sha256: string;
+    /**
+     * YAML frontmatter for the resolved skill (no `---` delimiters).
+     * Optional for backwards compatibility with older histories.
+     */
+    frontmatterYaml?: string;
   };
 }
 
@@ -456,6 +461,14 @@ export type DisplayedMessage =
       agentSkill?: {
         skillName: string;
         scope: AgentSkillScope;
+        /**
+         * Optional snapshot content attached later by message aggregation (e.g. tooltips).
+         * Not persisted on the user message itself.
+         */
+        snapshot?: {
+          frontmatterYaml?: string;
+          body?: string;
+        };
       };
       /** Present when this message is a /compact command */
       compactionRequest?: {

@@ -117,6 +117,7 @@ export const MuxMessageSchema = z.object({
           skillName: SkillNameSchema,
           scope: AgentSkillScopeSchema,
           sha256: z.string(),
+          frontmatterYaml: z.string().optional(),
         })
         .optional(),
       error: z.string().optional(),

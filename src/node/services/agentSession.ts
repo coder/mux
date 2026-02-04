@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import { createHash } from "crypto";
 import { readFile } from "fs/promises";
+import YAML from "yaml";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
@@ -1808,6 +1809,8 @@ export class AgentSession {
     const resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data);
     const skill = resolved.package;
 
+    const frontmatterYaml = YAML.stringify(skill.frontmatter).trimEnd();
+
     const body =
       skill.body.length > MAX_AGENT_SKILL_SNAPSHOT_CHARS
         ? `${skill.body.slice(0, MAX_AGENT_SKILL_SNAPSHOT_CHARS)}\n\n[Skill body truncated to ${MAX_AGENT_SKILL_SNAPSHOT_CHARS} characters]`
@@ -1842,6 +1845,7 @@ export class AgentSession {
         skillName: skill.frontmatter.name,
         scope: skill.scope,
         sha256,
+        frontmatterYaml,
       },
     });
 

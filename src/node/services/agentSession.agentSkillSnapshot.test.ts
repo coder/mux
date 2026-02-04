@@ -132,6 +132,11 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(snapshotMessage.metadata?.agentSkillSnapshot?.skillName).toBe("test-skill");
     expect(snapshotMessage.metadata?.agentSkillSnapshot?.sha256).toBeTruthy();
 
+    const frontmatterYaml = snapshotMessage.metadata?.agentSkillSnapshot?.frontmatterYaml;
+    expect(frontmatterYaml).toBeTruthy();
+    expect(frontmatterYaml ?? "").toContain("name:");
+    expect(frontmatterYaml ?? "").toContain("description:");
+
     const snapshotText = snapshotMessage.parts.find((p) => p.type === "text")?.text;
     expect(snapshotText).toContain("<agent-skill");
     expect(snapshotText).toContain("Follow this skill.");
