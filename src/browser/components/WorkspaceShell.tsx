@@ -22,6 +22,10 @@ const RIGHT_SIDEBAR_DEFAULT_WIDTH_PX = 400;
 const RIGHT_SIDEBAR_MIN_WIDTH_PX = 300;
 const RIGHT_SIDEBAR_ABS_MAX_WIDTH_PX = 1200;
 
+// Guard against subpixel rounding (e.g. zoom/devicePixelRatio) producing a 1px horizontal
+// overflow that would trigger the WorkspaceShell scrollbar.
+const RIGHT_SIDEBAR_OVERFLOW_GUARD_PX = 1;
+
 interface WorkspaceShellProps {
   workspaceId: string;
   projectPath: string;
@@ -83,7 +87,10 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
     ? RIGHT_SIDEBAR_ABS_MAX_WIDTH_PX
     : Math.min(
         RIGHT_SIDEBAR_ABS_MAX_WIDTH_PX,
-        Math.max(RIGHT_SIDEBAR_MIN_WIDTH_PX, usableWidthPx - CHAT_PANE_MIN_WIDTH_PX)
+        Math.max(
+          RIGHT_SIDEBAR_MIN_WIDTH_PX,
+          usableWidthPx - CHAT_PANE_MIN_WIDTH_PX - RIGHT_SIDEBAR_OVERFLOW_GUARD_PX
+        )
       );
 
   const sidebar = useResizableSidebar({
