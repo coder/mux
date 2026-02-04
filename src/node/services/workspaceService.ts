@@ -794,21 +794,42 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private createInitLogger(workspaceId: string) {
+    const hasInitState = () => this.initStateManager.getInitState(workspaceId) !== undefined;
+
     return {
       logStep: (message: string) => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.appendOutput(workspaceId, message, false);
       },
       logStdout: (line: string) => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.appendOutput(workspaceId, line, false);
       },
       logStderr: (line: string) => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.appendOutput(workspaceId, line, true);
       },
       logComplete: (exitCode: number) => {
         this.initAbortControllers.delete(workspaceId);
+
+        // WorkspaceService.remove() clears in-memory init state early so waiters/tools can bail out.
+        // If init completes after deletion, avoid noisy logs (endInit() would report missing state).
+        if (!hasInitState()) {
+          return;
+        }
+
         void this.initStateManager.endInit(workspaceId, exitCode);
       },
       enterHookPhase: () => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.enterHookPhase(workspaceId);
       },
     };
@@ -1156,6 +1177,12 @@ export class WorkspaceService extends EventEmitter {
 
     const session = this.getOrCreateSession(workspaceId);
     this.initStateManager.startInit(workspaceId, projectPath);
+
+    // Create abort controller immediately so workspace lifecycle operations (e.g., cancel/remove)
+    // can reliably interrupt init even if the UI deletes the workspace during create().
+    const initAbortController = new AbortController();
+    this.initAbortControllers.set(workspaceId, initAbortController);
+
     const initLogger = this.createInitLogger(workspaceId);
 
     try {
@@ -1274,24 +1301,29 @@ export class WorkspaceService extends EventEmitter {
       // Background init: run postCreateSetup (if present) then initWorkspace
       const secrets = secretsToRecord(this.config.getProjectSecrets(projectPath));
 
-      const initAbortController = new AbortController();
-      this.initAbortControllers.set(workspaceId, initAbortController);
-
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
-      runBackgroundInit(
-        runtime,
-        {
-          projectPath,
-          branchName: finalBranchName,
-          trunkBranch: normalizedTrunkBranch,
-          workspacePath: createResult!.workspacePath,
-          initLogger,
-          env: secrets,
-          abortSignal: initAbortController.signal,
-        },
-        workspaceId,
-        log
-      );
+      //
+      // If the user cancelled creation while create() was still in flight, avoid spawning
+      // additional background work for a workspace that's already being removed.
+      if (!this.removingWorkspaces.has(workspaceId) && !initAbortController.signal.aborted) {
+        runBackgroundInit(
+          runtime,
+          {
+            projectPath,
+            branchName: finalBranchName,
+            trunkBranch: normalizedTrunkBranch,
+            workspacePath: createResult!.workspacePath,
+            initLogger,
+            env: secrets,
+            abortSignal: initAbortController.signal,
+          },
+          workspaceId,
+          log
+        );
+      } else {
+        initAbortController.abort();
+        this.initAbortControllers.delete(workspaceId);
+      }
 
       return Ok({ metadata: completeMetadata });
     } catch (error) {
@@ -1319,6 +1351,10 @@ export class WorkspaceService extends EventEmitter {
       initAbortController.abort();
       this.initAbortControllers.delete(workspaceId);
     }
+
+    // Avoid leaking init waiters/logs after workspace deletion.
+    // This must happen before deleting the session directory so queued init-status writes
+    // don't recreate ~/.mux/sessions/<workspaceId>/ after removal.
     this.initStateManager.clearInMemoryState(workspaceId);
 
     // Try to remove from runtime (filesystem)
@@ -1482,11 +1518,6 @@ export class WorkspaceService extends EventEmitter {
       } else {
         log.error(`Could not find metadata for workspace ${workspaceId}, creating phantom cleanup`);
       }
-
-      // Avoid leaking init waiters/logs after workspace deletion.
-      // This must happen before deleting the session directory so queued init-status writes
-      // don't recreate ~/.mux/sessions/<workspaceId>/ after removal.
-      this.initStateManager.clearInMemoryState(workspaceId);
 
       // Remove session data
       try {

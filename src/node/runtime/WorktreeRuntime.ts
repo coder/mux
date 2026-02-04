@@ -86,7 +86,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
   }
 
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
-    const { projectPath, branchName, workspacePath, initLogger, env, skipInitHook } = params;
+    const { projectPath, branchName, workspacePath, initLogger, abortSignal, env, skipInitHook } =
+      params;
 
     try {
       if (skipInitHook) {
@@ -101,7 +102,7 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       if (hookExists) {
         initLogger.enterHookPhase?.();
         const muxEnv = { ...env, ...getMuxEnv(projectPath, "worktree", branchName) };
-        await this.runInitHook(workspacePath, muxEnv, initLogger);
+        await this.runInitHook(workspacePath, muxEnv, initLogger, abortSignal);
       } else {
         // No hook - signal completion immediately
         initLogger.logComplete(0);
