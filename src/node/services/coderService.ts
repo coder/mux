@@ -428,11 +428,8 @@ export class CoderService {
           ? { state: "unavailable", reason: { kind: "not-logged-in", message: notLoggedInMessage } }
           : { state: "unavailable", reason: { kind: "error", message: sanitizedLine } };
 
-        // Don't cache not-logged-in state - user may log in and retry.
-        if (!isNotLoggedIn) {
-          this.cachedInfo = result;
-        }
-
+        // Don't cache whoami failures: users can often recover without restarting the app
+        // (e.g., temporary network issues or `coder login`).
         return result;
       }
 

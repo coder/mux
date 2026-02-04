@@ -219,6 +219,53 @@ describe("CoderService", () => {
       expect(info.reason.message.toLowerCase()).toContain("not logged in");
     });
 
+    it("re-checks whoami after transient failure (does not cache error state)", async () => {
+      // First call: whoami transient error
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
+        )
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.reject(new Error("error: Connection refused")))
+      );
+
+      // Second call: should try again (previous error must not be cached)
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
+        )
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.reject(new Error("error: Connection refused")))
+      );
+
+      const first = await service.getCoderInfo();
+      expect(first).toMatchObject({ state: "unavailable", reason: { kind: "error" } });
+
+      if (
+        first.state !== "unavailable" ||
+        typeof first.reason === "string" ||
+        first.reason.kind !== "error"
+      ) {
+        throw new Error(`Expected unavailable error state, got: ${JSON.stringify(first)}`);
+      }
+
+      expect(first.reason.message.toLowerCase()).toContain("connection refused");
+
+      const second = await service.getCoderInfo();
+      expect(second).toMatchObject({ state: "unavailable", reason: { kind: "error" } });
+
+      const cmds = execAsyncSpy?.mock.calls.map(([cmd]) => cmd) ?? [];
+      expect(cmds.filter((c) => c === "coder whoami --output=json")).toHaveLength(2);
+    });
+
     it("re-checks login status after not-logged-in and caches once logged in", async () => {
       // First call: not logged in
       execAsyncSpy?.mockImplementationOnce(() =>
