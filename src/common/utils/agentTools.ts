@@ -127,7 +127,7 @@ export function isPlanLikeInResolvedChain(
 }
 
 export function isExecLikeEditingCapableInResolvedChain(
-  agents: readonly (ToolsConfigCarrier & { id: AgentId })[],
+  agents: ReadonlyArray<ToolsConfigCarrier & { id: AgentId }>,
   maxDepth = 10
 ): boolean {
   const inheritsExec = agents.some((agent) => agent.id === "exec");

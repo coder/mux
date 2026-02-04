@@ -364,7 +364,7 @@ describe("AgentSession execSubagentHardRestart", () => {
 
     // Retry should include the continuation notice in additionalSystemInstructions.
     const retryAdditionalSystemInstructions = (streamMessage as ReturnType<typeof mock>).mock
-      .calls[1][6];
+      .calls[1][6] as unknown;
     expect(String(retryAdditionalSystemInstructions)).toContain("hard-restarted");
 
     session.dispose();
