@@ -199,16 +199,22 @@ export function GeneralSection() {
       stopCoderWorkspaceOnArchiveUpdateChainRef.current =
         stopCoderWorkspaceOnArchiveUpdateChainRef.current
           .then(async () => {
-            const pending = stopCoderWorkspaceOnArchivePendingUpdateRef.current;
-            if (pending === undefined) {
-              return;
-            }
+            // Drain the pending ref so a toggle that happens while updateCoderPrefs is in-flight
+            // doesn't get stranded without a subsequent write scheduled.
+            for (;;) {
+              const pending = stopCoderWorkspaceOnArchivePendingUpdateRef.current;
+              if (pending === undefined) {
+                return;
+              }
 
-            await api.config.updateCoderPrefs({ stopCoderWorkspaceOnArchive: pending });
-
-            // Only clear if nothing changed while the write was in-flight.
-            if (stopCoderWorkspaceOnArchivePendingUpdateRef.current === pending) {
+              // Clear before awaiting so rapid toggles coalesce into a new pending value.
               stopCoderWorkspaceOnArchivePendingUpdateRef.current = undefined;
+
+              try {
+                await api.config.updateCoderPrefs({ stopCoderWorkspaceOnArchive: pending });
+              } catch {
+                // Best-effort only. Swallow errors so the queue doesn't get stuck.
+              }
             }
           })
           .catch(() => {
