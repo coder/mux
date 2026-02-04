@@ -480,6 +480,10 @@ export const SendMessageOptionsSchema = z.object({
   }),
   providerOptions: MuxProviderOptionsSchema.optional(),
   muxMetadata: z.any().optional(), // Black box
+  /**
+   * When true, skip persisting AI settings (e.g., for one-shot or compaction sends).
+   */
+  skipAiSettingsPersistence: z.boolean().optional(),
   experiments: ExperimentsSchema.optional(),
   /**
    * When true, workspace-specific agent definitions are disabled.

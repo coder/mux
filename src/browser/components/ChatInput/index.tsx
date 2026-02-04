@@ -1952,18 +1952,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           inputRef.current.style.height = "";
         }
 
+        // One-shot models shouldn't update the persisted session defaults.
+        const sendOptions = {
+          ...sendMessageOptions,
+          ...compactionOptions,
+          ...(modelOverride ? { model: modelOverride } : {}),
+          ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          additionalSystemInstructions,
+          editMessageId: editingMessage?.id,
+          fileParts: sendFileParts,
+          muxMetadata,
+        };
+
         const result = await api.workspace.sendMessage({
           workspaceId: props.workspaceId,
           message: finalMessageText,
-          options: {
-            ...sendMessageOptions,
-            ...compactionOptions,
-            ...(modelOverride ? { model: modelOverride } : {}),
-            additionalSystemInstructions,
-            editMessageId: editingMessage?.id,
-            fileParts: sendFileParts,
-            muxMetadata,
-          },
+          options: sendOptions,
         });
 
         if (!result.success) {

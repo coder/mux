@@ -80,6 +80,7 @@ describe("applyCompactionOverrides", () => {
     const result = applyCompactionOverrides(baseOptions, compactData);
 
     expect(result.agentId).toBe("compact");
+    expect(result.skipAiSettingsPersistence).toBe(true);
     expect(result.toolPolicy).toEqual([{ regex_match: ".*", action: "disable" }]);
   });
 
