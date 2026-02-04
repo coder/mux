@@ -28,7 +28,11 @@ export function applyCompactionOverrides(
   baseOptions: SendMessageOptions,
   compactData: CompactionRequestData
 ): SendMessageOptions {
-  const compactionModel = compactData.model ?? baseOptions.model;
+  const compactionModelOverride = compactData.model?.trim();
+  const compactionModel =
+    compactionModelOverride === undefined || compactionModelOverride === ""
+      ? baseOptions.model
+      : compactionModelOverride;
 
   const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
   const preferredThinking = agentAiDefaults.compact?.thinkingLevel;
