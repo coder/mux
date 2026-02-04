@@ -175,12 +175,11 @@ describeIntegration("Secrets Import (UI)", () => {
       const saveButton = within(modal).getByText("Save");
       await userEvent.click(saveButton);
 
-      // Wait for save to complete (Save button disappears when there are no changes)
+      // Wait for save to complete - the Save button disappears when there are no unsaved changes
       await waitFor(
         () => {
-          // Either Save button is gone or it's still there but not disabled
-          const saveBtn = modal.querySelector('button:has-text("Save")');
-          // The test can proceed once save completes
+          const saveBtn = within(modal).queryByText("Save");
+          if (saveBtn) throw new Error("Save button still present, waiting for save to complete");
         },
         { timeout: 5_000 }
       );
