@@ -206,6 +206,32 @@ describe("StreamingMessageAggregator", () => {
       expect(contents).toEqual(["hello"]);
     });
 
+    test("should show uiVisible synthetic messages by default", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const syntheticVisible = createMuxMessage("s1", "user", "synthetic visible", {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+        uiVisible: true,
+      });
+      const user = createMuxMessage("u1", "user", "hello", {
+        timestamp: 2,
+        historySequence: 2,
+      });
+
+      aggregator.loadHistoricalMessages([syntheticVisible, user], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const userMessages = displayed.filter((m) => m.type === "user");
+
+      expect(userMessages).toHaveLength(2);
+      expect(userMessages[0]?.content).toBe("synthetic visible");
+      expect(userMessages[0]?.isSynthetic).toBe(true);
+      expect(userMessages[1]?.content).toBe("hello");
+      expect(userMessages[1]?.isSynthetic).toBeUndefined();
+    });
+
     test("should show synthetic messages when debugLlmRequest is enabled", () => {
       withDebugLlmRequestEnabled(() => {
         const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
