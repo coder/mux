@@ -157,6 +157,11 @@ export function GeneralSection() {
   const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
   const stopCoderWorkspaceOnArchiveLoadNonceRef = useRef(0);
 
+  // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
+  // toggles can't race and persist a stale value via out-of-order writes.
+  const stopCoderWorkspaceOnArchiveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const stopCoderWorkspaceOnArchivePendingUpdateRef = useRef<boolean | undefined>(undefined);
+
   useEffect(() => {
     if (!api) {
       return;
@@ -189,9 +194,26 @@ export function GeneralSection() {
         return;
       }
 
-      void api.config.updateCoderPrefs({ stopCoderWorkspaceOnArchive: checked }).catch(() => {
-        // Best-effort only.
-      });
+      stopCoderWorkspaceOnArchivePendingUpdateRef.current = checked;
+
+      stopCoderWorkspaceOnArchiveUpdateChainRef.current =
+        stopCoderWorkspaceOnArchiveUpdateChainRef.current
+          .then(async () => {
+            const pending = stopCoderWorkspaceOnArchivePendingUpdateRef.current;
+            if (pending === undefined) {
+              return;
+            }
+
+            await api.config.updateCoderPrefs({ stopCoderWorkspaceOnArchive: pending });
+
+            // Only clear if nothing changed while the write was in-flight.
+            if (stopCoderWorkspaceOnArchivePendingUpdateRef.current === pending) {
+              stopCoderWorkspaceOnArchivePendingUpdateRef.current = undefined;
+            }
+          })
+          .catch(() => {
+            // Best-effort only.
+          });
     },
     [api]
   );
