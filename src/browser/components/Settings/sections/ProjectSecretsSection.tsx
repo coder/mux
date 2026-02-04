@@ -181,7 +181,7 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
     [getSecrets]
   );
 
-  // Expose a test-only import helper to avoid flaky UI interactions in happy-dom.
+  // Expose test-only helpers to avoid flaky UI interactions in happy-dom.
   useEffect(() => {
     if (!isTestEnv || typeof window === "undefined") {
       return;
@@ -189,14 +189,19 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
 
     const testWindow = window as typeof window & {
       __muxImportSecrets?: (path: string) => Promise<void>;
+      __muxGetSecretsState?: () => Secret[];
     };
     testWindow.__muxImportSecrets = handleImportFromProject;
+    testWindow.__muxGetSecretsState = () => secrets;
     return () => {
       if (testWindow.__muxImportSecrets === handleImportFromProject) {
         delete testWindow.__muxImportSecrets;
       }
+      if (testWindow.__muxGetSecretsState) {
+        delete testWindow.__muxGetSecretsState;
+      }
     };
-  }, [handleImportFromProject, isTestEnv]);
+  }, [handleImportFromProject, isTestEnv, secrets]);
 
   if (isLoading) {
     return (
