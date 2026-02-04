@@ -202,6 +202,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   })();
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
+
+  // Keep a stable reference to the latest input value so event handlers don't need to rebind
+  // on same-length edits (e.g. selection-replace) to know the previous value.
+  const latestInputValueRef = useRef(input);
+  latestInputValueRef.current = input;
   // Track concurrent sends with a counter (not boolean) to handle queued follow-ups correctly.
   // When a follow-up is queued during stream-start, it resolves immediately but shouldn't
   // clear the "in flight" state until all sends complete.
@@ -338,22 +343,26 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const handleInputChange = useCallback(
     (next: string) => {
       if (powerMode.enabled) {
-        const delta = next.length - input.length;
+        const prev = latestInputValueRef.current;
+        const delta = next.length - prev.length;
         const el = inputRef.current;
 
-        if (el && delta !== 0) {
+        if (el && next !== prev) {
           // Power Mode should feel responsive on backspace/delete too.
           if (delta > 0) {
             powerMode.burstFromTextarea(el, Math.min(6, delta));
-          } else {
+          } else if (delta < 0) {
             powerMode.burstFromTextarea(el, Math.min(6, -delta), "delete");
+          } else {
+            // Selection replace / overwrite with no net length change.
+            powerMode.burstFromTextarea(el, 1);
           }
         }
       }
 
       setInput(next);
     },
-    [input.length, powerMode, setInput]
+    [powerMode, setInput]
   );
 
   // Draft state combines text input and attachments

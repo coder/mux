@@ -25,13 +25,16 @@ export class PowerModeEngine {
 
   private shakeEl: HTMLElement | null = null;
   private shakeTimeoutId: number | null = null;
-  private shakePrevTransform: string | null = null;
+  private shakePrevTranslate: string | null = null;
+  private shakePrevRotate: string | null = null;
   private lastShakeTimeMs = 0;
 
   private audioCtx: AudioContext | null = null;
   private audioMasterGain: GainNode | null = null;
   private audioNoiseBuffer: AudioBuffer | null = null;
   private audioInitFailed = false;
+
+  private lastSoundTimeMs = 0;
 
   private resizeListenerActive = false;
 
@@ -200,6 +203,13 @@ export class PowerModeEngine {
     const el = this.shakeEl;
     if (!el) return;
 
+    if (
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+    ) {
+      return;
+    }
+
     const now = performance.now();
     if (now - this.lastShakeTimeMs < 100) {
       return;
@@ -223,9 +233,12 @@ export class PowerModeEngine {
       this.shakeTimeoutId = null;
     }
 
-    this.shakePrevTransform ??= el.style.transform || "";
+    // Use individual transform properties so we don't clobber any existing `transform`.
+    this.shakePrevTranslate ??= el.style.getPropertyValue("translate");
+    this.shakePrevRotate ??= el.style.getPropertyValue("rotate");
 
-    el.style.transform = `translate(${dx}px, ${dy}px) rotate(${rot}deg)`;
+    el.style.setProperty("translate", `${dx}px ${dy}px`);
+    el.style.setProperty("rotate", `${rot}deg`);
 
     this.shakeTimeoutId = window.setTimeout(() => {
       this.clearShake();
@@ -235,7 +248,8 @@ export class PowerModeEngine {
   private clearShake(): void {
     const el = this.shakeEl;
     if (!el) {
-      this.shakePrevTransform = null;
+      this.shakePrevTranslate = null;
+      this.shakePrevRotate = null;
       return;
     }
 
@@ -244,26 +258,56 @@ export class PowerModeEngine {
       this.shakeTimeoutId = null;
     }
 
-    if (this.shakePrevTransform === null) {
+    if (this.shakePrevTranslate === null && this.shakePrevRotate === null) {
       return;
     }
 
-    el.style.transform = this.shakePrevTransform;
-    this.shakePrevTransform = null;
+    if (this.shakePrevTranslate !== null) {
+      if (this.shakePrevTranslate) {
+        el.style.setProperty("translate", this.shakePrevTranslate);
+      } else {
+        el.style.removeProperty("translate");
+      }
+    }
+
+    if (this.shakePrevRotate !== null) {
+      if (this.shakePrevRotate) {
+        el.style.setProperty("rotate", this.shakePrevRotate);
+      } else {
+        el.style.removeProperty("rotate");
+      }
+    }
+
+    this.shakePrevTranslate = null;
+    this.shakePrevRotate = null;
   }
 
   private maybePlaySounds(intensity: number, kind: PowerModeBurstKind): void {
     // Audio should feel subtle; fail silently if AudioContext is unavailable or blocked.
+    // Throttle aggressively so we don't create Web Audio node graphs at key-repeat rates.
+    const nowMs = performance.now();
+    if (nowMs - this.lastSoundTimeMs < 30) {
+      return;
+    }
+
+    let played = false;
+
     const base = kind === "delete" ? 0.35 : 0.55;
     const typeChance = Math.min(0.95, base + intensity * 0.06);
     if (Math.random() <= typeChance) {
       this.playTypewriter(intensity, kind);
+      played = true;
     }
 
     const cap = kind === "delete" ? 0.2 : 0.12;
     const gunChance = Math.min(cap, (kind === "delete" ? 0.03 : 0.015) * intensity);
     if (Math.random() <= gunChance) {
       this.playGun(intensity, kind);
+      played = true;
+    }
+
+    if (played) {
+      this.lastSoundTimeMs = nowMs;
     }
   }
 
