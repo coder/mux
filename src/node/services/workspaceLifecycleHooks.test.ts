@@ -105,9 +105,9 @@ describe("WorkspaceLifecycleHooks", () => {
     const hooks = new WorkspaceLifecycleHooks();
 
     const calls: string[] = [];
-    hooks.registerAfterUnarchive(async () => {
+    hooks.registerAfterUnarchive(() => {
       calls.push("first");
-      throw new Error("boom\nstack");
+      return Promise.reject(new Error("boom\nstack"));
     });
     hooks.registerAfterUnarchive(() => {
       calls.push("second");
