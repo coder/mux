@@ -8,11 +8,12 @@
 
 import type { Secret } from "@/common/types/secrets";
 import type { APIClient } from "@/browser/contexts/API";
+import { UI_THEME_KEY } from "@/common/constants/storage";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { within, userEvent } from "@storybook/test";
+import { within, userEvent, waitFor, expect } from "@storybook/test";
 
 export default {
   ...appMeta,
@@ -136,5 +137,45 @@ export const SecretsProject: AppStory = {
 
     await dialogCanvas.findByText(/Select a project to configure/i);
     await dialogCanvas.findByDisplayValue("PROJECT_TOKEN");
+  },
+};
+
+export const SecretsLightModeFilled: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        // Set theme before AppLoader mounts so Chromatic captures the correct (light) color scheme.
+        if (typeof localStorage !== "undefined") {
+          localStorage.setItem(UI_THEME_KEY, JSON.stringify("light"));
+        }
+
+        return setupSecretsStory({
+          globalSecrets: [{ key: "OPENAI_API_KEY", value: "sk-openai-visible" }],
+        });
+      }}
+    />
+  ),
+  parameters: {
+    backgrounds: {
+      default: "light",
+    },
+  },
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSecrets(canvasElement);
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog", {}, { timeout: 10000 });
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByDisplayValue("OPENAI_API_KEY");
+
+    const showSecretButton = await dialogCanvas.findByRole("button", { name: /^Show secret$/i });
+    await userEvent.click(showSecretButton);
+
+    // Ensure the secret value is revealed so text color regressions (e.g. text-white) are visible.
+    await waitFor(() => {
+      const valueInput = dialogCanvas.getByDisplayValue("sk-openai-visible") as HTMLInputElement;
+      expect(valueInput.type).toBe("text");
+    });
   },
 };
