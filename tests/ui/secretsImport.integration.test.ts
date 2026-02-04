@@ -6,7 +6,7 @@
  */
 
 import "./dom";
-import { fireEvent, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { shouldRunIntegrationTests } from "../testUtils";
@@ -145,14 +145,16 @@ describeIntegration("Secrets Import (UI)", () => {
       );
 
       // Click the source project option
-      // Use pointerDown + pointerUp to better simulate Radix Select interaction
+      // Wrap in act() to ensure React state updates are flushed before continuing
       const options = document.body.querySelectorAll('[role="option"]');
       const sourceOption = Array.from(options).find((opt) =>
         opt.textContent?.includes(sourceProjectName)
       ) as HTMLElement;
-      fireEvent.pointerDown(sourceOption);
-      fireEvent.pointerUp(sourceOption);
-      fireEvent.click(sourceOption);
+      await act(async () => {
+        fireEvent.click(sourceOption);
+        // Small delay to allow async import operation to start
+        await new Promise((r) => setTimeout(r, 100));
+      });
 
       // Wait for import to complete - should now have 4 secrets
       // (TARGET_KEY_1, SHARED_KEY from target + SOURCE_KEY_1, SOURCE_KEY_2 from source)
