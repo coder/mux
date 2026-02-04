@@ -2,6 +2,8 @@
  * Slash command suggestions generation
  */
 
+import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
+import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getSlashCommandDefinitions } from "./parser";
 import { SLASH_COMMAND_DEFINITION_MAP } from "./registry";
 import type {
@@ -99,7 +101,27 @@ function buildTopLevelSuggestions(
     };
   });
 
-  return [...commandSuggestions, ...skillSuggestions];
+  // Model alias one-shot suggestions (e.g., /haiku, /sonnet)
+  const modelAliasDefinitions: SuggestionDefinition[] = Object.entries(MODEL_ABBREVIATIONS).map(
+    ([alias, modelId]) => ({
+      key: alias,
+      description: `Send with ${formatModelDisplayName(modelId.split(":")[1] ?? modelId)} (one message)`,
+      appendSpace: true,
+    })
+  );
+
+  const modelAliasSuggestions = filterAndMapSuggestions(
+    modelAliasDefinitions,
+    partial,
+    (definition) => ({
+      id: `model-oneshot:${definition.key}`,
+      display: `/${definition.key}`,
+      description: definition.description,
+      replacement: `/${definition.key} `,
+    })
+  );
+
+  return [...commandSuggestions, ...skillSuggestions, ...modelAliasSuggestions];
 }
 
 function buildSubcommandSuggestions(
