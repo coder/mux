@@ -142,7 +142,24 @@ export const CreateWorkspaceRemoteServerAvailable: AppStory = {
     const remoteOption = await body.findByRole("option", { name: "Remote" });
     await userEvent.click(remoteOption);
 
-    await canvas.findByRole("combobox", { name: "Remote server" }, { timeout: 10000 });
+    if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+      // Ensure the Radix Select overlay is fully dismissed before we query for the remote server selector.
+      await userEvent.keyboard("{Escape}");
+    }
+
+    // Radix Select updates can take a tick to commit; wait for the trigger to reflect
+    // the selection before looking for the remote server selector (helps CI/Chromatic stability).
+    await waitFor(() => {
+      const createOnAfter = canvas.getByRole("combobox", { name: "Create on" });
+      if (!/Remote/i.test(createOnAfter.textContent ?? "")) {
+        throw new Error("Create on not set to Remote");
+      }
+      if (createOnAfter.getAttribute("aria-expanded") === "true") {
+        throw new Error("Create on dropdown still open");
+      }
+    });
+
+    await body.findByRole("combobox", { name: "Remote server" }, { timeout: 10000 });
 
     await waitFor(() => {
       const createOnAfter = canvas.getByRole("combobox", { name: "Create on" });
@@ -150,9 +167,13 @@ export const CreateWorkspaceRemoteServerAvailable: AppStory = {
         throw new Error("Create on dropdown still open");
       }
 
-      const remoteServerAfter = canvas.getByRole("combobox", { name: "Remote server" });
+      const remoteServerAfter = body.getByRole("combobox", { name: "Remote server" });
       if (remoteServerAfter.getAttribute("aria-expanded") === "true") {
         throw new Error("Remote server dropdown still open");
+      }
+
+      if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+        throw new Error("Scroll lock still active");
       }
     });
   },
@@ -176,23 +197,58 @@ export const CreateWorkspaceRemoteServerDropdownOpen: AppStory = {
     const remoteOption = await body.findByRole("option", { name: "Remote" });
     await userEvent.click(remoteOption);
 
-    const remoteServer = await canvas.findByRole(
-      "combobox",
-      { name: "Remote server" },
+    if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+      // Ensure the Radix Select overlay is fully dismissed before we query for the remote server selector.
+      await userEvent.keyboard("{Escape}");
+    }
+
+    await waitFor(
+      () => {
+        const createOnAfter = canvas.getByRole("combobox", { name: "Create on" });
+        if (!/Remote/i.test(createOnAfter.textContent ?? "")) {
+          throw new Error("Create on not set to Remote");
+        }
+        if (createOnAfter.getAttribute("aria-expanded") === "true") {
+          throw new Error("Create on dropdown still open");
+        }
+
+        // Radix Select uses scroll locking / aria-hiding while the dropdown is open.
+        // Wait for the lock to clear so the remote server control is visible to role queries.
+        if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+          throw new Error("Scroll lock still active");
+        }
+      },
+      { timeout: 10000 }
+    );
+
+    const remoteServerTrigger = await waitFor(
+      () => {
+        const el = storyRoot.querySelector('[aria-label="Remote server"]');
+        if (!(el instanceof HTMLElement)) {
+          throw new Error("Remote server trigger not found");
+        }
+
+        return el;
+      },
       { timeout: 10000 }
     );
 
     // Open the remote server dropdown and keep it open for the snapshot.
-    await userEvent.click(remoteServer);
+    // Use a native click to avoid userEvent's pointer-events checks while Radix is
+    // toggling scroll-lock / aria-hiding.
+    remoteServerTrigger.click();
+
+    await body.findByRole("option", { name: /Work desktop/i });
 
     await waitFor(() => {
-      const remoteServerAfter = canvas.getByRole("combobox", { name: "Remote server" });
+      const remoteServerAfter = storyRoot.querySelector('[aria-label="Remote server"]');
+      if (!(remoteServerAfter instanceof HTMLElement)) {
+        throw new Error("Remote server trigger not found");
+      }
       if (remoteServerAfter.getAttribute("aria-expanded") !== "true") {
         throw new Error("Remote server dropdown not open");
       }
     });
-
-    await body.findByRole("option", { name: /Work desktop/i });
   },
 };
 
