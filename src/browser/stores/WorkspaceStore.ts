@@ -15,7 +15,7 @@ import { isAbortError } from "@/browser/utils/isAbortError";
 import { getRetryStateKey } from "@/common/constants/storage";
 import { BASH_TRUNCATE_MAX_TOTAL_BYTES } from "@/common/constants/toolLimits";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import {
   isCaughtUpMessage,
   isStreamError,
@@ -2425,10 +2425,20 @@ export function useWorkspaceUsage(workspaceId: string): WorkspaceUsageState {
  */
 export function useWorkspaceStatsSnapshot(workspaceId: string): WorkspaceStatsSnapshot | null {
   const store = getStoreInstance();
-  return useSyncExternalStore(
-    (listener) => store.subscribeStats(workspaceId, listener),
-    () => store.getWorkspaceStatsSnapshot(workspaceId)
+
+  // NOTE: subscribeStats() starts/stops a backend subscription; if React re-subscribes on every
+  // render (because the subscribe callback is unstable), we can trigger an infinite loop.
+  // This useCallback is for correctness, not performance.
+  const subscribe = useCallback(
+    (listener: () => void) => store.subscribeStats(workspaceId, listener),
+    [store, workspaceId]
   );
+  const getSnapshot = useCallback(
+    () => store.getWorkspaceStatsSnapshot(workspaceId),
+    [store, workspaceId]
+  );
+
+  return useSyncExternalStore(subscribe, getSnapshot);
 }
 
 /**
