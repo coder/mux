@@ -185,6 +185,25 @@ interface RemoteMuxOrpcClient {
       input: z.infer<typeof schemas.workspace.getSubagentTranscript.input>
     ) => Promise<z.infer<typeof schemas.workspace.getSubagentTranscript.output>>;
   };
+  agents: {
+    list: (
+      input: z.infer<typeof schemas.agents.list.input>
+    ) => Promise<z.infer<typeof schemas.agents.list.output>>;
+    get: (
+      input: z.infer<typeof schemas.agents.get.input>
+    ) => Promise<z.infer<typeof schemas.agents.get.output>>;
+  };
+  agentSkills: {
+    list: (
+      input: z.infer<typeof schemas.agentSkills.list.input>
+    ) => Promise<z.infer<typeof schemas.agentSkills.list.output>>;
+    listDiagnostics: (
+      input: z.infer<typeof schemas.agentSkills.listDiagnostics.input>
+    ) => Promise<z.infer<typeof schemas.agentSkills.listDiagnostics.output>>;
+    get: (
+      input: z.infer<typeof schemas.agentSkills.get.input>
+    ) => Promise<z.infer<typeof schemas.agentSkills.get.output>>;
+  };
 }
 
 interface RemoteWorkspaceProxy {
@@ -1298,6 +1317,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agents.list({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1387,6 +1416,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agents.get({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1400,6 +1439,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.list.input)
         .output(schemas.agentSkills.list.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agentSkills.list({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1411,6 +1460,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.listDiagnostics.input)
         .output(schemas.agentSkills.listDiagnostics.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agentSkills.listDiagnostics({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1422,6 +1481,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.get.input)
         .output(schemas.agentSkills.get.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agentSkills.get({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
