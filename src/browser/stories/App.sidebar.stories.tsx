@@ -230,7 +230,10 @@ export const WithRemoteWorkspace: AppStory = {
         );
         if (!hoverCard) throw new Error("HoverCard not visible");
 
-        within(hoverCard).getByText(/Mux server:\s*server-work/i);
+        // HoverCard markup splits "Mux server:" and the server id across nested elements,
+        // so a single getByText(/Mux server:\s*server-work/i) will not match.
+        within(hoverCard).getByText(/Mux server:/i);
+        within(hoverCard).getByText(/server-work/i);
       },
       { timeout: 5000 }
     );
