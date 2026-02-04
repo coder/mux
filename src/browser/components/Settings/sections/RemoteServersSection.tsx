@@ -18,12 +18,24 @@ interface PingStatus {
   message?: string;
 }
 
-interface EditorNotice {
+interface LoadStatus {
+  status: "idle" | "loading" | "success" | "error";
+  message?: string;
+}
+
+interface Notice {
   type: "success" | "error";
   message: string;
 }
 
-type EditorMode = "add" | "edit";
+type EditorState = { mode: "add" } | { mode: "edit"; id: string };
+
+type EditorMode = EditorState["mode"];
+
+interface ProjectPathSuggestion {
+  path: string;
+  label: string;
+}
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -106,6 +118,39 @@ function formatPingPayload(payload: unknown): string {
   }
 }
 
+function getPathBasename(filePath: string): string {
+  const trimmed = filePath.trim().replace(/[/\\]+$/g, "");
+  if (!trimmed) {
+    return "";
+  }
+
+  const segments = trimmed.split(/[/\\]/);
+  const lastSegment = segments.at(-1);
+
+  return lastSegment ?? trimmed;
+}
+
+function createPathSuggestion(filePath: string): ProjectPathSuggestion | null {
+  const trimmed = filePath.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const label = getPathBasename(trimmed) || trimmed;
+  return { path: trimmed, label };
+}
+
+function getRemotePathPlaceholder(mapping: RemoteMuxServerProjectMapping): string {
+  const localBasename = mapping.localProjectPath.trim()
+    ? getPathBasename(mapping.localProjectPath)
+    : "";
+  if (!localBasename) {
+    return "Remote project path";
+  }
+
+  return `Remote project path (e.g., /…/${localBasename})`;
+}
+
 export function RemoteServersSection() {
   const { api } = useAPI();
 
@@ -116,7 +161,10 @@ export function RemoteServersSection() {
 
   const [pingById, setPingById] = useState<Record<string, PingStatus>>({});
 
-  const [editorMode, setEditorMode] = useState<EditorMode>("add");
+  const [notice, setNotice] = useState<Notice | null>(null);
+
+  const [editorState, setEditorState] = useState<EditorState | null>(null);
+
   const [draftConfig, setDraftConfig] = useState<RemoteMuxServerConfig>(() =>
     createDraftConfig(generateRemoteServerId())
   );
@@ -124,7 +172,18 @@ export function RemoteServersSection() {
   const [authToken, setAuthToken] = useState<string>("");
   const [clearAuthTokenOnSave, setClearAuthTokenOnSave] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [editorNotice, setEditorNotice] = useState<EditorNotice | null>(null);
+
+  const [localProjectSuggestions, setLocalProjectSuggestions] = useState<ProjectPathSuggestion[]>(
+    []
+  );
+  const [localProjectsError, setLocalProjectsError] = useState<string | null>(null);
+  const localProjectsRequestIdRef = useRef(0);
+
+  const [remoteProjectSuggestions, setRemoteProjectSuggestions] = useState<ProjectPathSuggestion[]>(
+    []
+  );
+  const [remoteProjectsStatus, setRemoteProjectsStatus] = useState<LoadStatus>({ status: "idle" });
+  const remoteProjectsRequestIdRef = useRef(0);
 
   const loadServers = useCallback(async () => {
     if (!api) {
@@ -168,21 +227,142 @@ export function RemoteServersSection() {
     }
   }, [api]);
 
+  const loadLocalProjects = useCallback(async () => {
+    if (!api) {
+      setLocalProjectSuggestions([]);
+      setLocalProjectsError(null);
+      return;
+    }
+
+    const requestId = localProjectsRequestIdRef.current + 1;
+    localProjectsRequestIdRef.current = requestId;
+
+    try {
+      const projects = await api.projects.list();
+      if (localProjectsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      const suggestions = projects
+        .map(([projectPath]) => createPathSuggestion(projectPath))
+        .filter((entry): entry is ProjectPathSuggestion => entry !== null)
+        .sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+
+      setLocalProjectSuggestions(suggestions);
+      setLocalProjectsError(null);
+    } catch (error) {
+      if (localProjectsRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setLocalProjectSuggestions([]);
+      setLocalProjectsError(getErrorMessage(error));
+    }
+  }, [api]);
+
+  const loadRemoteProjects = useCallback(
+    async (serverId: string) => {
+      if (!api) {
+        setRemoteProjectSuggestions([]);
+        setRemoteProjectsStatus({ status: "idle" });
+        return;
+      }
+
+      const remoteServersApi: Partial<APIClient>["remoteServers"] = api.remoteServers;
+      if (!remoteServersApi?.listRemoteProjects) {
+        setRemoteProjectSuggestions([]);
+        setRemoteProjectsStatus({
+          status: "error",
+          message: "Remote project suggestions are not supported by this backend.",
+        });
+        return;
+      }
+
+      const requestId = remoteProjectsRequestIdRef.current + 1;
+      remoteProjectsRequestIdRef.current = requestId;
+
+      setRemoteProjectsStatus({ status: "loading" });
+
+      try {
+        const result = await remoteServersApi.listRemoteProjects({ id: serverId });
+
+        if (remoteProjectsRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        if (!result.success) {
+          setRemoteProjectSuggestions([]);
+          setRemoteProjectsStatus({ status: "error", message: result.error });
+          return;
+        }
+
+        const suggestions = result.data
+          .map((entry) => createPathSuggestion(entry.path))
+          .filter((entry): entry is ProjectPathSuggestion => entry !== null)
+          .sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+
+        setRemoteProjectSuggestions(suggestions);
+        setRemoteProjectsStatus({ status: "success" });
+      } catch (error) {
+        if (remoteProjectsRequestIdRef.current !== requestId) {
+          return;
+        }
+
+        setRemoteProjectSuggestions([]);
+        setRemoteProjectsStatus({ status: "error", message: getErrorMessage(error) });
+      }
+    },
+    [api]
+  );
+
   useEffect(() => {
     void loadServers();
-  }, [loadServers]);
+    void loadLocalProjects();
+  }, [loadLocalProjects, loadServers]);
 
-  const resetEditorToAdd = useCallback(() => {
-    setEditorMode("add");
+  useEffect(() => {
+    if (editorState?.mode !== "edit") {
+      remoteProjectsRequestIdRef.current += 1;
+      setRemoteProjectSuggestions([]);
+      setRemoteProjectsStatus({ status: "idle" });
+      return;
+    }
+
+    void loadRemoteProjects(editorState.id);
+  }, [editorState, loadRemoteProjects]);
+
+  const closeEditor = useCallback(() => {
+    remoteProjectsRequestIdRef.current += 1;
+
+    setEditorState(null);
     setDraftConfig(createDraftConfig(generateRemoteServerId()));
     setDraftHasAuthToken(false);
     setAuthToken("");
     setClearAuthTokenOnSave(false);
-    setEditorNotice(null);
+    setNotice(null);
+
+    setRemoteProjectSuggestions([]);
+    setRemoteProjectsStatus({ status: "idle" });
+  }, []);
+
+  const startAdd = useCallback(() => {
+    remoteProjectsRequestIdRef.current += 1;
+
+    setEditorState({ mode: "add" });
+    setDraftConfig(createDraftConfig(generateRemoteServerId()));
+    setDraftHasAuthToken(false);
+    setAuthToken("");
+    setClearAuthTokenOnSave(false);
+    setNotice(null);
+
+    setRemoteProjectSuggestions([]);
+    setRemoteProjectsStatus({ status: "idle" });
   }, []);
 
   const startEdit = useCallback((entry: RemoteMuxServerListEntry) => {
-    setEditorMode("edit");
+    remoteProjectsRequestIdRef.current += 1;
+
+    setEditorState({ mode: "edit", id: entry.config.id });
     setDraftConfig({
       ...entry.config,
       enabled: entry.config.enabled !== false,
@@ -193,7 +373,10 @@ export function RemoteServersSection() {
     setDraftHasAuthToken(entry.hasAuthToken);
     setAuthToken("");
     setClearAuthTokenOnSave(false);
-    setEditorNotice(null);
+    setNotice(null);
+
+    setRemoteProjectSuggestions([]);
+    setRemoteProjectsStatus({ status: "idle" });
   }, []);
 
   const handleRemove = useCallback(
@@ -207,11 +390,11 @@ export function RemoteServersSection() {
         return;
       }
 
-      setEditorNotice(null);
+      setNotice(null);
 
       const remoteServersApi: Partial<APIClient>["remoteServers"] = api.remoteServers;
       if (!remoteServersApi) {
-        setEditorNotice({
+        setNotice({
           type: "error",
           message: "Remote servers are not supported by this backend.",
         });
@@ -221,21 +404,21 @@ export function RemoteServersSection() {
       try {
         const result = await remoteServersApi.remove({ id });
         if (!result.success) {
-          setEditorNotice({ type: "error", message: result.error });
+          setNotice({ type: "error", message: result.error });
           return;
         }
       } catch (error) {
-        setEditorNotice({ type: "error", message: getErrorMessage(error) });
+        setNotice({ type: "error", message: getErrorMessage(error) });
         return;
       }
 
-      if (editorMode === "edit" && draftConfig.id === id) {
-        resetEditorToAdd();
+      if (editorState?.mode === "edit" && editorState.id === id) {
+        closeEditor();
       }
 
       await loadServers();
     },
-    [api, draftConfig.id, editorMode, loadServers, resetEditorToAdd]
+    [api, closeEditor, editorState, loadServers]
   );
 
   const handlePing = useCallback(
@@ -290,9 +473,13 @@ export function RemoteServersSection() {
       return;
     }
 
+    if (!editorState) {
+      return;
+    }
+
     const remoteServersApi: Partial<APIClient>["remoteServers"] = api.remoteServers;
     if (!remoteServersApi) {
-      setEditorNotice({
+      setNotice({
         type: "error",
         message: "Remote servers are not supported by this backend.",
       });
@@ -301,18 +488,18 @@ export function RemoteServersSection() {
 
     const trimmedLabel = draftConfig.label.trim();
     if (!trimmedLabel) {
-      setEditorNotice({ type: "error", message: "Label is required." });
+      setNotice({ type: "error", message: "Label is required." });
       return;
     }
 
     const trimmedBaseUrl = draftConfig.baseUrl.trim();
     if (!trimmedBaseUrl) {
-      setEditorNotice({ type: "error", message: "Base URL is required." });
+      setNotice({ type: "error", message: "Base URL is required." });
       return;
     }
 
     setSaving(true);
-    setEditorNotice(null);
+    setNotice(null);
 
     const tokenToSend = clearAuthTokenOnSave ? "" : authToken.trim() ? authToken : undefined;
 
@@ -328,42 +515,19 @@ export function RemoteServersSection() {
       });
 
       if (!result.success) {
-        setEditorNotice({ type: "error", message: result.error });
+        setNotice({ type: "error", message: result.error });
         return;
       }
 
       await loadServers();
-
-      if (editorMode === "edit") {
-        setDraftHasAuthToken((prev) => {
-          if (tokenToSend === "") {
-            return false;
-          }
-
-          if (typeof tokenToSend === "string") {
-            return true;
-          }
-
-          return prev;
-        });
-      } else {
-        // New drafts start with an unknown token state until saved.
-        setDraftHasAuthToken(false);
-      }
-
-      setEditorNotice({ type: "success", message: "Saved." });
-      setAuthToken("");
-      setClearAuthTokenOnSave(false);
-
-      if (editorMode === "add") {
-        setDraftConfig(createDraftConfig(generateRemoteServerId()));
-      }
+      closeEditor();
+      setNotice({ type: "success", message: editorState.mode === "add" ? "Added." : "Saved." });
     } catch (error) {
-      setEditorNotice({ type: "error", message: getErrorMessage(error) });
+      setNotice({ type: "error", message: getErrorMessage(error) });
     } finally {
       setSaving(false);
     }
-  }, [api, authToken, clearAuthTokenOnSave, draftConfig, editorMode, loadServers]);
+  }, [api, authToken, clearAuthTokenOnSave, closeEditor, draftConfig, editorState, loadServers]);
 
   const handleMappingChange = useCallback(
     (index: number, next: Partial<RemoteMuxServerProjectMapping>) => {
@@ -394,6 +558,236 @@ export function RemoteServersSection() {
     });
   }, []);
 
+  const editorMode: EditorMode | null = editorState?.mode ?? null;
+  const editorDatalistIdLocal = `remote-server-local-projects-${draftConfig.id}`;
+  const editorDatalistIdRemote = `remote-server-remote-projects-${draftConfig.id}`;
+
+  const editorForm = editorMode ? (
+    <div className="grid gap-4">
+      <div>
+        <label
+          className="text-muted mb-1 block text-xs"
+          htmlFor={`remote-server-label-${draftConfig.id}`}
+        >
+          Label
+        </label>
+        <Input
+          id={`remote-server-label-${draftConfig.id}`}
+          value={draftConfig.label}
+          onChange={(e) => setDraftConfig((prev) => ({ ...prev, label: e.target.value }))}
+          placeholder="e.g., Work desktop"
+        />
+      </div>
+
+      <div>
+        <label
+          className="text-muted mb-1 block text-xs"
+          htmlFor={`remote-server-base-url-${draftConfig.id}`}
+        >
+          Base URL
+        </label>
+        <Input
+          id={`remote-server-base-url-${draftConfig.id}`}
+          value={draftConfig.baseUrl}
+          onChange={(e) =>
+            setDraftConfig((prev) => ({
+              ...prev,
+              baseUrl: e.target.value,
+            }))
+          }
+          placeholder="https://example.com"
+          spellCheck={false}
+          className="font-mono"
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-foreground text-sm">Enabled</div>
+          <div className="text-muted mt-0.5 text-xs">
+            Disabled servers are ignored for remote workspaces.
+          </div>
+        </div>
+        <Switch
+          checked={draftConfig.enabled !== false}
+          onCheckedChange={(checked) =>
+            setDraftConfig((prev) => ({
+              ...prev,
+              enabled: checked,
+            }))
+          }
+          aria-label="Toggle remote server enabled"
+        />
+      </div>
+
+      <div>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <label
+              className="text-muted mb-1 block text-xs"
+              htmlFor={`remote-server-token-${draftConfig.id}`}
+            >
+              Auth token (optional)
+            </label>
+            <div className="text-muted mb-2 text-xs">
+              {editorMode === "edit" && draftHasAuthToken
+                ? "Token is configured locally. Leave blank to keep the existing token."
+                : ""}
+              {editorMode === "edit" && draftHasAuthToken ? " " : ""}
+              Stored locally on this machine in{" "}
+              <code className="font-mono">~/.mux/secrets.json</code>. The token expected by the
+              remote server is configured on that machine in
+              <code className="ml-1 font-mono">~/.mux/server.lock</code>.
+              {clearAuthTokenOnSave && (
+                <span className="text-destructive ml-2">Will clear the local token on save.</span>
+              )}
+            </div>
+          </div>
+
+          {editorMode === "edit" && draftHasAuthToken && (
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={() => {
+                setAuthToken("");
+                setClearAuthTokenOnSave(true);
+              }}
+              disabled={saving}
+            >
+              Clear local token
+            </Button>
+          )}
+        </div>
+
+        <Input
+          id={`remote-server-token-${draftConfig.id}`}
+          type="password"
+          value={authToken}
+          onChange={(e) => {
+            setAuthToken(e.target.value);
+            setClearAuthTokenOnSave(false);
+          }}
+          placeholder={editorMode === "edit" ? "Enter new token" : "Enter token"}
+          spellCheck={false}
+          autoComplete="off"
+        />
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-foreground text-sm">Project mappings</div>
+            <div className="text-muted mt-0.5 text-xs">
+              Map each local project path to the corresponding path on the remote server.
+            </div>
+            <div className="text-muted mt-1 text-xs">
+              Local suggestions come from your configured projects.
+              {editorMode === "edit" ? " Remote suggestions come from the remote server." : ""}
+            </div>
+            {localProjectsError && (
+              <div className="text-destructive mt-1 text-xs">{localProjectsError}</div>
+            )}
+            {editorMode === "edit" && remoteProjectsStatus.status === "loading" && (
+              <div className="text-muted mt-1 flex items-center gap-1 text-xs">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading remote projects…
+              </div>
+            )}
+            {editorMode === "edit" &&
+              remoteProjectsStatus.status === "error" &&
+              remoteProjectsStatus.message && (
+                <div className="text-destructive mt-1 text-xs">{remoteProjectsStatus.message}</div>
+              )}
+            {editorMode === "add" && (
+              <div className="text-muted mt-1 text-xs">
+                Tip: save the server first to load remote project suggestions.
+              </div>
+            )}
+          </div>
+          <Button variant="outline" size="xs" onClick={handleAddMapping} disabled={saving}>
+            <Plus className="h-3.5 w-3.5" />
+            Add mapping
+          </Button>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {draftConfig.projectMappings.map((mapping, idx) => (
+            <div key={idx} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto]">
+              <Input
+                value={mapping.localProjectPath}
+                onChange={(e) =>
+                  handleMappingChange(idx, {
+                    localProjectPath: e.target.value,
+                  })
+                }
+                placeholder="Local project path"
+                spellCheck={false}
+                className="font-mono"
+                list={editorDatalistIdLocal}
+              />
+              <Input
+                value={mapping.remoteProjectPath}
+                onChange={(e) =>
+                  handleMappingChange(idx, {
+                    remoteProjectPath: e.target.value,
+                  })
+                }
+                placeholder={
+                  remoteProjectSuggestions.length > 0
+                    ? "Remote project path"
+                    : getRemotePathPlaceholder(mapping)
+                }
+                spellCheck={false}
+                className="font-mono"
+                list={editorDatalistIdRemote}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleRemoveMapping(idx)}
+                className="text-muted hover:text-error h-10 w-10"
+                aria-label="Remove mapping"
+                disabled={saving}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+
+        <datalist id={editorDatalistIdLocal}>
+          {localProjectSuggestions.map((suggestion) => (
+            <option key={suggestion.path} value={suggestion.path} label={suggestion.label} />
+          ))}
+        </datalist>
+        <datalist id={editorDatalistIdRemote}>
+          {remoteProjectSuggestions.map((suggestion) => (
+            <option key={suggestion.path} value={suggestion.path} label={suggestion.label} />
+          ))}
+        </datalist>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={() => void handleSave()} disabled={!api || saving}>
+          {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+          Save
+        </Button>
+
+        {editorMode === "edit" && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => void handleRemove(draftConfig.id)}
+            disabled={!api || saving}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Remove
+          </Button>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="space-y-6">
       <div>
@@ -406,11 +800,49 @@ export function RemoteServersSection() {
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h4 className="text-foreground text-sm font-medium">Configured</h4>
-          <Button variant="outline" size="sm" onClick={resetEditorToAdd}>
+          <Button variant="outline" size="sm" onClick={startAdd} disabled={!api || saving}>
             <Plus className="h-3.5 w-3.5" />
             Add
           </Button>
         </div>
+
+        {notice && (
+          <div
+            className={cn(
+              "flex items-start gap-2 rounded-md px-3 py-2 text-sm",
+              notice.type === "success"
+                ? "bg-green-500/10 text-green-500"
+                : "bg-destructive/10 text-destructive"
+            )}
+          >
+            {notice.type === "success" ? (
+              <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            ) : (
+              <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+            )}
+            <span>{notice.message}</span>
+          </div>
+        )}
+
+        {editorMode === "add" && (
+          <div className="border-border-medium bg-background-secondary space-y-4 rounded-md border p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-foreground text-sm font-medium">Add server</div>
+                <div className="text-muted mt-0.5 text-xs">
+                  ID: <code className="font-mono">{draftConfig.id}</code>
+                </div>
+              </div>
+
+              <Button variant="ghost" size="sm" onClick={closeEditor} disabled={saving}>
+                <X className="h-4 w-4" />
+                Cancel
+              </Button>
+            </div>
+
+            {editorForm}
+          </div>
+        )}
 
         {loadError && (
           <div className="bg-destructive/10 text-destructive flex items-start gap-2 rounded-md px-3 py-2 text-sm">
@@ -433,6 +865,8 @@ export function RemoteServersSection() {
               const enabled = config.enabled !== false;
               const pingStatus = pingById[config.id] ?? { status: "idle" };
 
+              const isEditingThis = editorState?.mode === "edit" && editorState.id === config.id;
+
               return (
                 <div
                   key={config.id}
@@ -441,49 +875,76 @@ export function RemoteServersSection() {
                     !enabled && "opacity-70"
                   )}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-foreground truncate text-sm font-medium">
-                        {config.label || config.id}
-                      </div>
-                      <div className="text-muted mt-0.5 font-mono text-xs break-all">
-                        {config.baseUrl}
-                      </div>
-                      <div className="text-muted mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                        <span>Enabled: {enabled ? "Yes" : "No"}</span>
-                        <span>Mappings: {config.projectMappings.length}</span>
-                        <span>Token: {entry.hasAuthToken ? "Configured" : "—"}</span>
-                      </div>
-                    </div>
+                  {isEditingThis ? (
+                    <div className="space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-foreground text-sm font-medium">
+                            Edit {config.label || config.id}
+                          </div>
+                          <div className="text-muted mt-0.5 text-xs">
+                            ID: <code className="font-mono">{draftConfig.id}</code>
+                          </div>
+                        </div>
 
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => startEdit(entry)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handlePing(config.id)}
-                        disabled={!api || pingStatus.status === "loading"}
-                      >
-                        {pingStatus.status === "loading" && (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        )}
-                        Ping
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void handleRemove(config.id)}
-                        disabled={!api}
-                        className="text-muted hover:text-error"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        Remove
-                      </Button>
+                        <Button variant="ghost" size="sm" onClick={closeEditor} disabled={saving}>
+                          <X className="h-4 w-4" />
+                          Cancel
+                        </Button>
+                      </div>
+
+                      {editorForm}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-foreground truncate text-sm font-medium">
+                          {config.label || config.id}
+                        </div>
+                        <div className="text-muted mt-0.5 font-mono text-xs break-all">
+                          {config.baseUrl}
+                        </div>
+                        <div className="text-muted mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                          <span>Enabled: {enabled ? "Yes" : "No"}</span>
+                          <span>Mappings: {config.projectMappings.length}</span>
+                          <span>Token: {entry.hasAuthToken ? "Configured" : "—"}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => startEdit(entry)}
+                          disabled={saving}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handlePing(config.id)}
+                          disabled={!api || pingStatus.status === "loading"}
+                        >
+                          {pingStatus.status === "loading" && (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          )}
+                          Ping
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void handleRemove(config.id)}
+                          disabled={!api || saving}
+                          className="text-muted hover:text-error"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
                   {pingStatus.status === "success" && pingStatus.message && (
                     <div className="mt-2 flex items-start gap-1.5 text-xs text-green-500">
@@ -502,212 +963,6 @@ export function RemoteServersSection() {
             })}
           </div>
         )}
-      </div>
-
-      <div className="border-border-medium bg-background-secondary space-y-4 rounded-md border p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-foreground text-sm font-medium">
-              {editorMode === "add" ? "Add server" : "Edit server"}
-            </div>
-            <div className="text-muted mt-0.5 text-xs">
-              ID: <code className="font-mono">{draftConfig.id}</code>
-            </div>
-          </div>
-
-          {editorMode === "edit" && (
-            <Button variant="ghost" size="sm" onClick={resetEditorToAdd}>
-              <X className="h-4 w-4" />
-              Cancel
-            </Button>
-          )}
-        </div>
-
-        {editorNotice && (
-          <div
-            className={cn(
-              "flex items-start gap-2 rounded-md px-3 py-2 text-sm",
-              editorNotice.type === "success"
-                ? "bg-green-500/10 text-green-500"
-                : "bg-destructive/10 text-destructive"
-            )}
-          >
-            {editorNotice.type === "success" ? (
-              <CheckCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            ) : (
-              <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-            )}
-            <span>{editorNotice.message}</span>
-          </div>
-        )}
-
-        <div className="grid gap-4">
-          <div>
-            <label className="text-muted mb-1 block text-xs" htmlFor="remote-server-label">
-              Label
-            </label>
-            <Input
-              id="remote-server-label"
-              value={draftConfig.label}
-              onChange={(e) => setDraftConfig((prev) => ({ ...prev, label: e.target.value }))}
-              placeholder="e.g., Work desktop"
-            />
-          </div>
-
-          <div>
-            <label className="text-muted mb-1 block text-xs" htmlFor="remote-server-base-url">
-              Base URL
-            </label>
-            <Input
-              id="remote-server-base-url"
-              value={draftConfig.baseUrl}
-              onChange={(e) =>
-                setDraftConfig((prev) => ({
-                  ...prev,
-                  baseUrl: e.target.value,
-                }))
-              }
-              placeholder="https://example.com"
-              spellCheck={false}
-              className="font-mono"
-            />
-          </div>
-
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <div className="text-foreground text-sm">Enabled</div>
-              <div className="text-muted mt-0.5 text-xs">
-                Disabled servers are ignored for remote workspaces.
-              </div>
-            </div>
-            <Switch
-              checked={draftConfig.enabled !== false}
-              onCheckedChange={(checked) =>
-                setDraftConfig((prev) => ({
-                  ...prev,
-                  enabled: checked,
-                }))
-              }
-              aria-label="Toggle remote server enabled"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <label className="text-muted mb-1 block text-xs" htmlFor="remote-server-token">
-                  Auth token (optional)
-                </label>
-                <div className="text-muted mb-2 text-xs">
-                  {editorMode === "edit" && draftHasAuthToken
-                    ? "Token is configured. Leave blank to keep the existing token."
-                    : "Stored in ~/.mux/secrets.json."}
-                  {clearAuthTokenOnSave && (
-                    <span className="text-destructive ml-2">Will be cleared on save.</span>
-                  )}
-                </div>
-              </div>
-
-              {editorMode === "edit" && draftHasAuthToken && (
-                <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() => {
-                    setAuthToken("");
-                    setClearAuthTokenOnSave(true);
-                  }}
-                >
-                  Clear token
-                </Button>
-              )}
-            </div>
-
-            <Input
-              id="remote-server-token"
-              type="password"
-              value={authToken}
-              onChange={(e) => {
-                setAuthToken(e.target.value);
-                setClearAuthTokenOnSave(false);
-              }}
-              placeholder={editorMode === "edit" ? "Enter new token" : "Enter token"}
-              spellCheck={false}
-              autoComplete="off"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <div className="text-foreground text-sm">Project mappings</div>
-                <div className="text-muted mt-0.5 text-xs">
-                  Each mapping links a remote project path to a local project path.
-                </div>
-              </div>
-              <Button variant="outline" size="xs" onClick={handleAddMapping}>
-                <Plus className="h-3.5 w-3.5" />
-                Add mapping
-              </Button>
-            </div>
-
-            <div className="mt-3 space-y-2">
-              {draftConfig.projectMappings.map((mapping, idx) => (
-                <div key={idx} className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto]">
-                  <Input
-                    value={mapping.localProjectPath}
-                    onChange={(e) =>
-                      handleMappingChange(idx, {
-                        localProjectPath: e.target.value,
-                      })
-                    }
-                    placeholder="Local project path"
-                    spellCheck={false}
-                    className="font-mono"
-                  />
-                  <Input
-                    value={mapping.remoteProjectPath}
-                    onChange={(e) =>
-                      handleMappingChange(idx, {
-                        remoteProjectPath: e.target.value,
-                      })
-                    }
-                    placeholder="Remote project path"
-                    spellCheck={false}
-                    className="font-mono"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleRemoveMapping(idx)}
-                    className="text-muted hover:text-error h-10 w-10"
-                    aria-label="Remove mapping"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => void handleSave()} disabled={!api || saving}>
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              Save
-            </Button>
-
-            {editorMode === "edit" && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => void handleRemove(draftConfig.id)}
-                disabled={!api || saving}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Remove
-              </Button>
-            )}
-          </div>
-        </div>
       </div>
     </div>
   );
