@@ -41,7 +41,12 @@ import {
 } from "@/browser/utils/messages/compactionModelPreference";
 import type { ChatAttachment } from "../components/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
-import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
+import {
+  getRuntimeKey,
+  copyWorkspaceStorage,
+  getWorkspaceLastReadKey,
+} from "@/common/constants/storage";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   DEFAULT_COMPACTION_WORD_TARGET,
   WORDS_TO_TOKENS_RATIO,
@@ -147,6 +152,10 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   resetInputHeight: () => void;
   /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
   onMessageSent?: () => void;
+  /** Callback to mark review IDs as checked after successful send */
+  onCheckReviews?: (reviewIds: string[]) => void;
+  /** Review IDs that are attached (for marking as checked on success) */
+  attachedReviewIds?: string[];
 }
 
 // ============================================================================
@@ -349,9 +358,18 @@ export async function processSlashCommand(
         return { clearInput: false, toastShown: true };
       }
 
-      // Success: clear input and attachments, exit edit mode, and trigger message-sent side effects
+      // Success: apply all post-send side effects to match normal send behavior
       setInput("");
       context.setAttachments([]);
+
+      // Mark workspace as read (prevents unread indicator after user's own message)
+      updatePersistedState(getWorkspaceLastReadKey(context.workspaceId), Date.now());
+
+      // Mark attached reviews as checked
+      if (context.attachedReviewIds && context.attachedReviewIds.length > 0) {
+        context.onCheckReviews?.(context.attachedReviewIds);
+      }
+
       context.onCancelEdit?.();
       context.onMessageSent?.();
 
