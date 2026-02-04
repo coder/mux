@@ -103,58 +103,65 @@ describeIntegration("Secrets Import (UI)", () => {
         { timeout: 5_000 }
       );
 
-      // Find and click the import dropdown
-      // Note: userEvent.click fails due to happy-dom pointer-events detection, use fireEvent
-      // The import button now just says "Import" with an icon
-      // First wait for the import dropdown to appear (requires other projects to be loaded)
-      await waitFor(
-        () => {
-          const importTriggers = modal.querySelectorAll('[role="combobox"]');
-          const importTrigger = Array.from(importTriggers).find((el) =>
-            el.textContent?.includes("Import")
-          );
-          if (!importTrigger)
-            throw new Error("Import dropdown not found - other projects may not be loaded yet");
-        },
-        { timeout: 5_000 }
-      );
-
-      const importTriggers = modal.querySelectorAll('[role="combobox"]');
-      const importTrigger = Array.from(importTriggers).find((el) =>
-        el.textContent?.includes("Import")
-      ) as HTMLElement;
-      fireEvent.click(importTrigger);
-
-      // Select the source project from dropdown (also in portal)
+      // Find and use the import control.
       const sourceProjectName = sourceRepoPath.split("/").pop()!;
+      let importSelect: HTMLSelectElement | null = null;
+      let importTrigger: HTMLElement | null = null;
+
       await waitFor(
         () => {
-          const option = document.body.querySelector(
-            `[role="option"][data-value="${sourceRepoPath}"]`
-          );
-          if (!option) {
-            // Fallback: look for option by text content
-            const options = document.body.querySelectorAll('[role="option"]');
-            const found = Array.from(options).find((opt) =>
-              opt.textContent?.includes(sourceProjectName)
-            );
-            if (!found) throw new Error(`Source project option not found: ${sourceProjectName}`);
+          importSelect = within(modal).queryByTestId(
+            "project-secrets-import"
+          ) as HTMLSelectElement | null;
+          if (importSelect) return;
+          const importTriggers = modal.querySelectorAll<HTMLElement>('[role="combobox"]');
+          importTrigger =
+            Array.from(importTriggers).find((el) => el.textContent?.includes("Import")) ?? null;
+          if (!importTrigger) {
+            throw new Error("Import control not found - other projects may not be loaded yet");
           }
         },
         { timeout: 5_000 }
       );
 
-      // Click the source project option
-      // Wrap in act() to ensure React state updates are flushed before continuing
-      const options = document.body.querySelectorAll('[role="option"]');
-      const sourceOption = Array.from(options).find((opt) =>
-        opt.textContent?.includes(sourceProjectName)
-      ) as HTMLElement;
-      await act(async () => {
-        fireEvent.click(sourceOption);
-        // Small delay to allow async import operation to start
-        await new Promise((r) => setTimeout(r, 100));
-      });
+      if (importSelect) {
+        await userEvent.selectOptions(importSelect, sourceRepoPath);
+      } else {
+        // Note: userEvent.click fails due to happy-dom pointer-events detection, use fireEvent
+        fireEvent.click(importTrigger!);
+
+        // Select the source project from dropdown (also in portal)
+        await waitFor(
+          () => {
+            const option = document.body.querySelector(
+              `[role="option"][data-value="${sourceRepoPath}"]`
+            );
+            if (!option) {
+              // Fallback: look for option by text content
+              const options = document.body.querySelectorAll('[role="option"]');
+              const found = Array.from(options).find((opt) =>
+                opt.textContent?.includes(sourceProjectName)
+              );
+              if (!found) {
+                throw new Error(`Source project option not found: ${sourceProjectName}`);
+              }
+            }
+          },
+          { timeout: 5_000 }
+        );
+
+        // Click the source project option
+        // Wrap in act() to ensure React state updates are flushed before continuing
+        const options = document.body.querySelectorAll('[role="option"]');
+        const sourceOption = Array.from(options).find((opt) =>
+          opt.textContent?.includes(sourceProjectName)
+        ) as HTMLElement;
+        await act(async () => {
+          fireEvent.click(sourceOption);
+          // Small delay to allow async import operation to start
+          await new Promise((r) => setTimeout(r, 100));
+        });
+      }
 
       // Wait for import to complete - should now have 4 secrets
       // (TARGET_KEY_1, SHARED_KEY from target + SOURCE_KEY_1, SOURCE_KEY_2 from source)

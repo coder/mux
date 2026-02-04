@@ -37,6 +37,9 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
   const [isImporting, setIsImporting] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [originalSecrets, setOriginalSecrets] = useState<Secret[]>([]);
+  // Use a native select in tests because Radix portals are unreliable in happy-dom.
+  const isTestEnv = import.meta.env.MODE === "test";
+  const importSelectRef = React.useRef<HTMLSelectElement>(null);
 
   // Get other projects (excluding current one) for import dropdown
   const otherProjects = Array.from(projects.entries()).filter(([path]) => path !== projectPath);
@@ -179,6 +182,15 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
     [getSecrets]
   );
 
+  const handleTestImportChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedProjectPath = event.currentTarget.value;
+    if (!selectedProjectPath) return;
+    void handleImportFromProject(selectedProjectPath);
+    if (importSelectRef.current) {
+      importSelectRef.current.value = "";
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="text-muted flex items-center gap-2 py-4 text-sm">
@@ -202,28 +214,51 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
           <Plus className="h-3.5 w-3.5" />
           Add
         </Button>
-        {otherProjects.length > 0 && (
-          <Select
-            value=""
-            onValueChange={(path) => void handleImportFromProject(path)}
-            disabled={isSaving || isImporting}
-          >
-            <SelectTrigger className="text-muted hover:text-foreground border-border-medium hover:bg-hover h-7 w-auto gap-1.5 border bg-transparent px-2 text-xs">
-              <Import className="h-3.5 w-3.5" />
-              <SelectValue placeholder={isImporting ? "Importing..." : "Import"} />
-            </SelectTrigger>
-            <SelectContent>
+        {otherProjects.length > 0 &&
+          (isTestEnv ? (
+            <select
+              ref={importSelectRef}
+              aria-label="Import secrets from project"
+              data-testid="project-secrets-import"
+              defaultValue=""
+              onChange={handleTestImportChange}
+              disabled={isSaving || isImporting}
+              className="text-muted hover:text-foreground border-border-medium hover:bg-hover h-7 w-auto rounded border bg-transparent px-2 text-xs"
+            >
+              <option value="" disabled>
+                {isImporting ? "Importing..." : "Import"}
+              </option>
               {otherProjects.map(([path]) => {
                 const name = path.split("/").pop() ?? path;
                 return (
-                  <SelectItem key={path} value={path}>
+                  <option key={path} value={path}>
                     {name}
-                  </SelectItem>
+                  </option>
                 );
               })}
-            </SelectContent>
-          </Select>
-        )}
+            </select>
+          ) : (
+            <Select
+              value=""
+              onValueChange={(path) => void handleImportFromProject(path)}
+              disabled={isSaving || isImporting}
+            >
+              <SelectTrigger className="text-muted hover:text-foreground border-border-medium hover:bg-hover h-7 w-auto gap-1.5 border bg-transparent px-2 text-xs">
+                <Import className="h-3.5 w-3.5" />
+                <SelectValue placeholder={isImporting ? "Importing..." : "Import"} />
+              </SelectTrigger>
+              <SelectContent>
+                {otherProjects.map(([path]) => {
+                  const name = path.split("/").pop() ?? path;
+                  return (
+                    <SelectItem key={path} value={path}>
+                      {name}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          ))}
         {/* Save/Discard buttons when there are changes */}
         {hasChanges && (
           <div className="ml-auto flex items-center gap-2">
