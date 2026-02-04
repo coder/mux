@@ -1415,6 +1415,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       editMessageId: editingMessage?.id,
       onCancelEdit: commandOnCancelEdit,
       reviews: reviewsData,
+      onMessageSent: variant === "workspace" ? props.onMessageSent : undefined,
     };
 
     const result = await processSlashCommand(parsed, commandContext);

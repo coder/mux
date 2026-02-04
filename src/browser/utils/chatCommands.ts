@@ -144,6 +144,8 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   // Workspace Actions
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
+  /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
+  onMessageSent?: () => void;
 }
 
 // ============================================================================
@@ -338,9 +340,10 @@ export async function processSlashCommand(
         return { clearInput: false, toastShown: true };
       }
 
-      // Success: clear input and exit edit mode
+      // Success: clear input, exit edit mode, and trigger message-sent side effects
       setInput("");
       context.onCancelEdit?.();
+      context.onMessageSent?.();
 
       trackCommandUsed("model");
       return { clearInput: true, toastShown: false };
