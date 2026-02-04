@@ -22,14 +22,14 @@ import {
   executeCompaction as executeCompactionDefault,
   type CompactionResult,
 } from "@/browser/utils/chatCommands";
-import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { workspaceStore } from "@/browser/stores/WorkspaceStore";
 
 // Type for executeCompaction function (for testing injection)
 type ExecuteCompactionFn = (opts: {
   api: RouterClient<AppRouter>;
   workspaceId: string;
-  sendMessageOptions: ReturnType<typeof buildSendMessageOptions>;
+  sendMessageOptions: ReturnType<typeof getSendOptionsFromStorage>;
   source: string;
 }) => Promise<CompactionResult>;
 
@@ -67,8 +67,8 @@ export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): v
       const workspaceId = queueRef.current.shift()!;
       isRunningRef.current = true;
 
-      // Use buildSendMessageOptions to get correct model, gateway, thinking level, etc.
-      const sendMessageOptions = buildSendMessageOptions(workspaceId);
+      // Read send options from storage for consistent model/thinking choices.
+      const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
 
       const cleanup = () => {
         // Always clear from triggered set after completion (success, failure, or rejection).

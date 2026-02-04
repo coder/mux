@@ -10,7 +10,7 @@ import type {
 } from "./types";
 import minimist from "minimist";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
-import { resolveModelAlias } from "@/common/utils/ai/models";
+import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 
 /**
  * Parse multiline command input into first-line tokens and remaining message
@@ -168,7 +168,8 @@ const compactCommandDefinition: SlashCommandDefinition = {
     // Handle -m (model) flag: resolve abbreviation if present, otherwise use as-is
     let model: string | undefined;
     if (parsed.m !== undefined && typeof parsed.m === "string" && parsed.m.trim().length > 0) {
-      model = resolveModelAlias(parsed.m.trim());
+      const normalized = normalizeModelInput(parsed.m.trim());
+      model = normalized.model ?? parsed.m.trim();
     }
 
     // Reject extra positional arguments UNLESS they're from multiline content
@@ -208,11 +209,12 @@ const modelCommandDefinition: SlashCommandDefinition = {
 
     if (cleanRemainingTokens.length === 1) {
       const token = cleanRemainingTokens[0];
+      const normalized = normalizeModelInput(token);
 
       // Resolve abbreviation if present, otherwise use as full model string
       return {
         type: "model-set",
-        modelString: resolveModelAlias(token),
+        modelString: normalized.model ?? token,
       };
     }
 

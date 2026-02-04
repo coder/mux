@@ -31,9 +31,9 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
   },
 }));
 
-// Mock buildSendMessageOptions
-void mock.module("@/browser/hooks/useSendMessageOptions", () => ({
-  buildSendMessageOptions: () => ({
+// Mock getSendOptionsFromStorage
+void mock.module("@/browser/utils/messages/sendOptions", () => ({
+  getSendOptionsFromStorage: () => ({
     model: "test-model",
     gateway: "anthropic",
   }),

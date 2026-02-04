@@ -13,9 +13,14 @@ import {
   updatePersistedState,
 } from "@/browser/hooks/usePersistedState";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import {
+  buildSendMessageOptions,
+  normalizeModelPreference,
+  normalizeSystem1Model,
+  normalizeSystem1ThinkingLevel,
+} from "@/browser/utils/messages/buildSendMessageOptions";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { isExperimentEnabled } from "@/browser/hooks/useExperiments";
@@ -46,9 +51,10 @@ function getProviderOptions(): MuxProviderOptions {
  */
 export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptions {
   // Read model preference (workspace-specific), fallback to the Settings default
-  const rawModel = readPersistedState<string>(getModelKey(workspaceId), getDefaultModel());
+  const defaultModel = getDefaultModel();
+  const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
   // Migrate any legacy mux-gateway:provider/model format to canonical form
-  const baseModel = migrateGatewayModel(rawModel);
+  const baseModel = normalizeModelPreference(rawModel, defaultModel);
 
   // Read thinking level (workspace-scoped).
   // Migration: if the workspace-scoped value is missing, fall back to legacy per-model storage
@@ -79,31 +85,25 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
 
   // Read disableWorkspaceAgents toggle (workspace-scoped)
 
-  const system1ModelTrimmed = readPersistedString(PREFERRED_SYSTEM_1_MODEL_KEY)?.trim();
-  const baseSystem1Model =
-    system1ModelTrimmed !== undefined && system1ModelTrimmed.length > 0
-      ? migrateGatewayModel(system1ModelTrimmed)
-      : undefined;
-  const system1ThinkingLevelRaw = readPersistedState<unknown>(
-    PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
-    "off"
+  const system1Model = normalizeSystem1Model(readPersistedString(PREFERRED_SYSTEM_1_MODEL_KEY));
+  const system1ThinkingLevel = normalizeSystem1ThinkingLevel(
+    readPersistedState<unknown>(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, "off")
   );
-  const system1ThinkingLevel = coerceThinkingLevel(system1ThinkingLevelRaw) ?? "off";
 
   const disableWorkspaceAgents = readPersistedState<boolean>(
     getDisableWorkspaceAgentsKey(workspaceId),
     false
   );
 
-  return {
+  return buildSendMessageOptions({
     model: baseModel,
-    system1Model: baseSystem1Model,
-    system1ThinkingLevel: system1ThinkingLevel !== "off" ? system1ThinkingLevel : undefined,
+    system1Model,
+    system1ThinkingLevel,
     agentId,
     thinkingLevel,
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
-    disableWorkspaceAgents: disableWorkspaceAgents || undefined, // Only include if true
+    disableWorkspaceAgents,
     experiments: {
       programmaticToolCalling: isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING),
       programmaticToolCallingExclusive: isExperimentEnabled(
@@ -112,5 +112,5 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
       system1: isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1),
       execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
     },
-  };
+  });
 }

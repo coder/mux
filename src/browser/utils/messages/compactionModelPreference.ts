@@ -5,8 +5,14 @@
 import { readPersistedString } from "@/browser/hooks/usePersistedState";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 
-// Re-export for convenience - validation used in /compact handler
-export { isValidModelFormat } from "@/common/utils/ai/models";
+export function getPreferredCompactionModel(): string | undefined {
+  const preferred = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
+  if (typeof preferred === "string" && preferred.trim().length > 0) {
+    return preferred.trim();
+  }
+
+  return undefined;
+}
 
 /**
  * Resolve the effective compaction model to use.
@@ -18,13 +24,8 @@ export { isValidModelFormat } from "@/common/utils/ai/models";
  */
 export function resolveCompactionModel(requestedModel: string | undefined): string | undefined {
   if (typeof requestedModel === "string" && requestedModel.trim().length > 0) {
-    return requestedModel;
+    return requestedModel.trim();
   }
 
-  const preferred = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
-  if (typeof preferred === "string" && preferred.trim().length > 0) {
-    return preferred;
-  }
-
-  return undefined;
+  return getPreferredCompactionModel();
 }
