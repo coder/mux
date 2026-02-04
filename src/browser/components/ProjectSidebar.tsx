@@ -808,7 +808,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   event.stopPropagation();
                                   openProjectSettings(projectPath);
                                 }}
-                                aria-label={`Settings for ${projectName}`}
+                                aria-label={`Configure ${projectName}`}
                                 data-project-path={projectPath}
                                 className="text-muted-dark hover:text-foreground hover:bg-hover mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200"
                               >

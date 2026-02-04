@@ -65,7 +65,7 @@ describeIntegration("Secrets Import (UI)", () => {
           if (!sidebar) throw new Error("Project sidebar not found");
           // Check that projects are loaded - look for the project settings button (key icon)
           const settingsButton = view!.container.querySelector(
-            `[aria-label="Settings for ${targetProjectName}"]`
+            `[aria-label="Configure ${targetProjectName}"]`
           );
           if (!settingsButton)
             throw new Error(
@@ -77,7 +77,7 @@ describeIntegration("Secrets Import (UI)", () => {
 
       // Open Settings → Projects for target project by clicking the key icon
       const settingsButton = view!.container.querySelector(
-        `[aria-label="Settings for ${targetProjectName}"]`
+        `[aria-label="Configure ${targetProjectName}"]`
       ) as HTMLElement;
       await userEvent.click(settingsButton);
 
