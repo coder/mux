@@ -17,7 +17,8 @@ import { GitStatusIndicator } from "./GitStatusIndicator";
 import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
-import { Trash2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Menu, Trash2 } from "lucide-react";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -252,6 +253,15 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const displayTitle = metadata.title ?? metadata.name;
   const isEditing = editingWorkspaceId === workspaceId;
 
+  // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
+  const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (isEditing) {
+      setIsTitleMenuOpen(false);
+    }
+  }, [isEditing]);
+
   const startEditing = () => {
     if (requestRename(workspaceId, displayTitle)) {
       setEditingTitle(displayTitle);
@@ -467,22 +477,58 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       runtimeConfig={metadata.runtimeConfig}
                       isWorking={isWorking}
                     />
-                    {!isDisabled && (
-                      <div className="text-muted text-xs">Double-click to edit title</div>
-                    )}
                   </div>
                 </HoverCardContent>
               </HoverCard>
             )}
 
             {!isCreating && !isEditing && (
-              <GitStatusIndicator
-                gitStatus={gitStatus}
-                workspaceId={workspaceId}
-                projectPath={projectPath}
-                tooltipPosition="right"
-                isWorking={isWorking}
-              />
+              <div className="flex items-center gap-1">
+                {!isDisabled && (
+                  <Popover open={isTitleMenuOpen} onOpenChange={setIsTitleMenuOpen}>
+                    <PopoverTrigger asChild>
+                      <button
+                        className={cn(
+                          "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                          // Hidden until row hover, but remain visible while open.
+                          isTitleMenuOpen ? "opacity-100" : "opacity-0"
+                        )}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Workspace actions for ${displayTitle}`}
+                        data-workspace-id={workspaceId}
+                      >
+                        <Menu className="h-3 w-3" />
+                      </button>
+                    </PopoverTrigger>
+
+                    <PopoverContent
+                      align="end"
+                      sideOffset={6}
+                      className="w-auto min-w-[140px] p-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        className="text-foreground hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsTitleMenuOpen(false);
+                          startEditing();
+                        }}
+                      >
+                        Edit title
+                      </button>
+                    </PopoverContent>
+                  </Popover>
+                )}
+
+                <GitStatusIndicator
+                  gitStatus={gitStatus}
+                  workspaceId={workspaceId}
+                  projectPath={projectPath}
+                  tooltipPosition="right"
+                  isWorking={isWorking}
+                />
+              </div>
             )}
           </div>
           {hasSecondaryRow && (
