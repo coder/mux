@@ -350,14 +350,14 @@ export function GeneralSection() {
         <div className="flex-1">
           <div className="text-foreground text-sm">Stop Coder workspace when archiving</div>
           <div className="text-muted text-xs">
-            When enabled, archiving a dedicated Coder workspace will stop it first.
+            When enabled, archiving a Mux workspace will stop its dedicated Coder workspace first.
           </div>
         </div>
         <Switch
           checked={stopCoderWorkspaceOnArchive}
           onCheckedChange={handleStopCoderWorkspaceOnArchiveChange}
           disabled={!api?.config?.updateCoderPrefs}
-          aria-label="Toggle stopping a dedicated Coder workspace when archiving"
+          aria-label="Toggle stopping the dedicated Coder workspace when archiving a Mux workspace"
         />
       </div>
 
