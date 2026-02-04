@@ -69,6 +69,35 @@ describe("commandParser", () => {
       });
     });
 
+    it("should parse /<model-alias> as model-oneshot with message", () => {
+      expectParse("/haiku check the pr", {
+        type: "model-oneshot",
+        modelString: KNOWN_MODELS.HAIKU.id,
+        message: "check the pr",
+      });
+    });
+
+    it("should parse /<model-alias> with multiline message", () => {
+      expectParse("/sonnet first line\nsecond line", {
+        type: "model-oneshot",
+        modelString: KNOWN_MODELS.SONNET.id,
+        message: "first line\nsecond line",
+      });
+    });
+
+    it("should return model-help for /<model-alias> without message", () => {
+      expectParse("/haiku", { type: "model-help" });
+      expectParse("/sonnet  ", { type: "model-help" }); // whitespace only
+    });
+
+    it("should return unknown-command for unknown aliases", () => {
+      expectParse("/xyz do something", {
+        type: "unknown-command",
+        command: "xyz",
+        subcommand: "do",
+      });
+    });
+
     it("should parse /vim command", () => {
       expectParse("/vim", { type: "vim-toggle" });
     });

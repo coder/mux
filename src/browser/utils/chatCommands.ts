@@ -280,6 +280,82 @@ export async function processSlashCommand(
     }
   }
 
+  // Handle model-oneshot: send a single message with a one-time model override
+  // This does NOT change the user's preferred model - it's a one-shot override
+  if (parsed.type === "model-oneshot") {
+    const activeClient = requireClient();
+    if (!activeClient) {
+      return { clearInput: false, toastShown: true };
+    }
+
+    if (!context.workspaceId) {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "Model one-shot requires an active workspace",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    if (context.variant !== "workspace") {
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: "Model one-shot is only available in workspace view",
+      });
+      return { clearInput: false, toastShown: true };
+    }
+
+    setInput("");
+    setSendingState(true);
+
+    try {
+      // Send message with model override (do NOT persist model preference)
+      const result = await activeClient.workspace.sendMessage({
+        workspaceId: context.workspaceId,
+        message: parsed.message,
+        options: {
+          ...context.sendMessageOptions,
+          model: parsed.modelString, // Override model for this message only
+          editMessageId: context.editMessageId,
+        },
+      });
+
+      if (!result.success) {
+        // Convert SendMessageError to string for error display
+        const errorString = result.error
+          ? typeof result.error === "string"
+            ? result.error
+            : "type" in result.error
+              ? result.error.type
+              : "Failed to send message"
+          : "Failed to send message";
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: errorString,
+        });
+        return { clearInput: true, toastShown: true };
+      }
+
+      // Exit edit mode if we were editing
+      context.onCancelEdit?.();
+
+      trackCommandUsed("model");
+      return { clearInput: true, toastShown: false };
+    } catch (error) {
+      console.error("Failed to send model-oneshot message:", error);
+      setToast({
+        id: Date.now().toString(),
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to send message",
+      });
+      return { clearInput: true, toastShown: true };
+    } finally {
+      setSendingState(false);
+    }
+  }
+
   if (parsed.type === "mcp-open") {
     setInput("");
     context.openSettings?.("projects");
