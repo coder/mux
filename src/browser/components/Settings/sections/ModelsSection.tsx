@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Loader2, Plus, ShieldCheck } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
+import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
   Select,
   SelectContent,
@@ -15,7 +16,6 @@ import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
@@ -284,7 +284,7 @@ export function ModelsSection() {
               <SelectContent>
                 {selectableProviders.map((provider) => (
                   <SelectItem key={provider} value={provider}>
-                    {PROVIDER_DISPLAY_NAMES[provider]}
+                    <ProviderWithIcon provider={provider} displayName />
                   </SelectItem>
                 ))}
               </SelectContent>
