@@ -744,7 +744,7 @@ export const ProjectSettingsWithSecrets: AppStory = {
     await waitFor(
       () => {
         const settingsButton = canvasElement.querySelector<HTMLElement>(
-          '[aria-label="Manage secrets for target-project"]'
+          '[aria-label="Settings for target-project"]'
         );
         if (!settingsButton) throw new Error("Project settings button not found");
       },
@@ -753,7 +753,7 @@ export const ProjectSettingsWithSecrets: AppStory = {
 
     // Click the key icon for target-project (now opens Settings → Projects)
     const settingsButton = canvasElement.querySelector<HTMLElement>(
-      '[aria-label="Manage secrets for target-project"]'
+      '[aria-label="Settings for target-project"]'
     )!;
     await userEvent.click(settingsButton);
 

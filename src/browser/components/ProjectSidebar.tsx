@@ -49,7 +49,7 @@ import { WorkspaceListItem, type WorkspaceSelection } from "./WorkspaceListItem"
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
-import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
+import { ChevronRight, CircleHelp, Settings } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -808,11 +808,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   event.stopPropagation();
                                   openProjectSettings(projectPath);
                                 }}
-                                aria-label={`Manage secrets for ${projectName}`}
+                                aria-label={`Settings for ${projectName}`}
                                 data-project-path={projectPath}
-                                className="text-muted-dark mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200 hover:bg-yellow-500/10 hover:text-yellow-500"
+                                className="text-muted-dark hover:text-foreground hover:bg-hover mr-1 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-[3px] border-none bg-transparent text-sm opacity-0 transition-all duration-200"
                               >
-                                <KeyRound size={12} />
+                                <Settings size={12} />
                               </button>
                             </TooltipTrigger>
                             <TooltipContent align="end">Project settings</TooltipContent>
