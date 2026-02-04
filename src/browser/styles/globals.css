@@ -1151,6 +1151,14 @@ body,
 }
 
 /* Tailwind utility extensions for dark theme surfaces */
+
+/* Hide right sidebar on narrow screens (including desktop window resize).
+   This prevents it from stacking below the chat pane and avoids horizontal overflow. */
+@media (max-width: 768px) {
+  .mobile-hide-right-sidebar {
+    display: none !important;
+  }
+}
 /*
  * iPadOS/iOS keyboard accessory bar fix
  *
