@@ -34,3 +34,4 @@ Mux runs `coder config-ssh --yes` before connecting, which creates SSH aliases l
 
 - If the **Use Coder Workspace** checkbox is missing, verify that the Coder CLI is found on the PATH.
 - Each Mux workspace still lives in its own directory on the remote machine, even when sharing a single Coder workspace.
+- By default, archiving a **New** (mux-created) Coder-backed workspace will also stop the underlying Coder workspace. This does **not** apply when using an **Existing** Coder workspace. To disable this behavior, set `stopCoderWorkspaceOnArchive` to `false` in `~/.mux/config.json`.
