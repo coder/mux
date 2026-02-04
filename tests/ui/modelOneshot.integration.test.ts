@@ -26,6 +26,9 @@ describe("Model one-shot (/<model> message)", () => {
       const app = await createAppHarness({ branchPrefix: `model-oneshot-${alias}` });
 
       try {
+        // Capture the model selector text before sending
+        const modelSelectorBefore = await app.chat.getModelSelectorText();
+
         const testMessage = "check the pr status";
         await app.chat.send(`/${alias} ${testMessage}`);
 
@@ -39,6 +42,10 @@ describe("Model one-shot (/<model> message)", () => {
         if (modelResult.success) {
           expect(modelResult.data).toBe(expectedModelId);
         }
+
+        // Verify the ModelSelector UI didn't change (preference not persisted)
+        const modelSelectorAfter = await app.chat.getModelSelectorText();
+        expect(modelSelectorAfter).toBe(modelSelectorBefore);
       } finally {
         await app.dispose();
       }
