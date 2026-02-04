@@ -16,13 +16,13 @@ describe("WorkspaceLifecycleHooks", () => {
     const hooks = new WorkspaceLifecycleHooks();
 
     const calls: string[] = [];
-    hooks.registerBeforeArchive(async () => {
+    hooks.registerBeforeArchive(() => {
       calls.push("first");
-      return Ok(undefined);
+      return Promise.resolve(Ok(undefined));
     });
-    hooks.registerBeforeArchive(async () => {
+    hooks.registerBeforeArchive(() => {
       calls.push("second");
-      return Ok(undefined);
+      return Promise.resolve(Ok(undefined));
     });
 
     const result = await hooks.runBeforeArchive({
@@ -38,17 +38,17 @@ describe("WorkspaceLifecycleHooks", () => {
     const hooks = new WorkspaceLifecycleHooks();
 
     const calls: string[] = [];
-    hooks.registerBeforeArchive(async () => {
+    hooks.registerBeforeArchive(() => {
       calls.push("first");
-      return Ok(undefined);
+      return Promise.resolve(Ok(undefined));
     });
-    hooks.registerBeforeArchive(async () => {
+    hooks.registerBeforeArchive(() => {
       calls.push("second");
-      return Err("nope\nextra");
+      return Promise.resolve(Err("nope\nextra"));
     });
-    hooks.registerBeforeArchive(async () => {
+    hooks.registerBeforeArchive(() => {
       calls.push("third");
-      return Ok(undefined);
+      return Promise.resolve(Ok(undefined));
     });
 
     const result = await hooks.runBeforeArchive({
@@ -67,9 +67,7 @@ describe("WorkspaceLifecycleHooks", () => {
   it("returns Err when a hook throws (and sanitizes the thrown message)", async () => {
     const hooks = new WorkspaceLifecycleHooks();
 
-    hooks.registerBeforeArchive(async () => {
-      throw new Error("boom\nstack");
-    });
+    hooks.registerBeforeArchive(() => Promise.reject(new Error("boom\nstack")));
 
     const result = await hooks.runBeforeArchive({
       workspaceId: "ws",

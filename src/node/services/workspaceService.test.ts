@@ -552,8 +552,9 @@ describe("WorkspaceService archive lifecycle hooks", () => {
       ]),
     };
 
-    editConfigSpy = mock(async (fn: (config: ProjectsConfig) => ProjectsConfig) => {
+    editConfigSpy = mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
       configState = fn(configState);
+      return Promise.resolve();
     });
 
     const mockConfig: Partial<Config> = {
@@ -601,7 +602,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
   test("returns Err and does not persist archivedAt when beforeArchive hook fails", async () => {
     const hooks = new WorkspaceLifecycleHooks();
-    hooks.registerBeforeArchive(async () => Err("hook failed"));
+    hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
     workspaceService.setWorkspaceLifecycleHooks(hooks);
 
     const result = await workspaceService.archive(workspaceId);
@@ -619,7 +620,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
   test("persists archivedAt when beforeArchive hooks succeed", async () => {
     const hooks = new WorkspaceLifecycleHooks();
-    hooks.registerBeforeArchive(async () => Ok(undefined));
+    hooks.registerBeforeArchive(() => Promise.resolve(Ok(undefined)));
     workspaceService.setWorkspaceLifecycleHooks(hooks);
 
     const result = await workspaceService.archive(workspaceId);

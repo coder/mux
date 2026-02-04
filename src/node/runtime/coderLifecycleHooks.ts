@@ -76,7 +76,7 @@ export function createStopCoderOnArchiveHook(options: {
 
     const stopResult = await options.coderService.stopWorkspace(workspaceName, { timeoutMs });
     if (!stopResult.success) {
-      return Err(`Failed to stop Coder workspace \"${workspaceName}\": ${stopResult.error}`);
+      return Err(`Failed to stop Coder workspace "${workspaceName}": ${stopResult.error}`);
     }
 
     return Ok(undefined);
