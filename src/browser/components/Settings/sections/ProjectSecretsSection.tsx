@@ -40,6 +40,14 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
 
   // Load secrets when project changes
   useEffect(() => {
+    // Guard against empty projectPath (happens during initial Settings render)
+    if (!projectPath) {
+      setSecrets([]);
+      setOriginalSecrets([]);
+      setIsLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setIsLoading(true);
     setHasChanges(false);
@@ -79,6 +87,7 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
   }, [secrets, originalSecrets]);
 
   const handleSave = async () => {
+    if (!projectPath) return; // Guard against empty projectPath
     setIsSaving(true);
     try {
       // Filter out empty secrets
