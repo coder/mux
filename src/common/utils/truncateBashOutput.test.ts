@@ -68,6 +68,26 @@ describe("truncateBashOutput", () => {
     expect(result.originalLines).toBe(BASH_HARD_MAX_LINES);
   });
 
+  it("handles output exactly at BASH_HARD_MAX_LINES with trailing newline", () => {
+    // Trailing newline should not count as an extra line
+    const lines = Array.from({ length: BASH_HARD_MAX_LINES }, (_, i) => `line${i}`);
+    const output = lines.join("\n") + "\n";
+    const result = truncateBashOutput(output);
+
+    expect(result.truncated).toBe(false);
+    expect(result.output).toBe(output);
+    expect(result.originalLines).toBe(BASH_HARD_MAX_LINES);
+  });
+
+  it("preserves trailing newline when truncating", () => {
+    const lines = Array.from({ length: BASH_HARD_MAX_LINES + 10 }, (_, i) => `line${i}`);
+    const output = lines.join("\n") + "\n";
+    const result = truncateBashOutput(output);
+
+    expect(result.truncated).toBe(true);
+    expect(result.output.endsWith("\n")).toBe(true);
+  });
+
   it("handles output exactly at BASH_MAX_TOTAL_BYTES", () => {
     // Create output exactly at byte limit
     const targetBytes = BASH_MAX_TOTAL_BYTES;
