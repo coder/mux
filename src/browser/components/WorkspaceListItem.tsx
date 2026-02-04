@@ -377,6 +377,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             });
           }
         }}
+        onContextMenu={(e) => {
+          if (isDisabled || isEditing) return;
+
+          // Right-click anywhere on the row should open the same actions menu as the hover hamburger.
+          e.preventDefault();
+          e.stopPropagation();
+          setIsTitleMenuOpen(true);
+        }}
         role="button"
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
