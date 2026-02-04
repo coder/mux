@@ -1,12 +1,24 @@
 import { useEffect, useState } from "react";
+import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { SplashScreen } from "@/browser/components/splashScreens/SplashScreen";
-import { useSettings } from "@/browser/contexts/SettingsContext";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 
+function getServerAuthToken(): string | null {
+  const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
+  return urlToken?.length ? urlToken : getStoredAuthToken();
+}
+
+function getBackendBaseUrl(): string {
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
+  // @ts-ignore - import.meta is available in Vite
+  return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
+}
+
 export function MuxGatewaySessionExpiredDialog() {
-  const { open: openSettings } = useSettings();
   const [isOpen, setIsOpen] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isStartingLogin, setIsStartingLogin] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -14,6 +26,8 @@ export function MuxGatewaySessionExpiredDialog() {
     }
 
     const handler = () => {
+      setLoginError(null);
+      setIsStartingLogin(false);
       setIsOpen(true);
     };
 
@@ -26,6 +40,93 @@ export function MuxGatewaySessionExpiredDialog() {
     };
   }, []);
 
+  const dismiss = () => {
+    setIsOpen(false);
+    setLoginError(null);
+    setIsStartingLogin(false);
+  };
+
+  const startMuxGatewayLogin = async () => {
+    if (isStartingLogin) {
+      return;
+    }
+
+    setIsStartingLogin(true);
+    setLoginError(null);
+
+    try {
+      const isDesktop = !!window.api;
+
+      if (isDesktop) {
+        const client = window.__ORPC_CLIENT__;
+        if (!client) {
+          throw new Error("Mux API not connected.");
+        }
+
+        const startResult = await client.muxGatewayOauth.startDesktopFlow();
+        if (!startResult.success) {
+          throw new Error(startResult.error);
+        }
+
+        // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+        window.open(startResult.data.authorizeUrl, "_blank", "noopener");
+        dismiss();
+        return;
+      }
+
+      // Browser/server mode: use unauthenticated bootstrap route.
+      // Open popup synchronously to preserve user gesture context (avoids popup blockers).
+      const popup = window.open("about:blank", "_blank");
+      if (!popup) {
+        throw new Error("Popup blocked - please allow popups and try again.");
+      }
+
+      const backendBaseUrl = getBackendBaseUrl();
+      const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
+      const authToken = getServerAuthToken();
+
+      let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };
+      try {
+        const res = await fetch(startUrl, {
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        });
+
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          const body = await res.text();
+          const prefix = body.trim().slice(0, 80);
+          throw new Error(
+            `Unexpected response from ${startUrl.toString()} (expected JSON, got ${
+              contentType || "unknown"
+            }): ${prefix}`
+          );
+        }
+
+        json = (await res.json()) as typeof json;
+
+        if (!res.ok) {
+          const message = typeof json.error === "string" ? json.error : `HTTP ${res.status}`;
+          throw new Error(message);
+        }
+      } catch (err) {
+        popup.close();
+        throw err;
+      }
+
+      if (typeof json.authorizeUrl !== "string") {
+        popup.close();
+        throw new Error(`Invalid response from ${startUrl.pathname}`);
+      }
+
+      popup.location.href = json.authorizeUrl;
+      dismiss();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setIsStartingLogin(false);
+      setLoginError(message);
+    }
+  };
+
   if (!isOpen) {
     return null;
   }
@@ -33,16 +134,24 @@ export function MuxGatewaySessionExpiredDialog() {
   return (
     <SplashScreen
       title="Mux Gateway session expired"
-      onDismiss={() => setIsOpen(false)}
+      onDismiss={dismiss}
+      dismissOnPrimaryAction={false}
       primaryAction={{
-        label: "Login to mux gateway",
+        label: isStartingLogin ? "Starting login..." : "Login to mux gateway",
+        disabled: isStartingLogin,
         onClick: () => {
-          openSettings("providers", { expandProvider: "mux-gateway" });
+          void startMuxGatewayLogin();
         },
       }}
       dismissLabel="Cancel"
     >
       <p className="text-muted text-sm">{MUX_GATEWAY_SESSION_EXPIRED_MESSAGE}</p>
+
+      {loginError && (
+        <p className="mt-3 text-sm">
+          <strong className="text-destructive">Login failed:</strong> {loginError}
+        </p>
+      )}
     </SplashScreen>
   );
 }
