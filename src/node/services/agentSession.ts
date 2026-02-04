@@ -1817,7 +1817,12 @@ export class AgentSession {
         : skill.body;
 
     const snapshotText = `<agent-skill name="${skill.frontmatter.name}" scope="${skill.scope}">\n${body}\n</agent-skill>`;
-    const sha256 = createHash("sha256").update(snapshotText).digest("hex");
+
+    // Include the parsed YAML frontmatter in the hash so frontmatter-only edits (e.g. description)
+    // generate a new snapshot and keep the UI hover preview in sync.
+    const sha256 = createHash("sha256")
+      .update(JSON.stringify({ snapshotText, frontmatterYaml }))
+      .digest("hex");
 
     // Dedupe: if we recently persisted the same snapshot, avoid inserting again.
     const historyResult = await this.historyService.getHistory(this.workspaceId);
