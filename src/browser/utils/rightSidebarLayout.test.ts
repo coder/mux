@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  addTabToFocusedTabset,
   addToolToFocusedTabset,
   closeSplit,
   dockTabToEdge,
@@ -66,6 +67,22 @@ test("addToolToFocusedTabset is an alias of selectTabInFocusedTabset", () => {
   const s0 = getDefaultRightSidebarLayoutState("costs");
   const s1 = addToolToFocusedTabset(s0, "review");
   expect(JSON.stringify(s1)).toContain("review");
+});
+
+test("addTabToFocusedTabset can add a tab without stealing focus", () => {
+  const s0: RightSidebarLayoutState = {
+    version: 1,
+    nextId: 2,
+    focusedTabsetId: "tabset-1",
+    root: { type: "tabset", id: "tabset-1", tabs: ["costs", "review"], activeTab: "costs" },
+  };
+
+  const s1 = addTabToFocusedTabset(s0, "stats", false);
+
+  expect(s1.root.type).toBe("tabset");
+  if (s1.root.type !== "tabset") throw new Error("expected tabset");
+  expect(s1.root.tabs).toEqual(["costs", "review", "stats"]);
+  expect(s1.root.activeTab).toBe("costs");
 });
 
 test("moveTabToTabset moves tab between tabsets", () => {
