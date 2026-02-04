@@ -1392,6 +1392,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     }
 
     const reviewsData = attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
+    // Prepare file parts for commands that need to send messages with attachments
+    const commandFileParts = chatAttachmentsToFileParts(attachments, { validate: true });
     const commandContext: SlashCommandContext = {
       api,
       variant,
@@ -1415,6 +1417,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       editMessageId: editingMessage?.id,
       onCancelEdit: commandOnCancelEdit,
       reviews: reviewsData,
+      fileParts: commandFileParts.length > 0 ? commandFileParts : undefined,
       onMessageSent: variant === "workspace" ? props.onMessageSent : undefined,
     };
 

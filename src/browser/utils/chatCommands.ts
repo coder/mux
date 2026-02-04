@@ -16,6 +16,7 @@ import {
   type CompactionFollowUpInput,
   isDefaultSourceContent,
   pickPreservedSendOptions,
+  prepareUserMessageForSend,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -311,14 +312,22 @@ export async function processSlashCommand(
     setSendingState(true);
 
     try {
+      // Prepare message with reviews (if any) - matches normal send flow
+      const { finalText, metadata: reviewMetadata } = prepareUserMessageForSend(
+        { text: parsed.message, reviews: context.reviews },
+        undefined
+      );
+
       // Send message with model override (do NOT persist model preference)
       const result = await activeClient.workspace.sendMessage({
         workspaceId: context.workspaceId,
-        message: parsed.message,
+        message: finalText,
         options: {
           ...context.sendMessageOptions,
           model: parsed.modelString, // Override model for this message only
           editMessageId: context.editMessageId,
+          fileParts: context.fileParts,
+          muxMetadata: reviewMetadata,
         },
       });
 
@@ -340,8 +349,9 @@ export async function processSlashCommand(
         return { clearInput: false, toastShown: true };
       }
 
-      // Success: clear input, exit edit mode, and trigger message-sent side effects
+      // Success: clear input and attachments, exit edit mode, and trigger message-sent side effects
       setInput("");
+      context.setAttachments([]);
       context.onCancelEdit?.();
       context.onMessageSent?.();
 
