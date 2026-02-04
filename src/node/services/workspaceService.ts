@@ -1765,18 +1765,6 @@ export class WorkspaceService extends EventEmitter {
       }
       const { projectPath, workspacePath } = workspace;
 
-      // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
-      // "headless" with no obvious UI affordance to interrupt it.
-      if (this.aiService.isStreaming(workspaceId)) {
-        const stopResult = await this.interruptStream(workspaceId);
-        if (!stopResult.success) {
-          log.debug("Failed to stop stream during workspace archive", {
-            workspaceId,
-            error: stopResult.error,
-          });
-        }
-      }
-
       // Lifecycle hooks run *before* we persist archivedAt.
       //
       // NOTE: Archiving is typically a quick UI action, but it can fail if a hook needs to perform
@@ -1793,6 +1781,21 @@ export class WorkspaceService extends EventEmitter {
         });
         if (!hookResult.success) {
           return Err(hookResult.error);
+        }
+      }
+
+      // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
+      // "headless" with no obvious UI affordance to interrupt it.
+      //
+      // NOTE: We only interrupt after beforeArchive hooks succeed, so a hook failure doesn't stop
+      // an active stream.
+      if (this.aiService.isStreaming(workspaceId)) {
+        const stopResult = await this.interruptStream(workspaceId);
+        if (!stopResult.success) {
+          log.debug("Failed to stop stream during workspace archive", {
+            workspaceId,
+            error: stopResult.error,
+          });
         }
       }
 

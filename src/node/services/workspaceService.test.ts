@@ -524,6 +524,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
   const workspacePath = "/tmp/project/ws-archive";
 
   let workspaceService: WorkspaceService;
+  let mockAIService: AIService;
   let configState: ProjectsConfig;
   let editConfigSpy: ReturnType<typeof mock>;
 
@@ -580,7 +581,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
       cleanup: mock(() => Promise.resolve()),
     };
 
-    const aiService: AIService = {
+    mockAIService = {
       isStreaming: mock(() => false),
       getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
       // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -593,7 +594,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
       mockConfig as Config,
       mockHistoryService as HistoryService,
       mockPartialService as PartialService,
-      aiService,
+      mockAIService,
       mockInitStateManager as InitStateManager,
       mockExtensionMetadataService as ExtensionMetadataService,
       mockBackgroundProcessManager as BackgroundProcessManager
@@ -616,6 +617,23 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     const entry = configState.projects.get(projectPath)?.workspaces[0];
     expect(entry?.archivedAt).toBeUndefined();
+  });
+
+  test("does not interrupt an active stream when beforeArchive hook fails", async () => {
+    const hooks = new WorkspaceLifecycleHooks();
+    hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    (mockAIService.isStreaming as ReturnType<typeof mock>).mockReturnValue(true);
+
+    const interruptStreamSpy = mock(() => Promise.resolve(Ok(undefined)));
+    workspaceService.interruptStream =
+      interruptStreamSpy as unknown as typeof workspaceService.interruptStream;
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(false);
+    expect(interruptStreamSpy).toHaveBeenCalledTimes(0);
   });
 
   test("persists archivedAt when beforeArchive hooks succeed", async () => {
