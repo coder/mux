@@ -17,8 +17,8 @@ import { GitStatusIndicator } from "./GitStatusIndicator";
 import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { Menu, Trash2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
+import { Pencil, Trash2, Menu } from "lucide-react";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -255,10 +255,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
   const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
+    null
+  );
 
   useEffect(() => {
     if (isEditing) {
       setIsTitleMenuOpen(false);
+      setContextMenuPosition(null);
     }
   }, [isEditing]);
 
@@ -380,9 +384,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         onContextMenu={(e) => {
           if (isDisabled || isEditing) return;
 
-          // Right-click anywhere on the row should open the same actions menu as the hover hamburger.
           e.preventDefault();
           e.stopPropagation();
+          setContextMenuPosition({ x: e.clientX, y: e.clientY });
           setIsTitleMenuOpen(true);
         }}
         role="button"
@@ -414,14 +418,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     e.stopPropagation();
                     void onArchiveWorkspace(workspaceId, e.currentTarget);
                   }}
-                  aria-label={`Archive workspace ${displayTitle}`}
+                  aria-label={`Archive chat ${displayTitle}`}
                   data-workspace-id={workspaceId}
                 >
                   <ArchiveIcon className="h-3 w-3" />
                 </button>
               </TooltipTrigger>
               <TooltipContent align="start">
-                Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+                Archive chat ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
               </TooltipContent>
             </Tooltip>
           </ActionButtonWrapper>
@@ -471,6 +475,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 </HoverCardTrigger>
                 <HoverCardContent
                   align="start"
+                  side="top"
                   sideOffset={8}
                   className="border-separator-light bg-modal-bg w-auto max-w-[420px] px-[10px] py-[6px] text-[11px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
                   onPointerDownOutside={preventHoverCardDismissForRadixPortals}
@@ -501,7 +506,27 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 />
 
                 {!isDisabled && (
-                  <Popover open={isTitleMenuOpen} onOpenChange={setIsTitleMenuOpen}>
+                  <Popover
+                    open={isTitleMenuOpen}
+                    onOpenChange={(open) => {
+                      setIsTitleMenuOpen(open);
+                      if (!open) setContextMenuPosition(null);
+                    }}
+                  >
+                    {/* When opened via right-click, anchor at click position */}
+                    {contextMenuPosition && (
+                      <PopoverAnchor asChild>
+                        <span
+                          style={{
+                            position: "fixed",
+                            left: contextMenuPosition.x,
+                            top: contextMenuPosition.y,
+                            width: 0,
+                            height: 0,
+                          }}
+                        />
+                      </PopoverAnchor>
+                    )}
                     <PopoverTrigger asChild>
                       <button
                         className={cn(
@@ -518,20 +543,24 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     </PopoverTrigger>
 
                     <PopoverContent
-                      align="end"
-                      sideOffset={6}
-                      className="w-auto min-w-[140px] p-1"
+                      align={contextMenuPosition ? "start" : "end"}
+                      side={contextMenuPosition ? "right" : "bottom"}
+                      sideOffset={contextMenuPosition ? 0 : 6}
+                      className="w-[150px] !min-w-0 p-1"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
-                        className="text-foreground hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                        className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
                         onClick={(e) => {
                           e.stopPropagation();
                           setIsTitleMenuOpen(false);
                           startEditing();
                         }}
                       >
-                        Edit title
+                        <span className="flex items-center gap-2">
+                          <Pencil className="h-3 w-3" />
+                          Edit title
+                        </span>
                       </button>
                     </PopoverContent>
                   </Popover>
