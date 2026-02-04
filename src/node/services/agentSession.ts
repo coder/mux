@@ -1456,6 +1456,7 @@ export class AgentSession {
     if (!this.messageQueue.isEmpty()) {
       const displayText = this.messageQueue.getDisplayText();
       const fileParts = this.messageQueue.getFileParts();
+      const reviews = this.messageQueue.getReviews();
       this.messageQueue.clear();
       this.emitQueuedMessageChanged();
 
@@ -1464,6 +1465,7 @@ export class AgentSession {
         workspaceId: this.workspaceId,
         text: displayText,
         fileParts: fileParts,
+        reviews: reviews,
       });
     }
   }

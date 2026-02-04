@@ -622,6 +622,7 @@ export class WorkspaceStore {
           text: data.text,
           mode: "replace",
           fileParts: data.fileParts,
+          reviews: data.reviews,
         })
       );
     },

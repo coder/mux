@@ -1227,26 +1227,36 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         text: string;
         mode?: "append" | "replace";
         fileParts?: FilePart[];
+        reviews?: ReviewNoteDataForDisplay[];
       }>;
 
-      const { text, mode = "append", fileParts } = customEvent.detail;
+      const { text, mode = "append", fileParts, reviews } = customEvent.detail;
       const hasFileParts = !!fileParts && fileParts.length > 0;
+      const hasReviews = !!reviews && reviews.length > 0;
 
       if (mode === "replace") {
         if (editingMessage) {
           return;
         }
-        if (hasFileParts) {
-          restoreDraft({ content: text, fileParts, reviews: [] });
+        if (hasFileParts || hasReviews) {
+          restoreDraft({
+            content: text,
+            fileParts: fileParts ?? [],
+            reviews: reviews ?? [],
+          });
         } else {
           restoreText(text);
         }
-      } else if (hasFileParts) {
+      } else if (hasFileParts || hasReviews) {
         const currentText = getDraft().text;
         const separator = currentText.trim() ? "\n\n" : "";
         const nextText = currentText + separator + text;
         applyDraftFromPending(
-          { content: nextText, fileParts, reviews: [] },
+          {
+            content: nextText,
+            fileParts: fileParts ?? [],
+            reviews: reviews ?? [],
+          },
           `restored-${Date.now()}`
         );
       } else {

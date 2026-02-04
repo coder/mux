@@ -6,6 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
@@ -17,7 +18,7 @@ export const CUSTOM_EVENTS = {
 
   /**
    * Event to insert text into the chat input
-   * Detail: { text: string, mode?: "replace" | "append", fileParts?: FilePart[] }
+   * Detail: { text: string, mode?: "replace" | "append", fileParts?: FilePart[], reviews?: ReviewNoteDataForDisplay[] }
    */
   UPDATE_CHAT_INPUT: "mux:updateChatInput",
 
@@ -107,6 +108,7 @@ export interface CustomEventPayloads {
     text: string;
     mode?: "replace" | "append";
     fileParts?: FilePart[];
+    reviews?: ReviewNoteDataForDisplay[];
   };
   [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload

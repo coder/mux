@@ -112,6 +112,16 @@ describe("commandParser", () => {
       });
     });
 
+    it("treats inherited properties as literal model inputs", () => {
+      expectParse("/model toString", { type: "model-set", modelString: "toString" });
+      expectParse("/compact -m toString", {
+        type: "compact",
+        maxOutputTokens: undefined,
+        continueMessage: undefined,
+        model: "toString",
+      });
+    });
+
     it("should parse /vim command", () => {
       expectParse("/vim", { type: "vim-toggle" });
     });

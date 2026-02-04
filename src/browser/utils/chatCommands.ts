@@ -291,6 +291,15 @@ export async function processSlashCommand(
   // normal message-send flow (so side effects like review completion and last-read
   // tracking can't drift).
 
+  if (parsed.type === "model-oneshot") {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Model one-shot is handled in the chat input.",
+    });
+    return { clearInput: false, toastShown: true };
+  }
+
   if (parsed.type === "mcp-open") {
     setInput("");
     context.openSettings?.("projects");

@@ -387,6 +387,7 @@ export const RestoreToInputEventSchema = z.object({
   workspaceId: z.string(),
   text: z.string(),
   fileParts: z.array(FilePartSchema).optional(),
+  reviews: z.array(ReviewNoteDataSchema).optional(),
 });
 
 // All streaming events now have a `type` field for O(1) discriminated union lookup.
