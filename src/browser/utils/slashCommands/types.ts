@@ -13,6 +13,7 @@ import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
 export type ParsedCommand =
   | { type: "model-set"; modelString: string }
+  | { type: "model-oneshot"; modelString: string; message: string }
   | { type: "model-help" }
   | { type: "clear" }
   | { type: "truncate"; percentage: number }

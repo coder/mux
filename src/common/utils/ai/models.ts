@@ -12,7 +12,10 @@ export const defaultModel = DEFAULT_MODEL;
  * Otherwise returns the input unchanged.
  */
 export function resolveModelAlias(modelInput: string): string {
-  return MODEL_ABBREVIATIONS[modelInput] ?? modelInput;
+  if (Object.hasOwn(MODEL_ABBREVIATIONS, modelInput)) {
+    return MODEL_ABBREVIATIONS[modelInput];
+  }
+  return modelInput;
 }
 
 /**

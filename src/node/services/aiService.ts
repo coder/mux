@@ -3248,6 +3248,17 @@ export class AIService extends EventEmitter {
 
     return Ok(this.mockAiStreamPlayer.debugGetLastPrompt(workspaceId));
   }
+  debugGetLastMockModel(workspaceId: string): Result<string | null> {
+    if (typeof workspaceId !== "string" || workspaceId.trim().length === 0) {
+      return Err("debugGetLastMockModel: workspaceId is required");
+    }
+
+    if (!this.mockModeEnabled || !this.mockAiStreamPlayer) {
+      return Ok(null);
+    }
+
+    return Ok(this.mockAiStreamPlayer.debugGetLastModel(workspaceId));
+  }
 
   debugGetLastLlmRequest(workspaceId: string): Result<DebugLlmRequestSnapshot | null> {
     if (typeof workspaceId !== "string" || workspaceId.trim().length === 0) {

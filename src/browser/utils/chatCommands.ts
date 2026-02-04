@@ -144,6 +144,12 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   // Workspace Actions
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
+  /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
+  onMessageSent?: () => void;
+  /** Callback to mark review IDs as checked after successful send */
+  onCheckReviews?: (reviewIds: string[]) => void;
+  /** Review IDs that are attached (for marking as checked on success) */
+  attachedReviewIds?: string[];
 }
 
 // ============================================================================
@@ -278,6 +284,20 @@ export async function processSlashCommand(
       });
       return { clearInput: false, toastShown: true };
     }
+  }
+
+  // model-oneshot ("/<model-alias> ...") is handled directly in ChatInput.
+  // This keeps the command parsing centralized, but routes actual sending through the
+  // normal message-send flow (so side effects like review completion and last-read
+  // tracking can't drift).
+
+  if (parsed.type === "model-oneshot") {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Model one-shot is handled in the chat input.",
+    });
+    return { clearInput: false, toastShown: true };
   }
 
   if (parsed.type === "mcp-open") {

@@ -44,6 +44,8 @@ export function applyCompactionOverrides(
   return {
     ...baseOptions,
     agentId: "compact",
+    // Compaction shouldn't update persisted model/thinking defaults.
+    skipAiSettingsPersistence: true,
     model: compactionModel,
     thinkingLevel,
     maxOutputTokens: compactData.maxOutputTokens,

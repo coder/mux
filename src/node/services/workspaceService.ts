@@ -1914,13 +1914,18 @@ export class WorkspaceService extends EventEmitter {
 
   /**
    * Best-effort persist AI settings from send/resume options.
-   * Skips compaction requests which use a different model intentionally.
+   * Skips requests explicitly marked to avoid persistence.
    */
   private async maybePersistAISettingsFromOptions(
     workspaceId: string,
     options: SendMessageOptions | undefined,
     context: "send" | "resume"
   ): Promise<void> {
+    if (options?.skipAiSettingsPersistence) {
+      // One-shot/compaction sends shouldn't overwrite workspace defaults.
+      return;
+    }
+
     const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
     if (!extractedSettings) return;
 
@@ -1929,9 +1934,6 @@ export class WorkspaceService extends EventEmitter {
       typeof rawAgentId === "string" && rawAgentId.trim().length > 0
         ? rawAgentId.trim().toLowerCase()
         : WORKSPACE_DEFAULTS.agentId;
-
-    // Skip compaction - it may use a different model and shouldn't override user preference.
-    if (agentId === "compact") return;
 
     const persistResult = await this.persistWorkspaceAISettingsForAgent(
       workspaceId,

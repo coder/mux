@@ -387,6 +387,7 @@ export const RestoreToInputEventSchema = z.object({
   workspaceId: z.string(),
   text: z.string(),
   fileParts: z.array(FilePartSchema).optional(),
+  reviews: z.array(ReviewNoteDataSchema).optional(),
 });
 
 // All streaming events now have a `type` field for O(1) discriminated union lookup.
@@ -479,6 +480,10 @@ export const SendMessageOptionsSchema = z.object({
   }),
   providerOptions: MuxProviderOptionsSchema.optional(),
   muxMetadata: z.any().optional(), // Black box
+  /**
+   * When true, skip persisting AI settings (e.g., for one-shot or compaction sends).
+   */
+  skipAiSettingsPersistence: z.boolean().optional(),
   experiments: ExperimentsSchema.optional(),
   /**
    * When true, workspace-specific agent definitions are disabled.
