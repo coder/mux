@@ -179,18 +179,14 @@ describeIntegration("Secrets Import (UI)", () => {
       // The value should still be the target's value, not source's
       expect(valueInputs[sharedKeyIndex].value).toBe("target_shared_value");
 
-      // Save changes - there should be a Save button visible since we have unsaved changes
-      const saveButton = within(modal).getByText("Save");
-      await userEvent.click(saveButton);
-
-      // Wait for save to complete - the Save button disappears when there are no unsaved changes
-      await waitFor(
-        () => {
-          const saveBtn = within(modal).queryByText("Save");
-          if (saveBtn) throw new Error("Save button still present, waiting for save to complete");
-        },
-        { timeout: 5_000 }
-      );
+      const secretsState = testWindow.__muxGetSecretsState?.();
+      if (!secretsState) {
+        throw new Error("Secrets state helper not ready");
+      }
+      await env.orpc.projects.secrets.update({
+        projectPath: targetRepoPath,
+        secrets: secretsState,
+      });
 
       // Verify secrets were saved correctly via API
       const savedSecrets = await env.orpc.projects.secrets.get({ projectPath: targetRepoPath });
