@@ -237,7 +237,7 @@ export class StreamingMessageAggregator {
   // Adding a new cached value? Add it here and it will auto-invalidate.
   private displayedMessageCache = new Map<
     string,
-    { version: number; agentSkillSnapshotSha?: string; messages: DisplayedMessage[] }
+    { version: number; agentSkillSnapshotCacheKey?: string; messages: DisplayedMessage[] }
   >();
   private messageVersions = new Map<string, number>();
   private cache: {
@@ -2264,12 +2264,15 @@ export class StreamingMessageAggregator {
           ? { frontmatterYaml: agentSkillSnapshot.frontmatterYaml, body: agentSkillSnapshot.body }
           : undefined;
 
-        const agentSkillSnapshotSha = agentSkillSnapshot?.sha256;
+        const agentSkillSnapshotCacheKey = agentSkillSnapshot
+          ? `${agentSkillSnapshot.sha256 ?? ""}\n${agentSkillSnapshot.frontmatterYaml ?? ""}`
+          : undefined;
 
         const version = this.messageVersions.get(message.id) ?? 0;
         const cached = this.displayedMessageCache.get(message.id);
         const canReuse =
-          cached?.version === version && cached.agentSkillSnapshotSha === agentSkillSnapshotSha;
+          cached?.version === version &&
+          cached.agentSkillSnapshotCacheKey === agentSkillSnapshotCacheKey;
 
         const messageDisplay = canReuse
           ? cached.messages
@@ -2278,7 +2281,7 @@ export class StreamingMessageAggregator {
         if (!canReuse) {
           this.displayedMessageCache.set(message.id, {
             version,
-            agentSkillSnapshotSha,
+            agentSkillSnapshotCacheKey,
             messages: messageDisplay,
           });
         }

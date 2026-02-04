@@ -336,6 +336,76 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("agent skill snapshot cache", () => {
+    test("should invalidate cached hover snapshot when frontmatter changes", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const snapshotText = "<agent-skill>\nBODY\n</agent-skill>";
+
+      const snapshot1 = createMuxMessage("s1", "assistant", snapshotText, {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: "test-skill",
+          scope: "project",
+          sha256: "sha-1",
+          frontmatterYaml: "description: v1",
+        },
+      });
+
+      const invocation = createMuxMessage("u1", "user", "/test-skill", {
+        timestamp: 2,
+        historySequence: 2,
+        muxMetadata: {
+          type: "agent-skill",
+          rawCommand: "/test-skill",
+          skillName: "test-skill",
+          scope: "project",
+        },
+      });
+
+      aggregator.addMessage(snapshot1);
+      aggregator.addMessage(invocation);
+
+      const displayed1 = aggregator.getDisplayedMessages();
+      const user1 = displayed1.find((m) => m.type === "user" && m.id === "u1");
+      expect(user1).toBeDefined();
+
+      if (user1?.type === "user") {
+        expect(user1.agentSkill?.snapshot?.frontmatterYaml).toBe("description: v1");
+        expect(user1.agentSkill?.snapshot?.body).toBe("BODY");
+      }
+
+      // Update the snapshot frontmatter without changing body or sha256.
+      const snapshot2 = createMuxMessage("s1", "assistant", snapshotText, {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: "test-skill",
+          scope: "project",
+          sha256: "sha-1",
+          frontmatterYaml: "description: v2",
+        },
+      });
+
+      aggregator.addMessage(snapshot2);
+
+      const displayed2 = aggregator.getDisplayedMessages();
+      const user2 = displayed2.find((m) => m.type === "user" && m.id === "u1");
+      expect(user2).toBeDefined();
+
+      if (user2?.type === "user") {
+        expect(user2.agentSkill?.snapshot?.frontmatterYaml).toBe("description: v2");
+        expect(user2.agentSkill?.snapshot?.body).toBe("BODY");
+      }
+
+      // Cache should not reuse the prior DisplayedMessage when snapshot metadata changes.
+      expect(user2).not.toBe(user1);
+    });
+  });
+
   describe("todo lifecycle", () => {
     test("should clear todos when stream ends", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
