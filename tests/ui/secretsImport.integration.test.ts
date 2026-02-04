@@ -126,18 +126,21 @@ describeIntegration("Secrets Import (UI)", () => {
 
       if (importSelect) {
         const currentImportSelect = importSelect as HTMLSelectElement;
+        let sourceOptionIndex = -1;
         await waitFor(
           () => {
             const options = Array.from(currentImportSelect.options) as HTMLOptionElement[];
-            const optionExists = options.some((option) => option.value === sourceRepoPath);
-            if (!optionExists) {
+            sourceOptionIndex = options.findIndex((option) => option.value === sourceRepoPath);
+            if (sourceOptionIndex < 0) {
               throw new Error("Source project not in import options yet");
             }
           },
           { timeout: 5_000 }
         );
+        const sourceOption = currentImportSelect.options[sourceOptionIndex];
         // Use fireEvent for happy-dom stability in CI.
         await act(async () => {
+          sourceOption.selected = true;
           currentImportSelect.value = sourceRepoPath;
           fireEvent.change(currentImportSelect, { target: { value: sourceRepoPath } });
         });

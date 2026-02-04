@@ -183,7 +183,10 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
   );
 
   const handleTestImportChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedProjectPath = event.currentTarget.value;
+    const selectedProjectPath =
+      event.currentTarget.value ||
+      event.currentTarget.options[event.currentTarget.selectedIndex]?.value ||
+      "";
     if (!selectedProjectPath) return;
     void handleImportFromProject(selectedProjectPath);
     if (importSelectRef.current) {
