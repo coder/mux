@@ -206,7 +206,10 @@ export class MCPConfigService {
       output[name] = obj;
     }
 
-    await writeFileAtomic(filePath, JSON.stringify({ servers: output }, null, 2), "utf-8");
+    await writeFileAtomic(filePath, JSON.stringify({ servers: output }, null, 2), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
   }
 
   /**

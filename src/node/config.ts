@@ -951,7 +951,10 @@ export class Config {
 // }
 ${jsonString}`;
 
-      fs.writeFileSync(this.providersFile, contentWithComments);
+      writeFileAtomic.sync(this.providersFile, contentWithComments, {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
     } catch (error) {
       log.error("Error saving providers config:", error);
       throw error; // Re-throw to let caller handle
