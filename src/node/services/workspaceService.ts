@@ -993,6 +993,11 @@ export class WorkspaceService extends EventEmitter {
         log.error(`Could not find metadata for workspace ${workspaceId}, creating phantom cleanup`);
       }
 
+      // Avoid leaking init waiters/logs after workspace deletion.
+      // This must happen before deleting the session directory so queued init-status writes
+      // don't recreate ~/.mux/sessions/<workspaceId>/ after removal.
+      this.initStateManager.clearInMemoryState(workspaceId);
+
       // Remove session data
       try {
         const sessionDir = this.config.getSessionDir(workspaceId);
@@ -1008,9 +1013,6 @@ export class WorkspaceService extends EventEmitter {
 
       // Dispose session
       this.disposeSession(workspaceId);
-
-      // Avoid leaking init waiters/logs after workspace deletion.
-      this.initStateManager.clearInMemoryState(workspaceId);
 
       // Close any terminal sessions for this workspace
       this.terminalService?.closeWorkspaceSessions(workspaceId);

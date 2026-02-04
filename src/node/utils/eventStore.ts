@@ -1,4 +1,4 @@
-import { SessionFileManager } from "@/node/utils/sessionFile";
+import { SessionFileManager, type SessionFileWriteOptions } from "@/node/utils/sessionFile";
 import type { Config } from "@/node/config";
 import { log } from "@/node/services/log";
 
@@ -105,8 +105,12 @@ export class EventStore<TState, TEvent> {
    * Write state to disk.
    * Logs errors but doesn't throw (fire-and-forget pattern).
    */
-  async persist(workspaceId: string, state: TState): Promise<void> {
-    const result = await this.fileManager.write(workspaceId, state);
+  async persist(
+    workspaceId: string,
+    state: TState,
+    options?: SessionFileWriteOptions
+  ): Promise<void> {
+    const result = await this.fileManager.write(workspaceId, state, options);
     if (!result.success) {
       log.error(`[${this.storeName}] Failed to persist state for ${workspaceId}: ${result.error}`);
     }

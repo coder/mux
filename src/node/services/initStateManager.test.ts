@@ -6,6 +6,7 @@ import { Config } from "@/node/config";
 import { InitStateManager } from "./initStateManager";
 import type { WorkspaceInitEvent } from "@/common/orpc/types";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
+import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 
 describe("InitStateManager", () => {
   let tempDir: string;
@@ -247,6 +248,47 @@ describe("InitStateManager", () => {
       // This allows tools to proceed and fail naturally with their own errors
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(initPromise).resolves.toBeUndefined();
+    });
+
+    it("should not recreate session directory if queued persistence runs after state is cleared", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      const sessionDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(sessionDir, { recursive: true });
+
+      let releaseLock: (() => void) | undefined;
+      const lockHeld = workspaceFileLocks.withLock(workspaceId, async () => {
+        await new Promise<void>((resolve) => {
+          releaseLock = resolve;
+        });
+      });
+
+      // Let the lock callback run so releaseLock is set.
+      await Promise.resolve();
+      if (!releaseLock) {
+        throw new Error("Expected workspace file lock to be held");
+      }
+
+      // Queue endInit persistence behind the workspace file lock.
+      const endInitPromise = manager.endInit(workspaceId, 0);
+
+      // Simulate workspace removal: clear in-memory init state and delete the session directory.
+      manager.clearInMemoryState(workspaceId);
+      await fs.rm(sessionDir, { recursive: true, force: true });
+
+      // Allow queued persistence to proceed.
+      releaseLock();
+      await lockHeld;
+      await endInitPromise;
+
+      expect(await manager.readInitStatus(workspaceId)).toBeNull();
+
+      const sessionDirExists = await fs
+        .access(sessionDir)
+        .then(() => true)
+        .catch(() => false);
+      expect(sessionDirExists).toBe(false);
     });
   });
 
