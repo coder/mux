@@ -108,19 +108,19 @@ function buildEnvironmentContext(workspacePath: string, runtimeType: RuntimeMode
 
     case RUNTIME_MODE.SSH:
       // SSH runtime clones the repository on a remote host
-      description = `You are in a clone of a git repository at ${workspacePath}`;
+      description = `Your working directory is ${workspacePath} (a git repository clone)`;
       lines = gitCommonLines;
       break;
 
     case RUNTIME_MODE.DOCKER:
       // Docker runtime runs in an isolated container
-      description = `You are in a clone of a git repository at ${workspacePath} inside a Docker container`;
+      description = `Your working directory is ${workspacePath} (a git repository clone inside a Docker container)`;
       lines = gitCommonLines;
       break;
 
     case RUNTIME_MODE.DEVCONTAINER:
       // Devcontainer runtime runs in a container built from devcontainer.json
-      description = `You are in a git worktree at ${workspacePath} inside a Dev Container`;
+      description = `Your working directory is ${workspacePath} (a git worktree inside a Dev Container)`;
       lines = gitCommonLines;
       break;
 
