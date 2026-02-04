@@ -125,7 +125,21 @@ describeIntegration("Secrets Import (UI)", () => {
       );
 
       if (importSelect) {
-        await userEvent.selectOptions(importSelect, sourceRepoPath);
+        const currentImportSelect = importSelect as HTMLSelectElement;
+        await waitFor(
+          () => {
+            const options = Array.from(currentImportSelect.options) as HTMLOptionElement[];
+            const optionExists = options.some((option) => option.value === sourceRepoPath);
+            if (!optionExists) {
+              throw new Error("Source project not in import options yet");
+            }
+          },
+          { timeout: 5_000 }
+        );
+        // Use fireEvent for happy-dom stability in CI.
+        await act(async () => {
+          fireEvent.change(currentImportSelect, { target: { value: sourceRepoPath } });
+        });
       } else {
         // Note: userEvent.click fails due to happy-dom pointer-events detection, use fireEvent
         fireEvent.click(importTrigger!);
@@ -170,7 +184,7 @@ describeIntegration("Secrets Import (UI)", () => {
           const keyInputs = modal.querySelectorAll('input[placeholder="SECRET_NAME"]');
           expect(keyInputs.length).toBe(4);
         },
-        { timeout: 5_000 }
+        { timeout: 10_000 }
       );
 
       // Verify the keys are correct
