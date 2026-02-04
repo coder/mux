@@ -327,6 +327,12 @@ export async function processSlashCommand(
         undefined
       );
 
+      // When editing, always pass fileParts (empty array if none) so edits can clear attachments.
+      // For new messages, undefined means no attachments to avoid backend overhead.
+      const sendFileParts = context.editMessageId
+        ? context.fileParts ?? []
+        : context.fileParts;
+
       // Send message with model override (do NOT persist model preference)
       const result = await activeClient.workspace.sendMessage({
         workspaceId: context.workspaceId,
@@ -335,7 +341,7 @@ export async function processSlashCommand(
           ...context.sendMessageOptions,
           model: parsed.modelString, // Override model for this message only
           editMessageId: context.editMessageId,
-          fileParts: context.fileParts,
+          fileParts: sendFileParts,
           muxMetadata: reviewMetadata,
         },
       });
