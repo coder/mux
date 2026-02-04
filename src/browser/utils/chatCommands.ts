@@ -16,7 +16,6 @@ import {
   type CompactionFollowUpInput,
   isDefaultSourceContent,
   pickPreservedSendOptions,
-  prepareUserMessageForSend,
 } from "@/common/types/message";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -41,12 +40,7 @@ import {
 } from "@/browser/utils/messages/compactionModelPreference";
 import type { ChatAttachment } from "../components/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
-import {
-  getRuntimeKey,
-  copyWorkspaceStorage,
-  getWorkspaceLastReadKey,
-} from "@/common/constants/storage";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
 import {
   DEFAULT_COMPACTION_WORD_TARGET,
   WORDS_TO_TOKENS_RATIO,
@@ -292,108 +286,10 @@ export async function processSlashCommand(
     }
   }
 
-  // Handle model-oneshot: send a single message with a one-time model override
-  // This does NOT change the user's preferred model - it's a one-shot override
-  if (parsed.type === "model-oneshot") {
-    const activeClient = requireClient();
-    if (!activeClient) {
-      return { clearInput: false, toastShown: true };
-    }
-
-    if (!context.workspaceId) {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: "Model one-shot requires an active workspace",
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    if (context.variant !== "workspace") {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: "Model one-shot is only available in workspace view",
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    setSendingState(true);
-
-    try {
-      // Prepare message with reviews (if any) - matches normal send flow
-      const { finalText, metadata: reviewMetadata } = prepareUserMessageForSend(
-        { text: parsed.message, reviews: context.reviews },
-        undefined
-      );
-
-      // When editing, always pass fileParts (empty array if none) so edits can clear attachments.
-      // For new messages, undefined means no attachments to avoid backend overhead.
-      const sendFileParts = context.editMessageId
-        ? context.fileParts ?? []
-        : context.fileParts;
-
-      // Send message with model override (do NOT persist model preference)
-      const result = await activeClient.workspace.sendMessage({
-        workspaceId: context.workspaceId,
-        message: finalText,
-        options: {
-          ...context.sendMessageOptions,
-          model: parsed.modelString, // Override model for this message only
-          editMessageId: context.editMessageId,
-          fileParts: sendFileParts,
-          muxMetadata: reviewMetadata,
-        },
-      });
-
-      if (!result.success) {
-        // Convert SendMessageError to string for error display
-        const errorString = result.error
-          ? typeof result.error === "string"
-            ? result.error
-            : "type" in result.error
-              ? result.error.type
-              : "Failed to send message"
-          : "Failed to send message";
-        setToast({
-          id: Date.now().toString(),
-          type: "error",
-          message: errorString,
-        });
-        // Preserve input on error so user can retry
-        return { clearInput: false, toastShown: true };
-      }
-
-      // Success: apply all post-send side effects to match normal send behavior
-      setInput("");
-      context.setAttachments([]);
-
-      // Mark workspace as read (prevents unread indicator after user's own message)
-      updatePersistedState(getWorkspaceLastReadKey(context.workspaceId), Date.now());
-
-      // Mark attached reviews as checked
-      if (context.attachedReviewIds && context.attachedReviewIds.length > 0) {
-        context.onCheckReviews?.(context.attachedReviewIds);
-      }
-
-      context.onCancelEdit?.();
-      context.onMessageSent?.();
-
-      trackCommandUsed("model");
-      return { clearInput: true, toastShown: false };
-    } catch (error) {
-      console.error("Failed to send model-oneshot message:", error);
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to send message",
-      });
-      // Preserve input on error so user can retry
-      return { clearInput: false, toastShown: true };
-    } finally {
-      setSendingState(false);
-    }
-  }
+  // model-oneshot ("/<model-alias> ...") is handled directly in ChatInput.
+  // This keeps the command parsing centralized, but routes actual sending through the
+  // normal message-send flow (so side effects like review completion and last-read
+  // tracking can't drift).
 
   if (parsed.type === "mcp-open") {
     setInput("");

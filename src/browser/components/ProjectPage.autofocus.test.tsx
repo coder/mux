@@ -38,9 +38,9 @@ void mock.module("./ChatInput/index", () => ({
     onReady?: (api: {
       focus: () => void;
       restoreText: (text: string) => void;
+      restoreDraft: (pending: unknown) => void;
       appendText: (text: string) => void;
       prependText: (text: string) => void;
-      restoreAttachments: (images: unknown[]) => void;
     }) => void;
   }) => {
     useEffect(() => {
@@ -54,9 +54,9 @@ void mock.module("./ChatInput/index", () => ({
           focusMock();
         },
         restoreText: () => undefined,
+        restoreDraft: () => undefined,
         appendText: () => undefined,
         prependText: () => undefined,
-        restoreAttachments: () => undefined,
       });
     }, [props]);
 
