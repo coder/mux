@@ -117,6 +117,16 @@ const mockWorkspaces: CoderWorkspace[] = [
   },
 ];
 
+const mockParseError = "Unexpected token u in JSON at position 0";
+
+const mockCoderInfo = {
+  state: "available" as const,
+  version: "2.28.0",
+  // Include username + URL so Storybook renders the logged-in label in Coder stories.
+  username: "coder-user",
+  url: "https://coder.example.com",
+};
+
 /**
  * Coder available - shows Coder runtime button.
  * When Coder CLI is available, the Coder button appears in the runtime selector.
@@ -129,7 +139,7 @@ export const SSHWithCoderAvailable: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { state: "available", version: "2.28.0" },
+          coderInfo: mockCoderInfo,
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],
@@ -166,7 +176,7 @@ export const CoderNewWorkspace: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { state: "available", version: "2.28.0" },
+          coderInfo: mockCoderInfo,
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],
@@ -210,7 +220,7 @@ export const CoderExistingWorkspace: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { state: "available", version: "2.28.0" },
+          coderInfo: mockCoderInfo,
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],
@@ -243,6 +253,149 @@ export const CoderExistingWorkspace: AppStory = {
 
     // Wait for workspace dropdown to appear
     await canvas.findByTestId("coder-workspace-select", {}, { timeout: 5000 });
+  },
+};
+
+/**
+ * Coder existing workspace flow with parse error.
+ * Shows the error state when listing workspaces fails to parse.
+ */
+export const CoderExistingWorkspaceParseError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [],
+          coderInfo: mockCoderInfo,
+          coderTemplates: mockTemplates,
+          coderPresets: new Map([
+            ["coder-on-coder", mockPresetsCoderOnCoder],
+            ["kubernetes-dev", mockPresetsK8s],
+            ["aws-windows", []],
+          ]),
+          coderWorkspaces: mockWorkspaces,
+          coderWorkspacesResult: { ok: false, error: mockParseError },
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
+    const canvas = within(storyRoot);
+
+    // Wait for runtime controls
+    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+
+    // Click Coder runtime button directly
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await userEvent.click(coderButton);
+
+    // Wait for Coder controls
+    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+
+    // Click "Existing" button
+    const existingButton = canvas.getByRole("button", { name: "Existing" });
+    await userEvent.click(existingButton);
+
+    // Error message should appear for workspace listing
+    await canvas.findByText(mockParseError, {}, { timeout: 5000 });
+  },
+};
+
+/**
+ * Coder new workspace flow with template parse error.
+ * Shows the error state when listing templates fails to parse.
+ */
+export const CoderTemplatesParseError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [],
+          coderInfo: mockCoderInfo,
+          coderTemplatesResult: { ok: false, error: mockParseError },
+          coderWorkspaces: mockWorkspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
+    const canvas = within(storyRoot);
+
+    // Wait for runtime controls
+    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+
+    // Click Coder runtime button directly
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await userEvent.click(coderButton);
+
+    // Wait for Coder controls
+    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+
+    await canvas.findByText(mockParseError, {}, { timeout: 5000 });
+
+    const templateSelect = await canvas.findByTestId(
+      "coder-template-select",
+      {},
+      { timeout: 5000 }
+    );
+    await waitFor(() => {
+      if (!templateSelect.hasAttribute("data-disabled")) {
+        throw new Error("Template dropdown should be disabled when templates fail to load");
+      }
+    });
+  },
+};
+
+/**
+ * Coder new workspace flow with preset parse error.
+ * Shows the error state when listing presets fails to parse.
+ */
+export const CoderPresetsParseError: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        expandProjects(["/Users/dev/my-project"]);
+        return createMockORPCClient({
+          projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
+          workspaces: [],
+          coderInfo: mockCoderInfo,
+          coderTemplates: mockTemplates,
+          coderPresets: new Map([
+            ["coder-on-coder", mockPresetsCoderOnCoder],
+            ["kubernetes-dev", mockPresetsK8s],
+            ["aws-windows", []],
+          ]),
+          coderPresetsResult: new Map([["coder-on-coder", { ok: false, error: mockParseError }]]),
+          coderWorkspaces: mockWorkspaces,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openProjectCreationView(storyRoot);
+    const canvas = within(storyRoot);
+
+    // Wait for runtime controls
+    await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
+
+    // Click Coder runtime button directly
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await userEvent.click(coderButton);
+
+    // Wait for Coder controls and template select
+    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-template-select", {}, { timeout: 5000 });
+
+    await canvas.findByText(mockParseError, {}, { timeout: 5000 });
   },
 };
 
@@ -347,7 +500,7 @@ export const CoderNoPresets: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { state: "available", version: "2.28.0" },
+          coderInfo: mockCoderInfo,
           coderTemplates: [
             { name: "simple-vm", displayName: "Simple VM", organizationName: "default" },
           ],
@@ -398,7 +551,7 @@ export const CoderNoRunningWorkspaces: AppStory = {
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
-          coderInfo: { state: "available", version: "2.28.0" },
+          coderInfo: mockCoderInfo,
           coderTemplates: mockTemplates,
           coderPresets: new Map([
             ["coder-on-coder", mockPresetsCoderOnCoder],

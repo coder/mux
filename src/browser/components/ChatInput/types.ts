@@ -26,7 +26,6 @@ export interface ChatInputWorkspaceVariant {
   runtimeType?: TelemetryRuntimeType;
   onMessageSent?: () => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
-  onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;
   isStreamStarting?: boolean;
@@ -70,7 +69,6 @@ export interface ChatInputCreationVariant {
     metadata: FrontendWorkspaceMetadata,
     options?: WorkspaceCreatedOptions
   ) => void;
-  onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   onModelChange?: (model: string) => void;
   disabled?: boolean;
   onReady?: (api: ChatInputAPI) => void;

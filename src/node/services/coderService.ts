@@ -9,6 +9,9 @@ import { spawn, type ChildProcess } from "child_process";
 import {
   CoderWorkspaceStatusSchema,
   type CoderInfo,
+  type CoderListPresetsResult,
+  type CoderListTemplatesResult,
+  type CoderListWorkspacesResult,
   type CoderTemplate,
   type CoderPreset,
   type CoderWorkspace,
@@ -21,7 +24,22 @@ export interface CoderApiSession {
   token: string;
   dispose: () => Promise<void>;
 }
-export type { CoderInfo, CoderTemplate, CoderPreset, CoderWorkspace, CoderWorkspaceStatus };
+export type {
+  CoderInfo,
+  CoderListPresetsResult,
+  CoderListTemplatesResult,
+  CoderListWorkspacesResult,
+  CoderTemplate,
+  CoderPreset,
+  CoderWorkspace,
+  CoderWorkspaceStatus,
+};
+
+interface CoderWhoamiData {
+  url: string;
+  username?: string;
+  id?: string;
+}
 
 /** Discriminated union for workspace status check results */
 export type WorkspaceStatusResult =
@@ -277,6 +295,8 @@ export class CoderService {
   // This keeps token reuse explicit without persisting anything to disk.
   private provisioningSessions = new Map<string, CoderApiSession>();
   private cachedInfo: CoderInfo | null = null;
+  // Cache whoami results so later URL lookups can reuse the last CLI response.
+  private cachedWhoami: CoderWhoamiData | null = null;
 
   /**
    * Get Coder CLI info. Caches result for the session.
@@ -310,7 +330,22 @@ export class CoderService {
         return this.cachedInfo;
       }
 
-      this.cachedInfo = { state: "available", version };
+      let whoami: CoderWhoamiData | null = null;
+      try {
+        whoami = await this.getWhoamiData();
+      } catch (error) {
+        // Username and deployment URL are optional; do not block availability on whoami failures.
+        log.debug("Failed to fetch Coder whoami data", { error });
+      }
+
+      const availableInfo: CoderInfo = {
+        state: "available",
+        version,
+        ...(whoami?.username ? { username: whoami.username } : {}),
+        ...(whoami?.url ? { url: whoami.url } : {}),
+      };
+
+      this.cachedInfo = availableInfo;
       return this.cachedInfo;
     } catch (error) {
       log.debug("Coder CLI not available", { error });
@@ -438,6 +473,31 @@ export class CoderService {
    */
   clearCache(): void {
     this.cachedInfo = null;
+    this.cachedWhoami = null;
+  }
+
+  // Preserve the old behavior: explicit whoami checks should hit the CLI even if cached.
+  // The cache only exists so later URL lookups can reuse the last whoami response.
+  private async getWhoamiData(options?: { useCache?: boolean }): Promise<CoderWhoamiData> {
+    if (options?.useCache && this.cachedWhoami) {
+      return this.cachedWhoami;
+    }
+
+    using proc = execAsync("coder whoami --output=json");
+    const { stdout } = await proc.result;
+
+    const data = JSON.parse(stdout) as Array<Partial<CoderWhoamiData>>;
+    if (!data[0]?.url) {
+      throw new Error("Could not determine Coder deployment URL from `coder whoami`");
+    }
+
+    this.cachedWhoami = {
+      url: data[0].url,
+      username: data[0].username,
+      id: data[0].id,
+    };
+
+    return this.cachedWhoami;
   }
 
   /**
@@ -445,14 +505,8 @@ export class CoderService {
    * Throws if Coder CLI is not configured/logged in.
    */
   private async getDeploymentUrl(): Promise<string> {
-    using proc = execAsync("coder whoami --output json");
-    const { stdout } = await proc.result;
-
-    const data = JSON.parse(stdout) as Array<{ url: string }>;
-    if (!data[0]?.url) {
-      throw new Error("Could not determine Coder deployment URL from `coder whoami`");
-    }
-    return data[0].url;
+    const { url } = await this.getWhoamiData({ useCache: true });
+    return url;
   }
 
   /**
@@ -679,14 +733,14 @@ export class CoderService {
   /**
    * List available Coder templates.
    */
-  async listTemplates(): Promise<CoderTemplate[]> {
+  async listTemplates(): Promise<CoderListTemplatesResult> {
     try {
       using proc = execAsync("coder templates list --output=json");
       const { stdout } = await proc.result;
 
       // Handle empty output (no templates)
       if (!stdout.trim()) {
-        return [];
+        return { ok: true, templates: [] };
       }
 
       // CLI returns [{Template: {...}}, ...] wrapper structure
@@ -698,16 +752,22 @@ export class CoderService {
         };
       }>;
 
-      return raw.map((entry) => ({
-        name: entry.Template.name,
-        displayName: entry.Template.display_name ?? entry.Template.name,
-        organizationName: entry.Template.organization_name ?? "default",
-      }));
+      return {
+        ok: true,
+        templates: raw.map((entry) => ({
+          name: entry.Template.name,
+          displayName: entry.Template.display_name ?? entry.Template.name,
+          organizationName: entry.Template.organization_name ?? "default",
+        })),
+      };
     } catch (error) {
-      // Common user state: Coder CLI installed but not configured/logged in.
-      // Don't spam error logs for UI list calls.
-      log.debug("Failed to list Coder templates", { error });
-      return [];
+      const message =
+        error instanceof Error
+          ? error.message.split("\n")[0].slice(0, 200).trim()
+          : "Unknown error";
+      // Surface CLI failures so the UI doesn't show "No templates" incorrectly.
+      log.warn("Failed to list Coder templates", { error });
+      return { ok: false, error: message || "Unknown error" };
     }
   }
 
@@ -716,7 +776,7 @@ export class CoderService {
    * @param templateName - Template name
    * @param org - Organization name for disambiguation (optional)
    */
-  async listPresets(templateName: string, org?: string): Promise<CoderPreset[]> {
+  async listPresets(templateName: string, org?: string): Promise<CoderListPresetsResult> {
     try {
       const orgFlag = org ? ` --org ${shescape.quote(org)}` : "";
       using proc = execAsync(
@@ -726,7 +786,7 @@ export class CoderService {
 
       // Handle empty output (no presets)
       if (!stdout.trim()) {
-        return [];
+        return { ok: true, presets: [] };
       }
 
       // CLI returns [{TemplatePreset: {ID, Name, ...}}, ...] wrapper structure
@@ -739,18 +799,23 @@ export class CoderService {
         };
       }>;
 
-      return raw.map((entry) => ({
-        id: entry.TemplatePreset.ID,
-        name: entry.TemplatePreset.Name,
-        description: entry.TemplatePreset.Description,
-        isDefault: entry.TemplatePreset.Default ?? false,
-      }));
+      return {
+        ok: true,
+        presets: raw.map((entry) => ({
+          id: entry.TemplatePreset.ID,
+          name: entry.TemplatePreset.Name,
+          description: entry.TemplatePreset.Description,
+          isDefault: entry.TemplatePreset.Default ?? false,
+        })),
+      };
     } catch (error) {
-      log.debug("Failed to list Coder presets (may not exist for template)", {
-        templateName,
-        error,
-      });
-      return [];
+      const message =
+        error instanceof Error
+          ? error.message.split("\n")[0].slice(0, 200).trim()
+          : "Unknown error";
+      // Surface CLI failures so the UI doesn't show "No presets" incorrectly.
+      log.warn("Failed to list Coder presets", { templateName, error });
+      return { ok: false, error: message || "Unknown error" };
     }
   }
 
@@ -784,7 +849,7 @@ export class CoderService {
   /**
    * List Coder workspaces (all statuses).
    */
-  async listWorkspaces(): Promise<CoderWorkspace[]> {
+  async listWorkspaces(): Promise<CoderListWorkspacesResult> {
     // Derive known statuses from schema to avoid duplication and prevent ORPC validation errors
     const KNOWN_STATUSES = new Set<string>(CoderWorkspaceStatusSchema.options);
 
@@ -794,7 +859,7 @@ export class CoderService {
 
       // Handle empty output (no workspaces)
       if (!stdout.trim()) {
-        return [];
+        return { ok: true, workspaces: [] };
       }
 
       const workspaces = JSON.parse(stdout) as Array<{
@@ -807,19 +872,26 @@ export class CoderService {
       }>;
 
       // Filter to known statuses to avoid ORPC schema validation failures
-      return workspaces
-        .filter((w) => KNOWN_STATUSES.has(w.latest_build.status))
-        .map((w) => ({
-          name: w.name,
-          templateName: w.template_name,
-          templateDisplayName: w.template_display_name || w.template_name,
-          status: w.latest_build.status as CoderWorkspaceStatus,
-        }));
+      return {
+        ok: true,
+        workspaces: workspaces
+          .filter((w) => KNOWN_STATUSES.has(w.latest_build.status))
+          .map((w) => ({
+            name: w.name,
+            templateName: w.template_name,
+            templateDisplayName: w.template_display_name || w.template_name,
+            status: w.latest_build.status as CoderWorkspaceStatus,
+          })),
+      };
     } catch (error) {
-      // Common user state: Coder CLI installed but not configured/logged in.
-      // Don't spam error logs for UI list calls.
-      log.debug("Failed to list Coder workspaces", { error });
-      return [];
+      const message =
+        error instanceof Error
+          ? error.message.split("\n")[0].slice(0, 200).trim()
+          : "Unknown error";
+      // Users reported seeing "No workspaces found" even when the CLI failed,
+      // so surface an error state instead of silently returning an empty list.
+      log.warn("Failed to list Coder workspaces", { error });
+      return { ok: false, error: message || "Unknown error" };
     }
   }
 

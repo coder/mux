@@ -361,12 +361,21 @@ export const TaskApplyGitPatchToolArgsSchema = z
   })
   .strict();
 
+const TaskApplyGitPatchAppliedCommitSchema = z
+  .object({
+    // Commit subject line (always stable, even across dry-run vs real apply)
+    subject: z.string().min(1),
+    // Optional SHA (omitted for dry-run because the commit IDs may differ when applied for real)
+    sha: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const TaskApplyGitPatchToolResultSchema = z.union([
   z
     .object({
       success: z.literal(true),
       taskId: z.string(),
-      appliedCommitCount: z.number().int().nonnegative(),
+      appliedCommits: z.array(TaskApplyGitPatchAppliedCommitSchema),
       headCommitSha: z.string().optional(),
       dryRun: z.boolean().optional(),
       note: z.string().optional(),
@@ -741,6 +750,8 @@ export const TOOL_DEFINITIONS = {
   task: {
     description:
       "Spawn a sub-agent task (child workspace). " +
+      "\n\nIMPORTANT: Subagents only see committed state. Uncommitted changes are not available. " +
+      "Commit any changes you want the sub-agent to consider before spawning a task. " +
       "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background. " +
       "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
       "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +

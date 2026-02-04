@@ -61,10 +61,16 @@ interface UseCoderWorkspaceReturn {
 
   /** Available templates */
   templates: CoderTemplate[];
+  /** Error message when templates fail to load (null = no error) */
+  templatesError: string | null;
   /** Presets for the currently selected template */
   presets: CoderPreset[];
+  /** Error message when presets fail to load (null = no error) */
+  presetsError: string | null;
   /** Running Coder workspaces */
   existingWorkspaces: CoderWorkspace[];
+  /** Error message when workspaces fail to load (null = no error) */
+  workspacesError: string | null;
 
   /** Loading states */
   loadingTemplates: boolean;
@@ -103,8 +109,11 @@ export function useCoderWorkspace({
   coderConfigRef.current = coderConfig;
   onCoderConfigChangeRef.current = onCoderConfigChange;
   const [templates, setTemplates] = useState<CoderTemplate[]>([]);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [presets, setPresets] = useState<CoderPreset[]>([]);
+  const [presetsError, setPresetsError] = useState<string | null>(null);
   const [existingWorkspaces, setExistingWorkspaces] = useState<CoderWorkspace[]>([]);
+  const [workspacesError, setWorkspacesError] = useState<string | null>(null);
 
   // Loading states
   const [loadingTemplates, setLoadingTemplates] = useState(false);
@@ -150,29 +159,43 @@ export function useCoderWorkspace({
   useEffect(() => {
     if (!api || !enabled || coderInfo?.state !== "available") {
       setTemplates([]);
+      setTemplatesError(null);
       setLoadingTemplates(false);
       return;
     }
 
     let mounted = true;
     setLoadingTemplates(true);
+    setTemplatesError(null);
 
     api.coder
       .listTemplates()
       .then((result) => {
-        if (mounted) {
-          setTemplates(result);
+        if (!mounted) return;
+        if (result.ok) {
+          setTemplates(result.templates);
+          setTemplatesError(null);
           // Auto-select first template if none selected
-          const autoConfig = buildAutoSelectedTemplateConfig(coderConfigRef.current, result);
+          const autoConfig = buildAutoSelectedTemplateConfig(
+            coderConfigRef.current,
+            result.templates
+          );
           if (autoConfig) {
             onCoderConfigChange(autoConfig);
           }
+        } else {
+          setTemplates([]);
+          setTemplatesError(result.error);
         }
       })
-      .catch(() => {
-        if (mounted) {
-          setTemplates([]);
-        }
+      .catch((error) => {
+        if (!mounted) return;
+        const message =
+          error instanceof Error
+            ? error.message.split("\n")[0].slice(0, 200).trim()
+            : "Unknown error";
+        setTemplates([]);
+        setTemplatesError(message || "Unknown error");
       })
       .finally(() => {
         if (mounted) {
@@ -190,25 +213,36 @@ export function useCoderWorkspace({
   useEffect(() => {
     if (!api || !enabled || coderInfo?.state !== "available") {
       setExistingWorkspaces([]);
+      setWorkspacesError(null);
       setLoadingWorkspaces(false);
       return;
     }
 
     let mounted = true;
     setLoadingWorkspaces(true);
+    setWorkspacesError(null);
 
     api.coder
       .listWorkspaces()
       .then((result) => {
-        if (mounted) {
-          // Backend already filters to running workspaces by default
-          setExistingWorkspaces(result);
+        if (!mounted) return;
+        if (result.ok) {
+          setExistingWorkspaces(result.workspaces);
+          setWorkspacesError(null);
+        } else {
+          // Users reported "No workspaces found" even when the CLI failed; surface the error.
+          setExistingWorkspaces([]);
+          setWorkspacesError(result.error);
         }
       })
-      .catch(() => {
-        if (mounted) {
-          setExistingWorkspaces([]);
-        }
+      .catch((error) => {
+        if (!mounted) return;
+        const message =
+          error instanceof Error
+            ? error.message.split("\n")[0].slice(0, 200).trim()
+            : "Unknown error";
+        setExistingWorkspaces([]);
+        setWorkspacesError(message || "Unknown error");
       })
       .finally(() => {
         if (mounted) {
@@ -225,12 +259,14 @@ export function useCoderWorkspace({
   useEffect(() => {
     if (!api || !enabled || !coderConfig?.template || coderConfig.existingWorkspace) {
       setPresets([]);
+      setPresetsError(null);
       setLoadingPresets(false);
       return;
     }
 
     let mounted = true;
     setLoadingPresets(true);
+    setPresetsError(null);
 
     // Capture template/org at request time to detect stale responses
     const templateAtRequest = coderConfig.template;
@@ -251,37 +287,55 @@ export function useCoderWorkspace({
           return;
         }
 
-        setPresets(result);
+        if (result.ok) {
+          setPresets(result.presets);
+          setPresetsError(null);
 
-        // Presets rules (per spec):
-        // - 0 presets: no dropdown
-        // - 1 preset: auto-select silently
-        // - 2+ presets: dropdown shown, auto-select default if exists, otherwise user must pick
-        // Use ref to get current config (avoids stale closure if user changed config during fetch)
-        const currentConfig = coderConfigRef.current;
-        if (currentConfig && !currentConfig.existingWorkspace) {
-          if (result.length === 1) {
-            const onlyPreset = result[0];
-            if (onlyPreset && currentConfig.preset !== onlyPreset.name) {
-              onCoderConfigChange({ ...currentConfig, preset: onlyPreset.name });
+          // Presets rules (per spec):
+          // - 0 presets: no dropdown
+          // - 1 preset: auto-select silently
+          // - 2+ presets: dropdown shown, auto-select default if exists, otherwise user must pick
+          // Use ref to get current config (avoids stale closure if user changed config during fetch)
+          const currentConfig = coderConfigRef.current;
+          if (currentConfig && !currentConfig.existingWorkspace) {
+            if (result.presets.length === 1) {
+              const onlyPreset = result.presets[0];
+              if (onlyPreset && currentConfig.preset !== onlyPreset.name) {
+                onCoderConfigChange({ ...currentConfig, preset: onlyPreset.name });
+              }
+            } else if (result.presets.length >= 2 && !currentConfig.preset) {
+              // Auto-select default preset if available, otherwise first preset
+              // This keeps UI and config in sync (UI falls back to first preset for display)
+              const defaultPreset = result.presets.find((p) => p.isDefault);
+              const presetToSelect = defaultPreset ?? result.presets[0];
+              if (presetToSelect) {
+                onCoderConfigChange({ ...currentConfig, preset: presetToSelect.name });
+              }
+            } else if (result.presets.length === 0 && currentConfig.preset) {
+              onCoderConfigChange({ ...currentConfig, preset: undefined });
             }
-          } else if (result.length >= 2 && !currentConfig.preset) {
-            // Auto-select default preset if available, otherwise first preset
-            // This keeps UI and config in sync (UI falls back to first preset for display)
-            const defaultPreset = result.find((p) => p.isDefault);
-            const presetToSelect = defaultPreset ?? result[0];
-            if (presetToSelect) {
-              onCoderConfigChange({ ...currentConfig, preset: presetToSelect.name });
-            }
-          } else if (result.length === 0 && currentConfig.preset) {
-            onCoderConfigChange({ ...currentConfig, preset: undefined });
           }
+        } else {
+          setPresets([]);
+          setPresetsError(result.error);
         }
       })
-      .catch(() => {
-        if (mounted) {
-          setPresets([]);
+      .catch((error) => {
+        if (!mounted) {
+          return;
         }
+        if (
+          coderConfigRef.current?.template !== templateAtRequest ||
+          coderConfigRef.current?.templateOrg !== orgAtRequest
+        ) {
+          return;
+        }
+        const message =
+          error instanceof Error
+            ? error.message.split("\n")[0].slice(0, 200).trim()
+            : "Unknown error";
+        setPresets([]);
+        setPresetsError(message || "Unknown error");
       })
       .finally(() => {
         // Only clear loading for the active request (not stale ones)
@@ -338,8 +392,11 @@ export function useCoderWorkspace({
     coderConfig,
     setCoderConfig: onCoderConfigChange,
     templates,
+    templatesError,
     presets,
+    presetsError,
     existingWorkspaces,
+    workspacesError,
     loadingTemplates,
     loadingPresets,
     loadingWorkspaces,

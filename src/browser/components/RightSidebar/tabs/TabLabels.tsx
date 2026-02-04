@@ -2,6 +2,9 @@
  * Tab label components for RightSidebar tabs.
  *
  * Each tab type has its own label component that handles badges, icons, and actions.
+ *
+ * CostsTabLabel and StatsTabLabel subscribe to their own data to avoid re-rendering
+ * the entire RightSidebarTabsetNode tree when stats update during agent streaming.
  */
 
 import React from "react";
@@ -11,22 +14,49 @@ import { FileIcon } from "../../FileIcon";
 import { formatTabDuration, type ReviewStats } from "./registry";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { cn } from "@/common/lib/utils";
+import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
+import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 
 interface CostsTabLabelProps {
-  sessionCost: number | null;
+  workspaceId: string;
 }
 
-/** Costs tab label with session cost badge */
-export const CostsTabLabel: React.FC<CostsTabLabelProps> = ({ sessionCost }) => (
-  <>
-    Costs
-    {sessionCost !== null && (
-      <span className="text-muted text-[10px]">
-        ${sessionCost < 0.01 ? "<0.01" : sessionCost.toFixed(2)}
-      </span>
-    )}
-  </>
-);
+/**
+ * Costs tab label with session cost badge.
+ * Subscribes to workspace usage directly to avoid re-rendering parent components.
+ */
+export const CostsTabLabel: React.FC<CostsTabLabelProps> = ({ workspaceId }) => {
+  const usage = useWorkspaceUsage(workspaceId);
+
+  const sessionCost = React.useMemo(() => {
+    const parts: ChatUsageDisplay[] = [];
+    if (usage.sessionTotal) parts.push(usage.sessionTotal);
+    if (usage.liveCostUsage) parts.push(usage.liveCostUsage);
+    if (parts.length === 0) return null;
+
+    const aggregated = sumUsageHistory(parts);
+    if (!aggregated) return null;
+
+    const total =
+      (aggregated.input.cost_usd ?? 0) +
+      (aggregated.cached.cost_usd ?? 0) +
+      (aggregated.cacheCreate.cost_usd ?? 0) +
+      (aggregated.output.cost_usd ?? 0) +
+      (aggregated.reasoning.cost_usd ?? 0);
+    return total > 0 ? total : null;
+  }, [usage.sessionTotal, usage.liveCostUsage]);
+
+  return (
+    <>
+      Costs
+      {sessionCost !== null && (
+        <span className="text-muted text-[10px]">
+          ${sessionCost < 0.01 ? "<0.01" : sessionCost.toFixed(2)}
+        </span>
+      )}
+    </>
+  );
+};
 
 interface ReviewTabLabelProps {
   reviewStats: ReviewStats | null;
@@ -50,18 +80,32 @@ export const ReviewTabLabel: React.FC<ReviewTabLabelProps> = ({ reviewStats }) =
 );
 
 interface StatsTabLabelProps {
-  sessionDuration: number | null;
+  workspaceId: string;
 }
 
-/** Stats tab label with session duration badge */
-export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ sessionDuration }) => (
-  <>
-    Stats
-    {sessionDuration !== null && (
-      <span className="text-muted text-[10px]">{formatTabDuration(sessionDuration)}</span>
-    )}
-  </>
-);
+/**
+ * Stats tab label with session duration badge.
+ * Subscribes to workspace stats directly to avoid re-rendering parent components.
+ */
+export const StatsTabLabel: React.FC<StatsTabLabelProps> = ({ workspaceId }) => {
+  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
+
+  const sessionDuration = React.useMemo(() => {
+    const baseDuration = statsSnapshot?.session?.totalDurationMs ?? 0;
+    const activeDuration = statsSnapshot?.active?.elapsedMs ?? 0;
+    const total = baseDuration + activeDuration;
+    return total > 0 ? total : null;
+  }, [statsSnapshot]);
+
+  return (
+    <>
+      Stats
+      {sessionDuration !== null && (
+        <span className="text-muted text-[10px]">{formatTabDuration(sessionDuration)}</span>
+      )}
+    </>
+  );
+};
 
 /** Explorer tab label with folder tree icon */
 export const ExplorerTabLabel: React.FC = () => (

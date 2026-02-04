@@ -5,23 +5,13 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { parseCommand } from "./parser";
 
 describe("parser multiline compatibility", () => {
-  it("allows /providers with newlines in value", () => {
-    const result = parseCommand("/providers set anthropic apiKey\nsk-123");
+  it("allows /compact with multiline follow-up", () => {
+    const result = parseCommand("/compact\nContinue here");
     expect(result).toEqual({
-      type: "providers-set",
-      provider: "anthropic",
-      keyPath: ["apiKey"],
-      value: "sk-123",
-    });
-  });
-
-  it("allows /providers with newlines between args", () => {
-    const result = parseCommand("/providers\nset\nanthropic\napiKey\nsk-456");
-    expect(result).toEqual({
-      type: "providers-set",
-      provider: "anthropic",
-      keyPath: ["apiKey"],
-      value: "sk-456",
+      type: "compact",
+      maxOutputTokens: undefined,
+      continueMessage: "Continue here",
+      model: undefined,
     });
   });
 

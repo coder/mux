@@ -16,6 +16,7 @@ import {
   splitBashOutputLines,
 } from "@/node/services/system1/bashOutputFiltering";
 import { decideBashOutputCompaction } from "@/node/services/system1/bashCompactionPolicy";
+import { truncateBashOutput } from "@/common/utils/truncateBashOutput";
 import { runSystem1KeepRangesForBashOutput } from "@/node/services/system1/system1AgentRunner";
 import {
   formatBashOutputReport,
@@ -113,6 +114,7 @@ import {
   resolveAgentBody,
   resolveAgentFrontmatter,
   discoverAgentDefinitions,
+  type AgentDefinitionsRoots,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
@@ -441,6 +443,74 @@ function appendToolNote(existing: string | undefined, extra: string): string {
   }
 
   return `${existing}\n\n${extra}`;
+}
+
+/**
+ * Discover agent definitions for tool description context.
+ *
+ * The task tool lists "Available sub-agents" by filtering on
+ * AgentDefinitionDescriptor.subagentRunnable.
+ *
+ * NOTE: discoverAgentDefinitions() sets descriptor.subagentRunnable from the agent's *own*
+ * frontmatter only, which means derived agents (e.g. `base: exec`) may incorrectly appear
+ * non-runnable if they don't repeat `subagent.runnable: true`.
+ *
+ * Re-resolve frontmatter with inheritance (base-first) so subagent.runnable is inherited.
+ */
+export async function discoverAvailableSubagentsForToolContext(args: {
+  runtime: Parameters<typeof discoverAgentDefinitions>[0];
+  workspacePath: string;
+  cfg: ReturnType<Config["loadConfigOrDefault"]>;
+  roots?: AgentDefinitionsRoots;
+}): Promise<Awaited<ReturnType<typeof discoverAgentDefinitions>>> {
+  assert(args, "discoverAvailableSubagentsForToolContext: args is required");
+  assert(args.runtime, "discoverAvailableSubagentsForToolContext: runtime is required");
+  assert(
+    args.workspacePath && args.workspacePath.length > 0,
+    "discoverAvailableSubagentsForToolContext: workspacePath is required"
+  );
+  assert(args.cfg, "discoverAvailableSubagentsForToolContext: cfg is required");
+
+  const discovered = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
+    roots: args.roots,
+  });
+
+  const resolved = await Promise.all(
+    discovered.map(async (descriptor) => {
+      try {
+        const resolvedFrontmatter = await resolveAgentFrontmatter(
+          args.runtime,
+          args.workspacePath,
+          descriptor.id,
+          { roots: args.roots }
+        );
+
+        const effectivelyDisabled = isAgentEffectivelyDisabled({
+          cfg: args.cfg,
+          agentId: descriptor.id,
+          resolvedFrontmatter,
+        });
+
+        if (effectivelyDisabled) {
+          return null;
+        }
+
+        return {
+          ...descriptor,
+          // Important: descriptor.subagentRunnable comes from the agent's own frontmatter only.
+          // Re-resolve with inheritance so derived agents inherit runnable: true from their base.
+          subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
+        };
+      } catch {
+        // Best-effort: keep the descriptor if enablement or inheritance can't be resolved.
+        return descriptor;
+      }
+    })
+  );
+
+  return resolved.filter((descriptor): descriptor is NonNullable<typeof descriptor> =>
+    Boolean(descriptor)
+  );
 }
 
 export class AIService extends EventEmitter {
@@ -991,6 +1061,13 @@ export class AIService extends EventEmitter {
         }
         const { region } = creds;
 
+        // Optional AWS shared config profile name (equivalent to AWS_PROFILE).
+        // Useful for SSO profiles when Mux isn't launched with AWS_PROFILE set.
+        const profile =
+          typeof providerConfig.profile === "string" && providerConfig.profile.trim()
+            ? providerConfig.profile.trim()
+            : undefined;
+
         const baseFetch = getProviderFetch(providerConfig);
         const { createAmazonBedrock } = await PROVIDER_REGISTRY.bedrock();
 
@@ -1041,7 +1118,7 @@ export class AIService extends EventEmitter {
         // - And more...
         const provider = createAmazonBedrock({
           region,
-          credentialProvider: fromNodeProviderChain(),
+          credentialProvider: fromNodeProviderChain(profile ? { profile } : {}),
           fetch: baseFetch,
         });
         return Ok(provider(modelId));
@@ -1779,34 +1856,11 @@ export class AIService extends EventEmitter {
       // For tool descriptions (task tool), filter to agents that are effectively enabled.
       let agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
       if (!isSubagentWorkspace) {
-        const discovered = await discoverAgentDefinitions(runtime, agentDiscoveryPath);
-
-        const filtered = await Promise.all(
-          discovered.map(async (descriptor) => {
-            try {
-              const resolvedFrontmatter = await resolveAgentFrontmatter(
-                runtime,
-                agentDiscoveryPath,
-                descriptor.id
-              );
-
-              const effectivelyDisabled = isAgentEffectivelyDisabled({
-                cfg,
-                agentId: descriptor.id,
-                resolvedFrontmatter,
-              });
-
-              return effectivelyDisabled ? null : descriptor;
-            } catch {
-              // Best-effort: keep the descriptor if enablement can't be resolved.
-              return descriptor;
-            }
-          })
-        );
-
-        agentDefinitions = filtered.filter(
-          (descriptor): descriptor is NonNullable<typeof descriptor> => Boolean(descriptor)
-        );
+        agentDefinitions = await discoverAvailableSubagentsForToolContext({
+          runtime,
+          workspacePath: agentDiscoveryPath,
+          cfg,
+        });
       }
 
       // Discover available skills for tool description context
@@ -2382,11 +2436,28 @@ export class AIService extends EventEmitter {
               }): Promise<{ filteredOutput: string; notice: string } | undefined> => {
                 let system1TimedOut = false;
 
-                try {
-                  if (typeof params.output !== "string" || params.output.length === 0) {
+                if (typeof params.output !== "string" || params.output.length === 0) {
+                  return undefined;
+                }
+
+                // Apply hard truncation as a safety net. This ensures output is bounded
+                // even when System1 compaction is skipped or fails.
+                const hardTruncation = truncateBashOutput(params.output);
+
+                // Helper to return truncation result when skipping System1 compaction
+                const returnHardTruncationIfNeeded = ():
+                  | { filteredOutput: string; notice: string }
+                  | undefined => {
+                  if (!hardTruncation.truncated) {
                     return undefined;
                   }
+                  return {
+                    filteredOutput: hardTruncation.output,
+                    notice: `Output exceeded hard limits (${hardTruncation.originalLines} lines, ${hardTruncation.originalBytes} bytes). Showing last ${hardTruncation.output.split("\n").length} lines.`,
+                  };
+                };
 
+                try {
                   const minLines =
                     taskSettings.bashOutputCompactionMinLines ??
                     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default;
@@ -2424,7 +2495,8 @@ export class AIService extends EventEmitter {
                   const triggeredByBytes = decision.triggeredByBytes;
 
                   if (!triggeredByLines && !triggeredByBytes) {
-                    return undefined;
+                    // Output is below compaction thresholds, but may still exceed hard limits
+                    return returnHardTruncationIfNeeded();
                   }
 
                   if (!decision.shouldCompact) {
@@ -2446,7 +2518,8 @@ export class AIService extends EventEmitter {
                       timeoutMs,
                     });
 
-                    return undefined;
+                    // System1 compaction skipped, but still apply hard limits
+                    return returnHardTruncationIfNeeded();
                   }
 
                   const maxKeptLines = decision.effectiveMaxKeptLines;
@@ -2657,7 +2730,8 @@ export class AIService extends EventEmitter {
                     upstreamAborted,
                     isAbortError,
                   });
-                  return undefined;
+                  // System1 failed, but still apply hard limits as safety net
+                  return returnHardTruncationIfNeeded();
                 }
               };
 

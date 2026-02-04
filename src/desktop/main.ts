@@ -48,6 +48,8 @@ import type { Config } from "@/node/config";
 import type { ServiceContainer } from "@/node/services/serviceContainer";
 import { VERSION } from "@/version";
 import { getMuxHome, migrateLegacyMuxHome } from "@/common/constants/paths";
+import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
+import { parseMuxDeepLink } from "@/common/utils/deepLink";
 
 import assert from "@/common/utils/assert";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
@@ -147,13 +149,17 @@ if (!gotTheLock) {
 } else {
   // This is the primary instance
   console.log("This is the primary instance");
-  app.on("second-instance", () => {
+  app.on("second-instance", (_event, argv) => {
     // Someone tried to run a second instance, focus our window instead
     console.log("Second instance attempted to start");
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+
+    try {
+      handleArgvMuxDeepLinks(argv);
+    } catch (error) {
+      console.debug("[deep-link] Failed to parse second-instance argv for mux deep links:", error);
     }
+
+    focusMainWindow();
   });
 }
 
@@ -161,6 +167,89 @@ let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+
+// mux:// deep links can arrive before the main window exists / finishes loading.
+const bufferedMuxDeepLinks: MuxDeepLinkPayload[] = [];
+let mainWindowFinishedLoading = false;
+
+function focusMainWindow() {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
+function flushBufferedMuxDeepLinks() {
+  if (!mainWindow || !mainWindowFinishedLoading) return;
+
+  while (bufferedMuxDeepLinks.length > 0) {
+    const payload = bufferedMuxDeepLinks[0];
+    try {
+      mainWindow.webContents.send("mux:deep-link", payload);
+      bufferedMuxDeepLinks.shift();
+    } catch (error) {
+      // Best-effort: never crash startup if the renderer isn't ready.
+      console.debug("[deep-link] Failed to send mux deep link payload:", error);
+      return;
+    }
+  }
+}
+
+function handleMuxDeepLink(raw: string) {
+  try {
+    const payload = parseMuxDeepLink(raw);
+    if (!payload) return;
+
+    // Buffer until the renderer has finished loading.
+    if (!mainWindow || !mainWindowFinishedLoading) {
+      bufferedMuxDeepLinks.push(payload);
+      return;
+    }
+
+    mainWindow.webContents.send("mux:deep-link", payload);
+  } catch (error) {
+    // Best-effort: never crash startup if argv parsing/protocol handling is weird.
+    console.debug(`[deep-link] Failed to handle mux deep link: ${raw}`, error);
+  }
+}
+
+function handleArgvMuxDeepLinks(argv: string[]) {
+  for (const arg of argv) {
+    if (arg.startsWith("mux:")) {
+      handleMuxDeepLink(arg);
+    }
+  }
+}
+
+// macOS deep links arrive via open-url (must be registered before ready)
+if (process.platform === "darwin") {
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handleMuxDeepLink(url);
+    focusMainWindow();
+  });
+}
+
+// Initial launch: Windows/Linux deep links are passed in argv.
+try {
+  handleArgvMuxDeepLinks(process.argv);
+} catch (error) {
+  console.debug("[deep-link] Failed to parse initial argv for mux deep links:", error);
+}
+
+function registerMuxProtocolClient() {
+  try {
+    if (!app.isPackaged && process.defaultApp && process.argv[1]) {
+      // On Windows dev builds, Electron needs the executable + app path to register.
+      app.setAsDefaultProtocolClient("mux", process.execPath, [path.resolve(process.argv[1])]);
+      return;
+    }
+
+    app.setAsDefaultProtocolClient("mux");
+  } catch (error) {
+    // Best-effort: never crash startup if protocol registration fails.
+    console.debug("[deep-link] Failed to register mux:// protocol handler:", error);
+  }
+}
 
 /**
  * Format timestamp as HH:MM:SS.mmm for readable logging
@@ -646,6 +735,8 @@ async function loadServices(): Promise<void> {
 function createWindow() {
   assert(services, "Services must be loaded before creating window");
 
+  mainWindowFinishedLoading = false;
+
   // Calculate default window size (80% of screen)
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
@@ -750,6 +841,9 @@ function createWindow() {
     console.timeEnd("[window] Content load");
     console.log(`[${timestamp()}] [window] Content finished loading`);
 
+    mainWindowFinishedLoading = true;
+    flushBufferedMuxDeepLinks();
+
     // NOTE: Tokenizer modules are NOT loaded at startup anymore!
     // The Proxy in tokenizer.ts loads them on-demand when first accessed.
     // This reduces startup time from ~8s to <1s.
@@ -758,6 +852,7 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+    mainWindowFinishedLoading = false;
   });
 }
 
@@ -766,6 +861,8 @@ if (gotTheLock) {
   void app.whenReady().then(async () => {
     try {
       console.log("App ready, creating window...");
+
+      registerMuxProtocolClient();
 
       // Migrate from .cmux to .mux directory structure if needed
       migrateLegacyMuxHome();

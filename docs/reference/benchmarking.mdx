@@ -13,19 +13,19 @@ Mux ships with a headless adapter for [Terminal-Bench](https://www.tbench.ai/). 
 
 Optional environment overrides:
 
-| Variable              | Purpose                                                   | Default                                |
-| --------------------- | --------------------------------------------------------- | -------------------------------------- |
-| `MUX_AGENT_REPO_ROOT` | Path copied into each task container                      | repo root inferred from the agent file |
-| `MUX_TRUNK`           | Branch checked out when preparing the project             | `main`                                 |
-| `MUX_WORKSPACE_ID`    | Workspace identifier used inside Mux                      | `mux-bench`                            |
-| `MUX_MODEL`           | Preferred model (supports `provider/model` syntax)        | `anthropic/claude-sonnet-4-5`          |
-| `MUX_THINKING_LEVEL`  | Optional reasoning level (`off`, `low`, `medium`, `high`) | `high`                                 |
-| `MUX_MODE`            | Starting mode (`plan` or `exec`)                          | `exec`                                 |
-| `MUX_RUNTIME`         | Runtime type (`local`, `worktree`, or `ssh <host>`)       | `worktree`                             |
-| `MUX_TIMEOUT_MS`      | Optional stream timeout in milliseconds                   | no timeout                             |
-| `MUX_CONFIG_ROOT`     | Location for Mux session data inside the container        | `/root/.mux`                           |
-| `MUX_APP_ROOT`        | Path where the Mux sources are staged                     | `/opt/mux-app`                         |
-| `MUX_PROJECT_PATH`    | Explicit project directory inside the task container      | auto-detected from common paths        |
+| Variable              | Purpose                                              | Default                                |
+| --------------------- | ---------------------------------------------------- | -------------------------------------- |
+| `MUX_AGENT_REPO_ROOT` | Path copied into each task container                 | repo root inferred from the agent file |
+| `MUX_TRUNK`           | Branch checked out when preparing the project        | `main`                                 |
+| `MUX_WORKSPACE_ID`    | Workspace identifier used inside Mux                 | `mux-bench`                            |
+| `MUX_MODEL`           | Preferred model (supports `provider/model` syntax)   | `anthropic/claude-sonnet-4-5`          |
+| `MUX_THINKING_LEVEL`  | Reasoning level (`OFF`, `LOW`, `MED`, `HIGH`, `MAX`) | `HIGH`                                 |
+| `MUX_MODE`            | Starting mode (`plan` or `exec`)                     | `exec`                                 |
+| `MUX_RUNTIME`         | Runtime type (`local`, `worktree`, or `ssh <host>`)  | `worktree`                             |
+| `MUX_TIMEOUT_MS`      | Optional stream timeout in milliseconds              | no timeout                             |
+| `MUX_CONFIG_ROOT`     | Location for Mux session data inside the container   | `/root/.mux`                           |
+| `MUX_APP_ROOT`        | Path where the Mux sources are staged                | `/opt/mux-app`                         |
+| `MUX_PROJECT_PATH`    | Explicit project directory inside the task container | auto-detected from common paths        |
 
 ## Running Terminal-Bench
 

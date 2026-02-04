@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { SlashSuggestion } from "@/browser/utils/slashCommands/types";
 import { getSlashCommandSuggestions } from "@/browser/utils/slashCommands/suggestions";
-import type { ORPCClient } from "../orpc/client";
 import { filterSuggestionsForMobile, MOBILE_HIDDEN_COMMANDS } from "../utils/slashCommandHelpers";
 
 interface UseSlashCommandSuggestionsOptions {
   input: string;
-  client: Pick<ORPCClient, "providers">;
   hiddenCommands?: ReadonlySet<string>;
   enabled?: boolean;
 }
@@ -18,34 +16,7 @@ interface UseSlashCommandSuggestionsResult {
 export function useSlashCommandSuggestions(
   options: UseSlashCommandSuggestionsOptions
 ): UseSlashCommandSuggestionsResult {
-  const { input, client, hiddenCommands = MOBILE_HIDDEN_COMMANDS, enabled = true } = options;
-  const [providerNames, setProviderNames] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (!enabled) {
-      setProviderNames([]);
-      return;
-    }
-
-    let cancelled = false;
-    const loadProviders = async () => {
-      try {
-        const names = await client.providers.list();
-        if (!cancelled && Array.isArray(names)) {
-          setProviderNames(names);
-        }
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.error("[useSlashCommandSuggestions] Failed to load provider names", error);
-        }
-      }
-    };
-
-    void loadProviders();
-    return () => {
-      cancelled = true;
-    };
-  }, [client, enabled]);
+  const { input, hiddenCommands = MOBILE_HIDDEN_COMMANDS, enabled = true } = options;
 
   const suggestions = useMemo(() => {
     if (!enabled) {
@@ -55,9 +26,9 @@ export function useSlashCommandSuggestions(
     if (!trimmed.startsWith("/")) {
       return [];
     }
-    const raw = getSlashCommandSuggestions(trimmed, { providerNames }) ?? [];
+    const raw = getSlashCommandSuggestions(trimmed) ?? [];
     return filterSuggestionsForMobile(raw, hiddenCommands);
-  }, [enabled, hiddenCommands, input, providerNames]);
+  }, [enabled, hiddenCommands, input]);
 
   return { suggestions };
 }

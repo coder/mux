@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useLayoutEffect } from "react";
 import type { DisplayedMessage } from "@/common/types/message";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { TypewriterMarkdown } from "./TypewriterMarkdown";
+import { normalizeReasoningMarkdown } from "./MarkdownStyles";
 import { cn } from "@/common/lib/utils";
 import { Shimmer } from "../ai-elements/shimmer";
 import { Lightbulb } from "lucide-react";
@@ -60,13 +61,26 @@ export const ReasoningMessage: React.FC<ReasoningMessageProps> = ({ message, cla
       return <div className="text-thinking-mode opacity-60">Thinking...</div>;
     }
 
-    // Streaming text gets typewriter effect
+    // Preserve single newlines so short section headers (e.g. "Fixing …") don't get
+    // collapsed into the previous paragraph by the markdown renderer.
+    //
+    // Also apply a small heuristic fixup for providers that omit a leading newline
+    // before bold section headers (e.g. `...!**Deciding...**\n\n`).
+    // Streaming text gets typewriter effect.
     if (isStreaming) {
-      return <TypewriterMarkdown deltas={[content]} isComplete={false} />;
+      return (
+        <TypewriterMarkdown
+          deltas={[normalizeReasoningMarkdown(content)]}
+          isComplete={false}
+          preserveLineBreaks
+        />
+      );
     }
 
     // Completed text renders as static content
-    return content ? <MarkdownRenderer content={content} /> : null;
+    return content ? (
+      <MarkdownRenderer content={normalizeReasoningMarkdown(content)} preserveLineBreaks />
+    ) : null;
   };
 
   return (

@@ -11,7 +11,7 @@ type SendMessageOptions = NonNullable<
 >;
 
 export interface SlashCommandRunnerContext {
-  client: Pick<ORPCClient, "workspace" | "providers" | "projects">;
+  client: Pick<ORPCClient, "workspace" | "projects">;
   workspaceId?: string | null;
   metadata?: FrontendWorkspaceMetadata | null;
   sendMessageOptions: SendMessageOptions;
@@ -46,20 +46,6 @@ export async function executeSlashCommand(
         "/model",
         "Usage: /model <model-id>. Example: /model anthropic:claude-sonnet-4-5"
       );
-      return true;
-    case "providers-set":
-      return handleProviderSet(ctx, parsed);
-    case "providers-help":
-      ctx.showInfo("/providers", "Usage: /providers set <provider> <keyPath> <value>");
-      return true;
-    case "providers-missing-args":
-      ctx.showError(
-        "/providers",
-        "Missing required arguments. Usage: /providers set <provider> <keyPath> <value>"
-      );
-      return true;
-    case "providers-invalid-subcommand":
-      ctx.showError("/providers", `Unknown subcommand: ${parsed.subcommand}`);
       return true;
     case "fork":
       return handleFork(ctx, parsed);
@@ -192,28 +178,6 @@ async function handleCompaction(
     return true;
   } catch (error) {
     ctx.showError("Compaction", getErrorMessage(error));
-    return true;
-  }
-}
-
-async function handleProviderSet(
-  ctx: SlashCommandRunnerContext,
-  parsed: Extract<ParsedCommand, { type: "providers-set" }>
-): Promise<boolean> {
-  try {
-    const result = await ctx.client.providers.setProviderConfig({
-      provider: parsed.provider,
-      keyPath: parsed.keyPath,
-      value: parsed.value,
-    });
-    if (!result.success) {
-      ctx.showError("Providers", result.error ?? "Failed to update provider");
-      return true;
-    }
-    ctx.showInfo("Providers", `Updated ${parsed.provider}`);
-    return true;
-  } catch (error) {
-    ctx.showError("Providers", getErrorMessage(error));
     return true;
   }
 }

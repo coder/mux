@@ -1,5 +1,6 @@
 import type { RouterClient } from "@orpc/server";
 import type { AppRouter } from "@/node/orpc/router";
+import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
 
 // Our simplified permission modes for UI
 export type UIPermissionMode = "plan" | "edit";
@@ -32,6 +33,10 @@ declare global {
     // Register a callback for notification clicks (navigates to workspace)
     // Returns an unsubscribe function.
     onNotificationClicked?: (callback: (data: { workspaceId: string }) => void) => () => void;
+    // Consume any mux:// deep links received before the renderer subscribed.
+    consumePendingDeepLinks?: () => MuxDeepLinkPayload[];
+    // Subscribe to mux:// deep links as they arrive. Returns an unsubscribe function.
+    onDeepLink?: (callback: (payload: MuxDeepLinkPayload) => void) => () => void;
     // Optional ORPC-backed API surfaces populated in tests/storybook mocks
     tokenizer?: unknown;
     providers?: unknown;

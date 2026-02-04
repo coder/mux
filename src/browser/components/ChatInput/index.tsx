@@ -57,6 +57,7 @@ import {
   processSlashCommand,
   type SlashCommandContext,
 } from "@/browser/utils/chatCommands";
+import { Button } from "../ui/button";
 import { shouldTriggerAutoCompaction } from "@/browser/utils/compaction/shouldTriggerAutoCompaction";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
@@ -219,7 +220,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   const [commandSuggestions, setCommandSuggestions] = useState<SlashSuggestion[]>([]);
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
-  const [providerNames, setProviderNames] = useState<string[]>([]);
   const [toast, setToast] = useState<Toast | null>(null);
   // State for destructive command confirmation modal
   const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState<{
@@ -716,8 +716,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   coderConfig: coderState.coderConfig,
                   onCoderConfigChange: coderState.setCoderConfig,
                   templates: coderState.templates,
+                  templatesError: coderState.templatesError,
                   presets: coderState.presets,
+                  presetsError: coderState.presetsError,
                   existingWorkspaces: coderState.existingWorkspaces,
+                  workspacesError: coderState.workspacesError,
                   loadingTemplates: coderState.loadingTemplates,
                   loadingPresets: coderState.loadingPresets,
                   loadingWorkspaces: coderState.loadingWorkspaces,
@@ -1064,36 +1067,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Watch input for slash commands
   useEffect(() => {
     const suggestions = getSlashCommandSuggestions(input, {
-      providerNames,
       agentSkills: agentSkillDescriptors,
       variant,
       mcpAllowUserDefined,
     });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, providerNames, agentSkillDescriptors, variant, mcpAllowUserDefined]);
-
-  // Load provider names for suggestions
-  useEffect(() => {
-    let isMounted = true;
-
-    const loadProviders = async () => {
-      try {
-        const names = await api?.providers.list();
-        if (isMounted && Array.isArray(names)) {
-          setProviderNames(names);
-        }
-      } catch (error) {
-        console.error("Failed to load provider list:", error);
-      }
-    };
-
-    void loadProviders();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [api]);
+  }, [input, agentSkillDescriptors, variant, mcpAllowUserDefined]);
 
   // Load agent skills for suggestions
   useEffect(() => {
@@ -1415,7 +1395,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setAttachments,
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
       setToast,
-      onProviderConfig: props.onProviderConfig,
       setPreferredModel,
       setVimEnabled,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
@@ -2097,7 +2076,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           "relative flex flex-col gap-1",
           variant === "creation"
             ? "bg-separator w-full max-w-3xl rounded-lg border border-border-light px-6 py-5 shadow-lg"
-            : "bg-separator border-border-light border-t px-[15px] pt-[5px] pb-[max(15px,min(env(safe-area-inset-bottom,0px),40px))] mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]"
+            : "bg-separator border-border-light border-t px-[15px] pt-[5px] pb-[max(8px,min(env(safe-area-inset-bottom,0px),40px))] mb-[calc(-1*min(env(safe-area-inset-bottom,0px),40px))]"
         )}
         data-component="ChatInputSection"
         data-autofocus-state="done"
@@ -2236,11 +2215,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               </div>
             )}
 
-            <div className="@container flex flex-wrap items-center gap-x-3 gap-y-1 [@container(max-width:480px)]:flex-col [@container(max-width:480px)]:items-stretch [@container(max-width:480px)]:gap-1">
-              {/* Row 1 on mobile: Model Selector + Thinking Slider */}
-              <div className="flex items-center gap-x-3 [@container(max-width:480px)]:w-full">
+            <div className="@container flex min-w-[340px] flex-nowrap items-center gap-1.5">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5">
                 <div
-                  className="flex items-center gap-2"
+                  className="flex min-w-0 items-center gap-1.5"
                   data-component="ModelSelectorGroup"
                   data-tutorial="model-selector"
                 >
@@ -2254,8 +2232,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     onSetDefaultModel={setDefaultModel}
                     hiddenModels={hiddenModels}
                     onOpenSettings={() => open("models")}
+                    className="w-[clamp(5.5rem,28vw,8rem)] min-w-0"
                   />
-                  <div className="hidden [@media(hover:hover)_and_(pointer:fine)]:block">
+                  <div className="hidden [@container(min-width:500px)]:[@media(hover:hover)_and_(pointer:fine)]:block">
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <HelpIndicator>?</HelpIndicator>
@@ -2284,21 +2263,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   </div>
                 </div>
 
-                {/* Thinking Slider - slider hidden on narrow containers, label always clickable */}
-                <div
-                  className="flex items-center [&_.thinking-slider]:[@container(max-width:550px)]:hidden"
-                  data-component="ThinkingSliderGroup"
-                >
+                <div className="flex shrink-0 items-center" data-component="ThinkingSliderGroup">
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
-                <div className="ml-4 flex items-center" data-component="ModelSettingsGroup">
+
+                <div className="flex items-center" data-component="ModelSettingsGroup">
                   <ModelSettings model={baseModel || ""} />
                 </div>
               </div>
 
-              {/* Row 2 on mobile: Context Usage + Agent Mode + Send Button */}
               <div
-                className="ml-auto flex items-center gap-2 [@container(max-width:480px)]:ml-0 [@container(max-width:480px)]:w-full [@container(max-width:480px)]:justify-end"
+                className="flex min-w-0 items-center justify-end gap-1.5"
                 data-component="ModelControls"
                 data-tutorial="mode-selector"
               >
@@ -2309,27 +2284,34 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     idleCompaction={idleCompactionProps}
                   />
                 )}
-                <AgentModePicker onComplete={() => inputRef.current?.focus()} />
+
+                <div className="min-w-0 [@container(max-width:340px)]:hidden">
+                  <AgentModePicker
+                    className="min-w-0"
+                    onComplete={() => inputRef.current?.focus()}
+                  />
+                </div>
+
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <button
+                    <Button
                       type="button"
                       onClick={() => void handleSend()}
                       disabled={!canSend}
                       aria-label="Send message"
-                      style={{ backgroundColor: focusBorderColor }}
+                      size="xs"
+                      variant="ghost"
                       className={cn(
-                        "border-border-light inline-flex items-center justify-center rounded-sm border px-1.5 py-0.5 text-[11px] font-medium transition-colors duration-200 hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100",
-                        // Mobile: wider tap target + larger icon, keep icon centered.
-                        "[@container(max-width:480px)]:h-9 [@container(max-width:480px)]:w-11 [@container(max-width:480px)]:px-0 [@container(max-width:480px)]:py-0 [@container(max-width:480px)]:text-sm",
-                        currentAgent?.uiColor ? "text-white" : "text-text"
+                        "text-muted hover:text-foreground hover:bg-hover inline-flex items-center justify-center rounded-sm px-1.5 py-0.5 font-medium transition-colors duration-200 disabled:opacity-50",
+                        // Touch: wider tap target, keep icon centered.
+                        "[@media(hover:none)_and_(pointer:coarse)]:h-9 [@media(hover:none)_and_(pointer:coarse)]:w-11 [@media(hover:none)_and_(pointer:coarse)]:px-0 [@media(hover:none)_and_(pointer:coarse)]:py-0 [@media(hover:none)_and_(pointer:coarse)]:text-sm"
                       )}
                     >
                       <SendHorizontal
-                        className="h-3.5 w-3.5 [@container(max-width:480px)]:h-4 [@container(max-width:480px)]:w-4"
+                        className="h-3.5 w-3.5 [@media(hover:none)_and_(pointer:coarse)]:h-4 [@media(hover:none)_and_(pointer:coarse)]:w-4"
                         strokeWidth={2.5}
                       />
-                    </button>
+                    </Button>
                   </TooltipTrigger>
                   <TooltipContent align="center">
                     Send message ({formatKeybind(KEYBINDS.SEND_MESSAGE)})

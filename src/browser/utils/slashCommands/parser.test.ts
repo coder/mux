@@ -7,10 +7,6 @@ const expectParse = (input: string, expected: ReturnType<typeof parseCommand>) =
   expect(parseCommand(input)).toEqual(expected);
 };
 
-const expectProvidersSet = (input: string, provider: string, keyPath: string[], value: string) => {
-  expectParse(input, { type: "providers-set", provider, keyPath, value });
-};
-
 const expectModelSet = (input: string, modelString: string) => {
   expectParse(input, { type: "model-set", modelString });
 };
@@ -27,76 +23,12 @@ describe("commandParser", () => {
       expectParse("/clear", { type: "clear" });
     });
 
-    it("should parse /providers help when no subcommand", () => {
-      expectParse("/providers", { type: "providers-help" });
-    });
-
-    it("should parse /providers with invalid subcommand", () => {
-      expectParse("/providers invalid", {
-        type: "providers-invalid-subcommand",
-        subcommand: "invalid",
+    it("treats removed /providers command as unknown", () => {
+      expectParse("/providers", {
+        type: "unknown-command",
+        command: "providers",
+        subcommand: undefined,
       });
-    });
-
-    it("should parse /providers set with missing args", () => {
-      const missingArgsCases = [
-        { input: "/providers set", argCount: 0 },
-        { input: "/providers set anthropic", argCount: 1 },
-        { input: "/providers set anthropic apiKey", argCount: 2 },
-      ];
-
-      missingArgsCases.forEach(({ input, argCount }) => {
-        expectParse(input, {
-          type: "providers-missing-args",
-          subcommand: "set",
-          argCount,
-        });
-      });
-    });
-
-    it("should parse /providers set with all arguments", () => {
-      expectProvidersSet(
-        "/providers set anthropic apiKey sk-123",
-        "anthropic",
-        ["apiKey"],
-        "sk-123"
-      );
-    });
-
-    it("rejects mux-gateway provider for /providers set", () => {
-      expectParse("/providers set mux-gateway couponCode abc123", {
-        type: "command-invalid-args",
-        command: "providers set",
-        input: "mux-gateway",
-        usage: "/providers set <provider> <key> <value>",
-      });
-    });
-
-    it("should handle quoted arguments", () => {
-      expectProvidersSet(
-        '/providers set anthropic apiKey "my key with spaces"',
-        "anthropic",
-        ["apiKey"],
-        "my key with spaces"
-      );
-    });
-
-    it("should handle multiple spaces in value", () => {
-      expectProvidersSet(
-        "/providers set anthropic apiKey My Anthropic API",
-        "anthropic",
-        ["apiKey"],
-        "My Anthropic API"
-      );
-    });
-
-    it("should handle nested key paths", () => {
-      expectProvidersSet(
-        "/providers set anthropic baseUrl.scheme https",
-        "anthropic",
-        ["baseUrl", "scheme"],
-        "https"
-      );
     });
 
     it("should parse unknown commands", () => {
@@ -111,24 +43,6 @@ describe("commandParser", () => {
         command: "foo",
         subcommand: "bar",
       });
-    });
-
-    it("should handle multiple spaces between arguments", () => {
-      expectProvidersSet(
-        "/providers   set   anthropic   apiKey   sk-12345",
-        "anthropic",
-        ["apiKey"],
-        "sk-12345"
-      );
-    });
-
-    it("should handle quoted URL values", () => {
-      expectProvidersSet(
-        '/providers set anthropic baseUrl "https://api.anthropic.com/v1"',
-        "anthropic",
-        ["baseUrl"],
-        "https://api.anthropic.com/v1"
-      );
     });
 
     it("should parse /model with abbreviation", () => {

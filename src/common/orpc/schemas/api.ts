@@ -103,6 +103,8 @@ export const tokenizer = {
 // Providers
 export const AWSCredentialStatusSchema = z.object({
   region: z.string().optional(),
+  /** Optional AWS shared config profile name (equivalent to AWS_PROFILE). */
+  profile: z.string().optional(),
   bearerTokenSet: z.boolean(),
   accessKeyIdSet: z.boolean(),
   secretAccessKeySet: z.boolean(),

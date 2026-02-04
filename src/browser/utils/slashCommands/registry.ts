@@ -43,99 +43,6 @@ function parseMultilineCommand(rawInput: string): {
 // Re-export MODEL_ABBREVIATIONS from constants for backwards compatibility
 export { MODEL_ABBREVIATIONS };
 
-const PROVIDER_SLASH_COMMAND_BLOCKLIST = new Set(["mux-gateway"]);
-
-function isProviderSlashCommandBlocked(provider: string | undefined): boolean {
-  // Mux Gateway settings are configured in the Settings UI; don't allow slash command updates.
-  if (!provider) return false;
-  return PROVIDER_SLASH_COMMAND_BLOCKLIST.has(provider.trim().toLowerCase());
-}
-
-// Provider configuration data
-const DEFAULT_PROVIDER_NAMES: SuggestionDefinition[] = [
-  {
-    key: "anthropic",
-    description: "Anthropic (Claude) provider",
-  },
-  {
-    key: "openai",
-    description: "OpenAI provider",
-  },
-  {
-    key: "google",
-    description: "Google Gemini provider",
-  },
-  {
-    key: "bedrock",
-    description: "Amazon Bedrock provider (AWS)",
-  },
-];
-
-const DEFAULT_PROVIDER_KEYS: Record<string, SuggestionDefinition[]> = {
-  anthropic: [
-    {
-      key: "apiKey",
-      description: "API key used when calling Anthropic",
-    },
-    {
-      key: "baseUrl",
-      description: "Override Anthropic base URL",
-    },
-    {
-      key: "baseUrl.scheme",
-      description: "Protocol to use for the base URL",
-    },
-  ],
-  openai: [
-    {
-      key: "apiKey",
-      description: "API key used when calling OpenAI",
-    },
-    {
-      key: "baseUrl",
-      description: "Override OpenAI base URL",
-    },
-  ],
-  google: [
-    {
-      key: "apiKey",
-      description: "API key used when calling Google Gemini",
-    },
-  ],
-  bedrock: [
-    {
-      key: "region",
-      description: "AWS region (e.g., us-east-1, us-west-2)",
-    },
-    {
-      key: "bearerToken",
-      description: "Bedrock bearer token (maps to AWS_BEARER_TOKEN_BEDROCK)",
-    },
-    {
-      key: "accessKeyId",
-      description: "AWS Access Key ID (alternative to bearerToken)",
-    },
-    {
-      key: "secretAccessKey",
-      description: "AWS Secret Access Key (use with accessKeyId)",
-    },
-  ],
-  default: [
-    {
-      key: "apiKey",
-      description: "API key required by the provider",
-    },
-    {
-      key: "baseUrl",
-      description: "Override provider base URL",
-    },
-    {
-      key: "baseUrl.scheme",
-      description: "Protocol to use for the base URL",
-    },
-  ],
-};
-
 // Suggestion helper functions
 function filterAndMapSuggestions<T extends SuggestionDefinition>(
   definitions: readonly T[],
@@ -149,22 +56,6 @@ function filterAndMapSuggestions<T extends SuggestionDefinition>(
       normalizedPartial ? definition.key.toLowerCase().startsWith(normalizedPartial) : true
     )
     .map((definition) => build(definition));
-}
-
-function dedupeDefinitions<T extends SuggestionDefinition>(definitions: readonly T[]): T[] {
-  const seen = new Set<string>();
-  const result: T[] = [];
-
-  for (const definition of definitions) {
-    const key = definition.key.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    result.push(definition);
-  }
-
-  return result;
 }
 
 const clearCommandDefinition: SlashCommandDefinition = {
@@ -305,105 +196,6 @@ const compactCommandDefinition: SlashCommandDefinition = {
 
     return { type: "compact", maxOutputTokens, continueMessage, model };
   },
-};
-
-const PROVIDERS_SET_USAGE = "/providers set <provider> <key> <value>";
-
-const providersSetCommandDefinition: SlashCommandDefinition = {
-  key: "set",
-  description: "Set a provider configuration value",
-  handler: ({ cleanRemainingTokens }) => {
-    if (cleanRemainingTokens.length < 3) {
-      return {
-        type: "providers-missing-args",
-        subcommand: "set",
-        argCount: cleanRemainingTokens.length,
-      };
-    }
-
-    const [provider, key, ...valueParts] = cleanRemainingTokens;
-
-    if (isProviderSlashCommandBlocked(provider)) {
-      return {
-        type: "command-invalid-args",
-        command: "providers set",
-        input: provider,
-        usage: PROVIDERS_SET_USAGE,
-      };
-    }
-
-    const value = valueParts.join(" ");
-    const keyPath = key.split(".");
-
-    return {
-      type: "providers-set",
-      provider,
-      keyPath,
-      value,
-    };
-  },
-  suggestions: ({ stage, partialToken, completedTokens, context }) => {
-    // Stage 2: /providers set [provider]
-    if (stage === 2) {
-      const dynamicDefinitions = (context.providerNames ?? [])
-        .filter((name) => !isProviderSlashCommandBlocked(name))
-        .map((name) => ({
-          key: name,
-          description: `${name} provider configuration`,
-        }));
-
-      const combined = dedupeDefinitions([...dynamicDefinitions, ...DEFAULT_PROVIDER_NAMES]).filter(
-        (definition) => !isProviderSlashCommandBlocked(definition.key)
-      );
-
-      return filterAndMapSuggestions(combined, partialToken, (definition) => ({
-        id: `command:providers:set:${definition.key}`,
-        display: definition.key,
-        description: definition.description,
-        replacement: `/providers set ${definition.key} `,
-      }));
-    }
-
-    // Stage 3: /providers set <provider> [key]
-    if (stage === 3) {
-      const providerName = completedTokens[2];
-
-      if (isProviderSlashCommandBlocked(providerName)) {
-        return [];
-      }
-
-      // Use provider-specific keys if defined, otherwise fall back to defaults
-      const definitions =
-        providerName && DEFAULT_PROVIDER_KEYS[providerName]
-          ? DEFAULT_PROVIDER_KEYS[providerName]
-          : DEFAULT_PROVIDER_KEYS.default;
-
-      return filterAndMapSuggestions(definitions, partialToken, (definition) => ({
-        id: `command:providers:set:${providerName}:${definition.key}`,
-        display: definition.key,
-        description: definition.description,
-        replacement: `/providers set ${providerName ?? ""} ${definition.key} `,
-      }));
-    }
-
-    return null;
-  },
-};
-
-const providersCommandDefinition: SlashCommandDefinition = {
-  key: "providers",
-  description: "Configure AI provider settings",
-  handler: ({ cleanRemainingTokens }) => {
-    if (cleanRemainingTokens.length === 0) {
-      return { type: "providers-help" };
-    }
-
-    return {
-      type: "providers-invalid-subcommand",
-      subcommand: cleanRemainingTokens[0] ?? "",
-    };
-  },
-  children: [providersSetCommandDefinition],
 };
 
 const modelCommandDefinition: SlashCommandDefinition = {
@@ -724,7 +516,6 @@ export const SLASH_COMMAND_DEFINITIONS: readonly SlashCommandDefinition[] = [
   truncateCommandDefinition,
   compactCommandDefinition,
   modelCommandDefinition,
-  providersCommandDefinition,
   planCommandDefinition,
 
   forkCommandDefinition,

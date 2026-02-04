@@ -11,7 +11,6 @@ import {
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
-import { useWorkspaceUsage, useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useAPI } from "@/browser/contexts/API";
 import { CostsTab } from "./RightSidebar/CostsTab";
@@ -20,7 +19,6 @@ import { ReviewPanel } from "./RightSidebar/CodeReview/ReviewPanel";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { StatsTab } from "./RightSidebar/StatsTab";
 
-import { sumUsageHistory, type ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { matchesKeybind, KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { SidebarCollapseButton } from "./ui/SidebarCollapseButton";
 import { cn } from "@/common/lib/utils";
@@ -202,9 +200,7 @@ interface RightSidebarTabsetNodeProps {
   onReviewNote?: (data: ReviewNoteData) => void;
   reviewStats: ReviewStats | null;
   onReviewStatsChange: (stats: ReviewStats | null) => void;
-  sessionCost: number | null;
   statsTabEnabled: boolean;
-  sessionDuration: number | null;
   /** Whether any sidebar tab is currently being dragged */
   isDraggingTab: boolean;
   /** Data about the currently dragged tab (if any) */
@@ -342,13 +338,13 @@ const RightSidebarTabsetNode: React.FC<RightSidebarTabsetNodeProps> = (props) =>
     let label: React.ReactNode;
 
     if (tab === "costs") {
-      label = <CostsTabLabel sessionCost={props.sessionCost} />;
+      label = <CostsTabLabel workspaceId={props.workspaceId} />;
     } else if (tab === "review") {
       label = <ReviewTabLabel reviewStats={props.reviewStats} />;
     } else if (tab === "explorer") {
       label = <ExplorerTabLabel />;
     } else if (tab === "stats") {
-      label = <StatsTabLabel sessionDuration={props.sessionDuration} />;
+      label = <StatsTabLabel workspaceId={props.workspaceId} />;
     } else if (isTerminal) {
       const terminalIndex = terminalTabs.indexOf(tab);
       label = (
@@ -775,8 +771,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [initialActiveTab, setAutoFocusTerminalSession, setCollapsed, setLayout, _setFocusTrigger]);
 
-  const usage = useWorkspaceUsage(workspaceId);
-
   const baseId = `right-sidebar-${workspaceId}`;
 
   // Build map of tab → position for keybind tooltips
@@ -788,36 +782,6 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
     });
     return positions;
   }, [layout.root]);
-
-  // Calculate session cost for tab display
-  const sessionCost = React.useMemo(() => {
-    const parts: ChatUsageDisplay[] = [];
-    if (usage.sessionTotal) parts.push(usage.sessionTotal);
-    if (usage.liveCostUsage) parts.push(usage.liveCostUsage);
-    if (parts.length === 0) return null;
-
-    const aggregated = sumUsageHistory(parts);
-    if (!aggregated) return null;
-
-    // Sum all cost components
-    const total =
-      (aggregated.input.cost_usd ?? 0) +
-      (aggregated.cached.cost_usd ?? 0) +
-      (aggregated.cacheCreate.cost_usd ?? 0) +
-      (aggregated.output.cost_usd ?? 0) +
-      (aggregated.reasoning.cost_usd ?? 0);
-    return total > 0 ? total : null;
-  }, [usage.sessionTotal, usage.liveCostUsage]);
-
-  const statsSnapshot = useWorkspaceStatsSnapshot(workspaceId);
-
-  const sessionDuration = (() => {
-    if (!statsTabEnabled) return null;
-    const baseDuration = statsSnapshot?.session?.totalDurationMs ?? 0;
-    const activeDuration = statsSnapshot?.active?.elapsedMs ?? 0;
-    const total = baseDuration + activeDuration;
-    return total > 0 ? total : null;
-  })();
 
   // @dnd-kit state for tracking active drag
   const [activeDragData, setActiveDragData] = React.useState<TabDragData | null>(null);
@@ -1213,11 +1177,9 @@ const RightSidebarComponent: React.FC<RightSidebarProps> = ({
         onReviewNote={onReviewNote}
         reviewStats={reviewStats}
         statsTabEnabled={statsTabEnabled}
-        sessionDuration={sessionDuration}
         onReviewStatsChange={setReviewStats}
         isDraggingTab={isDraggingTab}
         activeDragData={activeDragData}
-        sessionCost={sessionCost}
         setLayout={setLayout}
         onPopOutTerminal={handlePopOutTerminal}
         onAddTerminal={handleAddTerminal}

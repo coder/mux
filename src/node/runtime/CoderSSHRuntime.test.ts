@@ -40,7 +40,7 @@ function createMockCoderService(overrides?: Partial<CoderService>): CoderService
     getWorkspaceStatus: mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "running" as const })
     ),
-    listWorkspaces: mock(() => Promise.resolve([])),
+    listWorkspaces: mock(() => Promise.resolve({ ok: true, workspaces: [] })),
     waitForStartupScripts: mock(() =>
       (async function* (): AsyncGenerator<string, void, unknown> {
         await Promise.resolve();

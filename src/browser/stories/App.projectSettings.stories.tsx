@@ -18,7 +18,7 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { within, userEvent, expect } from "@storybook/test";
+import { within, userEvent, waitFor, expect } from "@storybook/test";
 import { getMCPTestResultsKey } from "@/common/constants/storage";
 
 export default {
@@ -682,18 +682,31 @@ export const ToolSelectorInteraction: AppStory = {
     const body = within(canvasElement.ownerDocument.body);
 
     // Find the tool selector section
-    await body.findByText("mux");
+    await body.findByText("mux", {}, { timeout: 10000 });
 
     // Click "None" to deselect all tools
-    const noneButton = await body.findByRole("button", { name: /^None$/i });
+    const noneButton = await body.findByRole("button", { name: /^None$/i }, { timeout: 10000 });
     await userEvent.click(noneButton);
 
-    // Should now show "0 of X tools enabled"
-    await expect(body.findByText(/0 of \d+ tools enabled/i)).resolves.toBeInTheDocument();
+    // Wait for selection state to update (CI can be slower than local runs).
+    await waitFor(() => expect(noneButton).toBeDisabled());
+
+    // Should now show "0 of X tools enabled".
+    // CI can be slower than local runs, so use an explicit timeout to avoid flake.
+    await body.findByText(
+      (_content, element) => {
+        const text = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
+        return /^0 of \d+ tools enabled$/i.test(text);
+      },
+      {},
+      { timeout: 10000 }
+    );
 
     // Click "All" to select all tools
-    const allButton = await body.findByRole("button", { name: /^All$/i });
+    const allButton = await body.findByRole("button", { name: /^All$/i }, { timeout: 10000 });
+    await waitFor(() => expect(allButton).toBeEnabled());
     await userEvent.click(allButton);
+    await waitFor(() => expect(allButton).toBeDisabled());
   },
 };
 

@@ -14,8 +14,10 @@ import { log } from "@/node/services/log";
 import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import {
   discoverAgentDefinitions,
+  readAgentDefinition,
   resolveAgentFrontmatter,
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
@@ -33,6 +35,7 @@ import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
+import { isToolEnabledInResolvedChain } from "@/common/utils/agentTools";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ToolCallEndEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -538,20 +541,20 @@ export class TaskService {
     }
 
     const parentAiSettings = this.resolveWorkspaceAISettings(parentMeta, agentId);
-    const inheritedModelString =
-      typeof args.modelString === "string" && args.modelString.trim().length > 0
+
+    // If the parent workspace has an explicit per-agent override for this agentId,
+    // prefer it over the model/thinking inherited from the calling workspace.
+    const hasWorkspaceOverrideForAgent = Boolean(parentMeta.aiSettingsByAgent?.[agentId]);
+
+    const inheritedModelString = hasWorkspaceOverrideForAgent
+      ? (parentAiSettings?.model ?? defaultModel)
+      : typeof args.modelString === "string" && args.modelString.trim().length > 0
         ? args.modelString.trim()
         : (parentAiSettings?.model ?? defaultModel);
-    const inheritedThinkingLevel: ThinkingLevel =
-      args.thinkingLevel ?? parentAiSettings?.thinkingLevel ?? "off";
 
-    const subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
-
-    const taskModelString = subagentDefaults?.modelString ?? inheritedModelString;
-    const canonicalModel = normalizeGatewayModel(taskModelString).trim();
-
-    const requestedThinkingLevel = subagentDefaults?.thinkingLevel ?? inheritedThinkingLevel;
-    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
+    const inheritedThinkingLevel: ThinkingLevel = hasWorkspaceOverrideForAgent
+      ? (parentAiSettings?.thinkingLevel ?? "off")
+      : (args.thinkingLevel ?? parentAiSettings?.thinkingLevel ?? "off");
 
     const parentRuntimeConfig = parentMeta.runtimeConfig;
     const taskRuntimeConfig: RuntimeConfig = parentRuntimeConfig;
@@ -567,6 +570,43 @@ export class TaskService {
     const parentWorkspacePath = isInPlace
       ? parentMeta.projectPath
       : runtime.getWorkspacePath(parentMeta.projectPath, parentMeta.name);
+
+    let subagentDefaults = cfg.agentAiDefaults?.[agentId] ?? cfg.subagentAiDefaults?.[agentId];
+
+    // Base fallback: if the selected agent has no explicit defaults, inherit cfg.agentAiDefaults
+    // from its base chain (e.g. `base: exec` → agentAiDefaults.exec).
+    //
+    // IMPORTANT: Only apply base fallback when the parent workspace hasn't explicitly overridden
+    // AI settings for this agentId, so workspace-specific overrides keep winning.
+    if (!subagentDefaults && !hasWorkspaceOverrideForAgent) {
+      try {
+        const agentDefinition = await readAgentDefinition(runtime, parentWorkspacePath, agentId);
+        const chain = await resolveAgentInheritanceChain({
+          runtime,
+          workspacePath: parentWorkspacePath,
+          agentId,
+          agentDefinition,
+          workspaceId: parentWorkspaceId,
+        });
+
+        const inheritedDefaults = chain
+          .slice(1)
+          .map((entry) => cfg.agentAiDefaults?.[entry.id])
+          .find((entry) => entry !== undefined);
+
+        if (inheritedDefaults) {
+          subagentDefaults = inheritedDefaults;
+        }
+      } catch {
+        // Ignore: base fallback is best-effort. Validation happens below.
+      }
+    }
+
+    const taskModelString = subagentDefaults?.modelString ?? inheritedModelString;
+    const canonicalModel = normalizeGatewayModel(taskModelString).trim();
+
+    const requestedThinkingLevel = subagentDefaults?.thinkingLevel ?? inheritedThinkingLevel;
+    const effectiveThinkingLevel = enforceThinkingPolicy(canonicalModel, requestedThinkingLevel);
 
     // Helper to build error hint with all available runnable agents.
     // NOTE: This resolves frontmatter inheritance so same-name overrides (e.g. project exec.md
@@ -2378,11 +2418,75 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const childEntry = this.findWorkspaceEntry(cfg, childWorkspaceId);
 
-    // Only exec subagents are expected to make commits that should be handed back to the parent.
-    const childAgentId = coerceNonEmptyString(
+    // Only exec-like subagents are expected to make commits that should be handed back to the parent.
+    // NOTE: Custom agents can inherit from exec (base: exec). Those should also generate patches,
+    // but read-only subagents (e.g. explore) should not.
+    const childAgentIdRaw = coerceNonEmptyString(
       childEntry?.workspace.agentId ?? childEntry?.workspace.agentType
     );
-    if (childAgentId !== "exec") {
+    const childAgentId = childAgentIdRaw?.toLowerCase();
+    if (!childAgentId) {
+      return;
+    }
+
+    let shouldGeneratePatch = childAgentId === "exec";
+
+    if (!shouldGeneratePatch) {
+      const parsedChildAgentId = AgentIdSchema.safeParse(childAgentId);
+      if (parsedChildAgentId.success) {
+        const agentId = parsedChildAgentId.data;
+
+        // Prefer resolving agent inheritance from the parent workspace: project agents may be untracked
+        // (and therefore absent from child worktrees), but they are always present in the parent that
+        // spawned the task.
+        const agentDiscoveryEntry = this.findWorkspaceEntry(cfg, parentWorkspaceId) ?? childEntry;
+        const agentDiscoveryWs = agentDiscoveryEntry?.workspace;
+
+        const agentWorkspacePath = coerceNonEmptyString(agentDiscoveryWs?.path);
+        const runtimeConfig = agentDiscoveryWs?.runtimeConfig;
+
+        if (agentDiscoveryEntry && agentWorkspacePath && runtimeConfig) {
+          const fallbackName =
+            agentWorkspacePath.split("/").pop() ?? agentWorkspacePath.split("\\").pop() ?? "";
+          const workspaceName =
+            coerceNonEmptyString(agentDiscoveryWs?.name) ?? coerceNonEmptyString(fallbackName);
+
+          if (workspaceName) {
+            const runtime = createRuntimeForWorkspace({
+              runtimeConfig,
+              projectPath: agentDiscoveryEntry.projectPath,
+              name: workspaceName,
+            });
+
+            try {
+              const agentDefinition = await readAgentDefinition(
+                runtime,
+                agentWorkspacePath,
+                agentId
+              );
+              const chain = await resolveAgentInheritanceChain({
+                runtime,
+                workspacePath: agentWorkspacePath,
+                agentId,
+                agentDefinition,
+                workspaceId: childWorkspaceId,
+              });
+
+              const inheritsExec = chain.some((agent) => agent.id === "exec");
+              const canEdit =
+                isToolEnabledInResolvedChain("file_edit_insert", chain) ||
+                isToolEnabledInResolvedChain("file_edit_replace_string", chain);
+
+              shouldGeneratePatch = inheritsExec && canEdit;
+            } catch {
+              // ignore - treat as non-exec-like
+            }
+          }
+        }
+      }
+    }
+
+    if (!shouldGeneratePatch) {
       return;
     }
 

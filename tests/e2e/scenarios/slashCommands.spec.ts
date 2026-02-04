@@ -1,6 +1,3 @@
-import fs from "fs/promises";
-import path from "path";
-import { parse } from "jsonc-parser";
 import { electronTest as test, electronExpect as expect } from "../electronTest";
 import {
   MOCK_COMPACTION_SUMMARY_PREFIX,
@@ -125,33 +122,5 @@ test.describe("slash command flows", () => {
     await ui.chat.expectTranscriptContains(
       "Claude Sonnet 4.5 is now responding with standard reasoning capacity."
     );
-  });
-
-  test("slash command /providers set anthropic baseUrl updates provider config", async ({
-    ui,
-    workspace,
-  }) => {
-    await ui.projects.openFirstWorkspace();
-
-    await ui.chat.sendCommandAndExpectStatus(
-      "/providers set anthropic baseUrl https://custom.endpoint",
-      "Provider anthropic updated"
-    );
-
-    const providersPath = path.join(workspace.configRoot, "providers.jsonc");
-    await expect
-      .poll(async () => {
-        try {
-          await fs.access(providersPath);
-          return true;
-        } catch {
-          return false;
-        }
-      })
-      .toBeTruthy();
-    const content = await fs.readFile(providersPath, "utf-8");
-    const parsed = parse(content) as Record<string, unknown>;
-    const anthropicConfig = parsed?.anthropic as Record<string, unknown> | undefined;
-    expect(anthropicConfig?.baseUrl).toBe("https://custom.endpoint");
   });
 });

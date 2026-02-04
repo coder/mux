@@ -46,12 +46,16 @@ describeIntegration("sendMessage context handling tests", () => {
       "should maintain conversation context across messages",
       async () => {
         await withSharedWorkspace(provider, async ({ env, workspaceId, collector }) => {
-          // Send first message establishing context
+          // Send first message establishing context.
+          // Tools are disabled to keep this test deterministic in CI: models can
+          // occasionally emit tool-call-only responses (no assistant text), but this
+          // test is focused on conversation context continuity.
           const result1 = await sendMessageWithModel(
             env,
             workspaceId,
             "My name is TestUser. Remember this.",
-            modelString(provider, model)
+            modelString(provider, model),
+            { toolPolicy: [{ regex_match: ".*", action: "disable" }] }
           );
           expect(result1.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);
@@ -66,7 +70,8 @@ describeIntegration("sendMessage context handling tests", () => {
             env,
             workspaceId,
             "What is my name?",
-            modelString(provider, model)
+            modelString(provider, model),
+            { toolPolicy: [{ regex_match: ".*", action: "disable" }] }
           );
           expect(result2.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);

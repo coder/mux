@@ -442,17 +442,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     [workspaceId, setAutoScroll, api]
   );
 
-  const handleProviderConfig = useCallback(
-    async (provider: string, keyPath: string[], value: string) => {
-      if (!api) throw new Error("API not connected");
-      const result = await api.providers.setProviderConfig({ provider, keyPath, value });
-      if (!result.success) {
-        throw new Error(result.error);
-      }
-    },
-    [api]
-  );
-
   const openInEditor = useOpenInEditor();
   const handleOpenInEditor = useCallback(() => {
     void openInEditor(workspaceId, namedWorkspacePath, runtimeConfig);
@@ -754,7 +743,6 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         onCompactClick={handleCompactClick}
         onMessageSent={handleMessageSent}
         onTruncateHistory={handleClearHistory}
-        onProviderConfig={handleProviderConfig}
         editingMessage={editingMessage}
         onCancelEdit={handleCancelEdit}
         onEditLastUserMessage={handleEditLastUserMessageClick}
@@ -785,7 +773,6 @@ interface ChatInputPaneProps {
   onCompactClick: () => void;
   onMessageSent: () => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
-  onProviderConfig: (provider: string, keyPath: string[], value: string) => Promise<void>;
   editingMessage: EditingMessageState;
   onCancelEdit: () => void;
   onEditLastUserMessage: () => void;
@@ -829,7 +816,6 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
         runtimeType={getRuntimeTypeForTelemetry(props.runtimeConfig)}
         onMessageSent={props.onMessageSent}
         onTruncateHistory={props.onTruncateHistory}
-        onProviderConfig={props.onProviderConfig}
         onModelChange={props.onModelChange}
         disabled={!props.projectName || !props.workspaceName || props.isQueuedAgentTask}
         disabledReason={

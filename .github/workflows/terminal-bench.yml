@@ -22,7 +22,7 @@ on:
         type: string
         default: "4"
       env:
-        description: "Environment to run in (local, daytona)"
+        description: "Harbor backend environment (e.g., docker, daytona, e2b). Leave empty for Harbor default."
         required: false
         type: string
         default: ""
@@ -82,7 +82,7 @@ on:
         default: "4"
         type: string
       env:
-        description: "Environment to run in (local, daytona)"
+        description: "Harbor backend environment (e.g., docker, daytona, e2b). Leave empty for Harbor default."
         required: false
         default: ""
         type: string
@@ -124,6 +124,13 @@ jobs:
     # If consistently hitting this timeout, investigate task-level issues
     timeout-minutes: 240
     steps:
+      - name: Validate Harbor env input
+        if: ${{ inputs.env == 'local' }}
+        run: |
+          echo "inputs.env=local is no longer supported by Harbor."
+          echo "Use env: docker or env: daytona (or leave empty for Harbor default)."
+          exit 1
+
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

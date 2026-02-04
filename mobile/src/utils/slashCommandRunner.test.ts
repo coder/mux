@@ -19,10 +19,6 @@ function createMockClient(): SlashCommandRunnerContext["client"] {
       executeBash: jest.fn(),
       onChat: jest.fn(),
     },
-    providers: {
-      list: jest.fn().mockResolvedValue(["anthropic"]),
-      setProviderConfig: jest.fn().mockResolvedValue(undefined),
-    },
     projects: {
       list: jest.fn(),
       listBranches: jest.fn().mockResolvedValue({ branches: ["main"], recommendedTrunk: "main" }),
@@ -86,9 +82,9 @@ describe("executeSlashCommand", () => {
     expect(ctx.onClearTimeline).toHaveBeenCalled();
   });
 
-  it("shows unsupported info for telemetry commands", async () => {
+  it("shows unsupported info for desktop-only commands", async () => {
     const ctx = createContext();
-    const handled = await executeSlashCommand({ type: "telemetry-set", enabled: true }, ctx);
+    const handled = await executeSlashCommand({ type: "vim-toggle" }, ctx);
     expect(handled).toBe(true);
     expect(ctx.showInfo).toHaveBeenCalledWith(
       "Not supported",

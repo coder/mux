@@ -16,6 +16,27 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
+import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
+
+// mux:// deep links can arrive before the React app subscribes.
+// Buffer them here so the renderer can consume them on mount.
+const pendingDeepLinks: MuxDeepLinkPayload[] = [];
+const deepLinkSubscribers = new Set<(payload: MuxDeepLinkPayload) => void>();
+
+ipcRenderer.on("mux:deep-link", (_event: unknown, payload: MuxDeepLinkPayload) => {
+  if (deepLinkSubscribers.size === 0) {
+    pendingDeepLinks.push(payload);
+  }
+
+  for (const subscriber of deepLinkSubscribers) {
+    try {
+      subscriber(payload);
+    } catch (error) {
+      // Best-effort: a renderer bug shouldn't break deep link delivery.
+      console.debug("[deep-link] Renderer subscriber threw:", error);
+    }
+  }
+});
 
 // Forward ORPC MessagePort from renderer to main process
 window.addEventListener("message", (event) => {
@@ -47,6 +68,13 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("mux:notification-clicked", listener);
     return () => {
       ipcRenderer.off("mux:notification-clicked", listener);
+    };
+  },
+  consumePendingDeepLinks: () => pendingDeepLinks.splice(0, pendingDeepLinks.length),
+  onDeepLink: (callback: (payload: MuxDeepLinkPayload) => void) => {
+    deepLinkSubscribers.add(callback);
+    return () => {
+      deepLinkSubscribers.delete(callback);
     };
   },
 });

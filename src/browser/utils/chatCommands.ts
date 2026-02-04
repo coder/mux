@@ -57,7 +57,7 @@ import {
   createCommandToast,
   createInvalidCompactModelToast,
 } from "@/browser/components/ChatInputToasts";
-import { trackCommandUsed, trackProviderConfigured } from "@/common/telemetry";
+import { trackCommandUsed } from "@/common/telemetry";
 import { addEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 
 const BUILT_IN_MODEL_SET = new Set<string>(Object.values(KNOWN_MODELS).map((model) => model.id));
@@ -137,7 +137,6 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   openSettings?: (section?: string) => void;
 
   // Global Actions
-  onProviderConfig?: (provider: string, keyPath: string[], value: string) => Promise<void>;
   setPreferredModel: (model: string) => void;
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 
@@ -181,41 +180,6 @@ export async function processSlashCommand(
   };
 
   // 1. Global Commands
-  if (parsed.type === "providers-set") {
-    if (context.onProviderConfig) {
-      setSendingState(true);
-      setInput(""); // Clear input immediately
-
-      try {
-        await context.onProviderConfig(parsed.provider, parsed.keyPath, parsed.value);
-        // Track successful provider configuration
-        trackCommandUsed("providers");
-        trackProviderConfigured(parsed.provider, parsed.keyPath[0] ?? "unknown");
-        setToast({
-          id: Date.now().toString(),
-          type: "success",
-          message: `Provider ${parsed.provider} updated`,
-        });
-      } catch (error) {
-        console.error("Failed to update provider config:", error);
-        setToast({
-          id: Date.now().toString(),
-          type: "error",
-          message: error instanceof Error ? error.message : "Failed to update provider",
-        });
-        return { clearInput: false, toastShown: true }; // Input restored by caller if clearInput is false?
-        // Actually caller restores if we return clearInput: false.
-        // But here we cleared it proactively?
-        // The caller (ChatInput) pattern is: if (!result.clearInput) setInput(original).
-        // So we should return clearInput: false on error.
-      } finally {
-        setSendingState(false);
-      }
-      return { clearInput: true, toastShown: true };
-    }
-    return { clearInput: false, toastShown: false };
-  }
-
   if (parsed.type === "model-set") {
     const modelString = parsed.modelString;
 

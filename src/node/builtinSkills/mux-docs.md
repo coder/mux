@@ -52,7 +52,7 @@ Use this index to find a page's:
       - Models (`/config/models`) → `references/docs/config/models.mdx` — Select and configure AI models in Mux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx` — Configure API keys and settings for AI providers
     - Why Parallelize? (`/getting-started/why-parallelize`) → `references/docs/getting-started/why-parallelize.mdx` — Use cases for running multiple AI agents in parallel
-    - Mux Codes (`/getting-started/mux-codes`) → `references/docs/getting-started/mux-codes.mdx` — Redeem free LLM token credits for evaluating Mux
+    - Mux Gateway (`/getting-started/mux-gateway`) → `references/docs/getting-started/mux-gateway.mdx` — Log in to Mux Gateway to get evaluation credits
     - CLI (`/reference/cli`) → `references/docs/reference/cli.mdx` — Run one-off agent tasks from the command line with `mux run`
   - **Workspaces**
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx` — Isolated development environments for parallel agent work

@@ -7,7 +7,7 @@ import type { SendMessageError } from "@/common/types/errors";
 
 export interface FormattedError {
   message: string;
-  providerCommand?: string; // e.g., "/providers set anthropic apiKey YOUR_KEY"
+  resolutionHint?: string; // e.g., "Open Settings → Providers and add an API key"
 }
 
 /**
@@ -19,7 +19,7 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
     case "api_key_not_found":
       return {
         message: `API key not found for ${error.provider}.`,
-        providerCommand: `/providers set ${error.provider} apiKey YOUR_API_KEY`,
+        resolutionHint: `Open Settings → Providers and add an API key for ${error.provider}.`,
       };
 
     case "provider_not_supported":

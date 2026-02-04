@@ -170,6 +170,24 @@ describe("hooks", () => {
       expect(result.allowed).toBe(true);
       expect(result.output).toContain("tool=bash");
     });
+
+    test("receives flattened tool input env vars", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_pre");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, '#!/bin/bash\necho "arg=$MUX_TOOL_INPUT_ARG"');
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPreHook(runtime, hookPath, {
+        tool: "test_tool",
+        toolInput: '{"arg": "value"}',
+        workspaceId: "test-workspace",
+        projectDir: tempDir,
+      });
+
+      expect(result.allowed).toBe(true);
+      expect(result.output).toContain("arg=value");
+    });
   });
 
   describe("runPostHook", () => {
@@ -219,6 +237,57 @@ describe("hooks", () => {
       expect(result.output).toContain('result={"value":42}');
     });
 
+    test("receives flattened tool input/result env vars", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_post");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(
+        hookPath,
+        '#!/bin/bash\necho "arg=$MUX_TOOL_INPUT_ARG"\necho "value=$MUX_TOOL_RESULT_VALUE"'
+      );
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPostHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test_tool",
+          toolInput: '{"arg": "value"}',
+          workspaceId: "test-workspace",
+          projectDir: tempDir,
+        },
+        { value: 42 }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("arg=value");
+      expect(result.output).toContain("value=42");
+    });
+
+    test("omits MUX_TOOL_RESULT_PATH when writing result file fails", async () => {
+      const hookDir = path.join(tempDir, ".mux");
+      const hookPath = path.join(hookDir, "tool_post");
+      await fs.mkdir(hookDir, { recursive: true });
+      await fs.writeFile(hookPath, '#!/bin/bash\necho "path=${MUX_TOOL_RESULT_PATH-unset}"');
+      await fs.chmod(hookPath, 0o755);
+
+      const result = await runPostHook(
+        runtime,
+        hookPath,
+        {
+          tool: "test_tool",
+          toolInput: "{}",
+          workspaceId: "test-workspace",
+          projectDir: tempDir,
+          // Make writing /dev/null/<file> fail (since /dev/null isn't a directory).
+          runtimeTempDir: "/dev/null",
+        },
+        { value: 42 }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.output).toContain("path=unset");
+    });
     test("can read result from MUX_TOOL_RESULT_PATH", async () => {
       const hookDir = path.join(tempDir, ".mux");
       const hookPath = path.join(hookDir, "tool_post");
@@ -391,6 +460,7 @@ exit 1
         `#!/bin/bash
 echo "TOOL=$MUX_TOOL" >&2
 echo "INPUT=$MUX_TOOL_INPUT" >&2
+echo "SCRIPT=$MUX_TOOL_INPUT_SCRIPT" >&2
 echo $MUX_EXEC
 read RESULT
 `
@@ -411,6 +481,7 @@ read RESULT
 
       expect(hook.stderr).toContain("TOOL=bash");
       expect(hook.stderr).toContain('INPUT={"script": "echo hello"}');
+      expect(hook.stderr).toContain("SCRIPT=echo hello");
     });
 
     test("receives tool result via stdin", async () => {

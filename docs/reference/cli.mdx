@@ -60,7 +60,7 @@ mux run --json "List all TypeScript files" | jq '.type'
 | `--model <model>`     | `-m`  | Model to use (e.g., `anthropic:claude-sonnet-4-5`)              | Default model     |
 | `--runtime <runtime>` | `-r`  | Runtime: `local`, `worktree`, `ssh <host>`, or `docker <image>` | `local`           |
 | `--mode <mode>`       |       | Agent mode: `plan` or `exec`                                    | `exec`            |
-| `--thinking <level>`  | `-t`  | Thinking level: `off`, `low`, `medium`, `high`                  | `medium`          |
+| `--thinking <level>`  | `-t`  | Thinking level: `OFF`, `LOW`, `MED`, `HIGH`, `MAX`              | `MED`             |
 | `--budget <usd>`      | `-b`  | Stop when session cost exceeds budget (USD)                     | No limit          |
 | `--experiment <id>`   | `-e`  | Enable experiment (repeatable)                                  | None              |
 | `--json`              |       | Output NDJSON for programmatic use                              | Off               |

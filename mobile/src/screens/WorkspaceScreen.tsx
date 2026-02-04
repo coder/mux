@@ -263,7 +263,6 @@ function WorkspaceScreenInner({
   );
   const { suggestions: commandSuggestions } = useSlashCommandSuggestions({
     input,
-    client,
     enabled: !isCreationMode,
   });
   useEffect(() => {

@@ -344,7 +344,9 @@ export class PRStatusStore {
 
   private shouldFetchWorkspace(entry: WorkspacePRCacheEntry | undefined, now: number): boolean {
     if (!entry) return true;
-    if (entry.loading) return false;
+    // Allow refresh if entry was hydrated from localStorage (fetchedAt === 0)
+    // but is marked loading - this means we have stale cached data and need fresh data.
+    if (entry.loading && entry.fetchedAt !== 0) return false;
 
     if (entry.error) {
       return now - entry.fetchedAt > ERROR_RETRY_DELAY_MS;

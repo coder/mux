@@ -20,6 +20,8 @@ import { buildCompactionPrompt, DEFAULT_COMPACTION_WORD_TARGET } from "../src/co
 import { formatModelDisplayName } from "../src/common/utils/ai/modelDisplay";
 import { AgentDefinitionFrontmatterSchema } from "../src/common/orpc/schemas/agentDefinition";
 import { PROVIDER_ENV_VARS, AZURE_OPENAI_ENV_VARS } from "../src/node/utils/providerRequirements";
+import { TOOL_DEFINITIONS } from "../src/common/utils/tools/toolDefinitions";
+import { toolHookEnvVarName } from "../src/common/utils/tools/toolHookEnv";
 
 const MODE = process.argv[2] === "check" ? "check" : "write";
 const DOCS_DIR = path.join(import.meta.dir, "..", "docs");
@@ -453,6 +455,262 @@ async function syncProviderEnvVars(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// Tool hook env vars (tool-specific flattened env vars)
+// ---------------------------------------------------------------------------
+
+type ToolHookEnvVarDoc = {
+  envVar: string;
+  jsonPath: string;
+  type: string;
+  description: string;
+};
+
+function escapeMarkdownTableCodeCell(value: string): string {
+  // Values are wrapped in backticks, so we mostly just need to keep the table
+  // delimiter safe.
+  return value.replaceAll("|", "\\|").replaceAll("\n", " ").trim();
+}
+
+function escapeMarkdownTableTextCell(value: string): string {
+  // docs/hooks/tools.mdx is MDX; raw `<...>` sequences can be parsed as JSX.
+  // Escape them so tool descriptions like "(<5s)" render correctly.
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("|", "\\|")
+    .replaceAll("\\n", " ")
+    .replaceAll("\n", " ")
+    .trim();
+}
+
+function getZodSchemaType(schema: unknown): string | undefined {
+  if (typeof schema !== "object" || schema === null) return undefined;
+
+  if (!("type" in schema)) return undefined;
+  const type = (schema as { type: unknown }).type;
+  return typeof type === "string" ? type : undefined;
+}
+
+function getZodSchemaDescription(schema: unknown): string | undefined {
+  if (typeof schema !== "object" || schema === null) return undefined;
+  if (!("description" in schema)) return undefined;
+
+  const description = (schema as { description: unknown }).description;
+  return typeof description === "string" && description.trim() ? description.trim() : undefined;
+}
+
+function unwrapZodSchemaForDocs(schema: unknown): unknown {
+  let current = schema;
+
+  // Best-effort unwrap of wrappers we commonly use in tool schemas.
+  for (let i = 0; i < 20; i += 1) {
+    const type = getZodSchemaType(current);
+
+    if (type === "optional" || type === "nullable" || type === "default") {
+      if (typeof current !== "object" || current === null) break;
+      const def = (current as { _def?: unknown })._def;
+      if (typeof def !== "object" || def === null) break;
+      if (!("innerType" in def)) break;
+      current = (def as { innerType: unknown }).innerType;
+      continue;
+    }
+
+    // z.preprocess() in Zod v4 is represented as a "pipe" (transform -> schema)
+    if (type === "pipe") {
+      if (typeof current !== "object" || current === null) break;
+      const def = (current as { _def?: unknown })._def;
+      if (typeof def !== "object" || def === null) break;
+      if (!("out" in def)) break;
+      current = (def as { out: unknown }).out;
+      continue;
+    }
+
+    break;
+  }
+
+  return current;
+}
+
+function collectToolHookEnvVarsFromZodSchema(schema: unknown): ToolHookEnvVarDoc[] {
+  const entries = new Map<string, ToolHookEnvVarDoc>();
+
+  function add(entry: ToolHookEnvVarDoc): void {
+    // De-dupe by env var name (unions, etc.)
+    if (!entries.has(entry.envVar)) {
+      entries.set(entry.envVar, entry);
+    }
+  }
+
+  function walk(
+    currentSchema: unknown,
+    options: {
+      keyPath: string[];
+      jsonPath: string;
+      descriptionHint?: string;
+    }
+  ): void {
+    const description = getZodSchemaDescription(currentSchema) ?? options.descriptionHint;
+    const unwrapped = unwrapZodSchemaForDocs(currentSchema);
+    const type = getZodSchemaType(unwrapped) ?? "unknown";
+
+    if (type === "object") {
+      if (typeof unwrapped !== "object" || unwrapped === null) return;
+      if (!("shape" in unwrapped)) return;
+      const shape = (unwrapped as { shape: unknown }).shape;
+      if (typeof shape !== "object" || shape === null) return;
+
+      for (const [key, child] of Object.entries(shape)) {
+        walk(child, {
+          keyPath: [...options.keyPath, key],
+          jsonPath: options.jsonPath ? `${options.jsonPath}.${key}` : key,
+        });
+      }
+      return;
+    }
+
+    if (type === "record") {
+      if (typeof unwrapped !== "object" || unwrapped === null) return;
+      const def = (unwrapped as { _def?: unknown })._def;
+      if (typeof def !== "object" || def === null) return;
+      if (!("valueType" in def)) return;
+
+      // Dynamic keys: document a <KEY> template.
+      walk((def as { valueType: unknown }).valueType, {
+        keyPath: [...options.keyPath, "<KEY>"],
+        jsonPath: options.jsonPath ? `${options.jsonPath}[<KEY>]` : "[<KEY>]",
+        descriptionHint: description,
+      });
+      return;
+    }
+
+    if (type === "array" || type === "tuple") {
+      // Arrays also get a _COUNT env var.
+      add({
+        envVar: toolHookEnvVarName("MUX_TOOL_INPUT", [...options.keyPath, "COUNT"], {
+          allowPlaceholders: true,
+        }),
+        jsonPath: options.jsonPath ? `${options.jsonPath}.length` : "length",
+        type: "number",
+        description: description
+          ? `Number of elements in ${options.jsonPath} (${description})`
+          : `Number of elements in ${options.jsonPath}`,
+      });
+
+      let elementSchema: unknown;
+      if (type === "array") {
+        if (typeof unwrapped !== "object" || unwrapped === null) return;
+        if (!("element" in unwrapped)) return;
+        elementSchema = (unwrapped as { element: unknown }).element;
+      } else {
+        // tuple
+        if (typeof unwrapped !== "object" || unwrapped === null) return;
+        const def = (unwrapped as { _def?: unknown })._def;
+        if (typeof def !== "object" || def === null) return;
+        if (!("items" in def)) return;
+        elementSchema = (def as { items: unknown }).items;
+      }
+
+      // If the elementSchema is actually an array (tuple items), walk each item
+      // but keep a single <INDEX> placeholder in the key.
+      if (Array.isArray(elementSchema)) {
+        for (const itemSchema of elementSchema) {
+          walk(itemSchema, {
+            keyPath: [...options.keyPath, "<INDEX>"],
+            jsonPath: options.jsonPath ? `${options.jsonPath}[<INDEX>]` : "[<INDEX>]",
+            descriptionHint: description,
+          });
+        }
+      } else {
+        walk(elementSchema, {
+          keyPath: [...options.keyPath, "<INDEX>"],
+          jsonPath: options.jsonPath ? `${options.jsonPath}[<INDEX>]` : "[<INDEX>]",
+          descriptionHint: description,
+        });
+      }
+      return;
+    }
+
+    if (type === "union" || type === "intersection") {
+      if (typeof unwrapped !== "object" || unwrapped === null) return;
+      const def = (unwrapped as { _def?: unknown })._def;
+      if (typeof def !== "object" || def === null) return;
+
+      if (
+        type === "union" &&
+        "options" in def &&
+        Array.isArray((def as { options: unknown }).options)
+      ) {
+        for (const option of (def as { options: unknown[] }).options) {
+          walk(option, options);
+        }
+        return;
+      }
+
+      if (type === "intersection" && "left" in def && "right" in def) {
+        walk((def as { left: unknown }).left, options);
+        walk((def as { right: unknown }).right, options);
+        return;
+      }
+    }
+
+    // Leaf
+    if (options.keyPath.length === 0) return;
+
+    add({
+      envVar: toolHookEnvVarName("MUX_TOOL_INPUT", options.keyPath, { allowPlaceholders: true }),
+      jsonPath: options.jsonPath || "(root)",
+      type,
+      description: description ?? "",
+    });
+  }
+
+  walk(schema, { keyPath: [], jsonPath: "" });
+  return [...entries.values()].sort((a, b) => a.envVar.localeCompare(b.envVar));
+}
+
+function generateToolHookEnvVarsBlock(): string {
+  const lines: string[] = [];
+
+  const tools = Object.entries(TOOL_DEFINITIONS).sort(([a], [b]) => a.localeCompare(b));
+
+  for (const [toolName, def] of tools) {
+    const vars = collectToolHookEnvVarsFromZodSchema(def.schema);
+    if (vars.length === 0) continue;
+
+    lines.push("<details>");
+    lines.push(`<summary>${toolName} (${vars.length})</summary>`);
+    lines.push("");
+    lines.push("| Env var | JSON path | Type | Description |");
+    lines.push("| ------ | --------- | ---- | ----------- |");
+
+    for (const v of vars) {
+      const envVar = escapeMarkdownTableCodeCell(v.envVar);
+      const jsonPath = escapeMarkdownTableCodeCell(v.jsonPath);
+      const type = escapeMarkdownTableTextCell(v.type);
+      const desc = escapeMarkdownTableTextCell(v.description || "—");
+
+      lines.push(`| \`${envVar}\` | \`${jsonPath}\` | ${type} | ${desc} |`);
+    }
+
+    lines.push("");
+    lines.push("</details>");
+    lines.push("");
+  }
+
+  return lines.join("\n").trim();
+}
+
+async function syncToolHookEnvVars(): Promise<boolean> {
+  return syncDoc({
+    docsFile: "hooks/tools.mdx",
+    sourceLabel: "src/common/utils/tools/toolDefinitions.ts",
+    markerName: "TOOL_HOOK_ENV_VARS",
+    generateBlock: generateToolHookEnvVarsBlock,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Auto-label workflow sync
 // ---------------------------------------------------------------------------
 
@@ -503,6 +761,7 @@ async function main(): Promise<void> {
     syncCompactionCustomizationDocs(),
     syncNotifyDocs(),
     syncProviderEnvVars(),
+    syncToolHookEnvVars(),
     syncAutoLabelWorkflow(),
     syncDeepReviewSkill(),
   ]);

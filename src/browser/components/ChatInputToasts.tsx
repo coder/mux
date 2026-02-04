@@ -34,62 +34,6 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
   if (!parsed) return null;
 
   switch (parsed.type) {
-    case "providers-help":
-      return {
-        id: Date.now().toString(),
-        type: "error",
-        title: "Providers Command",
-        message: "Configure AI provider settings",
-        solution: (
-          <>
-            <SolutionLabel>Usage:</SolutionLabel>
-            /providers set &lt;provider&gt; &lt;key&gt; &lt;value&gt;
-            <br />
-            <br />
-            <SolutionLabel>Example:</SolutionLabel>
-            /providers set anthropic apiKey YOUR_API_KEY
-          </>
-        ),
-      };
-
-    case "providers-missing-args": {
-      const missing =
-        parsed.argCount === 0
-          ? "provider, key, and value"
-          : parsed.argCount === 1
-            ? "key and value"
-            : parsed.argCount === 2
-              ? "value"
-              : "";
-
-      return {
-        id: Date.now().toString(),
-        type: "error",
-        title: "Missing Arguments",
-        message: `Missing ${missing} for /providers set`,
-        solution: (
-          <>
-            <SolutionLabel>Usage:</SolutionLabel>
-            /providers set &lt;provider&gt; &lt;key&gt; &lt;value&gt;
-          </>
-        ),
-      };
-    }
-
-    case "providers-invalid-subcommand":
-      return {
-        id: Date.now().toString(),
-        type: "error",
-        title: "Invalid Subcommand",
-        message: `Invalid subcommand '${parsed.subcommand}'`,
-        solution: (
-          <>
-            <SolutionLabel>Available Commands:</SolutionLabel>
-            /providers set - Configure provider settings
-          </>
-        ),
-      };
-
     case "model-help":
       return {
         id: Date.now().toString(),
@@ -184,12 +128,14 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
         type: "error",
         title: "API Key Not Found",
         message: `The ${error.provider} provider requires an API key to function.`,
-        solution: formatted.providerCommand ? (
+        solution: (
           <>
-            <SolutionLabel>Quick Fix:</SolutionLabel>
-            {formatted.providerCommand}
+            <SolutionLabel>Fix:</SolutionLabel>
+            {formatted.resolutionHint ?? "Open Settings → Providers and add an API key."}
+            <br />
+            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
           </>
-        ) : undefined,
+        ),
       };
     }
 
@@ -203,7 +149,9 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
         solution: (
           <>
             <SolutionLabel>Try This:</SolutionLabel>
-            Use an available provider from /providers list
+            Choose a supported provider in Settings → Providers.
+            <br />
+            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
           </>
         ),
       };

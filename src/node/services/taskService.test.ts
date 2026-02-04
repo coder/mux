@@ -989,6 +989,142 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("off");
   }, 20_000);
 
+  test("inherits agentAiDefaults from base chain on task create", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    // Custom agent definition stored in the project workspace (.mux/agents).
+    const agentsDir = path.join(projectPath, ".mux", "agents");
+    await fsPromises.mkdir(agentsDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(agentsDir, "custom.md"),
+      `---\nname: Custom\ndescription: Exec-derived custom agent for tests\nbase: exec\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+      "utf-8"
+    );
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: projectPath,
+                id: parentId,
+                name: "parent",
+                createdAt: new Date().toISOString(),
+                runtimeConfig: { type: "local" },
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      agentAiDefaults: {
+        exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "custom",
+      prompt: "run task with custom agent",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
+      model: "anthropic:claude-haiku-4-5",
+      agentId: "custom",
+      thinkingLevel: "off",
+      experiments: undefined,
+    });
+
+    const postCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === created.data.taskId);
+    expect(childEntry).toBeTruthy();
+    expect(childEntry?.aiSettings).toEqual({
+      model: "anthropic:claude-haiku-4-5",
+      thinkingLevel: "off",
+    });
+    expect(childEntry?.taskModelString).toBe("anthropic:claude-haiku-4-5");
+    expect(childEntry?.taskThinkingLevel).toBe("off");
+  }, 20_000);
+
+  test("does not apply agentAiDefaults base fallback when workspace overrides exist", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    // Custom agent definition stored in the project workspace (.mux/agents).
+    const agentsDir = path.join(projectPath, ".mux", "agents");
+    await fsPromises.mkdir(agentsDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(agentsDir, "custom.md"),
+      `---\nname: Custom\ndescription: Exec-derived custom agent for tests\nbase: exec\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+      "utf-8"
+    );
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: projectPath,
+                id: parentId,
+                name: "parent",
+                createdAt: new Date().toISOString(),
+                runtimeConfig: { type: "local" },
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+                aiSettingsByAgent: {
+                  custom: { model: "openai:gpt-5.2-pro", thinkingLevel: "medium" },
+                },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      agentAiDefaults: {
+        exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "custom",
+      prompt: "run task with custom agent",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
+      model: "openai:gpt-5.2-pro",
+      agentId: "custom",
+      thinkingLevel: "medium",
+      experiments: undefined,
+    });
+  }, 20_000);
   test("auto-resumes a parent workspace until background tasks finish", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -2038,6 +2174,189 @@ describe("TaskService", () => {
     expect(remove).toHaveBeenCalled();
   }, 20_000);
 
+  test("agent_report generates git format-patch artifact for exec-derived custom tasks", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    await fsPromises.mkdir(parentPath, { recursive: true });
+    await fsPromises.mkdir(childPath, { recursive: true });
+
+    // Custom agent definition stored in the parent workspace (.mux/agents).
+    const agentsDir = path.join(parentPath, ".mux", "agents");
+    await fsPromises.mkdir(agentsDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(agentsDir, "test-file.md"),
+      `---\nname: Test File\ndescription: Exec-derived custom agent for tests\nbase: exec\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+      "utf-8"
+    );
+
+    initGitRepo(childPath);
+    const baseCommitSha = execSync("git rev-parse HEAD", {
+      cwd: childPath,
+      encoding: "utf-8",
+    }).trim();
+
+    execSync("bash -lc 'echo \\\"world\\\" >> README.md'", { cwd: childPath, stdio: "ignore" });
+    execSync("git add README.md", { cwd: childPath, stdio: "ignore" });
+    execSync('git commit -m "child change"', { cwd: childPath, stdio: "ignore" });
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: parentPath,
+                id: parentId,
+                name: "parent",
+                runtimeConfig: { type: "local" },
+              },
+              {
+                path: childPath,
+                id: childId,
+                name: "agent_test_file_child",
+                parentWorkspaceId: parentId,
+                agentType: "test-file",
+                agentId: "test-file",
+                taskStatus: "running",
+                runtimeConfig: { type: "local" },
+                taskBaseCommitSha: baseCommitSha,
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, remove } = createWorkspaceServiceMocks();
+    const { partialService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const parentPartial = createMuxMessage(
+      "assistant-parent-partial",
+      "assistant",
+      "Waiting on subagent…",
+      { timestamp: Date.now() },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "task-call-1",
+          toolName: "task",
+          input: { subagent_type: "test-file", prompt: "do the thing", title: "Test task" },
+          state: "input-available",
+        },
+      ]
+    );
+    const writeParentPartial = await partialService.writePartial(parentId, parentPartial);
+    expect(writeParentPartial.success).toBe(true);
+
+    const childPartial = createMuxMessage(
+      "assistant-child-partial",
+      "assistant",
+      "",
+      { timestamp: Date.now(), historySequence: 0 },
+      [
+        {
+          type: "dynamic-tool",
+          toolCallId: "agent-report-call-1",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Hello from child", title: "Result" },
+          state: "output-available",
+          output: { success: true },
+        },
+      ]
+    );
+    const writeChildPartial = await partialService.writePartial(childId, childPartial);
+    expect(writeChildPartial.success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleAgentReport: (event: {
+        type: "tool-call-end";
+        workspaceId: string;
+        messageId: string;
+        toolCallId: string;
+        toolName: string;
+        result: unknown;
+        timestamp: number;
+      }) => Promise<void>;
+    };
+
+    const parentSessionDir = config.getSessionDir(parentId);
+    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId);
+
+    const waiter = taskService.waitForAgentReport(childId, {
+      timeoutMs: 10_000,
+      requestingWorkspaceId: parentId,
+    });
+
+    const handleReportPromise = internal.handleAgentReport({
+      type: "tool-call-end",
+      workspaceId: childId,
+      messageId: "assistant-child-partial",
+      toolCallId: "agent-report-call-1",
+      toolName: "agent_report",
+      result: { success: true },
+      timestamp: Date.now(),
+    });
+
+    const report = await waiter;
+    expect(report).toEqual({ reportMarkdown: "Hello from child", title: "Result" });
+
+    const artifactAfterWait = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(artifactAfterWait).not.toBeNull();
+    expect(["pending", "ready"]).toContain(artifactAfterWait!.status);
+
+    await handleReportPromise;
+
+    // Cleanup should be deferred until git-format-patch generation completes.
+    expect(remove).not.toHaveBeenCalled();
+
+    const start = Date.now();
+    let lastArtifact: unknown = null;
+    while (true) {
+      const artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+      lastArtifact = artifact;
+
+      if (artifact?.status === "ready") {
+        try {
+          await fsPromises.stat(patchPath);
+          if (remove.mock.calls.length > 0) {
+            break;
+          }
+        } catch {
+          // Keep polling until the patch file exists.
+        }
+      } else if (artifact?.status === "failed" || artifact?.status === "skipped") {
+        throw new Error(
+          `Patch artifact generation failed with status=${artifact.status}: ${artifact.error ?? "unknown error"}`
+        );
+      }
+
+      if (Date.now() - start > 10_000) {
+        throw new Error(
+          `Timed out waiting for patch artifact generation (removeCalled=${remove.mock.calls.length > 0}, lastArtifact=${JSON.stringify(lastArtifact)})`
+        );
+      }
+
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    const artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    expect(artifact?.status).toBe("ready");
+
+    await fsPromises.stat(patchPath);
+    expect(remove).toHaveBeenCalled();
+  }, 20_000);
   test("agent_report updates queued/running task tool output in parent history", async () => {
     const config = await createTestConfig(rootDir);
 

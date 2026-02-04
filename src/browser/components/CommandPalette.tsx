@@ -19,7 +19,7 @@ import { filterCommandsByPrefix } from "@/browser/utils/commandPaletteFiltering"
 import { matchesAllTerms } from "@/browser/utils/fuzzySearch";
 
 interface CommandPaletteProps {
-  getSlashContext?: () => { providerNames: string[]; workspaceId?: string };
+  getSlashContext?: () => { workspaceId?: string };
 }
 
 type PromptDef = NonNullable<NonNullable<CommandAction["prompt"]>>;
@@ -237,9 +237,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ getSlashContext 
     const q = query.trim();
 
     if (q.startsWith("/")) {
-      const ctx = getSlashContext?.() ?? { providerNames: [] as string[] };
+      const ctx = getSlashContext?.() ?? {};
       const suggestions = getSlashCommandSuggestions(q, {
-        providerNames: ctx.providerNames,
         agentSkills,
         variant: ctx.workspaceId ? "workspace" : "creation",
       });

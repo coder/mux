@@ -13,6 +13,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
+import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import {
   deleteWorkspaceStorage,
@@ -44,6 +45,7 @@ import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getProjectRouteId } from "@/common/utils/projectRouteId";
+import { resolveProjectPathFromProjectQuery } from "@/common/utils/deepLink";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { useRouter } from "@/browser/contexts/RouterContext";
@@ -215,6 +217,20 @@ function normalizeWorkspaceDraftsByProject(value: unknown): WorkspaceDraftsByPro
   }
 
   return result;
+}
+
+function normalizeProjectPathForComparison(projectPath: string): string {
+  let normalized = projectPath.trim();
+
+  // Be forgiving: mux:// links may include trailing path separators.
+  normalized = normalized.replace(/[\\/]+$/, "");
+
+  // Paths are case-insensitive on Windows.
+  if (globalThis.window?.api?.platform === "win32") {
+    normalized = normalized.toLowerCase();
+  }
+
+  return normalized;
 }
 
 function createWorkspaceDraftId(): string {
@@ -408,7 +424,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       });
   }, [api]);
   // Get project refresh function from ProjectContext
-  const { projects, refreshProjects } = useProjectContext();
+  const { projects, refreshProjects, loading: projectsLoading } = useProjectContext();
   // Get router navigation functions and current route state
   const {
     navigateToWorkspace,
@@ -455,6 +471,164 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     () => normalizeWorkspaceDraftsByProject(workspaceDraftsByProjectState),
     [workspaceDraftsByProjectState]
   );
+
+  const pendingDeepLinksRef = useRef<MuxDeepLinkPayload[]>([]);
+
+  const handleDeepLink = useCallback(
+    (payload: MuxDeepLinkPayload) => {
+      if (payload.type !== "new_chat") {
+        return;
+      }
+
+      let resolvedProjectPath: string | null = null;
+
+      const projectPathFromPayload =
+        typeof payload.projectPath === "string" && payload.projectPath.trim().length > 0
+          ? payload.projectPath
+          : null;
+
+      if (projectPathFromPayload) {
+        const target = normalizeProjectPathForComparison(projectPathFromPayload);
+
+        for (const projectPath of projects.keys()) {
+          if (normalizeProjectPathForComparison(projectPath) === target) {
+            resolvedProjectPath = projectPath;
+            break;
+          }
+        }
+      }
+
+      const projectIdFromPayload =
+        resolvedProjectPath === null &&
+        typeof payload.projectId === "string" &&
+        payload.projectId.trim().length > 0
+          ? payload.projectId
+          : null;
+
+      if (projectIdFromPayload) {
+        for (const projectPath of projects.keys()) {
+          if (getProjectRouteId(projectPath) === projectIdFromPayload) {
+            resolvedProjectPath = projectPath;
+            break;
+          }
+        }
+      }
+
+      const projectQueryFromPayload =
+        resolvedProjectPath === null &&
+        typeof payload.project === "string" &&
+        payload.project.trim().length > 0
+          ? payload.project
+          : null;
+
+      // Back-compat/ergonomics: if a deep link passed a projectPath that doesn't match
+      // exactly (e.g., different machine), still try matching by its final path segment.
+      const inferredProjectQueryFromPath =
+        resolvedProjectPath === null && projectQueryFromPayload === null && projectPathFromPayload
+          ? projectPathFromPayload
+          : null;
+
+      const projectQuery = projectQueryFromPayload ?? inferredProjectQueryFromPath;
+      if (resolvedProjectPath === null && projectQuery) {
+        resolvedProjectPath = resolveProjectPathFromProjectQuery(projects.keys(), projectQuery);
+      }
+
+      // If no project is specified (or matching failed), default to the first project in the list.
+      if (resolvedProjectPath === null) {
+        const firstProjectPath = projects.keys().next().value;
+        if (typeof firstProjectPath === "string") {
+          resolvedProjectPath = firstProjectPath;
+        }
+      }
+
+      if (!resolvedProjectPath) {
+        // Startup deep links can arrive before the projects list is populated.
+        //
+        // NOTE: ProjectContext can set `projectsLoading=false` even when the API isn't
+        // connected yet (refreshProjects() returns early but the effect still flips loading).
+        // In that window, buffer unresolved links in-memory and retry once projects load.
+        const shouldBuffer = projectsLoading || !api || projects.size === 0;
+        if (shouldBuffer) {
+          const queue = pendingDeepLinksRef.current;
+          if (queue.length >= 10) {
+            queue.shift();
+          }
+          queue.push(payload);
+        }
+        return;
+      }
+
+      const normalizedSectionId =
+        typeof payload.sectionId === "string" && payload.sectionId.trim().length > 0
+          ? payload.sectionId
+          : null;
+
+      // IMPORTANT: Deep links should always create a fresh draft, even if an existing draft
+      // is empty. This keeps deep-link navigations predictable and avoids surprising reuse.
+      const draftId = createWorkspaceDraftId();
+      const createdAt = Date.now();
+
+      setWorkspaceDraftsByProjectState((prev) => {
+        const current = normalizeWorkspaceDraftsByProject(prev);
+        const existing = current[resolvedProjectPath] ?? [];
+
+        return {
+          ...current,
+          [resolvedProjectPath]: [
+            ...existing,
+            {
+              draftId,
+              sectionId: normalizedSectionId,
+              createdAt,
+            },
+          ],
+        };
+      });
+
+      const prompt =
+        typeof payload.prompt === "string" && payload.prompt.trim().length > 0
+          ? payload.prompt
+          : null;
+
+      if (prompt) {
+        updatePersistedState(getInputKey(getDraftScopeId(resolvedProjectPath, draftId)), prompt);
+      }
+
+      navigateToProject(resolvedProjectPath, normalizedSectionId ?? undefined, draftId);
+    },
+    [api, navigateToProject, projects, projectsLoading, setWorkspaceDraftsByProjectState]
+  );
+
+  const deepLinkHandlerRef = useRef(handleDeepLink);
+  deepLinkHandlerRef.current = handleDeepLink;
+
+  useEffect(() => {
+    const unsubscribe = window.api?.onDeepLink?.((payload) => {
+      deepLinkHandlerRef.current(payload);
+    });
+
+    const pending = window.api?.consumePendingDeepLinks?.() ?? [];
+    for (const payload of pending) {
+      deepLinkHandlerRef.current(payload);
+    }
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [deepLinkHandlerRef]);
+
+  useEffect(() => {
+    if (pendingDeepLinksRef.current.length === 0) {
+      return;
+    }
+
+    const queued = pendingDeepLinksRef.current;
+    pendingDeepLinksRef.current = [];
+
+    for (const payload of queued) {
+      deepLinkHandlerRef.current(payload);
+    }
+  }, [projects, projectsLoading, deepLinkHandlerRef]);
 
   // Clean up promotions that point at removed drafts or archived workspaces so
   // promoted entries never hide the real workspace list.

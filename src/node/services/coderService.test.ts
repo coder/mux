@@ -38,6 +38,21 @@ function mockExecError(error: Error): void {
   execAsyncSpy?.mockReturnValue(createMockExecResult(Promise.reject(error)));
 }
 
+function mockVersionAndWhoami(options: { version: string; username?: string }): void {
+  execAsyncSpy?.mockImplementationOnce(() =>
+    createMockExecResult(
+      Promise.resolve({ stdout: JSON.stringify({ version: options.version }), stderr: "" })
+    )
+  );
+  const whoamiPayload = {
+    url: "https://coder.example.com",
+    ...(options.username ? { username: options.username } : {}),
+  };
+  execAsyncSpy?.mockImplementationOnce(() =>
+    createMockExecResult(Promise.resolve({ stdout: JSON.stringify([whoamiPayload]), stderr: "" }))
+  );
+}
+
 /**
  * Mock spawn for streaming createWorkspace() tests.
  * Uses spyOn instead of vi.mock to avoid polluting other test files.
@@ -88,19 +103,29 @@ describe("CoderService", () => {
 
   describe("getCoderInfo", () => {
     it("returns available state with valid version", async () => {
-      mockExecOk(JSON.stringify({ version: "2.28.2" }));
+      mockVersionAndWhoami({ version: "2.28.2", username: "coder-user" });
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ state: "available", version: "2.28.2" });
+      expect(info).toEqual({
+        state: "available",
+        version: "2.28.2",
+        username: "coder-user",
+        url: "https://coder.example.com",
+      });
     });
 
     it("returns available state for exact minimum version", async () => {
-      mockExecOk(JSON.stringify({ version: "2.25.0" }));
+      mockVersionAndWhoami({ version: "2.25.0", username: "coder-user" });
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ state: "available", version: "2.25.0" });
+      expect(info).toEqual({
+        state: "available",
+        version: "2.25.0",
+        username: "coder-user",
+        url: "https://coder.example.com",
+      });
     });
 
     it("returns outdated state for version below minimum", async () => {
@@ -112,11 +137,19 @@ describe("CoderService", () => {
     });
 
     it("handles version with dev suffix", async () => {
-      mockExecOk(JSON.stringify({ version: "2.28.2-devel+903c045b9" }));
+      mockVersionAndWhoami({
+        version: "2.28.2-devel+903c045b9",
+        username: "coder-user",
+      });
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ state: "available", version: "2.28.2-devel+903c045b9" });
+      expect(info).toEqual({
+        state: "available",
+        version: "2.28.2-devel+903c045b9",
+        username: "coder-user",
+        url: "https://coder.example.com",
+      });
     });
 
     it("returns unavailable state with reason missing when CLI not installed", async () => {
@@ -150,12 +183,12 @@ describe("CoderService", () => {
     });
 
     it("caches the result", async () => {
-      mockExecOk(JSON.stringify({ version: "2.28.2" }));
+      mockVersionAndWhoami({ version: "2.28.2", username: "coder-user" });
 
       await service.getCoderInfo();
       await service.getCoderInfo();
 
-      expect(execAsyncSpy).toHaveBeenCalledTimes(1);
+      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -181,10 +214,13 @@ describe("CoderService", () => {
 
       const templates = await service.listTemplates();
 
-      expect(templates).toEqual([
-        { name: "template-1", displayName: "Template One", organizationName: "org1" },
-        { name: "template-2", displayName: "Template Two", organizationName: "default" },
-      ]);
+      expect(templates).toEqual({
+        ok: true,
+        templates: [
+          { name: "template-1", displayName: "Template One", organizationName: "org1" },
+          { name: "template-2", displayName: "Template Two", organizationName: "default" },
+        ],
+      });
     });
 
     it("uses name as displayName when display_name not present", async () => {
@@ -199,17 +235,20 @@ describe("CoderService", () => {
 
       const templates = await service.listTemplates();
 
-      expect(templates).toEqual([
-        { name: "my-template", displayName: "my-template", organizationName: "default" },
-      ]);
+      expect(templates).toEqual({
+        ok: true,
+        templates: [
+          { name: "my-template", displayName: "my-template", organizationName: "default" },
+        ],
+      });
     });
 
-    it("returns empty array on error", async () => {
+    it("returns error result on error", async () => {
       mockExecError(new Error("not logged in"));
 
       const templates = await service.listTemplates();
 
-      expect(templates).toEqual([]);
+      expect(templates).toEqual({ ok: false, error: "not logged in" });
     });
 
     it("returns empty array for empty output", async () => {
@@ -217,7 +256,7 @@ describe("CoderService", () => {
 
       const templates = await service.listTemplates();
 
-      expect(templates).toEqual([]);
+      expect(templates).toEqual({ ok: true, templates: [] });
     });
   });
 
@@ -245,10 +284,13 @@ describe("CoderService", () => {
 
       const presets = await service.listPresets("my-template");
 
-      expect(presets).toEqual([
-        { id: "preset-1", name: "Small", description: "Small instance", isDefault: true },
-        { id: "preset-2", name: "Large", description: "Large instance", isDefault: false },
-      ]);
+      expect(presets).toEqual({
+        ok: true,
+        presets: [
+          { id: "preset-1", name: "Small", description: "Small instance", isDefault: true },
+          { id: "preset-2", name: "Large", description: "Large instance", isDefault: false },
+        ],
+      });
     });
 
     it("returns empty array when template has no presets", async () => {
@@ -256,15 +298,15 @@ describe("CoderService", () => {
 
       const presets = await service.listPresets("no-presets-template");
 
-      expect(presets).toEqual([]);
+      expect(presets).toEqual({ ok: true, presets: [] });
     });
 
-    it("returns empty array on error", async () => {
+    it("returns error result on error", async () => {
       mockExecError(new Error("template not found"));
 
       const presets = await service.listPresets("nonexistent");
 
-      expect(presets).toEqual([]);
+      expect(presets).toEqual({ ok: false, error: "template not found" });
     });
   });
 
@@ -295,19 +337,22 @@ describe("CoderService", () => {
 
       const workspaces = await service.listWorkspaces();
 
-      expect(workspaces).toEqual([
-        { name: "ws-1", templateName: "t1", templateDisplayName: "t1", status: "running" },
-        { name: "ws-2", templateName: "t2", templateDisplayName: "t2", status: "stopped" },
-        { name: "ws-3", templateName: "t3", templateDisplayName: "t3", status: "starting" },
-      ]);
+      expect(workspaces).toEqual({
+        ok: true,
+        workspaces: [
+          { name: "ws-1", templateName: "t1", templateDisplayName: "t1", status: "running" },
+          { name: "ws-2", templateName: "t2", templateDisplayName: "t2", status: "stopped" },
+          { name: "ws-3", templateName: "t3", templateDisplayName: "t3", status: "starting" },
+        ],
+      });
     });
 
-    it("returns empty array on error", async () => {
+    it("returns error result on failure", async () => {
       mockExecError(new Error("not logged in"));
 
       const workspaces = await service.listWorkspaces();
 
-      expect(workspaces).toEqual([]);
+      expect(workspaces).toEqual({ ok: false, error: "not logged in" });
     });
   });
 
@@ -457,10 +502,12 @@ describe("CoderService", () => {
 
     function mockWhoami() {
       execAsyncSpy?.mockImplementation((cmd: string) => {
-        if (cmd === "coder whoami --output json") {
+        if (cmd === "coder whoami --output=json") {
           return createMockExecResult(
             Promise.resolve({
-              stdout: JSON.stringify([{ url: "https://coder.example.com" }]),
+              stdout: JSON.stringify([
+                { url: "https://coder.example.com", username: "coder-user" },
+              ]),
               stderr: "",
             })
           );
@@ -491,6 +538,31 @@ describe("CoderService", () => {
         headers: { "Coder-Session-Token": "session-token" },
       });
       expect(execAsyncSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("reuses cached whoami after getCoderInfo", async () => {
+      mockVersionAndWhoami({ version: "2.28.2", username: "coder-user" });
+      execAsyncSpy?.mockImplementation((cmd: string) =>
+        createMockExecResult(Promise.reject(new Error(`Unexpected command: ${cmd}`)))
+      );
+      const fetchSpy = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ hostname_suffix: ".corp" }),
+      });
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      await service.getCoderInfo();
+
+      const session = {
+        token: "session-token",
+        dispose: vi.fn().mockResolvedValue(undefined),
+      };
+      await service.fetchDeploymentSshConfig(session);
+
+      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
+      const whoamiCalls =
+        execAsyncSpy?.mock.calls.filter(([cmd]) => cmd === "coder whoami --output=json") ?? [];
+      expect(whoamiCalls).toHaveLength(1);
     });
 
     it("defaults to coder when hostname suffix missing", async () => {
@@ -568,10 +640,12 @@ describe("CoderService", () => {
       // Mock getPresetParamNames (coder templates presets list)
       // Mock getTemplateRichParameters (coder tokens create + fetch)
       execAsyncSpy?.mockImplementation((cmd: string) => {
-        if (cmd === "coder whoami --output json") {
+        if (cmd === "coder whoami --output=json") {
           return createMockExecResult(
             Promise.resolve({
-              stdout: JSON.stringify([{ url: "https://coder.example.com" }]),
+              stdout: JSON.stringify([
+                { url: "https://coder.example.com", username: "coder-user" },
+              ]),
               stderr: "",
             })
           );

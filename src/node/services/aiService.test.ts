@@ -2,18 +2,28 @@
 // These tests would need to be rewritten to work with Bun's test runner
 // For now, the commandProcessor tests demonstrate our testing approach
 
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { describe, it, expect, beforeEach } from "bun:test";
+
 import {
   AIService,
   normalizeAnthropicBaseURL,
   buildAnthropicHeaders,
   buildAppAttributionHeaders,
   ANTHROPIC_1M_CONTEXT_HEADER,
+  discoverAvailableSubagentsForToolContext,
 } from "./aiService";
 import { HistoryService } from "./historyService";
 import { PartialService } from "./partialService";
 import { InitStateManager } from "./initStateManager";
 import { Config } from "@/node/config";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { DisposableTempDir } from "@/node/services/tempDir";
+
+import { createTaskTool } from "./tools/task";
+import { createTestToolConfig } from "./tools/testHelpers";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 
 describe("AIService", () => {
@@ -160,5 +170,52 @@ describe("buildAppAttributionHeaders", () => {
     buildAppAttributionHeaders(existing);
 
     expect(existing).toEqual(existingSnapshot);
+  });
+});
+
+describe("discoverAvailableSubagentsForToolContext", () => {
+  it("includes derived agents that inherit subagent.runnable from base", async () => {
+    using project = new DisposableTempDir("available-subagents");
+    using muxHome = new DisposableTempDir("available-subagents-home");
+
+    const agentsRoot = path.join(project.path, ".mux", "agents");
+    await fs.mkdir(agentsRoot, { recursive: true });
+
+    // Derived agent: base exec but no explicit subagent.runnable.
+    await fs.writeFile(
+      path.join(agentsRoot, "custom.md"),
+      `---\nname: Custom Exec Derivative\nbase: exec\n---\nBody\n`,
+      "utf-8"
+    );
+
+    const runtime = new LocalRuntime(project.path);
+    const cfg = new Config(muxHome.path).loadConfigOrDefault();
+
+    const availableSubagents = await discoverAvailableSubagentsForToolContext({
+      runtime,
+      workspacePath: project.path,
+      cfg,
+      roots: {
+        projectRoot: agentsRoot,
+        globalRoot: path.join(project.path, "empty-global-agents"),
+      },
+    });
+
+    const custom = availableSubagents.find((agent) => agent.id === "custom");
+    expect(custom).toBeDefined();
+    expect(custom?.subagentRunnable).toBe(true);
+
+    // Ensure the task tool description includes the derived agent in the runnable sub-agent list.
+    const taskTool = createTaskTool({
+      ...createTestToolConfig(project.path, { workspaceId: "test-workspace" }),
+      availableSubagents,
+    });
+
+    const description = (taskTool as unknown as { description?: unknown }).description;
+    expect(typeof description).toBe("string");
+    if (typeof description === "string") {
+      expect(description).toContain("Available sub-agents");
+      expect(description).toContain("- custom");
+    }
   });
 });

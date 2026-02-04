@@ -46,8 +46,11 @@ import { normalizeAgentAiDefaults, type AgentAiDefaults } from "@/common/types/a
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import type {
   CoderInfo,
-  CoderTemplate,
+  CoderListPresetsResult,
+  CoderListTemplatesResult,
+  CoderListWorkspacesResult,
   CoderPreset,
+  CoderTemplate,
   CoderWorkspace,
 } from "@/common/orpc/schemas/coder";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -184,6 +187,12 @@ export interface MockORPCClientOptions {
   coderPresets?: Map<string, CoderPreset[]>;
   /** Existing Coder workspaces */
   coderWorkspaces?: CoderWorkspace[];
+  /** Override Coder template list result (including error states) */
+  coderTemplatesResult?: CoderListTemplatesResult;
+  /** Override Coder preset list result per template (including error states) */
+  coderPresetsResult?: Map<string, CoderListPresetsResult>;
+  /** Override Coder workspace list result (including error states) */
+  coderWorkspacesResult?: CoderListWorkspacesResult;
   /** Available agent skills (descriptors) */
   agentSkills?: AgentSkillDescriptor[];
 }
@@ -260,6 +269,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     coderTemplates = [],
     coderPresets = new Map<string, CoderPreset[]>(),
     coderWorkspaces = [],
+    coderTemplatesResult,
+    coderPresetsResult = new Map<string, CoderListPresetsResult>(),
+    coderWorkspacesResult,
     layoutPresets: initialLayoutPresets,
     agentSkills = [],
   } = options;
@@ -883,10 +895,17 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     },
     coder: {
       getInfo: () => Promise.resolve(coderInfo),
-      listTemplates: () => Promise.resolve(coderTemplates),
+      listTemplates: () =>
+        Promise.resolve(coderTemplatesResult ?? { ok: true, templates: coderTemplates }),
       listPresets: (input: { template: string }) =>
-        Promise.resolve(coderPresets.get(input.template) ?? []),
-      listWorkspaces: () => Promise.resolve(coderWorkspaces),
+        Promise.resolve(
+          coderPresetsResult.get(input.template) ?? {
+            ok: true,
+            presets: coderPresets.get(input.template) ?? [],
+          }
+        ),
+      listWorkspaces: () =>
+        Promise.resolve(coderWorkspacesResult ?? { ok: true, workspaces: coderWorkspaces }),
     },
     nameGeneration: {
       generate: () =>

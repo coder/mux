@@ -2,7 +2,6 @@
  * Coder workspace controls for the SSH-based Coder runtime.
  * Enables creating or connecting to Coder cloud workspaces.
  */
-import React from "react";
 import type {
   CoderInfo,
   CoderTemplate,
@@ -29,8 +28,11 @@ export interface CoderControlsProps {
 
   /** Data for dropdowns (loaded async) */
   templates: CoderTemplate[];
+  templatesError?: string | null;
   presets: CoderPreset[];
+  presetsError?: string | null;
   existingWorkspaces: CoderWorkspace[];
+  workspacesError?: string | null;
 
   /** Loading states */
   loadingTemplates: boolean;
@@ -96,8 +98,7 @@ export function resolveCoderAvailability(coderInfo: CoderInfo | null): CoderAvai
   return { state: "available", shouldShowRuntimeButton: true };
 }
 
-// Split status messaging from the SSH-only checkbox so the Coder runtime can render
-// availability without a hidden toggle prop.
+// Standalone availability messaging used by the Coder runtime UI.
 export function CoderAvailabilityMessage(props: { coderInfo: CoderInfo | null }) {
   const availability = resolveCoderAvailability(props.coderInfo);
 
@@ -117,122 +118,42 @@ export function CoderAvailabilityMessage(props: { coderInfo: CoderInfo | null })
   return null;
 }
 
-function CoderEnableToggle(props: {
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
-  disabled: boolean;
-  coderInfo: CoderInfo | null;
-}) {
-  const availability = resolveCoderAvailability(props.coderInfo);
-
-  if (availability.state === "loading") {
-    return (
-      <CoderCheckbox
-        enabled={props.enabled}
-        onEnabledChange={props.onEnabledChange}
-        disabled={props.disabled}
-        status={
-          <span className="text-muted flex items-center gap-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {CODER_CHECKING_LABEL}
-          </span>
-        }
-      />
-    );
-  }
-
-  if (availability.state === "outdated") {
-    return (
-      <CoderCheckbox
-        enabled={false}
-        onEnabledChange={props.onEnabledChange}
-        disabled={props.disabled}
-        disabledReason={availability.reason}
-      />
-    );
-  }
-
-  if (availability.state === "unavailable") {
-    return null;
-  }
-
-  return (
-    <CoderCheckbox
-      enabled={props.enabled}
-      onEnabledChange={props.onEnabledChange}
-      disabled={props.disabled}
-    />
-  );
-}
-
 export type CoderWorkspaceFormProps = Omit<
   CoderControlsProps,
   "enabled" | "onEnabledChange" | "coderInfo"
->;
-
-/** Checkbox row with optional status indicator and tooltip for disabled state */
-function CoderCheckbox(props: {
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
-  disabled: boolean;
-  status?: React.ReactNode;
-  /** When provided, wraps checkbox in tooltip explaining why it's disabled */
-  disabledReason?: string;
-}) {
-  const checkboxElement = (
-    <label
-      className={cn(
-        "flex items-center gap-1.5 text-xs",
-        props.disabledReason && "cursor-not-allowed"
-      )}
-    >
-      <input
-        type="checkbox"
-        checked={props.enabled}
-        onChange={(e) => props.onEnabledChange(e.target.checked)}
-        disabled={props.disabled || Boolean(props.disabledReason)}
-        className={cn("accent-accent", props.disabledReason && "cursor-not-allowed opacity-50")}
-        data-testid="coder-checkbox"
-      />
-      <span className={cn("text-muted", props.disabledReason && "opacity-50")}>
-        Use Coder Workspace
-      </span>
-      {props.status}
-    </label>
-  );
-
-  // Wrap in tooltip when disabled with a reason
-  if (props.disabledReason) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-block">{checkboxElement}</span>
-        </TooltipTrigger>
-        <TooltipContent align="start" className="max-w-60">
-          <p className="text-xs text-yellow-500">{props.disabledReason}</p>
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  return checkboxElement;
-}
+> & {
+  username?: string;
+  deploymentUrl?: string;
+};
 
 export function CoderWorkspaceForm(props: CoderWorkspaceFormProps) {
   const {
     coderConfig,
     onCoderConfigChange,
     templates,
+    templatesError,
     presets,
+    presetsError,
     existingWorkspaces,
+    workspacesError,
     loadingTemplates,
     loadingPresets,
     loadingWorkspaces,
     disabled,
     hasError,
+    username,
+    deploymentUrl,
   } = props;
 
   const mode: CoderMode = coderConfig?.existingWorkspace ? "existing" : "new";
+  const formHasError = Boolean(
+    (hasError ?? false) ||
+    (mode === "existing" && Boolean(workspacesError)) ||
+    (mode === "new" && Boolean(templatesError ?? presetsError))
+  );
+  const templateErrorId = templatesError ? "coder-template-error" : undefined;
+  const presetErrorId = presetsError ? "coder-preset-error" : undefined;
+  const workspaceErrorId = workspacesError ? "coder-workspace-error" : undefined;
 
   const handleModeChange = (newMode: CoderMode) => {
     if (newMode === "existing") {
@@ -296,211 +217,240 @@ export function CoderWorkspaceForm(props: CoderWorkspaceFormProps) {
         ? presets[0]?.name
         : (coderConfig?.preset ?? defaultPresetName ?? presets[0]?.name);
 
+  const templatePlaceholder = templatesError
+    ? "Error loading templates"
+    : templates.length === 0
+      ? "No templates"
+      : "Select template...";
+  const templateSelectDisabled = disabled || templates.length === 0 || Boolean(templatesError);
+
+  const presetPlaceholder = presetsError
+    ? "Error loading presets"
+    : presets.length === 0
+      ? "No presets"
+      : "Select preset...";
+  const presetSelectDisabled = disabled || presets.length === 0 || Boolean(presetsError);
+
+  const workspacePlaceholder = workspacesError
+    ? "Error loading workspaces"
+    : existingWorkspaces.length === 0
+      ? "No workspaces found"
+      : "Select workspace...";
+  const workspaceSelectDisabled =
+    disabled || existingWorkspaces.length === 0 || Boolean(workspacesError);
+
+  const headerBorderClass = formHasError
+    ? "border-b border-red-500"
+    : "border-b border-border-medium";
+
+  // Only show login context when we can name the user and the deployment they're on.
+  const showLoginInfo = Boolean(username && deploymentUrl);
   return (
     <div
       className={cn(
-        "flex w-fit rounded-md border",
-        hasError ? "border-red-500" : "border-border-medium"
+        "flex w-[22rem] flex-col rounded-md border",
+        formHasError ? "border-red-500" : "border-border-medium"
       )}
       data-testid="coder-controls-inner"
     >
-      {/* Left column: New/Existing toggle buttons */}
-      <div
-        className="border-border-medium flex flex-col gap-1 border-r p-2 pr-3"
-        role="group"
-        aria-label="Coder workspace mode"
-        data-testid="coder-mode-toggle"
-      >
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => handleModeChange("new")}
-              disabled={disabled}
-              className={cn(
-                "rounded-md border px-2 py-1 text-xs transition-colors",
-                mode === "new"
-                  ? "border-accent bg-accent/20 text-foreground"
-                  : "border-transparent bg-transparent text-muted hover:border-border-medium"
-              )}
-              aria-pressed={mode === "new"}
-            >
-              New
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Create a new Coder workspace from a template</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => handleModeChange("existing")}
-              disabled={disabled}
-              className={cn(
-                "rounded-md border px-2 py-1 text-xs transition-colors",
-                mode === "existing"
-                  ? "border-accent bg-accent/20 text-foreground"
-                  : "border-transparent bg-transparent text-muted hover:border-border-medium"
-              )}
-              aria-pressed={mode === "existing"}
-            >
-              Existing
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>Connect to an existing Coder workspace</TooltipContent>
-        </Tooltip>
-      </div>
-
-      {/* Right column: Mode-specific controls */}
-      {/* New workspace controls - template/preset stacked vertically */}
-      {mode === "new" && (
-        <div className="flex flex-col gap-1 p-2 pl-3">
-          <div className="flex h-7 items-center gap-2">
-            <label className="text-muted-foreground w-16 text-xs">Template</label>
-            {loadingTemplates ? (
-              <Loader2 className="text-muted h-4 w-4 animate-spin" />
-            ) : (
-              <Select
-                value={(() => {
-                  const templateName = coderConfig?.template;
-                  if (!templateName) {
-                    return "";
-                  }
-
-                  const matchingTemplates = templates.filter((t) => t.name === templateName);
-                  const firstMatch = matchingTemplates[0];
-                  const hasDuplicate =
-                    firstMatch && hasTemplateDuplicateName(firstMatch, templates);
-
-                  if (!hasDuplicate) {
-                    return templateName;
-                  }
-
-                  const org = coderConfig?.templateOrg ?? firstMatch?.organizationName ?? undefined;
-                  return org ? `${org}/${templateName}` : templateName;
-                })()}
-                onValueChange={handleTemplateChange}
-                disabled={disabled || templates.length === 0}
+      {showLoginInfo && (
+        <div className={cn("text-muted-foreground px-2 py-1.5 text-xs", headerBorderClass)}>
+          Logged in as <span className="text-foreground font-medium">{username}</span> on{" "}
+          <span className="text-foreground font-medium">{deploymentUrl}</span>
+        </div>
+      )}
+      <div className="flex">
+        {/* Left column: New/Existing toggle buttons */}
+        <div
+          className="border-border-medium flex flex-col gap-1 border-r p-2 pr-3"
+          role="group"
+          aria-label="Coder workspace mode"
+          data-testid="coder-mode-toggle"
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => handleModeChange("new")}
+                disabled={disabled}
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs transition-colors",
+                  mode === "new"
+                    ? "border-accent bg-accent/20 text-foreground"
+                    : "border-transparent bg-transparent text-muted hover:border-border-medium"
+                )}
+                aria-pressed={mode === "new"}
               >
-                <SelectTrigger
-                  className="h-7 w-[180px] text-xs"
-                  data-testid="coder-template-select"
+                New
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Create a new Coder workspace from a template</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => handleModeChange("existing")}
+                disabled={disabled}
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs transition-colors",
+                  mode === "existing"
+                    ? "border-accent bg-accent/20 text-foreground"
+                    : "border-transparent bg-transparent text-muted hover:border-border-medium"
+                )}
+                aria-pressed={mode === "existing"}
+              >
+                Existing
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Connect to an existing Coder workspace</TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* Right column: Mode-specific controls */}
+        {/* New workspace controls - template/preset stacked vertically */}
+        {mode === "new" && (
+          <div className="flex flex-col gap-1 p-2 pl-3">
+            <div className="flex h-7 items-center gap-2">
+              <label className="text-muted-foreground w-16 text-xs">Template</label>
+              {loadingTemplates ? (
+                <Loader2 className="text-muted h-4 w-4 animate-spin" />
+              ) : (
+                <Select
+                  value={(() => {
+                    const templateName = coderConfig?.template;
+                    if (!templateName) {
+                      return "";
+                    }
+
+                    const matchingTemplates = templates.filter((t) => t.name === templateName);
+                    const firstMatch = matchingTemplates[0];
+                    const hasDuplicate =
+                      firstMatch && hasTemplateDuplicateName(firstMatch, templates);
+
+                    if (!hasDuplicate) {
+                      return templateName;
+                    }
+
+                    const org =
+                      coderConfig?.templateOrg ?? firstMatch?.organizationName ?? undefined;
+                    return org ? `${org}/${templateName}` : templateName;
+                  })()}
+                  onValueChange={handleTemplateChange}
+                  disabled={templateSelectDisabled}
                 >
-                  <SelectValue placeholder="No templates" />
-                </SelectTrigger>
-                <SelectContent>
-                  {templates.map((t) => {
-                    // Show org name only if there are duplicate template names
-                    const hasDuplicate = hasTemplateDuplicateName(t, templates);
-                    // Use org/name as value when duplicates exist for disambiguation
-                    const itemValue = hasDuplicate ? `${t.organizationName}/${t.name}` : t.name;
-                    return (
-                      <SelectItem key={`${t.organizationName}/${t.name}`} value={itemValue}>
-                        {t.displayName || t.name}
-                        {hasDuplicate && (
-                          <span className="text-muted ml-1">({t.organizationName})</span>
-                        )}
+                  <SelectTrigger
+                    className="h-7 w-[180px] text-xs"
+                    data-testid="coder-template-select"
+                    aria-invalid={Boolean(templatesError) || undefined}
+                    aria-describedby={templateErrorId}
+                  >
+                    <SelectValue placeholder={templatePlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => {
+                      // Show org name only if there are duplicate template names
+                      const hasDuplicate = hasTemplateDuplicateName(t, templates);
+                      // Use org/name as value when duplicates exist for disambiguation
+                      const itemValue = hasDuplicate ? `${t.organizationName}/${t.name}` : t.name;
+                      return (
+                        <SelectItem key={`${t.organizationName}/${t.name}`} value={itemValue}>
+                          {t.displayName || t.name}
+                          {hasDuplicate && (
+                            <span className="text-muted ml-1">({t.organizationName})</span>
+                          )}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {templatesError && (
+              <p id={templateErrorId} role="alert" className="text-xs break-all text-red-500">
+                {templatesError}
+              </p>
+            )}
+            <div className="flex h-7 items-center gap-2">
+              <label className="text-muted-foreground w-16 text-xs">Preset</label>
+              {loadingPresets ? (
+                <Loader2 className="text-muted h-4 w-4 animate-spin" />
+              ) : (
+                <Select
+                  value={effectivePreset ?? ""}
+                  onValueChange={handlePresetChange}
+                  disabled={presetSelectDisabled}
+                >
+                  <SelectTrigger
+                    className="h-7 w-[180px] text-xs"
+                    data-testid="coder-preset-select"
+                    aria-invalid={Boolean(presetsError) || undefined}
+                    aria-describedby={presetErrorId}
+                  >
+                    <SelectValue placeholder={presetPlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {presets.map((p) => (
+                      <SelectItem key={p.id} value={p.name}>
+                        {p.name}
                       </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {presetsError && (
+              <p id={presetErrorId} role="alert" className="text-xs break-all text-red-500">
+                {presetsError}
+              </p>
             )}
           </div>
-          <div className="flex h-7 items-center gap-2">
-            <label className="text-muted-foreground w-16 text-xs">Preset</label>
-            {loadingPresets ? (
-              <Loader2 className="text-muted h-4 w-4 animate-spin" />
-            ) : (
-              <Select
-                value={effectivePreset ?? ""}
-                onValueChange={handlePresetChange}
-                disabled={disabled || presets.length === 0}
-              >
-                <SelectTrigger className="h-7 w-[180px] text-xs" data-testid="coder-preset-select">
-                  <SelectValue placeholder="No presets" />
-                </SelectTrigger>
-                <SelectContent>
-                  {presets.map((p) => (
-                    <SelectItem key={p.id} value={p.name}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        )}
+
+        {/* Existing workspace controls - keep base height aligned with New mode (2×h-7 + gap-1). */}
+        {mode === "existing" && (
+          <div className="flex w-[17rem] flex-col gap-1 p-2 pl-3">
+            <div className="flex min-h-[3.75rem] items-center gap-2">
+              <label className="text-muted-foreground w-16 text-xs">Workspace</label>
+              {loadingWorkspaces ? (
+                <Loader2 className="text-muted h-4 w-4 animate-spin" />
+              ) : (
+                <Select
+                  value={coderConfig?.workspaceName ?? ""}
+                  onValueChange={handleExistingWorkspaceChange}
+                  disabled={workspaceSelectDisabled}
+                >
+                  <SelectTrigger
+                    className="h-7 w-[180px] text-xs"
+                    data-testid="coder-workspace-select"
+                    aria-invalid={Boolean(workspacesError) || undefined}
+                    aria-describedby={workspaceErrorId}
+                  >
+                    <SelectValue placeholder={workspacePlaceholder} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {existingWorkspaces
+                      .filter((w) => w.status !== "deleted" && w.status !== "deleting")
+                      .map((w) => (
+                        <SelectItem key={w.name} value={w.name}>
+                          {w.name}
+                          <span className="text-muted ml-1">
+                            ({w.templateDisplayName} • {w.status})
+                          </span>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {workspacesError && (
+              <p id={workspaceErrorId} role="alert" className="text-xs break-all text-red-500">
+                {workspacesError}
+              </p>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Existing workspace controls - min-h matches New mode (2×h-7 + gap-1 + p-2) */}
-      {mode === "existing" && (
-        <div className="flex min-h-[4.75rem] min-w-[16rem] items-center gap-2 p-2 pl-3">
-          <label className="text-muted-foreground text-xs">Workspace</label>
-          {loadingWorkspaces ? (
-            <Loader2 className="text-muted h-4 w-4 animate-spin" />
-          ) : (
-            <Select
-              value={coderConfig?.workspaceName ?? ""}
-              onValueChange={handleExistingWorkspaceChange}
-              disabled={disabled || existingWorkspaces.length === 0}
-            >
-              <SelectTrigger className="h-7 w-[180px] text-xs" data-testid="coder-workspace-select">
-                <SelectValue
-                  placeholder={
-                    existingWorkspaces.length === 0 ? "No workspaces found" : "Select workspace..."
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {existingWorkspaces
-                  .filter((w) => w.status !== "deleted" && w.status !== "deleting")
-                  .map((w) => (
-                    <SelectItem key={w.name} value={w.name}>
-                      {w.name}
-                      <span className="text-muted ml-1">
-                        ({w.templateDisplayName} • {w.status})
-                      </span>
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function CoderControls(props: CoderControlsProps) {
-  const availability = resolveCoderAvailability(props.coderInfo);
-
-  if (availability.state === "unavailable") {
-    return null;
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5" data-testid="coder-controls">
-      <CoderEnableToggle
-        enabled={props.enabled}
-        onEnabledChange={props.onEnabledChange}
-        disabled={props.disabled}
-        coderInfo={props.coderInfo}
-      />
-      {availability.state === "available" && props.enabled && (
-        <CoderWorkspaceForm
-          coderConfig={props.coderConfig}
-          onCoderConfigChange={props.onCoderConfigChange}
-          templates={props.templates}
-          presets={props.presets}
-          existingWorkspaces={props.existingWorkspaces}
-          loadingTemplates={props.loadingTemplates}
-          loadingPresets={props.loadingPresets}
-          loadingWorkspaces={props.loadingWorkspaces}
-          disabled={props.disabled}
-          hasError={props.hasError}
-        />
-      )}
+        )}
+      </div>
     </div>
   );
 }

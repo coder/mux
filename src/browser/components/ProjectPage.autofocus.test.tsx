@@ -89,7 +89,6 @@ describe("ProjectPage", () => {
       projectName: "demo",
       leftSidebarCollapsed: true,
       onToggleLeftSidebarCollapsed: () => undefined,
-      onProviderConfig: () => Promise.resolve(undefined),
       onWorkspaceCreated: () => undefined,
     };
 

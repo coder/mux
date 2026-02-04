@@ -90,8 +90,17 @@ function sanitizeMode(mode: ChatMode): ChatMode {
   }
 }
 
-function sliderLocator(page: Page): Locator {
-  return page.getByRole("slider", { name: "Thinking level" });
+// Thinking level paddle controls (replaced old slider UI)
+function thinkingDecreasePaddle(page: Page): Locator {
+  return page.getByRole("button", { name: "Decrease thinking level" });
+}
+
+function thinkingIncreasePaddle(page: Page): Locator {
+  return page.getByRole("button", { name: "Increase thinking level" });
+}
+
+function thinkingLevelLabel(page: Page): Locator {
+  return page.getByLabel(/Thinking level:/);
 }
 
 function transcriptLocator(page: Page): Locator {
@@ -164,24 +173,50 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       await expect(agentPickerTrigger).toContainText(normalizedMode);
     },
 
-    async setThinkingLevel(value: number): Promise<void> {
-      if (!Number.isInteger(value)) {
-        throw new Error("Slider value must be an integer");
+    /**
+     * Set the thinking level using paddle controls.
+     * Values map to: 0=OFF, 1=LOW, 2=MED, 3=HIGH, 4=MAX
+     */
+    async setThinkingLevel(targetLevel: number): Promise<void> {
+      if (!Number.isInteger(targetLevel)) {
+        throw new Error("Thinking level must be an integer");
       }
-      if (value < 0 || value > 10) {
-        throw new Error(`Slider value ${value} is outside expected range 0-10`);
+      if (targetLevel < 0 || targetLevel > 4) {
+        throw new Error(`Thinking level ${targetLevel} is outside expected range 0-4`);
       }
 
-      const slider = sliderLocator(page);
-      await expect(slider).toBeVisible();
-      await slider.evaluate((element, desiredValue) => {
-        const input = element as HTMLInputElement;
-        input.value = String(desiredValue);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-      }, value);
+      const levelLabels = ["OFF", "LOW", "MED", "HIGH", "MAX"];
+      const targetLabel = levelLabels[targetLevel];
 
-      await expect(slider).toHaveValue(String(value));
+      const label = thinkingLevelLabel(page);
+      const decreasePaddle = thinkingDecreasePaddle(page);
+      const increasePaddle = thinkingIncreasePaddle(page);
+
+      // Wait for thinking controls to be visible
+      await expect(label).toBeVisible();
+
+      // Get current level by reading the label text
+      const getCurrentLevel = async (): Promise<number> => {
+        const text = await label.textContent();
+        const labelIndex = levelLabels.findIndex((l) => text?.includes(l));
+        return labelIndex === -1 ? 0 : labelIndex;
+      };
+
+      // Click paddles until we reach the target level (max 10 clicks to prevent infinite loop)
+      for (let i = 0; i < 10; i++) {
+        const currentLevel = await getCurrentLevel();
+        if (currentLevel === targetLevel) {
+          break;
+        }
+        if (currentLevel < targetLevel) {
+          await increasePaddle.click();
+        } else {
+          await decreasePaddle.click();
+        }
+      }
+
+      // Verify we reached the target
+      await expect(label).toContainText(targetLabel);
     },
 
     async sendMessage(message: string): Promise<void> {
