@@ -554,7 +554,7 @@ export const RemoteServers: AppStory = {
 
     await userEvent.click(pingButtons[0]);
 
-    await dialogCanvas.findByText(/OK —/i);
+    await dialogCanvas.findByText(/OK — Mux v0\.0\.0-mock/i);
   },
 };
 

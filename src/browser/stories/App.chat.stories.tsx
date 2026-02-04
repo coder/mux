@@ -195,6 +195,30 @@ export const RemoteWorkspaceSelected: AppStory = {
   play: async ({ canvasElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await waitForChatMessagesLoaded(storyRoot);
+
+    const canvas = within(storyRoot);
+    const header = await canvas.findByTestId("workspace-header");
+    const headerCanvas = within(header);
+
+    const globe = await headerCanvas.findByLabelText(
+      /Remote workspace \(Mux server: server-work\)/i
+    );
+
+    // Hover to open the globe tooltip and keep it open for the Chromatic snapshot.
+    await userEvent.hover(globe);
+
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+
+        const tooltipText = tooltip.textContent ?? "";
+        if (!tooltipText.includes("Remote workspace (Mux server: server-work)")) {
+          throw new Error(`Unexpected tooltip text: ${JSON.stringify(tooltipText)}`);
+        }
+      },
+      { timeout: 2000, interval: 50 }
+    );
   },
 };
 
