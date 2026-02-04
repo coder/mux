@@ -1287,6 +1287,13 @@ const RemoteMuxServerListEntrySchema = z
   })
   .strict();
 
+const RemoteMuxServerProjectSuggestionSchema = z
+  .object({
+    path: z.string(),
+    label: z.string(),
+  })
+  .strict();
+
 export const remoteServers = {
   list: {
     input: z.void(),
@@ -1330,6 +1337,14 @@ export const remoteServers = {
         })
         .strict()
     ),
+  },
+  listRemoteProjects: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(z.array(RemoteMuxServerProjectSuggestionSchema)),
   },
   workspaceCreate: {
     input: z

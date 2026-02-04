@@ -935,6 +935,66 @@ export const router = (authToken?: string) => {
             return Err(message);
           }
         }),
+      listRemoteProjects: t
+        .input(schemas.remoteServers.listRemoteProjects.input)
+        .output(schemas.remoteServers.listRemoteProjects.output)
+        .handler(async ({ context, input }) => {
+          const serverId = input.id.trim();
+          if (!serverId) {
+            return Err("Remote server id is required");
+          }
+
+          const config = context.config.loadConfigOrDefault();
+          const server = config.remoteServers?.find((entry) => entry.id === serverId) ?? null;
+          if (!server) {
+            return Err(`Remote server not found: ${serverId}`);
+          }
+
+          const authToken =
+            context.remoteServersService.getAuthToken({ id: serverId }) ?? undefined;
+
+          type RemoteProjectsListOutput = z.infer<typeof schemas.projects.list.output>;
+          interface RemoteMuxProjectsClient {
+            projects: {
+              list: () => Promise<RemoteProjectsListOutput>;
+            };
+          }
+
+          let client: RemoteMuxProjectsClient;
+          try {
+            client = createRemoteClient<RemoteMuxProjectsClient>({
+              baseUrl: server.baseUrl,
+              authToken,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+
+          try {
+            const projects = await client.projects.list();
+
+            const suggestions = projects
+              .map(([projectPath]) => stripTrailingSlashes(projectPath.trim()))
+              .filter((projectPath) => projectPath.length > 0)
+              .map((projectPath) => {
+                const label = projectPath
+                  .replace(/[/\\]+$/g, "")
+                  .split(/[/\\]/)
+                  .slice(-1)[0];
+                return {
+                  path: projectPath,
+                  label: label ? label : projectPath,
+                };
+              })
+              .sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+
+            return Ok(suggestions);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
       workspaceCreate: t
         .input(schemas.remoteServers.workspaceCreate.input)
         .output(schemas.remoteServers.workspaceCreate.output)
