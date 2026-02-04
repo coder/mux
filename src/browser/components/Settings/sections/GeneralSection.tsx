@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useTheme, THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
   Select,
@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Input } from "@/browser/components/ui/input";
+import { Switch } from "@/browser/components/ui/switch";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import {
@@ -151,6 +152,49 @@ export function GeneralSection() {
   const editorConfig = normalizeEditorConfig(rawEditorConfig);
   const [sshHost, setSshHost] = useState<string>("");
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
+
+  // Backend config: default to ON so archiving is safest even before async load completes.
+  const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
+  const stopCoderWorkspaceOnArchiveLoadNonceRef = useRef(0);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    const nonce = ++stopCoderWorkspaceOnArchiveLoadNonceRef.current;
+
+    void api.config
+      .getConfig()
+      .then((cfg) => {
+        // If the user toggled the setting while this request was in flight, keep the UI selection.
+        if (nonce !== stopCoderWorkspaceOnArchiveLoadNonceRef.current) {
+          return;
+        }
+
+        setStopCoderWorkspaceOnArchive(cfg.stopCoderWorkspaceOnArchive);
+      })
+      .catch(() => {
+        // Best-effort only. Keep the default (ON) if config fails to load.
+      });
+  }, [api]);
+
+  const handleStopCoderWorkspaceOnArchiveChange = useCallback(
+    (checked: boolean) => {
+      // Invalidate any in-flight initial load so it doesn't overwrite the user's selection.
+      stopCoderWorkspaceOnArchiveLoadNonceRef.current++;
+      setStopCoderWorkspaceOnArchive(checked);
+
+      if (!api?.config?.updateCoderPrefs) {
+        return;
+      }
+
+      void api.config.updateCoderPrefs({ stopCoderWorkspaceOnArchive: checked }).catch(() => {
+        // Best-effort only.
+      });
+    },
+    [api]
+  );
 
   // Load SSH host from server on mount (browser mode only)
   useEffect(() => {
@@ -301,6 +345,21 @@ export function GeneralSection() {
           )}
         </div>
       )}
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex-1">
+          <div className="text-foreground text-sm">Stop Coder workspace when archiving</div>
+          <div className="text-muted text-xs">
+            When enabled, archiving a dedicated Coder workspace will stop it first.
+          </div>
+        </div>
+        <Switch
+          checked={stopCoderWorkspaceOnArchive}
+          onCheckedChange={handleStopCoderWorkspaceOnArchiveChange}
+          disabled={!api?.config?.updateCoderPrefs}
+          aria-label="Toggle stopping a dedicated Coder workspace when archiving"
+        />
+      </div>
 
       {isBrowserMode && sshHostLoaded && (
         <div className="flex items-center justify-between">
