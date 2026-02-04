@@ -8,6 +8,7 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
 import { createArchivedWorkspace, NOW } from "./mockFactory";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import type { ProjectConfig } from "@/node/config";
 
 /** Helper to create session usage data with a specific total cost */
@@ -87,6 +88,111 @@ export const CreateWorkspace: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openFirstProjectCreationView(storyRoot);
+  },
+};
+
+const REMOTE_MUX_SERVERS_STORY_PROJECT_PATH = "/Users/dev/my-project";
+
+const WORK_REMOTE_MUX_SERVER = {
+  config: {
+    id: "server-work",
+    label: "Work desktop",
+    baseUrl: "https://mux-work.example.com",
+    enabled: true,
+    projectMappings: [
+      {
+        localProjectPath: REMOTE_MUX_SERVERS_STORY_PROJECT_PATH,
+        remoteProjectPath: "/home/dev/my-project",
+      },
+    ],
+  },
+  hasAuthToken: true,
+};
+
+function setupCreateWorkspaceWithRemoteMuxServer() {
+  expandProjects([REMOTE_MUX_SERVERS_STORY_PROJECT_PATH]);
+  window.localStorage.setItem(
+    getExperimentKey(EXPERIMENT_IDS.REMOTE_MUX_SERVERS),
+    JSON.stringify(true)
+  );
+
+  return createMockORPCClient({
+    projects: new Map([projectWithNoWorkspaces(REMOTE_MUX_SERVERS_STORY_PROJECT_PATH)]),
+    workspaces: [],
+    remoteServers: [WORK_REMOTE_MUX_SERVER],
+  });
+}
+
+/** Creation view - remote mux server available (experiment gated) */
+export const CreateWorkspaceRemoteServerAvailable: AppStory = {
+  render: () => <AppWithMocks setup={setupCreateWorkspaceWithRemoteMuxServer} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openFirstProjectCreationView(storyRoot);
+
+    const canvas = within(storyRoot);
+    const body = within(storyRoot.ownerDocument.body);
+
+    // Wait for the create target group to render (remote servers loaded + enabled).
+    const createOn = await canvas.findByRole("combobox", { name: "Create on" }, { timeout: 10000 });
+
+    // Switch to Remote so the snapshot captures the remote server selector,
+    // but keep dropdowns closed.
+    await userEvent.click(createOn);
+    const remoteOption = await body.findByRole("option", { name: "Remote" });
+    await userEvent.click(remoteOption);
+
+    await canvas.findByRole("combobox", { name: "Remote server" }, { timeout: 10000 });
+
+    await waitFor(() => {
+      const createOnAfter = canvas.getByRole("combobox", { name: "Create on" });
+      if (createOnAfter.getAttribute("aria-expanded") === "true") {
+        throw new Error("Create on dropdown still open");
+      }
+
+      const remoteServerAfter = canvas.getByRole("combobox", { name: "Remote server" });
+      if (remoteServerAfter.getAttribute("aria-expanded") === "true") {
+        throw new Error("Remote server dropdown still open");
+      }
+    });
+  },
+};
+
+/** Creation view - remote server dropdown open for Chromatic snapshot */
+export const CreateWorkspaceRemoteServerDropdownOpen: AppStory = {
+  render: () => <AppWithMocks setup={setupCreateWorkspaceWithRemoteMuxServer} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openFirstProjectCreationView(storyRoot);
+
+    const canvas = within(storyRoot);
+    const body = within(storyRoot.ownerDocument.body);
+
+    // Wait for the create target group to render (remote servers loaded + enabled).
+    const createOn = await canvas.findByRole("combobox", { name: "Create on" }, { timeout: 10000 });
+
+    // Select Remote in the "Create on" Radix Select.
+    await userEvent.click(createOn);
+    const remoteOption = await body.findByRole("option", { name: "Remote" });
+    await userEvent.click(remoteOption);
+
+    const remoteServer = await canvas.findByRole(
+      "combobox",
+      { name: "Remote server" },
+      { timeout: 10000 }
+    );
+
+    // Open the remote server dropdown and keep it open for the snapshot.
+    await userEvent.click(remoteServer);
+
+    await waitFor(() => {
+      const remoteServerAfter = canvas.getByRole("combobox", { name: "Remote server" });
+      if (remoteServerAfter.getAttribute("aria-expanded") !== "true") {
+        throw new Error("Remote server dropdown not open");
+      }
+    });
+
+    await body.findByRole("option", { name: /Work desktop/i });
   },
 };
 
