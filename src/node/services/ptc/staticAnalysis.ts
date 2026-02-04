@@ -61,28 +61,11 @@ export interface AnalysisResult {
 // Pattern Definitions
 // ============================================================================
 
-/**
- * Patterns that will fail at runtime in QuickJS.
- * We detect these early to give better error messages.
- */
-const UNAVAILABLE_PATTERNS: Array<{
-  pattern: RegExp;
-  type: AnalysisError["type"];
-  message: (match: RegExpMatchArray) => string;
-}> = [
-  {
-    // Dynamic import() - not supported in QuickJS, causes crash
-    pattern: /(?<![.\w])import\s*\(/g,
-    type: "forbidden_construct",
-    message: () => "Dynamic import() is not available in the sandbox",
-  },
-  {
-    // require() - CommonJS import, not in QuickJS
-    pattern: /(?<![.\w])require\s*\(/g,
-    type: "forbidden_construct",
-    message: () => "require() is not available in the sandbox - use mux.* tools instead",
-  },
-];
+// NOTE: We intentionally avoid regex scanning for substrings like "require(" or "import("
+// because those can appear inside string literals and cause false positives.
+//
+// Instead, we use the TypeScript AST in detectUnavailableGlobals() to detect actual
+// call expressions (require(), import()) and real global references.
 
 // ============================================================================
 // QuickJS Context Management
@@ -174,37 +157,6 @@ async function validateSyntax(code: string): Promise<AnalysisError | null> {
 }
 
 /**
- * Find line number for a match position in the source code.
- */
-function getLineNumber(code: string, index: number): number {
-  const upToMatch = code.slice(0, index);
-  return (upToMatch.match(/\n/g) ?? []).length + 1;
-}
-
-/**
- * Detect patterns that will fail at runtime in QuickJS.
- */
-function detectUnavailablePatterns(code: string): AnalysisError[] {
-  const errors: AnalysisError[] = [];
-
-  for (const { pattern, type, message } of UNAVAILABLE_PATTERNS) {
-    // Reset regex state for each scan
-    pattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = pattern.exec(code)) !== null) {
-      errors.push({
-        type,
-        message: message(match),
-        line: getLineNumber(code, match.index),
-      });
-    }
-  }
-
-  return errors;
-}
-
-/**
  * Detect references to unavailable globals (process, window, fetch, etc.)
  * using TypeScript AST to avoid false positives on object keys and string literals.
  */
@@ -219,20 +171,64 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
   const lineOffset = sourceFile ? WRAPPER_LINE_OFFSET : 0;
 
   function visit(node: ts.Node): void {
+    // If the node isn't within the user-authored code region (e.g., inside the wrapper prefix),
+    // keep traversing but don't report errors for it.
+    const nodeStart = node.getStart(parsedSourceFile);
+    const nodeEnd = node.end;
+    if (nodeStart < codeStartOffset || nodeEnd > codeEnd) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+
+    // Detect forbidden constructs via AST (avoids false positives inside string literals).
+    //
+    // - dynamic import(): ts.CallExpression whose expression is the ImportKeyword
+    // - require(): ts.CallExpression whose expression is identifier "require"
+    if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        if (!seen.has("import()")) {
+          seen.add("import()");
+          const { line } = parsedSourceFile.getLineAndCharacterOfPosition(
+            node.expression.getStart(parsedSourceFile)
+          );
+          errors.push({
+            type: "forbidden_construct",
+            message: "Dynamic import() is not available in the sandbox",
+            line: line - lineOffset + 1,
+          });
+        }
+        ts.forEachChild(node, visit);
+        return;
+      }
+
+      if (ts.isIdentifier(node.expression) && node.expression.text === "require") {
+        if (!seen.has("require()")) {
+          seen.add("require()");
+          const { line } = parsedSourceFile.getLineAndCharacterOfPosition(
+            node.expression.getStart(parsedSourceFile)
+          );
+          errors.push({
+            type: "forbidden_construct",
+            message: "require() is not available in the sandbox - use mux.* tools instead",
+            line: line - lineOffset + 1,
+          });
+        }
+        ts.forEachChild(node, visit);
+        return;
+      }
+    }
+
     // Only check identifier nodes
     if (!ts.isIdentifier(node)) {
       ts.forEachChild(node, visit);
       return;
     }
 
-    const start = node.getStart(parsedSourceFile);
-    if (start < codeStartOffset || node.end > codeEnd) {
-      return;
-    }
-
+    const start = nodeStart;
     const name = node.text;
 
-    // Skip 'require' - already handled as forbidden_construct pattern
+    // Skip 'require' identifier references - we only want to error on require() calls.
+    // (Keyword substrings inside strings should never trigger any error.)
     if (name === "require") {
       return;
     }
@@ -300,9 +296,8 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
  *
  * Performs:
  * 1. Syntax validation via QuickJS parser
- * 2. Unavailable pattern detection (import, require)
- * 3. Unavailable global detection (process, window, etc.)
- * 4. TypeScript type validation (if muxTypes provided)
+ * 2. Forbidden construct + unavailable global detection via TypeScript AST (require(), import(), process, window, etc.)
+ * 3. TypeScript type validation (if muxTypes provided)
  *
  * @param code - JavaScript code to analyze
  * @param muxTypes - Optional .d.ts content for type validation
@@ -319,18 +314,15 @@ export async function analyzeCode(code: string, muxTypes?: string): Promise<Anal
     return { valid: false, errors };
   }
 
-  // 2. Unavailable pattern detection (import, require)
-  errors.push(...detectUnavailablePatterns(code));
-
   let typeResult: ReturnType<typeof validateTypes> | undefined;
   if (muxTypes) {
     typeResult = validateTypes(code, muxTypes);
   }
 
-  // 3. Unavailable global detection (process, window, etc.)
+  // 2. Forbidden construct + unavailable global detection (process, window, require(), import(), etc.)
   errors.push(...detectUnavailableGlobals(code, typeResult?.sourceFile));
 
-  // 4. TypeScript type validation (if muxTypes provided)
+  // 3. TypeScript type validation (if muxTypes provided)
   if (typeResult) {
     for (const typeError of typeResult.errors) {
       errors.push({
