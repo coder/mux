@@ -348,10 +348,11 @@ describe("AgentSession execSubagentHardRestart", () => {
     const appendedNotice = (historyService.appendToHistory as ReturnType<typeof mock>).mock
       .calls[0][1] as MuxMessage | undefined;
     expect(appendedNotice?.metadata?.synthetic).toBe(true);
+    expect(appendedNotice?.metadata?.uiVisible).toBe(true);
     const noticeText = appendedNotice?.parts.find((p) => p.type === "text") as
       | { type: "text"; text: string }
       | undefined;
-    expect(noticeText?.text).toContain("hard-restarted");
+    expect(noticeText?.text).toContain("restarted");
 
     expect(
       ((historyService.appendToHistory as ReturnType<typeof mock>).mock.calls[1][1] as MuxMessage)
@@ -365,7 +366,7 @@ describe("AgentSession execSubagentHardRestart", () => {
     // Retry should include the continuation notice in additionalSystemInstructions.
     const retryAdditionalSystemInstructions = (streamMessage as ReturnType<typeof mock>).mock
       .calls[1][6] as unknown;
-    expect(String(retryAdditionalSystemInstructions)).toContain("hard-restarted");
+    expect(String(retryAdditionalSystemInstructions)).toContain("restarted");
 
     session.dispose();
   });

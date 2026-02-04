@@ -1309,11 +1309,9 @@ export class AgentSession {
     this.execSubagentHardRestartAttempts.add(requestId);
 
     const continuationNotice =
-      "This exec-like sub-agent hit the model context window limit (context_exceeded). " +
-      "Mux hard-restarted this sub-agent's chat history to recover. " +
-      "Your original task prompt is replayed below. " +
-      "Continue the task using ONLY the current workspace state (files, git history, command output). " +
-      "Reconstruct any missing context by inspecting the repo; do not rely on the cleared conversation.";
+      "Context limit reached. Mux restarted this agent's chat history and will replay your original prompt below. " +
+      "Continue using only the current workspace state (files, git history, command output); " +
+      "re-inspect the repo as needed.";
 
     log.info("Exec-like subagent hit context limit; hard-restarting history and retrying", {
       workspaceId: this.workspaceId,
@@ -1428,6 +1426,7 @@ export class AgentSession {
       {
         timestamp: Date.now(),
         synthetic: true,
+        uiVisible: true,
       }
     );
 
