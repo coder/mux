@@ -614,6 +614,12 @@ export class WorkspaceService extends EventEmitter {
   // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
   private readonly removingWorkspaces = new Set<string>();
 
+  // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
+  //
+  // Why this lives here: archive/remove are the user-facing lifecycle operations that should
+  // cancel any fire-and-forget init work to avoid orphaned processes (e.g., SSH sync, .mux/init).
+  private readonly initAbortControllers = new Map<string, AbortController>();
+
   /** Check if a workspace is currently being removed. */
   isRemoving(workspaceId: string): boolean {
     return this.removingWorkspaces.has(workspaceId);
@@ -799,6 +805,7 @@ export class WorkspaceService extends EventEmitter {
         this.initStateManager.appendOutput(workspaceId, line, true);
       },
       logComplete: (exitCode: number) => {
+        this.initAbortControllers.delete(workspaceId);
         void this.initStateManager.endInit(workspaceId, exitCode);
       },
       enterHookPhase: () => {
@@ -1266,6 +1273,10 @@ export class WorkspaceService extends EventEmitter {
 
       // Background init: run postCreateSetup (if present) then initWorkspace
       const secrets = secretsToRecord(this.config.getProjectSecrets(projectPath));
+
+      const initAbortController = new AbortController();
+      this.initAbortControllers.set(workspaceId, initAbortController);
+
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
       runBackgroundInit(
         runtime,
@@ -1276,6 +1287,7 @@ export class WorkspaceService extends EventEmitter {
           workspacePath: createResult!.workspacePath,
           initLogger,
           env: secrets,
+          abortSignal: initAbortController.signal,
         },
         workspaceId,
         log
@@ -1299,6 +1311,15 @@ export class WorkspaceService extends EventEmitter {
       return Ok(undefined);
     }
     this.removingWorkspaces.add(workspaceId);
+
+    // If this workspace is mid-init, cancel the fire-and-forget init work (postCreateSetup,
+    // sync/checkout, .mux/init hook, etc.) so removal doesn't leave orphaned background work.
+    const initAbortController = this.initAbortControllers.get(workspaceId);
+    if (initAbortController) {
+      initAbortController.abort();
+      this.initAbortControllers.delete(workspaceId);
+    }
+    this.initStateManager.clearInMemoryState(workspaceId);
 
     // Try to remove from runtime (filesystem)
     try {
@@ -1755,6 +1776,13 @@ export class WorkspaceService extends EventEmitter {
       if (!workspace) {
         return Err("Workspace not found");
       }
+      const initState = this.initStateManager.getInitState(workspaceId);
+      if (initState?.status === "running") {
+        // Archiving a half-initialized workspace is just cancellation; delete it (force) instead
+        // so we don't leave orphaned init/provisioning work running in the background.
+        return this.remove(workspaceId, true);
+      }
+
       const { projectPath, workspacePath } = workspace;
 
       // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
@@ -2114,6 +2142,10 @@ export class WorkspaceService extends EventEmitter {
       // Run init for forked workspace (fire-and-forget like create())
       // Use sourceBranch as trunk since fork is based on source workspace's branch
       const secrets = secretsToRecord(this.config.getProjectSecrets(foundProjectPath));
+
+      const initAbortController = new AbortController();
+      this.initAbortControllers.set(newWorkspaceId, initAbortController);
+
       runBackgroundInit(
         runtime,
         {
@@ -2123,6 +2155,7 @@ export class WorkspaceService extends EventEmitter {
           workspacePath: forkResult.workspacePath!,
           initLogger,
           env: secrets,
+          abortSignal: initAbortController.signal,
         },
         newWorkspaceId,
         log

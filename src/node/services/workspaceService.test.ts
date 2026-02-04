@@ -9,7 +9,7 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { SessionTimingService } from "./sessionTimingService";
 import type { AIService } from "./aiService";
-import type { InitStateManager } from "./initStateManager";
+import type { InitStateManager, InitStatus } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
@@ -454,7 +454,7 @@ describe("WorkspaceService remove timing rollup", () => {
       const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
-        clearInMemoryState: mock(() => undefined),
+        clearInMemoryState: mock((_workspaceId: string) => undefined),
       };
       const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
         setStreaming: mock((_workspaceId: string, streaming: boolean) =>
@@ -509,6 +509,196 @@ describe("WorkspaceService remove timing rollup", () => {
       expect(removeResult.success).toBe(true);
       expect(mockInitStateManager.clearInMemoryState).toHaveBeenCalledWith(workspaceId);
       expect(rollUpSawAbort).toBe(true);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("WorkspaceService init cancellation", () => {
+  test("archive() deletes workspace when init is running", async () => {
+    const workspaceId = "ws-init-running";
+
+    const removeMock = mock(() => Promise.resolve({ success: true as const, data: undefined }));
+    const editConfigMock = mock(() => Promise.resolve());
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      findWorkspace: mock(() => ({ projectPath: "/tmp/proj", workspacePath: "/tmp/proj/ws" })),
+      editConfig: editConfigMock,
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([])),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+    };
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      getInitState: mock(
+        (): InitStatus => ({
+          status: "running",
+          hookPath: "/tmp/proj",
+          startTime: 0,
+          lines: [],
+          exitCode: null,
+          endTime: null,
+        })
+      ),
+      clearInMemoryState: mock((_workspaceId: string) => undefined),
+    };
+
+    const mockHistoryService: Partial<HistoryService> = {};
+    const mockPartialService: Partial<PartialService> = {};
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      mockHistoryService as HistoryService,
+      mockPartialService as PartialService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    // Force archive() down the "delete instead" path without exercising remove() internals.
+    workspaceService.remove = removeMock as unknown as typeof workspaceService.remove;
+
+    const result = await workspaceService.archive(workspaceId);
+    expect(result.success).toBe(true);
+    expect(removeMock).toHaveBeenCalledWith(workspaceId, true);
+    expect(editConfigMock).not.toHaveBeenCalled();
+  });
+
+  test("archive() uses normal archive flow when init is complete", async () => {
+    const workspaceId = "ws-init-complete";
+
+    const removeMock = mock(() => Promise.resolve({ success: true as const, data: undefined }));
+    const editConfigMock = mock(() => Promise.resolve());
+
+    const mockAIService = {
+      isStreaming: mock(() => false),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      findWorkspace: mock(() => ({ projectPath: "/tmp/proj", workspacePath: "/tmp/proj/ws" })),
+      editConfig: editConfigMock,
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([])),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+    };
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      getInitState: mock(
+        (): InitStatus => ({
+          status: "success",
+          hookPath: "/tmp/proj",
+          startTime: 0,
+          lines: [],
+          exitCode: 0,
+          endTime: 1,
+        })
+      ),
+      clearInMemoryState: mock((_workspaceId: string) => undefined),
+    };
+
+    const mockHistoryService: Partial<HistoryService> = {};
+    const mockPartialService: Partial<PartialService> = {};
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      mockHistoryService as HistoryService,
+      mockPartialService as PartialService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    // Make it obvious if archive() incorrectly chooses deletion.
+    workspaceService.remove = removeMock as unknown as typeof workspaceService.remove;
+
+    const result = await workspaceService.archive(workspaceId);
+    expect(result.success).toBe(true);
+    expect(editConfigMock).toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
+  });
+
+  test("remove() aborts init and clears state before teardown", async () => {
+    const workspaceId = "ws-remove-aborts";
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-ws-remove-"));
+    try {
+      const abortController = new AbortController();
+      const clearInMemoryStateMock = mock((_workspaceId: string) => undefined);
+
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+        getWorkspaceMetadata: mock(() => Promise.resolve({ success: false as const, error: "na" })),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        on: mock(() => {}),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        off: mock(() => {}),
+      } as unknown as AIService;
+
+      const mockConfig: Partial<Config> = {
+        srcDir: "/tmp/src",
+        getSessionDir: mock((id: string) => path.join(tempRoot, id)),
+        removeWorkspace: mock(() => Promise.resolve()),
+        findWorkspace: mock(() => null),
+      };
+
+      const mockHistoryService: Partial<HistoryService> = {};
+      const mockPartialService: Partial<PartialService> = {};
+      const mockInitStateManager: Partial<InitStateManager> = {
+        clearInMemoryState: clearInMemoryStateMock,
+      };
+      const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+      const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+        cleanup: mock(() => Promise.resolve()),
+      };
+
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        mockHistoryService as HistoryService,
+        mockPartialService as PartialService,
+        mockAIService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+
+      // Inject an in-progress init AbortController.
+      const initAbortControllers = (
+        workspaceService as unknown as { initAbortControllers: Map<string, AbortController> }
+      ).initAbortControllers;
+      initAbortControllers.set(workspaceId, abortController);
+
+      const result = await workspaceService.remove(workspaceId, true);
+      expect(result.success).toBe(true);
+      expect(abortController.signal.aborted).toBe(true);
+      expect(clearInMemoryStateMock).toHaveBeenCalledWith(workspaceId);
+
+      expect(initAbortControllers.has(workspaceId)).toBe(false);
     } finally {
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
     }

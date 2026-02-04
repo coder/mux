@@ -17,7 +17,7 @@ import { GitStatusIndicator } from "./GitStatusIndicator";
 import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
-import { Trash2 } from "lucide-react";
+import { Trash2, X } from "lucide-react";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -73,6 +73,7 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   sectionId?: string;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onCancelCreation: (workspaceId: string) => Promise<void>;
 }
 
 /** Props for draft (UI-only placeholder) items */
@@ -230,6 +231,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     sectionId,
     onSelectWorkspace,
     onArchiveWorkspace,
+    onCancelCreation,
   } = props;
 
   // Destructure metadata for convenience
@@ -385,27 +387,46 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       >
         <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
 
-        {/* Archive button - centered when status text visible, top-aligned otherwise */}
-        {!isMuxHelpChat && !isCreating && !isEditing && (
+        {/* Action button - centered when status text visible, top-aligned otherwise */}
+        {!isMuxHelpChat && !isEditing && (
           <ActionButtonWrapper hasSubtitle={hasStatusText}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onArchiveWorkspace(workspaceId, e.currentTarget);
-                  }}
-                  aria-label={`Archive workspace ${displayTitle}`}
-                  data-workspace-id={workspaceId}
-                >
-                  <ArchiveIcon className="h-3 w-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent align="start">
-                Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-              </TooltipContent>
-            </Tooltip>
+            {isCreating ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className="text-muted hover:text-destructive inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-100 transition-colors duration-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onCancelCreation(workspaceId);
+                    }}
+                    aria-label={`Cancel workspace creation ${displayTitle}`}
+                    data-workspace-id={workspaceId}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="start">Cancel creation</TooltipContent>
+              </Tooltip>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onArchiveWorkspace(workspaceId, e.currentTarget);
+                    }}
+                    aria-label={`Archive workspace ${displayTitle}`}
+                    data-workspace-id={workspaceId}
+                  >
+                    <ArchiveIcon className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent align="start">
+                  Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+                </TooltipContent>
+              </Tooltip>
+            )}
           </ActionButtonWrapper>
         )}
         {/* Split row spacing when there's no secondary line to keep titles centered. */}

@@ -7,6 +7,7 @@
 
 import * as fs from "fs/promises";
 import * as path from "path";
+import * as os from "os";
 import {
   createTestEnvironment,
   cleanupTestEnvironment,
@@ -20,6 +21,8 @@ import {
   addSubmodule,
   waitForFileNotExists,
   waitForInitComplete,
+  createStreamCollector,
+  waitFor,
   createWorkspaceWithInit,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
@@ -93,6 +96,68 @@ async function makeWorkspaceDirty(env: TestEnvironment, workspaceId: string): Pr
     workspaceId,
     'echo "test modification to make workspace dirty" >> README.md'
   );
+}
+
+/**
+ * Create a temporary git repo with a committed .mux/init hook.
+ *
+ * The hook must be committed so SSH runtimes (which sync via git) receive it.
+ */
+async function createTempGitRepoWithInitHook(customScript: string): Promise<string> {
+  const repoPath = await createTempGitRepo();
+
+  const muxDir = path.join(repoPath, ".mux");
+  await fs.mkdir(muxDir, { recursive: true });
+
+  const hookPath = path.join(muxDir, "init");
+  const scriptContent = `#!/bin/bash\nset -euo pipefail\n${customScript}\n`;
+  await fs.writeFile(hookPath, scriptContent, { mode: 0o755 });
+
+  // Commit the init hook so SSH runtimes see it after sync.
+  using commitProc = execAsync(
+    `git -C "${repoPath}" add -A && git -C "${repoPath}" -c commit.gpgsign=false commit -m "Add init hook"`
+  );
+  await commitProc.result;
+
+  return repoPath;
+}
+
+async function executeSSH(command: string): Promise<string> {
+  if (!sshConfig) {
+    throw new Error("SSH config not ready");
+  }
+
+  using proc = execAsync(
+    `ssh -i "${sshConfig.privateKeyPath}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=2 -p ${sshConfig.port} testuser@localhost '${command}'`
+  );
+  const { stdout } = await proc.result;
+  return stdout.trim();
+}
+
+async function clearMarkerFile(runtimeType: "local" | "ssh", markerPath: string): Promise<void> {
+  if (runtimeType === "ssh") {
+    await executeSSH(`rm -f ${markerPath}`);
+    return;
+  }
+
+  await fs.rm(markerPath, { force: true });
+}
+
+async function markerFileExists(
+  runtimeType: "local" | "ssh",
+  markerPath: string
+): Promise<boolean> {
+  if (runtimeType === "ssh") {
+    const result = await executeSSH(`if [ -f ${markerPath} ]; then echo yes; else echo no; fi`);
+    return result === "yes";
+  }
+
+  try {
+    await fs.access(markerPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================================
@@ -200,6 +265,76 @@ describeIntegration("Workspace deletion integration tests", () => {
               expect(stillInConfig).toBe(false);
             }
           } finally {
+            await cleanupTestEnvironment(env);
+            await cleanupTempGitRepo(tempGitRepo);
+          }
+        },
+        TEST_TIMEOUT
+      );
+
+      runTest(
+        "archive during init should delete workspace and cancel init",
+        async () => {
+          const env = await createTestEnvironment();
+          const branchName = generateBranchName("archive-during-init");
+
+          const markerPath =
+            type === "ssh"
+              ? `/home/testuser/mux-init-cancel-${branchName}`
+              : path.join(os.tmpdir(), `mux-init-cancel-${branchName}`);
+
+          const sleepSeconds = 5;
+          const tempGitRepo = await createTempGitRepoWithInitHook(
+            `echo HOOK_STARTED\nsleep ${sleepSeconds}\necho done > \"${markerPath}\"`
+          );
+
+          try {
+            await clearMarkerFile(type, markerPath);
+
+            const runtimeConfig = getRuntimeConfig(branchName);
+            const { workspaceId } = await createWorkspaceWithInit(
+              env,
+              tempGitRepo,
+              branchName,
+              runtimeConfig,
+              false, // waitForInit
+              type === "ssh"
+            );
+
+            const collector = createStreamCollector(env.orpc, workspaceId);
+            collector.start();
+
+            try {
+              await collector.waitForSubscription();
+
+              const sawHookStarted = await waitFor(
+                () =>
+                  collector.getEvents().some((event) => {
+                    return (
+                      "type" in event &&
+                      event.type === "init-output" &&
+                      typeof event.line === "string" &&
+                      event.line.includes("HOOK_STARTED")
+                    );
+                  }),
+                type === "ssh" ? 20000 : 5000
+              );
+
+              expect(sawHookStarted).toBe(true);
+
+              const archiveResult = await env.orpc.workspace.archive({ workspaceId });
+              expect(archiveResult.success).toBe(true);
+
+              // Wait long enough that the init hook would have written the marker if it wasn't aborted.
+              await new Promise((resolve) => setTimeout(resolve, (sleepSeconds + 2) * 1000));
+
+              expect(await markerFileExists(type, markerPath)).toBe(false);
+              expect(await workspaceExists(env, workspaceId)).toBe(false);
+            } finally {
+              collector.stop();
+            }
+          } finally {
+            await clearMarkerFile(type, markerPath);
             await cleanupTestEnvironment(env);
             await cleanupTempGitRepo(tempGitRepo);
           }
