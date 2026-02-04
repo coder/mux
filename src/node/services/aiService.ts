@@ -16,6 +16,7 @@ import {
   splitBashOutputLines,
 } from "@/node/services/system1/bashOutputFiltering";
 import { decideBashOutputCompaction } from "@/node/services/system1/bashCompactionPolicy";
+import { truncateBashOutput } from "@/common/utils/truncateBashOutput";
 import { runSystem1KeepRangesForBashOutput } from "@/node/services/system1/system1AgentRunner";
 import {
   formatBashOutputReport,
@@ -2435,11 +2436,28 @@ export class AIService extends EventEmitter {
               }): Promise<{ filteredOutput: string; notice: string } | undefined> => {
                 let system1TimedOut = false;
 
-                try {
-                  if (typeof params.output !== "string" || params.output.length === 0) {
+                if (typeof params.output !== "string" || params.output.length === 0) {
+                  return undefined;
+                }
+
+                // Apply hard truncation as a safety net. This ensures output is bounded
+                // even when System1 compaction is skipped or fails.
+                const hardTruncation = truncateBashOutput(params.output);
+
+                // Helper to return truncation result when skipping System1 compaction
+                const returnHardTruncationIfNeeded = ():
+                  | { filteredOutput: string; notice: string }
+                  | undefined => {
+                  if (!hardTruncation.truncated) {
                     return undefined;
                   }
+                  return {
+                    filteredOutput: hardTruncation.output,
+                    notice: `Output exceeded hard limits (${hardTruncation.originalLines} lines, ${hardTruncation.originalBytes} bytes). Showing last ${hardTruncation.output.split("\n").length} lines.`,
+                  };
+                };
 
+                try {
                   const minLines =
                     taskSettings.bashOutputCompactionMinLines ??
                     SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS.bashOutputCompactionMinLines.default;
@@ -2477,7 +2495,8 @@ export class AIService extends EventEmitter {
                   const triggeredByBytes = decision.triggeredByBytes;
 
                   if (!triggeredByLines && !triggeredByBytes) {
-                    return undefined;
+                    // Output is below compaction thresholds, but may still exceed hard limits
+                    return returnHardTruncationIfNeeded();
                   }
 
                   if (!decision.shouldCompact) {
@@ -2499,7 +2518,8 @@ export class AIService extends EventEmitter {
                       timeoutMs,
                     });
 
-                    return undefined;
+                    // System1 compaction skipped, but still apply hard limits
+                    return returnHardTruncationIfNeeded();
                   }
 
                   const maxKeptLines = decision.effectiveMaxKeptLines;
@@ -2710,7 +2730,8 @@ export class AIService extends EventEmitter {
                     upstreamAborted,
                     isAbortError,
                   });
-                  return undefined;
+                  // System1 failed, but still apply hard limits as safety net
+                  return returnHardTruncationIfNeeded();
                 }
               };
 
