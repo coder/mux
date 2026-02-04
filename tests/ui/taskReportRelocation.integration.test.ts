@@ -75,7 +75,6 @@ async function seedHistory(historyService: HistoryService, workspaceId: string):
             {
               status: "completed" as const,
               taskId,
-              title: "Background analysis",
               reportMarkdown: "Hello from **report**\n\n- item 1\n- item 2",
             },
           ],
@@ -168,6 +167,7 @@ describe("Task report relocation UI", () => {
       });
 
       expect(awaitMessageBlock?.textContent).toContain("completed");
+      expect(awaitMessageBlock?.textContent).toContain("Background analysis");
       expect(awaitMessageBlock?.textContent).not.toContain("Hello from report");
       expect(awaitMessageBlock?.textContent).not.toContain("item 1");
       expect(awaitMessageBlock?.textContent).not.toContain("item 2");

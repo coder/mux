@@ -20,6 +20,14 @@ export interface TaskReportLinking {
    * instead of being duplicated under the corresponding `task_await` result.
    */
   suppressReportInAwaitTaskIds: Set<string>;
+
+  /**
+   * Titles from the original `task` tool call input (`args.title`), indexed by taskId.
+   *
+   * This is a best-effort fallback for task_await rows when the completed result omitted a title
+   * (e.g. older agent_report payloads).
+   */
+  spawnTitleByTaskId: Map<string, string>;
 }
 
 function getTaskIdFromToolResult(result: unknown): string | null {
@@ -30,6 +38,14 @@ function getTaskIdFromToolResult(result: unknown): string | null {
   return typeof taskId === "string" && taskId.trim().length > 0 ? taskId : null;
 }
 
+function getTitleFromTaskToolArgs(args: unknown): string | null {
+  if (typeof args !== "object" || args === null) return null;
+  if (!("title" in args)) return null;
+
+  const title = (args as { title?: unknown }).title;
+  return typeof title === "string" && title.trim().length > 0 ? title.trim() : null;
+}
+
 /**
  * Render-time helper that links completed task reports (from `task_await`) back to the
  * original `task` tool call that spawned the background work.
@@ -38,14 +54,20 @@ function getTaskIdFromToolResult(result: unknown): string | null {
  * helps the renderer place the final report in a more intuitive location.
  */
 export function computeTaskReportLinking(messages: DisplayedMessage[]): TaskReportLinking {
-  // First pass: record which taskIds have a visible `task` tool call.
+  // First pass: record which taskIds have a visible `task` tool call (and capture spawn titles).
   const taskToolCallTaskIds = new Set<string>();
+  const spawnTitleByTaskId = new Map<string, string>();
   for (const msg of messages) {
     if (msg.type !== "tool" || msg.toolName !== "task") continue;
 
     const taskId = getTaskIdFromToolResult(msg.result);
-    if (taskId) {
-      taskToolCallTaskIds.add(taskId);
+    if (!taskId) continue;
+
+    taskToolCallTaskIds.add(taskId);
+
+    const title = getTitleFromTaskToolArgs(msg.args);
+    if (title) {
+      spawnTitleByTaskId.set(taskId, title);
     }
   }
 
@@ -94,5 +116,5 @@ export function computeTaskReportLinking(messages: DisplayedMessage[]): TaskRepo
     suppressReportInAwaitTaskIds.add(taskId);
   }
 
-  return { reportByTaskId, suppressReportInAwaitTaskIds };
+  return { reportByTaskId, suppressReportInAwaitTaskIds, spawnTitleByTaskId };
 }
