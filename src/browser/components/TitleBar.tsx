@@ -2,12 +2,19 @@ import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { VERSION } from "@/version";
 import { SettingsButton } from "./SettingsButton";
+import { GatewayIcon } from "./icons/GatewayIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import type { UpdateStatus } from "@/common/orpc/types";
 import { Download, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { useAPI } from "@/browser/contexts/API";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { useSettings } from "@/browser/contexts/SettingsContext";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
+import {
+  formatMuxGatewayBalance,
+  useMuxGatewayAccountStatus,
+} from "@/browser/hooks/useMuxGatewayAccountStatus";
 import {
   isDesktopMode,
   getTitlebarLeftInset,
@@ -66,6 +73,13 @@ export function TitleBar() {
   const { api } = useAPI();
   const policyState = usePolicy();
   const policyEnforced = policyState.status.state === "enforced";
+  const { open: openSettings } = useSettings();
+  const gateway = useGateway();
+  const {
+    data: muxGatewayAccountStatus,
+    error: muxGatewayAccountError,
+    refresh: refreshMuxGatewayAccountStatus,
+  } = useMuxGatewayAccountStatus();
 
   const { extendedTimestamp, gitDescribe } = parseBuildInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
@@ -276,6 +290,46 @@ export function TitleBar() {
         </Tooltip>
       </div>
       <div className={cn("flex items-center gap-1.5", isDesktop && "titlebar-no-drag")}>
+        {gateway.isActive && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => openSettings("providers")}
+                onMouseEnter={() => {
+                  void refreshMuxGatewayAccountStatus();
+                }}
+                className="border-border-light text-muted-foreground hover:border-border-medium/80 hover:bg-toggle-bg/70 flex h-5 w-5 cursor-pointer items-center justify-center rounded border transition-opacity hover:opacity-70"
+                aria-label="Mux Gateway"
+              >
+                <GatewayIcon className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent align="end" className="w-56">
+              <div className="text-foreground text-[11px] font-medium">Mux Gateway</div>
+              <div className="mt-1.5 space-y-0.5 text-[11px]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted">Balance</span>
+                  <span className="text-foreground font-mono">
+                    {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-muted">Concurrent requests</span>
+                  <span className="text-foreground font-mono">
+                    {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
+                  </span>
+                </div>
+              </div>
+              {muxGatewayAccountError && (
+                <div className="text-destructive mt-1.5 text-[10px]">{muxGatewayAccountError}</div>
+              )}
+              <div className="text-muted border-separator-light mt-2 border-t pt-1.5 text-[10px]">
+                Click to open gateway settings
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        )}
         {policyEnforced && (
           <Tooltip>
             <TooltipTrigger asChild>
