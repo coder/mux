@@ -522,7 +522,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       try {
         const result = await onArchiveWorkspace(workspaceId);
         if (!result.success) {
-          const error = result.error ?? "Failed to archive workspace";
+          const error = result.error ?? "Failed to archive chat";
           let anchor: { top: number; left: number } | undefined;
           if (buttonElement) {
             const rect = buttonElement.getBoundingClientRect();
@@ -1319,7 +1319,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             title={
               archiveConfirmation
                 ? `Archive "${archiveConfirmation.displayTitle}" while streaming?`
-                : "Archive workspace?"
+                : "Archive chat?"
             }
             description="This workspace is currently streaming a response."
             warning="Archiving will interrupt the active stream."
@@ -1329,7 +1329,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
           />
           <PopoverError
             error={workspaceArchiveError.error}
-            prefix="Failed to archive workspace"
+            prefix="Failed to archive chat"
             onDismiss={workspaceArchiveError.clearError}
           />
           <PopoverError
