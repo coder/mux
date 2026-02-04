@@ -252,6 +252,45 @@ describe("createStartCoderOnUnarchiveHook", () => {
     expect(startWorkspace).toHaveBeenCalledWith("mux-ws", { timeoutMs: 1234 });
   });
 
+  it("waits for stopping workspace to become stopped before starting", async () => {
+    let pollCount = 0;
+    const getWorkspaceStatus = mock<
+      (workspaceName: string, options?: { timeoutMs?: number }) => Promise<WorkspaceStatusResult>
+    >(() => {
+      pollCount++;
+      if (pollCount === 1) {
+        return Promise.resolve({ kind: "ok", status: "stopping" });
+      }
+      return Promise.resolve({ kind: "ok", status: "stopped" });
+    });
+
+    const startWorkspace = mock<
+      (workspaceName: string, options?: { timeoutMs?: number }) => Promise<ReturnType<typeof Ok>>
+    >(() => Promise.resolve(Ok(undefined)));
+
+    const coderService = {
+      getWorkspaceStatus,
+      startWorkspace,
+    } as unknown as CoderService;
+
+    const hook = createStartCoderOnUnarchiveHook({
+      coderService,
+      shouldStopOnArchive: () => true,
+      timeoutMs: 1234,
+      stoppingPollIntervalMs: 0,
+      stoppingWaitTimeoutMs: 1000,
+    });
+
+    const result = await hook({
+      workspaceId: "ws",
+      workspaceMetadata: createSshCoderMetadata(),
+    });
+
+    expect(result.success).toBe(true);
+    expect(getWorkspaceStatus).toHaveBeenCalledTimes(2);
+    expect(startWorkspace).toHaveBeenCalledTimes(1);
+    expect(startWorkspace).toHaveBeenCalledWith("mux-ws", { timeoutMs: 1234 });
+  });
   it("does nothing when workspace is already running or starting", async () => {
     const getWorkspaceStatus = mock<(workspaceName: string) => Promise<WorkspaceStatusResult>>(() =>
       Promise.resolve({ kind: "ok", status: "running" })

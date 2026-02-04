@@ -11,6 +11,17 @@ const DEFAULT_STOP_TIMEOUT_MS = 60_000;
 const DEFAULT_START_TIMEOUT_MS = 60_000;
 const DEFAULT_STATUS_TIMEOUT_MS = 10_000;
 
+const DEFAULT_STOPPING_WAIT_TIMEOUT_MS = 15_000;
+const DEFAULT_STOPPING_POLL_INTERVAL_MS = 1_000;
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isAlreadyStoppedOrGone(status: WorkspaceStatusResult): boolean {
   if (status.kind === "not_found") {
     return true;
@@ -99,6 +110,8 @@ export function createStartCoderOnUnarchiveHook(options: {
   coderService: CoderService;
   shouldStopOnArchive: () => boolean;
   timeoutMs?: number;
+  stoppingWaitTimeoutMs?: number;
+  stoppingPollIntervalMs?: number;
 }): AfterUnarchiveHook {
   const timeoutMs = options.timeoutMs ?? DEFAULT_START_TIMEOUT_MS;
 
@@ -127,9 +140,55 @@ export function createStartCoderOnUnarchiveHook(options: {
       return Ok(undefined);
     }
 
-    const status = await options.coderService.getWorkspaceStatus(workspaceName, {
+    let status = await options.coderService.getWorkspaceStatus(workspaceName, {
       timeoutMs: DEFAULT_STATUS_TIMEOUT_MS,
     });
+
+    // Unarchive can happen immediately after archive, while the Coder workspace is still
+    // transitioning through "stopping". Starting during that transition can fail, so we
+    // best-effort poll briefly until it reaches a terminal state.
+    if (status.kind === "ok" && status.status === "stopping") {
+      const waitTimeoutMs = options.stoppingWaitTimeoutMs ?? DEFAULT_STOPPING_WAIT_TIMEOUT_MS;
+      const pollIntervalMs = options.stoppingPollIntervalMs ?? DEFAULT_STOPPING_POLL_INTERVAL_MS;
+      const deadlineMs = Date.now() + waitTimeoutMs;
+
+      log.debug(
+        "Coder workspace is still stopping after mux unarchive; waiting briefly before starting",
+        {
+          workspaceId,
+          coderWorkspaceName: workspaceName,
+          waitTimeoutMs,
+          pollIntervalMs,
+        }
+      );
+
+      while (status.kind === "ok" && status.status === "stopping") {
+        const remainingMs = deadlineMs - Date.now();
+        if (remainingMs <= 0) {
+          break;
+        }
+
+        await sleep(Math.min(pollIntervalMs, remainingMs));
+
+        const statusRemainingMs = deadlineMs - Date.now();
+        if (statusRemainingMs <= 0) {
+          break;
+        }
+
+        status = await options.coderService.getWorkspaceStatus(workspaceName, {
+          timeoutMs: Math.min(DEFAULT_STATUS_TIMEOUT_MS, statusRemainingMs),
+        });
+      }
+
+      if (status.kind === "ok" && status.status === "stopping") {
+        log.debug("Timed out waiting for Coder workspace to stop after mux unarchive", {
+          workspaceId,
+          coderWorkspaceName: workspaceName,
+          waitTimeoutMs,
+        });
+        return Ok(undefined);
+      }
+    }
 
     // If the workspace is gone, that's "good enough" — there's nothing to start.
     if (status.kind === "not_found") {
