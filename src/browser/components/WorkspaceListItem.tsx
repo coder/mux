@@ -504,9 +504,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                         <span className="font-mono">{remoteWorkspaceInfo.serverId}</span>
                       </div>
                     )}
-                    {!isDisabled && (
-                      <div className="text-muted text-xs">Double-click to edit title</div>
-                    )}
                   </div>
                 </HoverCardContent>
               </HoverCard>
