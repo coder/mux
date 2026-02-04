@@ -459,6 +459,7 @@ export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   system1: z.boolean().optional(),
+  execSubagentHardRestart: z.boolean().optional(),
 });
 
 // SendMessage options

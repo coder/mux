@@ -77,8 +77,12 @@ export interface TaskCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
-  /** PTC experiments to inherit to subagent */
-  experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean };
+  /** Experiments to inherit to subagent */
+  experiments?: {
+    programmaticToolCalling?: boolean;
+    programmaticToolCallingExclusive?: boolean;
+    execSubagentHardRestart?: boolean;
+  };
 }
 
 export interface TaskCreateResult {
