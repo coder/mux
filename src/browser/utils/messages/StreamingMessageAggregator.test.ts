@@ -774,6 +774,59 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("pending stream model", () => {
+    test("tracks requestedModel for pending user messages", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleMessage({
+        type: "message",
+        id: "msg1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "normal",
+            requestedModel: "anthropic:claude-sonnet-4-5",
+          },
+        },
+      });
+
+      expect(aggregator.getPendingStreamModel()).toBe("anthropic:claude-sonnet-4-5");
+    });
+
+    test("clears pending stream model on stream-start", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleMessage({
+        type: "message",
+        id: "msg1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "normal",
+            requestedModel: "anthropic:claude-sonnet-4-5",
+          },
+        },
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg2",
+        historySequence: 2,
+        model: "anthropic:claude-sonnet-4-5",
+        startTime: Date.now(),
+      });
+
+      expect(aggregator.getPendingStreamModel()).toBeNull();
+    });
+  });
+
   describe("usage-delta handling", () => {
     test("handleUsageDelta stores usage by messageId", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

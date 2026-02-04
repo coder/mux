@@ -267,6 +267,13 @@ interface MuxFrontendMetadataBase {
   reviews?: ReviewNoteDataForDisplay[];
   /** Command prefix to highlight in UI (e.g., "/compact -m sonnet" or "/react-effects") */
   commandPrefix?: string;
+  /**
+   * Model used for the pending send (UI-only).
+   *
+   * We stash this so the "starting" label reflects the actual model for one-shot
+   * and compaction sends instead of whatever happens to be persisted in localStorage.
+   */
+  requestedModel?: string;
 }
 
 /** Status to display in sidebar during background operations */

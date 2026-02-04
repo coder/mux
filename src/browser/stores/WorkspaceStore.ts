@@ -69,6 +69,8 @@ export interface WorkspaceState {
   pendingStreamStartTime: number | null;
   // Model override from pending compaction request (used during "starting" phase)
   pendingCompactionModel: string | null;
+  // Model used for the pending send (used during "starting" phase)
+  pendingStreamModel: string | null;
   // Runtime status from ensureReady (for Coder workspace starting UX)
   runtimeStatus: RuntimeStatusEvent | null;
   // Live streaming stats (updated on each stream-delta)
@@ -1008,6 +1010,7 @@ export class WorkspaceStore {
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime,
         pendingCompactionModel: aggregator.getPendingCompactionModel(),
+        pendingStreamModel: aggregator.getPendingStreamModel(),
         runtimeStatus: aggregator.getRuntimeStatus(),
         streamingTokenCount,
         streamingTPS,

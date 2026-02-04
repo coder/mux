@@ -321,6 +321,10 @@ export class StreamingMessageAggregator {
   // This is used for UI before we receive stream-start (e.g., show compaction model while "starting").
   private pendingCompactionRequest: CompactionRequestData | null = null;
 
+  // Model used for the pending send (set on user message) so the "starting" UI
+  // reflects one-shot/compaction overrides instead of stale localStorage values.
+  private pendingStreamModel: string | null = null;
+
   // Last completed stream timing stats (preserved after stream ends for display)
   // Unlike activeStreams, this persists until the next stream starts
   private lastCompletedStreamStats: {
@@ -894,6 +898,11 @@ export class StreamingMessageAggregator {
     return this.pendingCompactionRequest?.model ?? null;
   }
 
+  getPendingStreamModel(): string | null {
+    if (this.pendingStreamStartTime === null) return null;
+    return this.pendingStreamModel;
+  }
+
   private getLatestCompactionRequest(): CompactionRequestData | null {
     if (this.pendingCompactionRequest) {
       return this.pendingCompactionRequest;
@@ -917,6 +926,7 @@ export class StreamingMessageAggregator {
     this.pendingStreamStartTime = time;
     if (time === null) {
       this.pendingCompactionRequest = null;
+      this.pendingStreamModel = null;
     }
   }
 
@@ -1897,6 +1907,8 @@ export class StreamingMessageAggregator {
           | undefined;
         this.pendingCompactionRequest =
           muxMetadata?.type === "compaction-request" ? muxMetadata.parsed : null;
+
+        this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
 
         if (muxMeta?.displayStatus) {
           // Background operation - show requested status (don't persist)

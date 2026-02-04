@@ -1929,6 +1929,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         muxMetadata = reviewMetadata;
 
+        const effectiveModel = modelOverride ?? compactionOptions.model ?? sendMessageOptions.model;
+        muxMetadata = muxMetadata
+          ? { ...muxMetadata, requestedModel: effectiveModel }
+          : {
+              type: "normal",
+              requestedModel: effectiveModel,
+            };
+
         // Capture review IDs before clearing (for marking as checked on success)
         const sentReviewIds = reviewIdsForCheck;
 
@@ -1970,7 +1978,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // Track telemetry for successful message send
           telemetry.messageSent(
             props.workspaceId,
-            modelOverride ?? compactionOptions.model ?? sendMessageOptions.model,
+            effectiveModel,
             sendMessageOptions.agentId ?? agentId ?? "exec",
             finalMessageText.length,
             runtimeType,
