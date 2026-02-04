@@ -57,6 +57,7 @@ const AgentSkillSnapshotMetadataSchema = z.object({
   skillName: z.string().min(1),
   scope: z.enum(["project", "global", "built-in"]),
   sha256: z.string().optional(),
+  frontmatterYaml: z.string().optional(),
 });
 
 /** Re-export for consumers that need the loaded skill type */
@@ -193,6 +194,41 @@ function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
   return merged;
 }
 
+function extractAgentSkillSnapshotBody(snapshotText: string): string | null {
+  assert(typeof snapshotText === "string", "extractAgentSkillSnapshotBody requires snapshotText");
+
+  // Expected format (backend):
+  // <agent-skill ...>\n{body}\n</agent-skill>
+  if (!snapshotText.startsWith("<agent-skill")) {
+    return null;
+  }
+
+  const openTagEnd = snapshotText.indexOf(">\n");
+  if (openTagEnd === -1) {
+    return null;
+  }
+
+  const closeTag = "\n</agent-skill>";
+  const closeTagStart = snapshotText.lastIndexOf(closeTag);
+  if (closeTagStart === -1) {
+    return null;
+  }
+
+  const bodyStart = openTagEnd + ">\n".length;
+  if (closeTagStart < bodyStart) {
+    return null;
+  }
+
+  // Be strict about trailing content: if we can't confidently extract the body,
+  // avoid showing a misleading preview.
+  const trailing = snapshotText.slice(closeTagStart + closeTag.length);
+  if (trailing.trim().length > 0) {
+    return null;
+  }
+
+  return snapshotText.slice(bodyStart, closeTagStart);
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
@@ -201,7 +237,7 @@ export class StreamingMessageAggregator {
   // Adding a new cached value? Add it here and it will auto-invalidate.
   private displayedMessageCache = new Map<
     string,
-    { version: number; messages: DisplayedMessage[] }
+    { version: number; agentSkillSnapshotSha?: string; messages: DisplayedMessage[] }
   >();
   private messageVersions = new Map<string, number>();
   private cache: {
@@ -1874,7 +1910,10 @@ export class StreamingMessageAggregator {
     }
   }
 
-  private buildDisplayedMessagesForMessage(message: MuxMessage): DisplayedMessage[] {
+  private buildDisplayedMessagesForMessage(
+    message: MuxMessage,
+    agentSkillSnapshot?: { frontmatterYaml?: string; body?: string }
+  ): DisplayedMessage[] {
     const displayedMessages: DisplayedMessage[] = [];
     const baseTimestamp = message.metadata?.timestamp;
     const historySequence = message.metadata?.historySequence ?? 0;
@@ -1917,7 +1956,11 @@ export class StreamingMessageAggregator {
 
       const agentSkill =
         muxMeta?.type === "agent-skill"
-          ? { skillName: muxMeta.skillName, scope: muxMeta.scope }
+          ? {
+              skillName: muxMeta.skillName,
+              scope: muxMeta.scope,
+              snapshot: agentSkillSnapshot,
+            }
           : undefined;
 
       const compactionFollowUp = getCompactionFollowUpContent(muxMeta);
@@ -2170,7 +2213,36 @@ export class StreamingMessageAggregator {
       const showSyntheticMessages =
         typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
+      // Synthetic agent-skill snapshot messages are hidden from the transcript unless
+      // debugLlmRequest is enabled. We still want to surface their content in the UI by
+      // attaching the resolved snapshot (frontmatterYaml + body) to the *subsequent*
+      // /{skillName} invocation message.
+      const latestAgentSkillSnapshotByKey = new Map<
+        string,
+        { sha256?: string; frontmatterYaml?: string; body: string }
+      >();
+
       for (const message of allMessages) {
+        const snapshotMeta = message.metadata?.agentSkillSnapshot;
+        if (snapshotMeta) {
+          const parsed = AgentSkillSnapshotMetadataSchema.safeParse(snapshotMeta);
+          if (parsed.success) {
+            const snapshotText = message.parts
+              .filter((p) => p.type === "text")
+              .map((p) => p.text)
+              .join("");
+            const body = extractAgentSkillSnapshotBody(snapshotText);
+            if (body !== null) {
+              const key = `${parsed.data.scope}:${parsed.data.skillName}`;
+              latestAgentSkillSnapshotByKey.set(key, {
+                sha256: parsed.data.sha256,
+                frontmatterYaml: parsed.data.frontmatterYaml,
+                body,
+              });
+            }
+          }
+        }
+
         const isSynthetic = message.metadata?.synthetic === true;
 
         // Synthetic messages are typically for model context only, but can be shown in debug mode.
@@ -2178,15 +2250,37 @@ export class StreamingMessageAggregator {
           continue;
         }
 
+        const muxMeta = message.metadata?.muxMetadata as MuxFrontendMetadata | undefined;
+        const agentSkillSnapshotKey =
+          message.role === "user" && muxMeta?.type === "agent-skill"
+            ? `${muxMeta.scope}:${muxMeta.skillName}`
+            : undefined;
+
+        const agentSkillSnapshot = agentSkillSnapshotKey
+          ? latestAgentSkillSnapshotByKey.get(agentSkillSnapshotKey)
+          : undefined;
+
+        const agentSkillSnapshotForDisplay = agentSkillSnapshot
+          ? { frontmatterYaml: agentSkillSnapshot.frontmatterYaml, body: agentSkillSnapshot.body }
+          : undefined;
+
+        const agentSkillSnapshotSha = agentSkillSnapshot?.sha256;
+
         const version = this.messageVersions.get(message.id) ?? 0;
         const cached = this.displayedMessageCache.get(message.id);
-        const messageDisplay =
-          cached?.version === version
-            ? cached.messages
-            : this.buildDisplayedMessagesForMessage(message);
+        const canReuse =
+          cached?.version === version && cached.agentSkillSnapshotSha === agentSkillSnapshotSha;
 
-        if (cached?.version !== version) {
-          this.displayedMessageCache.set(message.id, { version, messages: messageDisplay });
+        const messageDisplay = canReuse
+          ? cached!.messages
+          : this.buildDisplayedMessagesForMessage(message, agentSkillSnapshotForDisplay);
+
+        if (!canReuse) {
+          this.displayedMessageCache.set(message.id, {
+            version,
+            agentSkillSnapshotSha,
+            messages: messageDisplay,
+          });
         }
 
         if (messageDisplay.length > 0) {
