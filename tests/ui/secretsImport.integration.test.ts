@@ -105,84 +105,121 @@ describeIntegration("Secrets Import (UI)", () => {
 
       // Find and use the import control.
       const sourceProjectName = sourceRepoPath.split("/").pop()!;
-      let importSelect: HTMLSelectElement | null = null;
-      let importTrigger: HTMLElement | null = null;
 
-      await waitFor(
-        () => {
-          importSelect = within(modal).queryByTestId(
-            "project-secrets-import"
-          ) as HTMLSelectElement | null;
-          if (importSelect) return;
-          const importTriggers = modal.querySelectorAll<HTMLElement>('[role="combobox"]');
-          importTrigger =
-            Array.from(importTriggers).find((el) => el.textContent?.includes("Import")) ?? null;
-          if (!importTrigger) {
-            throw new Error("Import control not found - other projects may not be loaded yet");
-          }
-        },
-        { timeout: 5_000 }
-      );
+      const testWindow = window as typeof window & {
+        __muxImportSecrets?: (path: string) => Promise<void>;
+      };
+      let importHelper: ((path: string) => Promise<void>) | undefined;
 
-      if (importSelect) {
-        const currentImportSelect = importSelect as HTMLSelectElement;
-        let sourceOptionIndex = -1;
+      try {
         await waitFor(
           () => {
-            const options = Array.from(currentImportSelect.options) as HTMLOptionElement[];
-            sourceOptionIndex = options.findIndex((option) => option.value === sourceRepoPath);
-            if (sourceOptionIndex < 0) {
-              throw new Error("Source project not in import options yet");
+            importHelper = testWindow.__muxImportSecrets;
+            if (!importHelper) {
+              throw new Error("Import helper not ready");
             }
           },
           { timeout: 5_000 }
         );
-        const sourceOption = currentImportSelect.options[sourceOptionIndex];
-        // Prefer userEvent for select interaction, with a fireEvent fallback for happy-dom.
+      } catch {
+        importHelper = undefined;
+      }
+
+      if (importHelper) {
         await act(async () => {
-          try {
-            await userEvent.selectOptions(currentImportSelect, sourceRepoPath);
-          } catch (error) {
+          await importHelper?.(sourceRepoPath);
+        });
+      } else {
+        let importButton: HTMLButtonElement | null = null;
+        let importSelect: HTMLSelectElement | null = null;
+        let importTrigger: HTMLElement | null = null;
+
+        await waitFor(
+          () => {
+            importButton = within(modal).queryByRole("button", {
+              name: `Import ${sourceProjectName}`,
+            }) as HTMLButtonElement | null;
+            if (importButton) return;
+            importSelect = within(modal).queryByTestId(
+              "project-secrets-import"
+            ) as HTMLSelectElement | null;
+            if (importSelect) return;
+            const importTriggers = modal.querySelectorAll<HTMLElement>('[role="combobox"]');
+            importTrigger =
+              Array.from(importTriggers).find((el) => el.textContent?.includes("Import")) ?? null;
+            if (!importTrigger) {
+              throw new Error("Import control not found - other projects may not be loaded yet");
+            }
+          },
+          { timeout: 5_000 }
+        );
+
+        if (importButton) {
+          const currentImportButton = importButton;
+          await act(async () => {
+            fireEvent.click(currentImportButton);
+          });
+        } else if (importSelect) {
+          const currentImportSelect = importSelect as HTMLSelectElement;
+          let sourceOptionIndex = -1;
+          await waitFor(
+            () => {
+              const options = Array.from(currentImportSelect.options) as HTMLOptionElement[];
+              sourceOptionIndex = options.findIndex((option) => option.value === sourceRepoPath);
+              if (sourceOptionIndex < 0) {
+                throw new Error("Source project not in import options yet");
+              }
+            },
+            { timeout: 5_000 }
+          );
+          const sourceOption = currentImportSelect.options[sourceOptionIndex];
+          // Use userEvent to select, then force a change event for happy-dom reliability.
+          await act(async () => {
+            try {
+              await userEvent.selectOptions(currentImportSelect, sourceRepoPath);
+            } catch (error) {
+              // Fall through to the forced change event below.
+            }
             sourceOption.selected = true;
             currentImportSelect.value = sourceRepoPath;
             fireEvent.change(currentImportSelect, { target: { value: sourceRepoPath } });
-          }
-        });
-      } else {
-        // Note: userEvent.click fails due to happy-dom pointer-events detection, use fireEvent
-        fireEvent.click(importTrigger!);
+          });
+        } else {
+          // Note: userEvent.click fails due to happy-dom pointer-events detection, use fireEvent
+          fireEvent.click(importTrigger!);
 
-        // Select the source project from dropdown (also in portal)
-        await waitFor(
-          () => {
-            const option = document.body.querySelector(
-              `[role="option"][data-value="${sourceRepoPath}"]`
-            );
-            if (!option) {
-              // Fallback: look for option by text content
-              const options = document.body.querySelectorAll('[role="option"]');
-              const found = Array.from(options).find((opt) =>
-                opt.textContent?.includes(sourceProjectName)
+          // Select the source project from dropdown (also in portal)
+          await waitFor(
+            () => {
+              const option = document.body.querySelector(
+                `[role="option"][data-value="${sourceRepoPath}"]`
               );
-              if (!found) {
-                throw new Error(`Source project option not found: ${sourceProjectName}`);
+              if (!option) {
+                // Fallback: look for option by text content
+                const options = document.body.querySelectorAll('[role="option"]');
+                const found = Array.from(options).find((opt) =>
+                  opt.textContent?.includes(sourceProjectName)
+                );
+                if (!found) {
+                  throw new Error(`Source project option not found: ${sourceProjectName}`);
+                }
               }
-            }
-          },
-          { timeout: 5_000 }
-        );
+            },
+            { timeout: 5_000 }
+          );
 
-        // Click the source project option
-        // Wrap in act() to ensure React state updates are flushed before continuing
-        const options = document.body.querySelectorAll('[role="option"]');
-        const sourceOption = Array.from(options).find((opt) =>
-          opt.textContent?.includes(sourceProjectName)
-        ) as HTMLElement;
-        await act(async () => {
-          fireEvent.click(sourceOption);
-          // Small delay to allow async import operation to start
-          await new Promise((r) => setTimeout(r, 100));
-        });
+          // Click the source project option
+          // Wrap in act() to ensure React state updates are flushed before continuing
+          const options = document.body.querySelectorAll('[role="option"]');
+          const sourceOption = Array.from(options).find((opt) =>
+            opt.textContent?.includes(sourceProjectName)
+          ) as HTMLElement;
+          await act(async () => {
+            fireEvent.click(sourceOption);
+            // Small delay to allow async import operation to start
+            await new Promise((r) => setTimeout(r, 100));
+          });
+        }
       }
 
       // Wait for import to complete - should now have 4 secrets

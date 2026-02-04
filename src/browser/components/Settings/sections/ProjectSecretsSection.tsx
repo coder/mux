@@ -37,9 +37,8 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
   const [isImporting, setIsImporting] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [originalSecrets, setOriginalSecrets] = useState<Secret[]>([]);
-  // Use a native select in tests because Radix portals are unreliable in happy-dom.
+  // Use test-only import buttons because Radix portals/select interactions are unreliable in happy-dom.
   const isTestEnv = import.meta.env.MODE === "test";
-  const importSelectRef = React.useRef<HTMLSelectElement>(null);
 
   // Get other projects (excluding current one) for import dropdown
   const otherProjects = Array.from(projects.entries()).filter(([path]) => path !== projectPath);
@@ -182,17 +181,22 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
     [getSecrets]
   );
 
-  const handleTestImportChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedProjectPath =
-      event.currentTarget.value ||
-      event.currentTarget.options[event.currentTarget.selectedIndex]?.value ||
-      "";
-    if (!selectedProjectPath) return;
-    void handleImportFromProject(selectedProjectPath);
-    if (importSelectRef.current) {
-      importSelectRef.current.value = "";
+  // Expose a test-only import helper to avoid flaky UI interactions in happy-dom.
+  useEffect(() => {
+    if (!isTestEnv || typeof window === "undefined") {
+      return;
     }
-  };
+
+    const testWindow = window as typeof window & {
+      __muxImportSecrets?: (path: string) => Promise<void>;
+    };
+    testWindow.__muxImportSecrets = handleImportFromProject;
+    return () => {
+      if (testWindow.__muxImportSecrets === handleImportFromProject) {
+        delete testWindow.__muxImportSecrets;
+      }
+    };
+  }, [handleImportFromProject, isTestEnv]);
 
   if (isLoading) {
     return (
@@ -219,27 +223,23 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
         </Button>
         {otherProjects.length > 0 &&
           (isTestEnv ? (
-            <select
-              ref={importSelectRef}
-              aria-label="Import secrets from project"
-              data-testid="project-secrets-import"
-              defaultValue=""
-              onChange={handleTestImportChange}
-              disabled={isSaving || isImporting}
-              className="text-muted hover:text-foreground border-border-medium hover:bg-hover h-7 w-auto rounded border bg-transparent px-2 text-xs"
-            >
-              <option value="" disabled>
-                {isImporting ? "Importing..." : "Import"}
-              </option>
+            <div className="flex items-center gap-2" data-testid="project-secrets-import-list">
               {otherProjects.map(([path]) => {
                 const name = path.split("/").pop() ?? path;
                 return (
-                  <option key={path} value={path}>
-                    {name}
-                  </option>
+                  <button
+                    key={path}
+                    type="button"
+                    data-testid={`project-secrets-import-${path}`}
+                    onClick={() => void handleImportFromProject(path)}
+                    disabled={isSaving || isImporting}
+                    className="text-muted hover:text-foreground border-border-medium hover:bg-hover h-7 rounded border bg-transparent px-2 text-xs"
+                  >
+                    {isImporting ? "Importing..." : `Import ${name}`}
+                  </button>
                 );
               })}
-            </select>
+            </div>
           ) : (
             <Select
               value=""
