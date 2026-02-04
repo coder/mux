@@ -77,7 +77,7 @@ import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
-// Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
+// Display labels for CLI help (OFF, LOW, MED, HIGH, XHIGH)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
 
 type CLIMode = "plan" | "exec";
@@ -117,7 +117,7 @@ function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefine
     return level;
   }
   throw new Error(
-    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, xhigh)`
+    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, max)`
   );
 }
 
