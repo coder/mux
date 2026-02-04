@@ -208,24 +208,31 @@ export const WithRemoteWorkspace: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    const canvas = within(storyRoot);
 
-    const globe = await canvas.findByLabelText(/Remote workspace \(Mux server: server-work\)/i);
-
-    // Hover to open the globe tooltip and keep it open for the Chromatic snapshot.
-    await userEvent.hover(globe);
-
+    // Wait for the remote workspace row to appear.
     await waitFor(
       () => {
-        const tooltip = document.body.querySelector('[role="tooltip"]');
-        if (!tooltip) throw new Error("Tooltip not visible");
-
-        const tooltipText = tooltip.textContent ?? "";
-        if (!tooltipText.includes("Remote workspace (Mux server: server-work)")) {
-          throw new Error(`Unexpected tooltip text: ${JSON.stringify(tooltipText)}`);
-        }
+        const row = storyRoot.querySelector<HTMLElement>('[data-workspace-id^="remote."]');
+        if (!row) throw new Error("Remote workspace row not found");
       },
-      { timeout: 2000, interval: 50 }
+      { timeout: 5000 }
+    );
+
+    const remoteRow = storyRoot.querySelector<HTMLElement>('[data-workspace-id^="remote."]')!;
+    const titleSpan = within(remoteRow).getByText("Remote: feature/remote");
+    await userEvent.hover(titleSpan);
+
+    // Wait for HoverCard to appear (portaled to body) and verify remote server line.
+    await waitFor(
+      () => {
+        const hoverCard = document.body.querySelector<HTMLElement>(
+          "[data-radix-popper-content-wrapper] .bg-modal-bg"
+        );
+        if (!hoverCard) throw new Error("HoverCard not visible");
+
+        within(hoverCard).getByText(/Mux server:\s*server-work/i);
+      },
+      { timeout: 5000 }
     );
   },
 };

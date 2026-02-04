@@ -19,7 +19,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Globe, Pencil, Trash2, Ellipsis } from "lucide-react";
+import { Pencil, Trash2, Ellipsis } from "lucide-react";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -479,21 +479,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       </Shimmer>
                     </span>
                   </HoverCardTrigger>
-                  {remoteWorkspaceInfo && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span
-                          className="text-muted-foreground inline-flex shrink-0"
-                          aria-label={`Remote workspace (Mux server: ${remoteWorkspaceInfo.serverId})`}
-                        >
-                          <Globe className="h-3 w-3" />
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent align="start">
-                        Remote workspace (Mux server: {remoteWorkspaceInfo.serverId})
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
                 </div>
                 <HoverCardContent
                   align="start"
@@ -509,9 +494,19 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       projectName={projectName}
                       workspaceName={metadata.name}
                       namedWorkspacePath={namedWorkspacePath}
+                      remoteServerId={remoteWorkspaceInfo?.serverId}
                       runtimeConfig={metadata.runtimeConfig}
                       isWorking={isWorking}
                     />
+                    {remoteWorkspaceInfo && (
+                      <div className="text-muted text-xs">
+                        Mux server:{" "}
+                        <span className="font-mono">{remoteWorkspaceInfo.serverId}</span>
+                      </div>
+                    )}
+                    {!isDisabled && (
+                      <div className="text-muted text-xs">Double-click to edit title</div>
+                    )}
                   </div>
                 </HoverCardContent>
               </HoverCard>

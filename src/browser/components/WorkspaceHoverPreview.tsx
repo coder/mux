@@ -1,4 +1,5 @@
 import React from "react";
+import { Globe } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { BranchSelector } from "./BranchSelector";
@@ -10,6 +11,7 @@ interface WorkspaceHoverPreviewProps {
   projectName: string;
   workspaceName: string;
   namedWorkspacePath: string;
+  remoteServerId?: string;
   runtimeConfig?: RuntimeConfig;
   isWorking: boolean;
   className?: string;
@@ -24,12 +26,18 @@ export function WorkspaceHoverPreview({
   projectName,
   workspaceName,
   namedWorkspacePath,
+  remoteServerId,
   runtimeConfig,
   isWorking,
   className,
 }: WorkspaceHoverPreviewProps) {
   return (
     <div className={cn("flex min-w-0 items-center gap-2 text-[11px]", className)}>
+      {remoteServerId && (
+        <span className="text-muted-foreground inline-flex shrink-0" aria-hidden="true">
+          <Globe className="h-3 w-3" />
+        </span>
+      )}
       <RuntimeBadge
         runtimeConfig={runtimeConfig}
         isWorking={isWorking}
