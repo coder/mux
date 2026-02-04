@@ -920,9 +920,15 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
       throw new Error(`Unexpected gateway-formatted model label: ${ugly.textContent ?? "(empty)"}`);
     }
 
-    // Sanity check that the gateway indicator exists.
-    const gatewayIndicator = canvasElement.querySelector('[aria-label="Using Mux Gateway"]');
-    if (!gatewayIndicator) throw new Error("Gateway indicator not found");
+    // Sanity check that the gateway indicator exists (moved to the titlebar).
+    const gatewayIndicator = await waitFor(
+      () => {
+        const el = canvasElement.querySelector('[aria-label="Mux Gateway"]');
+        if (!el) throw new Error("Gateway indicator not found");
+        return el;
+      },
+      { timeout: 2000, interval: 50 }
+    );
 
     // Hover to prove the gateway tooltip is wired up (and keep it visible for snapshot).
     await userEvent.hover(gatewayIndicator);
@@ -930,6 +936,9 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
       () => {
         const tooltip = document.querySelector('[role="tooltip"]');
         if (!tooltip) throw new Error("Tooltip not visible");
+        if (!tooltip.textContent?.includes("Mux Gateway")) {
+          throw new Error("Gateway tooltip not visible");
+        }
       },
       { timeout: 2000, interval: 50 }
     );
