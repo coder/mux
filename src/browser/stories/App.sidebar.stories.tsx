@@ -206,6 +206,28 @@ export const WithRemoteWorkspace: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    const canvas = within(storyRoot);
+
+    const globe = await canvas.findByLabelText(/Remote workspace \(Mux server: server-work\)/i);
+
+    // Hover to open the globe tooltip and keep it open for the Chromatic snapshot.
+    await userEvent.hover(globe);
+
+    await waitFor(
+      () => {
+        const tooltip = document.body.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+
+        const tooltipText = tooltip.textContent ?? "";
+        if (!tooltipText.includes("Remote workspace (Mux server: server-work)")) {
+          throw new Error(`Unexpected tooltip text: ${JSON.stringify(tooltipText)}`);
+        }
+      },
+      { timeout: 2000, interval: 50 }
+    );
+  },
 };
 
 /** Multiple projects showing sidebar organization */
