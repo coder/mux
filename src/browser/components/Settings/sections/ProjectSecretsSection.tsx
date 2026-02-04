@@ -121,12 +121,21 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({ pr
     setVisibleSecrets(newVisible);
   };
 
+  // Track the current project path to cancel stale imports
+  const currentProjectRef = React.useRef(projectPath);
+  useEffect(() => {
+    currentProjectRef.current = projectPath;
+  }, [projectPath]);
+
   // Import secrets from another project (doesn't overwrite existing keys)
   const handleImportFromProject = useCallback(
     async (sourceProjectPath: string) => {
+      const targetProject = currentProjectRef.current;
       setIsImporting(true);
       try {
         const sourceSecrets = await getSecrets(sourceProjectPath);
+        // Cancel if project changed during the async fetch
+        if (currentProjectRef.current !== targetProject) return;
         if (sourceSecrets.length === 0) return;
 
         setSecrets((current) => {
@@ -137,7 +146,10 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({ pr
       } catch (err) {
         console.error("Failed to import secrets:", err);
       } finally {
-        setIsImporting(false);
+        // Only clear importing if we're still on the same project
+        if (currentProjectRef.current === targetProject) {
+          setIsImporting(false);
+        }
       }
     },
     [getSecrets]
