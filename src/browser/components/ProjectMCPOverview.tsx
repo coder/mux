@@ -28,7 +28,7 @@ export const ProjectMCPOverview: React.FC<ProjectMCPOverviewProps> = (props) => 
     let cancelled = false;
 
     setLoading(true);
-    api.projects.mcp
+    api.mcp
       .list({ projectPath })
       .then((result) => {
         if (cancelled) return;

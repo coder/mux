@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -299,6 +300,7 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
                       value={secret.key}
                       onChange={(e) => updateSecretKey(index, e.target.value)}
                       placeholder="SECRET_NAME"
+                      aria-label="Secret key"
                       disabled={isLoading}
                       spellCheck={false}
                       className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
@@ -340,7 +342,10 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
                         onValueChange={(value) => updateSecretValue(index, { secret: value })}
                         disabled={isLoading}
                       >
-                        <SelectTrigger className="border-border-medium bg-modal-bg hover:bg-hover h-[34px] w-full px-2.5 font-mono text-[13px]">
+                        <SelectTrigger
+                          className="border-border-medium bg-modal-bg hover:bg-hover h-[34px] w-full px-2.5 font-mono text-[13px]"
+                          aria-label="Global secret key"
+                        >
                           <SelectValue placeholder="Select global secret" />
                         </SelectTrigger>
                         <SelectContent>
@@ -363,6 +368,7 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
                         }
                         onChange={(e) => updateSecretValue(index, e.target.value)}
                         placeholder="secret value"
+                        aria-label="Secret value"
                         disabled={isLoading}
                         spellCheck={false}
                         className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
@@ -377,6 +383,7 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
                         onClick={() => toggleVisibility(index)}
                         disabled={isLoading}
                         className="text-muted hover:text-foreground flex cursor-pointer items-center justify-center self-center rounded-sm border-none bg-transparent px-1 py-0.5 text-base transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label={visibleSecrets.has(index) ? "Hide secret" : "Show secret"}
                       >
                         <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
                       </button>
@@ -387,8 +394,9 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
                       onClick={() => removeSecret(index)}
                       disabled={isLoading}
                       className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Remove secret"
                     >
-                      ×
+                      <Trash2 className="h-4 w-4" />
                     </button>
                   </React.Fragment>
                 );

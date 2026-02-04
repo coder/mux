@@ -291,7 +291,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
   const getSecrets = useCallback(
     async (projectPath: string): Promise<Secret[]> => {
       if (!api) return [];
-      return await api.projects.secrets.get({ projectPath });
+      return await api.secrets.get({ projectPath });
     },
     [api]
   );
@@ -299,7 +299,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
   const updateSecrets = useCallback(
     async (projectPath: string, secrets: Secret[]) => {
       if (!api) return;
-      const result = await api.projects.secrets.update({ projectPath, secrets });
+      const result = await api.secrets.update({ projectPath, secrets });
       if (!result.success) {
         console.error("Failed to update secrets:", result.error);
       }

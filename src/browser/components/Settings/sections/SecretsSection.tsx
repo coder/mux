@@ -381,7 +381,10 @@ export const SecretsSection: React.FC = () => {
             <div className="text-muted text-xs">Select a project to configure</div>
           </div>
           <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[160px] cursor-pointer rounded-md border px-3 text-sm transition-colors">
+            <SelectTrigger
+              className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[160px] cursor-pointer rounded-md border px-3 text-sm transition-colors"
+              aria-label="Project"
+            >
               <SelectValue placeholder="Select project" />
             </SelectTrigger>
             <SelectContent>
@@ -444,6 +447,7 @@ export const SecretsSection: React.FC = () => {
                   value={secret.key}
                   onChange={(e) => updateSecretKey(index, e.target.value)}
                   placeholder="SECRET_NAME"
+                  aria-label="Secret key"
                   disabled={saving}
                   spellCheck={false}
                   className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
@@ -487,7 +491,10 @@ export const SecretsSection: React.FC = () => {
                     onValueChange={(value) => updateSecretValue(index, { secret: value })}
                     disabled={saving}
                   >
-                    <SelectTrigger className="border-border-medium bg-modal-bg hover:bg-hover h-[34px] w-full px-2.5 font-mono text-[13px]">
+                    <SelectTrigger
+                      className="border-border-medium bg-modal-bg hover:bg-hover h-[34px] w-full px-2.5 font-mono text-[13px]"
+                      aria-label="Global secret key"
+                    >
                       <SelectValue placeholder="Select global secret" />
                     </SelectTrigger>
                     <SelectContent>
@@ -510,6 +517,7 @@ export const SecretsSection: React.FC = () => {
                     }
                     onChange={(e) => updateSecretValue(index, e.target.value)}
                     placeholder="secret value"
+                    aria-label="Secret value"
                     disabled={saving}
                     spellCheck={false}
                     className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
