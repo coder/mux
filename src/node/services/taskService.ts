@@ -35,7 +35,7 @@ import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
-import { isToolEnabledInResolvedChain } from "@/common/utils/agentTools";
+import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ToolCallEndEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -2477,12 +2477,7 @@ export class TaskService {
                 workspaceId: childWorkspaceId,
               });
 
-              const inheritsExec = chain.some((agent) => agent.id === "exec");
-              const canEdit =
-                isToolEnabledInResolvedChain("file_edit_insert", chain) ||
-                isToolEnabledInResolvedChain("file_edit_replace_string", chain);
-
-              shouldGeneratePatch = inheritsExec && canEdit;
+              shouldGeneratePatch = isExecLikeEditingCapableInResolvedChain(chain);
             } catch {
               // ignore - treat as non-exec-like
             }
