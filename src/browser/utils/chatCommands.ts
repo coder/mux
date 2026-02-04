@@ -306,7 +306,6 @@ export async function processSlashCommand(
       return { clearInput: false, toastShown: true };
     }
 
-    setInput("");
     setSendingState(true);
 
     try {
@@ -335,10 +334,12 @@ export async function processSlashCommand(
           type: "error",
           message: errorString,
         });
-        return { clearInput: true, toastShown: true };
+        // Preserve input on error so user can retry
+        return { clearInput: false, toastShown: true };
       }
 
-      // Exit edit mode if we were editing
+      // Success: clear input and exit edit mode
+      setInput("");
       context.onCancelEdit?.();
 
       trackCommandUsed("model");
@@ -350,7 +351,8 @@ export async function processSlashCommand(
         type: "error",
         message: error instanceof Error ? error.message : "Failed to send message",
       });
-      return { clearInput: true, toastShown: true };
+      // Preserve input on error so user can retry
+      return { clearInput: false, toastShown: true };
     } finally {
       setSendingState(false);
     }
