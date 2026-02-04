@@ -38,6 +38,8 @@ export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({ pr
     let cancelled = false;
     setIsLoading(true);
     setHasChanges(false);
+    // Reset import state when project changes to avoid stuck isImporting
+    setIsImporting(false);
 
     (async () => {
       try {
