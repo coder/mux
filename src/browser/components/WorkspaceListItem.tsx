@@ -492,6 +492,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
             {!isCreating && !isEditing && (
               <div className="flex items-center gap-1">
+                <GitStatusIndicator
+                  gitStatus={gitStatus}
+                  workspaceId={workspaceId}
+                  projectPath={projectPath}
+                  tooltipPosition="right"
+                  isWorking={isWorking}
+                />
+
                 {!isDisabled && (
                   <Popover open={isTitleMenuOpen} onOpenChange={setIsTitleMenuOpen}>
                     <PopoverTrigger asChild>
@@ -528,14 +536,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     </PopoverContent>
                   </Popover>
                 )}
-
-                <GitStatusIndicator
-                  gitStatus={gitStatus}
-                  workspaceId={workspaceId}
-                  projectPath={projectPath}
-                  tooltipPosition="right"
-                  isWorking={isWorking}
-                />
               </div>
             )}
           </div>
