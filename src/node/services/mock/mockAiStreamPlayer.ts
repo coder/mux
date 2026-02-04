@@ -254,8 +254,11 @@ export class MockAiStreamPlayer {
     const latestText = this.extractText(latest);
 
     this.recordLastPrompt(workspaceId, messages);
+    // Always update last model to avoid stale state between requests
     if (options?.model) {
       this.lastModelByWorkspace.set(workspaceId, options.model);
+    } else {
+      this.lastModelByWorkspace.delete(workspaceId);
     }
     const reply = this.router.route({
       messages,
