@@ -40,6 +40,9 @@ function mockExecError(error: Error): void {
 
 function mockVersionAndWhoami(options: { version: string; username?: string }): void {
   execAsyncSpy?.mockImplementationOnce(() =>
+    createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
+  );
+  execAsyncSpy?.mockImplementationOnce(() =>
     createMockExecResult(
       Promise.resolve({ stdout: JSON.stringify({ version: options.version }), stderr: "" })
     )
@@ -129,11 +132,23 @@ describe("CoderService", () => {
     });
 
     it("returns outdated state for version below minimum", async () => {
-      mockExecOk(JSON.stringify({ version: "2.24.9" }));
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.resolve({ stdout: JSON.stringify({ version: "2.24.9" }), stderr: "" })
+        )
+      );
 
       const info = await service.getCoderInfo();
 
-      expect(info).toEqual({ state: "outdated", version: "2.24.9", minVersion: "2.25.0" });
+      expect(info).toEqual({
+        state: "outdated",
+        version: "2.24.9",
+        minVersion: "2.25.0",
+        binaryPath: "/usr/local/bin/coder",
+      });
     });
 
     it("handles version with dev suffix", async () => {
@@ -150,6 +165,83 @@ describe("CoderService", () => {
         username: "coder-user",
         url: "https://coder.example.com",
       });
+    });
+
+    it("returns unavailable state with not-logged-in reason when whoami fails", async () => {
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
+        )
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.reject(
+            new Error(
+              `Encountered an error running "coder whoami", see "coder whoami --help" for more information\nerror: You are not logged in. Try logging in using 'coder login <url>'.`
+            )
+          )
+        )
+      );
+
+      const info = await service.getCoderInfo();
+
+      expect(info).toEqual({
+        state: "unavailable",
+        reason: {
+          kind: "not-logged-in",
+          message:
+            "/usr/local/bin/coder is not logged in. Try logging in using 'coder login <url>'.",
+        },
+      });
+    });
+
+    it("re-checks login status after not-logged-in and caches once logged in", async () => {
+      // First call: not logged in
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(Promise.resolve({ stdout: "/usr/local/bin/coder\n", stderr: "" }))
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.resolve({ stdout: JSON.stringify({ version: "2.28.2" }), stderr: "" })
+        )
+      );
+      execAsyncSpy?.mockImplementationOnce(() =>
+        createMockExecResult(
+          Promise.reject(
+            new Error(
+              `Encountered an error running "coder whoami", see "coder whoami --help" for more information\nerror: You are not logged in. Try logging in using 'coder login <url>'.`
+            )
+          )
+        )
+      );
+
+      // Second call: now logged in
+      mockVersionAndWhoami({ version: "2.28.2", username: "coder-user" });
+
+      const first = await service.getCoderInfo();
+      expect(first).toEqual({
+        state: "unavailable",
+        reason: {
+          kind: "not-logged-in",
+          message:
+            "/usr/local/bin/coder is not logged in. Try logging in using 'coder login <url>'.",
+        },
+      });
+
+      const second = await service.getCoderInfo();
+      expect(second).toEqual({
+        state: "available",
+        version: "2.28.2",
+        username: "coder-user",
+        url: "https://coder.example.com",
+      });
+
+      // Third call should come from cache (no extra execAsync calls)
+      await service.getCoderInfo();
+      expect(execAsyncSpy).toHaveBeenCalledTimes(6);
     });
 
     it("returns unavailable state with reason missing when CLI not installed", async () => {
@@ -188,7 +280,7 @@ describe("CoderService", () => {
       await service.getCoderInfo();
       await service.getCoderInfo();
 
-      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
+      expect(execAsyncSpy).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -559,7 +651,7 @@ describe("CoderService", () => {
       };
       await service.fetchDeploymentSshConfig(session);
 
-      expect(execAsyncSpy).toHaveBeenCalledTimes(2);
+      expect(execAsyncSpy).toHaveBeenCalledTimes(3);
       const whoamiCalls =
         execAsyncSpy?.mock.calls.filter(([cmd]) => cmd === "coder whoami --output=json") ?? [];
       expect(whoamiCalls).toHaveLength(1);

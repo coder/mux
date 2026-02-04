@@ -60,7 +60,7 @@ function serializeParameterDefault(value: unknown): string {
 }
 
 // Minimum supported Coder CLI version
-const MIN_CODER_VERSION = "2.25.0";
+const MIN_CODER_VERSION = "2.31.0";
 
 /**
  * Normalize a version string for comparison.
@@ -307,6 +307,16 @@ export class CoderService {
       return this.cachedInfo;
     }
 
+    // Resolve the Coder binary path for better error messages (helps when multiple binaries are on PATH).
+    let binaryPath: string | null = null;
+    try {
+      using whichProc = execAsync("command -v coder");
+      const { stdout } = await whichProc.result;
+      binaryPath = stdout.split("\n")[0]?.trim() || null;
+    } catch {
+      // Ignore - we'll get a better error from the version command.
+    }
+
     try {
       using proc = execAsync("coder version --output=json");
       const { stdout } = await proc.result;
@@ -326,7 +336,12 @@ export class CoderService {
       // Check minimum version
       if (compareVersions(version, MIN_CODER_VERSION) < 0) {
         log.debug(`Coder CLI version ${version} is below minimum ${MIN_CODER_VERSION}`);
-        this.cachedInfo = { state: "outdated", version, minVersion: MIN_CODER_VERSION };
+        this.cachedInfo = {
+          state: "outdated",
+          version,
+          minVersion: MIN_CODER_VERSION,
+          ...(binaryPath ? { binaryPath } : {}),
+        };
         return this.cachedInfo;
       }
 
@@ -334,8 +349,36 @@ export class CoderService {
       try {
         whoami = await this.getWhoamiData();
       } catch (error) {
-        // Username and deployment URL are optional; do not block availability on whoami failures.
+        // Treat whoami failures as a blocking issue for the Coder runtime.
+        // If the CLI isn't logged in, users will hit confusing failures later during provisioning.
+        const message = error instanceof Error ? error.message : "Unknown error";
+        const lastLine =
+          message
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .at(-1) ?? "Unknown error";
+        const sanitized = lastLine
+          .replace(/^error:\s*/i, "")
+          .slice(0, 200)
+          .trim();
+        const isNotLoggedIn = sanitized.toLowerCase().includes("not logged in");
+        const notLoggedInMessage = binaryPath
+          ? `${binaryPath} is ${sanitized.replace(/^you are\s+/i, "")}`
+          : sanitized;
+
         log.debug("Failed to fetch Coder whoami data", { error });
+
+        const result: CoderInfo = isNotLoggedIn
+          ? { state: "unavailable", reason: { kind: "not-logged-in", message: notLoggedInMessage } }
+          : { state: "unavailable", reason: { kind: "error", message: sanitized } };
+
+        // Don't cache not-logged-in state - user may log in and retry.
+        if (!isNotLoggedIn) {
+          this.cachedInfo = result;
+        }
+
+        return result;
       }
 
       const availableInfo: CoderInfo = {
