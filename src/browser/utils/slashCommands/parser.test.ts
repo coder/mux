@@ -98,6 +98,20 @@ describe("commandParser", () => {
       });
     });
 
+    it("should not treat inherited properties as model aliases", () => {
+      // Ensures we use Object.hasOwn to avoid prototype chain lookups
+      expectParse("/toString hello", {
+        type: "unknown-command",
+        command: "toString",
+        subcommand: "hello",
+      });
+      expectParse("/constructor test", {
+        type: "unknown-command",
+        command: "constructor",
+        subcommand: "test",
+      });
+    });
+
     it("should parse /vim command", () => {
       expectParse("/vim", { type: "vim-toggle" });
     });

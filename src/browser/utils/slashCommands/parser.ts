@@ -33,7 +33,7 @@ export function parseCommand(input: string): ParsedCommand {
   if (!definition) {
     // Check if the command is a model alias (e.g., "/haiku check the pr")
     // This enables one-time model override without changing preferences
-    if (commandKey && commandKey in MODEL_ABBREVIATIONS) {
+    if (commandKey && Object.hasOwn(MODEL_ABBREVIATIONS, commandKey)) {
       // Extract the message: everything after the model alias
       const commandKeyWithSlash = `/${commandKey}`;
       let message = trimmed.substring(commandKeyWithSlash.length);
