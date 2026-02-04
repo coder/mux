@@ -169,6 +169,12 @@ interface RemoteMuxOrpcClient {
     interruptStream: (
       input: z.infer<typeof schemas.workspace.interruptStream.input>
     ) => Promise<z.infer<typeof schemas.workspace.interruptStream.output>>;
+    archive: (
+      input: z.infer<typeof schemas.workspace.archive.input>
+    ) => Promise<z.infer<typeof schemas.workspace.archive.output>>;
+    unarchive: (
+      input: z.infer<typeof schemas.workspace.unarchive.input>
+    ) => Promise<z.infer<typeof schemas.workspace.unarchive.output>>;
     getInfo: (
       input: z.infer<typeof schemas.workspace.getInfo.input>
     ) => Promise<FrontendWorkspaceMetadataSchemaType | null>;
@@ -2870,12 +2876,22 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.archive.input)
         .output(schemas.workspace.archive.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.archive({ workspaceId: remote.remoteWorkspaceId });
+          }
+
           return context.workspaceService.archive(input.workspaceId);
         }),
       unarchive: t
         .input(schemas.workspace.unarchive.input)
         .output(schemas.workspace.unarchive.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.unarchive({ workspaceId: remote.remoteWorkspaceId });
+          }
+
           return context.workspaceService.unarchive(input.workspaceId);
         }),
       fork: t
