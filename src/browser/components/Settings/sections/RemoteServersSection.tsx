@@ -76,6 +76,24 @@ function formatPingPayload(payload: unknown): string {
     return trimmed ? `OK — ${trimmed}` : "OK";
   }
 
+  if (typeof payload === "object" && !Array.isArray(payload)) {
+    const record = payload as Record<string, unknown>;
+    const rawVersion =
+      typeof record.git_describe === "string"
+        ? record.git_describe.trim()
+        : typeof record.version === "string"
+          ? record.version.trim()
+          : "";
+
+    if (rawVersion) {
+      const version =
+        rawVersion.startsWith("v") || rawVersion.startsWith("V")
+          ? `v${rawVersion.slice(1)}`
+          : `v${rawVersion}`;
+      return `OK — Mux ${version}`;
+    }
+  }
+
   try {
     const json = JSON.stringify(payload);
     if (json.length <= 200) {

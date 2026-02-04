@@ -221,13 +221,6 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             <Menu className="h-3.5 w-3.5" />
           </Button>
         )}
-        <RuntimeBadge
-          runtimeConfig={runtimeConfig}
-          isWorking={isWorking}
-          workspacePath={namedWorkspacePath}
-          workspaceName={workspaceName}
-          tooltipSide="bottom"
-        />
         {remoteWorkspaceInfo && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -243,6 +236,13 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </TooltipContent>
           </Tooltip>
         )}
+        <RuntimeBadge
+          runtimeConfig={runtimeConfig}
+          isWorking={isWorking}
+          workspacePath={namedWorkspacePath}
+          workspaceName={workspaceName}
+          tooltipSide="bottom"
+        />
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
         <div className="flex items-center gap-1">
           <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
