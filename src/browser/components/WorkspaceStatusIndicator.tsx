@@ -53,12 +53,18 @@ export const WorkspaceStatusIndicator = memo<{
     );
   }
 
-  const isWorking = (canInterrupt || isStarting || isCreating) && !awaitingUserQuestion;
-  if (!isWorking) {
+  const phase: "starting" | "streaming" | null = canInterrupt
+    ? "streaming"
+    : isStarting || isCreating
+      ? "starting"
+      : null;
+
+  if (!phase) {
     return null;
   }
 
   const modelToShow = canInterrupt ? (currentModel ?? fallbackModel) : fallbackModel;
+  const suffix = phase === "starting" ? "- starting..." : "- streaming...";
 
   return (
     <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
@@ -67,10 +73,12 @@ export const WorkspaceStatusIndicator = memo<{
           <span className="min-w-0 truncate">
             <ModelDisplay modelString={modelToShow} showTooltip={false} />
           </span>
-          <span className="shrink-0 opacity-70">- streaming...</span>
+          <span className="shrink-0 opacity-70">{suffix}</span>
         </>
       ) : (
-        <span className="min-w-0 truncate">Assistant - streaming...</span>
+        <span className="min-w-0 truncate">
+          {phase === "starting" ? "Assistant - starting..." : "Assistant - streaming..."}
+        </span>
       )}
     </div>
   );
