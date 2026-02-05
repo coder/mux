@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Loader2, Plus, ShieldCheck } from "lucide-react";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { Button } from "@/browser/components/ui/button";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
@@ -72,6 +73,7 @@ export function ModelsSection() {
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const gateway = useGateway();
+  const { options: providerOptions, setAnthropicOptions } = useProviderOptions();
 
   // Compaction model preference
   const [compactionModel, setCompactionModel] = usePersistedState<string>(
@@ -281,6 +283,29 @@ export function ModelsSection() {
                 models={selectableModels}
                 emptyOption={{ value: "", label: "Use workspace model" }}
               />
+            </div>
+          </div>
+          {/* 1M Context row */}
+          <div className="flex items-center gap-4 px-2 py-2 md:px-3">
+            <div className="w-28 shrink-0 md:w-32">
+              <div className="text-muted text-xs">1M Context</div>
+              <div className="text-muted-light text-[10px]">Anthropic beta</div>
+            </div>
+            <div className="min-w-0 flex-1">
+              <label className="text-foreground flex cursor-pointer items-center gap-2 text-xs select-none">
+                <input
+                  type="checkbox"
+                  className="cursor-pointer"
+                  checked={providerOptions.anthropic?.use1MContext ?? false}
+                  onChange={(e) =>
+                    setAnthropicOptions({
+                      ...providerOptions.anthropic,
+                      use1MContext: e.target.checked,
+                    })
+                  }
+                />
+                Enable 1M token context window for Claude Sonnet 4/4.5 and Opus 4.6
+              </label>
             </div>
           </div>
         </div>

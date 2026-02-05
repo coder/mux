@@ -72,6 +72,7 @@ import { useFeatureFlags } from "./contexts/FeatureFlagsContext";
 import { UILayoutsProvider, useUILayouts } from "@/browser/contexts/UILayoutsContext";
 import { FeatureFlagsProvider } from "./contexts/FeatureFlagsContext";
 import { ExperimentsProvider } from "./contexts/ExperimentsContext";
+import { ProviderOptionsProvider } from "./contexts/ProviderOptionsContext";
 import { getWorkspaceSidebarKey } from "./utils/workspace";
 import { WindowsToolchainBanner } from "./components/WindowsToolchainBanner";
 import { RosettaBanner } from "./components/RosettaBanner";
@@ -1050,15 +1051,17 @@ function App() {
         <UILayoutsProvider>
           <TooltipProvider delayDuration={200}>
             <SettingsProvider>
-              <SplashScreenProvider>
-                <TutorialProvider>
-                  <CommandRegistryProvider>
-                    <PowerModeProvider>
-                      <AppInner />
-                    </PowerModeProvider>
-                  </CommandRegistryProvider>
-                </TutorialProvider>
-              </SplashScreenProvider>
+              <ProviderOptionsProvider>
+                <SplashScreenProvider>
+                  <TutorialProvider>
+                    <CommandRegistryProvider>
+                      <PowerModeProvider>
+                        <AppInner />
+                      </PowerModeProvider>
+                    </CommandRegistryProvider>
+                  </TutorialProvider>
+                </SplashScreenProvider>
+              </ProviderOptionsProvider>
             </SettingsProvider>
           </TooltipProvider>
         </UILayoutsProvider>

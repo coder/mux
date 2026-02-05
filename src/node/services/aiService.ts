@@ -75,7 +75,7 @@ import {
   injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeGatewayModel, supports1MContext } from "@/common/utils/ai/models";
 import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
@@ -895,10 +895,10 @@ export class AIService extends EventEmitter {
           ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(effectiveBaseURL) }
           : configWithApiKey;
 
-        // Add 1M context beta header if requested
+        // Add 1M context beta header if requested and model supports it
         const headers = buildAnthropicHeaders(
           normalizedConfig.headers,
-          muxProviderOptions?.anthropic?.use1MContext
+          muxProviderOptions?.anthropic?.use1MContext && supports1MContext(`anthropic:${modelId}`)
         );
 
         // Lazy-load Anthropic provider to reduce startup time

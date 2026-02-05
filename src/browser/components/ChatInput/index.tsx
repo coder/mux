@@ -22,7 +22,6 @@ import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { ThinkingSliderComponent } from "../ThinkingSlider";
-import { ModelSettings } from "../ModelSettings";
 import {
   getAllowedRuntimeModesForUi,
   isParsedRuntimeAllowedByPolicy,
@@ -2427,10 +2426,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
                 <div className="flex shrink-0 items-center" data-component="ThinkingSliderGroup">
                   <ThinkingSliderComponent modelString={baseModel} />
-                </div>
-
-                <div className="flex items-center" data-component="ModelSettingsGroup">
-                  <ModelSettings model={baseModel || ""} />
                 </div>
               </div>
 
