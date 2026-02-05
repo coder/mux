@@ -10,7 +10,9 @@
 
 import assert from "@/common/utils/assert";
 
-export type VimMode = "insert" | "normal";
+export type VimMode = "insert" | "normal" | "visual" | "visualLine";
+
+export type VimRange = { start: number; end: number; kind: "char" | "line" };
 
 export type FindVariant = "f" | "F" | "t" | "T";
 
@@ -47,6 +49,14 @@ export interface VimState {
   text: string;
   cursor: number;
   mode: VimMode;
+  /**
+   * Visual selection anchor (set when entering visual modes).
+   *
+   * Invariants:
+   * - null in insert/normal
+   * - non-null in visual/visualLine
+   */
+  visualAnchor: number | null;
   yankBuffer: string;
   desiredColumn: number | null;
   lastFind: LastFind | null;
@@ -71,7 +81,13 @@ export interface LinesInfo {
 }
 
 function assertVimState(state: VimState): void {
-  assert(state.mode === "insert" || state.mode === "normal", "Unexpected Vim mode");
+  assert(
+    state.mode === "insert" ||
+      state.mode === "normal" ||
+      state.mode === "visual" ||
+      state.mode === "visualLine",
+    "Unexpected Vim mode"
+  );
   assert(typeof state.text === "string", "Vim text must be a string");
   assert(typeof state.yankBuffer === "string", "Vim yankBuffer must be a string");
 
@@ -85,6 +101,24 @@ function assertVimState(state: VimState): void {
     state.cursor <= maxCursor,
     `Vim cursor out of bounds for mode=${state.mode}. cursor=${state.cursor} max=${maxCursor} text.length=${state.text.length}`
   );
+
+  const isVisualMode = state.mode === "visual" || state.mode === "visualLine";
+
+  if (isVisualMode) {
+    assert(state.visualAnchor != null, "Vim visualAnchor must be set in visual mode");
+  } else {
+    assert(state.visualAnchor == null, "Vim visualAnchor must be null outside visual mode");
+  }
+
+  if (state.visualAnchor != null) {
+    assert(Number.isFinite(state.visualAnchor), "Vim visualAnchor must be a finite number");
+    assert(Number.isInteger(state.visualAnchor), "Vim visualAnchor must be an integer");
+    assert(state.visualAnchor >= 0, "Vim visualAnchor must be >= 0");
+    assert(
+      state.visualAnchor <= maxCursor,
+      `Vim visualAnchor out of bounds for mode=${state.mode}. visualAnchor=${state.visualAnchor} max=${maxCursor} text.length=${state.text.length}`
+    );
+  }
 
   if (state.desiredColumn != null) {
     assert(Number.isFinite(state.desiredColumn), "Vim desiredColumn must be a finite number");
@@ -204,6 +238,54 @@ export function getLineBounds(
   const lineStart = starts[row];
   const lineEnd = lineStart + lines[row].length;
   return { lineStart, lineEnd, row };
+}
+
+function clampSelectionIndex(text: string, idx: number): number {
+  return Math.max(0, Math.min(idx, text.length));
+}
+
+function getCharwiseVisualRange(text: string, anchor: number, cursor: number): VimRange {
+  // Visual charwise selection is inclusive on both ends, but the DOM range is [start, end).
+  const startInclusive = Math.min(anchor, cursor);
+  const endInclusive = Math.max(anchor, cursor);
+
+  return {
+    start: clampSelectionIndex(text, startInclusive),
+    end: clampSelectionIndex(text, endInclusive + 1),
+    kind: "char",
+  };
+}
+
+function getLinewiseVisualRange(text: string, anchor: number, cursor: number): VimRange {
+  const { row: anchorRow } = getRowCol(text, anchor);
+  const { row: cursorRow } = getRowCol(text, cursor);
+
+  const startRow = Math.min(anchorRow, cursorRow);
+  const endRow = Math.max(anchorRow, cursorRow);
+
+  const { lines, starts } = getLinesInfo(text);
+  const start = starts[startRow];
+
+  const endLineStart = starts[endRow];
+  const endLineEnd = endLineStart + lines[endRow].length;
+  const end = endRow < lines.length - 1 ? endLineEnd + 1 : endLineEnd;
+
+  return {
+    start: clampSelectionIndex(text, start),
+    end: clampSelectionIndex(text, end),
+    kind: "line",
+  };
+}
+
+export function getVisualRange(
+  state: Pick<VimState, "text" | "cursor" | "mode" | "visualAnchor">
+): VimRange | null {
+  if (state.mode !== "visual" && state.mode !== "visualLine") return null;
+  if (state.visualAnchor == null) return null;
+
+  return state.mode === "visual"
+    ? getCharwiseVisualRange(state.text, state.visualAnchor, state.cursor)
+    : getLinewiseVisualRange(state.text, state.visualAnchor, state.cursor);
 }
 
 /**
@@ -670,10 +752,19 @@ export function handleKeyPress(
 ): VimKeyResult {
   assertVimState(state);
 
-  const result =
-    state.mode === "insert"
-      ? handleInsertModeKey(state, key, modifiers)
-      : handleNormalModeKey(state, key, modifiers);
+  let result: VimKeyResult;
+  switch (state.mode) {
+    case "insert":
+      result = handleInsertModeKey(state, key, modifiers);
+      break;
+    case "normal":
+      result = handleNormalModeKey(state, key, modifiers);
+      break;
+    case "visual":
+    case "visualLine":
+      result = handleVisualModeKey(state, key, modifiers);
+      break;
+  }
 
   if (result.handled) {
     assertVimState(result.newState);
@@ -693,6 +784,7 @@ function handleInsertModeKey(state: VimState, key: string, modifiers: KeyModifie
     const normalCursor = Math.min(state.cursor, Math.max(0, state.text.length - 1));
     return handleKey(state, {
       mode: "normal",
+      visualAnchor: null,
       cursor: normalCursor,
       desiredColumn: null,
       pending: null,
@@ -733,6 +825,27 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
       const nextCount = Math.min(10000, prev * 10 + digit);
       return handleKey(nextState, { count: nextCount });
     }
+  }
+
+  // Enter visual modes.
+  // Clear any pending operator/find/g state for predictability.
+  if (!modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "v") {
+    return handleKey(nextState, {
+      mode: "visual",
+      visualAnchor: nextState.cursor,
+      pending: null,
+      desiredColumn: null,
+      count: null,
+    });
+  }
+  if (!modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "V") {
+    return handleKey(nextState, {
+      mode: "visualLine",
+      visualAnchor: nextState.cursor,
+      pending: null,
+      desiredColumn: null,
+      count: null,
+    });
   }
 
   // Handle pending command sequences (operators, multi-key prefixes, etc.)
@@ -790,6 +903,124 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
   return { handled: false };
 }
 
+/**
+ * Handle keys in visual / visual line mode.
+ */
+function handleVisualModeKey(state: VimState, key: string, modifiers: KeyModifiers): VimKeyResult {
+  const now = Date.now();
+  let nextState = state;
+
+  // Recover if visualAnchor is missing (should never happen, but avoids bricking key handling).
+  if (nextState.visualAnchor == null) {
+    return handleKey(nextState, {
+      mode: "normal",
+      visualAnchor: null,
+      pending: null,
+      desiredColumn: null,
+      count: null,
+    });
+  }
+
+  // Check for timeout on pending command sequences (800ms like Vim)
+  if (nextState.pending && now - nextState.pending.at > 800) {
+    nextState = { ...nextState, pending: null, count: null };
+  }
+
+  // Count parsing (like `2w`, `20l`).
+  // - 1–9 starts a count.
+  // - 0 only appends if a count is already in progress; otherwise it stays the `0` motion.
+  if (
+    nextState.pending?.kind !== "find" &&
+    !modifiers.ctrl &&
+    !modifiers.meta &&
+    !modifiers.alt &&
+    key.length === 1 &&
+    /^[0-9]$/.test(key)
+  ) {
+    const digit = Number(key);
+    if (digit !== 0 || nextState.count != null) {
+      const prev = nextState.count ?? 0;
+      const nextCount = Math.min(10000, prev * 10 + digit);
+      return handleKey(nextState, { count: nextCount });
+    }
+  }
+
+  // Handle pending command sequences (g prefix, find/till, etc.)
+  if (nextState.pending) {
+    // Visual mode operators operate immediately on the selection; a pending operator here is stale.
+    if (nextState.pending.kind === "op") {
+      nextState = { ...nextState, pending: null, count: null };
+    } else {
+      const result = handlePending(nextState, nextState.pending, key, modifiers, now);
+      if (result) return result;
+    }
+  }
+
+  // Exit visual mode.
+  if (key === "Escape" || (key === "[" && modifiers.ctrl)) {
+    return { handled: true, newState: exitVisualMode(nextState) };
+  }
+
+  // Toggle between visual/visualLine, or exit if pressed again.
+  if (!modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "v") {
+    if (nextState.mode === "visual") {
+      return { handled: true, newState: exitVisualMode(nextState) };
+    }
+    return handleKey(nextState, {
+      mode: "visual",
+      pending: null,
+      desiredColumn: null,
+      count: null,
+    });
+  }
+  if (!modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "V") {
+    if (nextState.mode === "visualLine") {
+      return { handled: true, newState: exitVisualMode(nextState) };
+    }
+    return handleKey(nextState, {
+      mode: "visualLine",
+      pending: null,
+      desiredColumn: null,
+      count: null,
+    });
+  }
+
+  // Operators act on the current visual selection (count is ignored).
+  if (
+    !modifiers.ctrl &&
+    !modifiers.meta &&
+    !modifiers.alt &&
+    (key === "d" || key === "c" || key === "y")
+  ) {
+    return { handled: true, newState: applyVisualOperator(nextState, key) };
+  }
+
+  // Handle undo/redo
+  if (key === "u") {
+    return { handled: true, newState: { ...nextState, count: null }, action: "undo" };
+  }
+  if (key === "r" && modifiers.ctrl) {
+    return { handled: true, newState: { ...nextState, count: null }, action: "redo" };
+  }
+
+  // Handle multi-key prefix commands (e.g. `g` prefix, find/till).
+  const prefixResult = tryHandlePrefix(nextState, key, now);
+  if (prefixResult) return prefixResult;
+
+  const count = nextState.count ?? 1;
+
+  // Motions extend the visual selection by moving the cursor.
+  const navResult = tryHandleNavigation(nextState, key, count);
+  if (navResult) return navResult;
+
+  // Swallow all other single-character keys in visual mode (don't type letters)
+  if (key.length === 1 && !modifiers.ctrl && !modifiers.meta && !modifiers.alt) {
+    return { handled: true, newState: { ...nextState, count: null } };
+  }
+
+  // Unknown key - let browser handle (e.g. Ctrl-V paste)
+  return { handled: false };
+}
 /**
  * Handle pending command sequences (operators, multi-key prefixes, etc.).
  */
@@ -1052,6 +1283,59 @@ function handleKey(state: VimState, updates: Partial<VimState>): VimKeyResult {
 
 function handleCommand(state: VimState, updates: Partial<VimState>): VimKeyResult {
   return handleKey(state, { ...updates, count: null });
+}
+
+function exitVisualMode(state: VimState): VimState {
+  const range = getVisualRange(state);
+  assert(range != null, "Expected visual range when exiting visual mode");
+
+  // When leaving visual mode we put the cursor at the selection start (like Vim).
+  return completeOperation(state, {
+    mode: "normal",
+    cursor: range.start,
+    visualAnchor: null,
+  });
+}
+
+function applyVisualOperator(state: VimState, op: "d" | "c" | "y"): VimState {
+  const range = getVisualRange(state);
+  assert(range != null, "Expected visual range in visual mode");
+
+  const { text, yankBuffer } = state;
+  const removed = text.slice(range.start, range.end);
+
+  switch (op) {
+    case "d": {
+      const result = deleteRange(text, range.start, range.end, true, yankBuffer);
+      return completeOperation(state, {
+        mode: "normal",
+        text: result.text,
+        cursor: result.cursor,
+        yankBuffer: result.yankBuffer,
+        visualAnchor: null,
+      });
+    }
+
+    case "c": {
+      const result = changeRange(text, range.start, range.end, yankBuffer);
+      return completeOperation(state, {
+        mode: "insert",
+        text: result.text,
+        cursor: result.cursor,
+        yankBuffer: result.yankBuffer,
+        visualAnchor: null,
+      });
+    }
+
+    case "y": {
+      return completeOperation(state, {
+        mode: "normal",
+        cursor: range.start,
+        yankBuffer: removed,
+        visualAnchor: null,
+      });
+    }
+  }
 }
 
 /**

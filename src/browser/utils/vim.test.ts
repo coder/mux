@@ -55,6 +55,7 @@ describe("Vim Command Integration Tests", () => {
     text: "",
     cursor: 0,
     mode: "insert",
+    visualAnchor: null,
     yankBuffer: "",
     desiredColumn: null,
     lastFind: null,
@@ -98,6 +99,75 @@ describe("Vim Command Integration Tests", () => {
       expect(state.mode).toBe("insert");
       expect(state.text).toBe("hello\n\nworld");
       expect(state.cursor).toBe(6);
+    });
+  });
+
+  describe("Visual mode", () => {
+    test("v enters visual mode and Escape exits to normal at selection start", () => {
+      const afterV = executeVimCommands(
+        { ...initialState, text: "hello world", cursor: 0, mode: "normal" },
+        ["v"]
+      );
+
+      expect(afterV.mode).toBe("visual");
+      expect(afterV.visualAnchor).toBe(0);
+      expect(afterV.cursor).toBe(0);
+
+      const afterEsc = executeVimCommands(afterV, ["Escape"]);
+      expect(afterEsc.mode).toBe("normal");
+      expect(afterEsc.visualAnchor).toBeNull();
+      expect(afterEsc.cursor).toBe(0);
+    });
+
+    test("motions extend the selection (v + w)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "hello world", cursor: 0, mode: "normal" },
+        ["v", "w"]
+      );
+
+      expect(state.mode).toBe("visual");
+      expect(state.visualAnchor).toBe(0);
+      expect(state.cursor).toBe(6);
+
+      expect(vim.getVisualRange(state)).toEqual({ start: 0, end: 7, kind: "char" });
+    });
+
+    test("visual operators act on the selection (d/c/y)", () => {
+      const initial = { ...initialState, text: "hello world", cursor: 0, mode: "normal" as const };
+
+      const deleted = executeVimCommands(initial, ["v", "w", "d"]);
+      expect(deleted.mode).toBe("normal");
+      expect(deleted.visualAnchor).toBeNull();
+      expect(deleted.text).toBe("orld");
+      expect(deleted.cursor).toBe(0);
+      expect(deleted.yankBuffer).toBe("hello w");
+
+      const changed = executeVimCommands(initial, ["v", "w", "c"]);
+      expect(changed.mode).toBe("insert");
+      expect(changed.visualAnchor).toBeNull();
+      expect(changed.text).toBe("orld");
+      expect(changed.cursor).toBe(0);
+      expect(changed.yankBuffer).toBe("hello w");
+
+      const yanked = executeVimCommands(initial, ["v", "w", "y"]);
+      expect(yanked.mode).toBe("normal");
+      expect(yanked.visualAnchor).toBeNull();
+      expect(yanked.text).toBe("hello world");
+      expect(yanked.cursor).toBe(0);
+      expect(yanked.yankBuffer).toBe("hello w");
+    });
+
+    test("V enters visual line mode and d deletes whole lines", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one\ntwo\nthree", cursor: 0, mode: "normal" },
+        ["V", "j", "d"]
+      );
+
+      expect(state.mode).toBe("normal");
+      expect(state.visualAnchor).toBeNull();
+      expect(state.text).toBe("three");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("one\ntwo\n");
     });
   });
 
