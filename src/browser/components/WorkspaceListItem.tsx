@@ -36,7 +36,6 @@ import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -407,29 +406,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       >
         <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
 
-        {/* Archive button - centered when status text visible, top-aligned otherwise */}
-        {!isMuxHelpChat && !isCreating && !isEditing && (
-          <ActionButtonWrapper hasSubtitle={hasStatusText}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onArchiveWorkspace(workspaceId, e.currentTarget);
-                  }}
-                  aria-label={`Archive chat ${displayTitle}`}
-                  data-workspace-id={workspaceId}
-                >
-                  <ArchiveIcon className="h-3 w-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent align="start">
-                Archive chat ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-              </TooltipContent>
-            </Tooltip>
-          </ActionButtonWrapper>
-        )}
         {/* Split row spacing when there's no secondary line to keep titles centered. */}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div
@@ -562,6 +538,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                           Edit chat title
                         </span>
                       </button>
+                      {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
                       {!isMuxHelpChat && (
                         <button
                           className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
