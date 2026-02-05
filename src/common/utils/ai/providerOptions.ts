@@ -132,7 +132,7 @@ export function buildProviderOptions(
       // - "medium" → effort: "medium", thinking enabled
       // - "high" → effort: "high", thinking enabled
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-      log.debug("buildProviderOptions: Anthropic Opus 4.5 config", {
+      log.debug("buildProviderOptions: Anthropic effort model config", {
         effort: effortLevel,
         budgetTokens,
         thinkingLevel: effectiveThinking,
@@ -298,11 +298,17 @@ export function buildProviderOptions(
         if (isFlash) {
           // Flash supports: minimal (maps to off), low, medium, high
           // When off, we don't set thinkingConfig at all (API defaults to minimal)
-          thinkingConfig.thinkingLevel = effectiveThinking === "xhigh" ? "high" : effectiveThinking;
-        } else {
-          // Pro only supports: low, high - map medium/xhigh to high
+          // "xhigh" and "max" map to "high" (Flash's maximum)
           thinkingConfig.thinkingLevel =
-            effectiveThinking === "medium" || effectiveThinking === "xhigh"
+            effectiveThinking === "xhigh" || effectiveThinking === "max"
+              ? "high"
+              : effectiveThinking;
+        } else {
+          // Pro only supports: low, high - map medium/xhigh/max to high
+          thinkingConfig.thinkingLevel =
+            effectiveThinking === "medium" ||
+            effectiveThinking === "xhigh" ||
+            effectiveThinking === "max"
               ? "high"
               : effectiveThinking;
         }

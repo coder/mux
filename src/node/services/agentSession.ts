@@ -1040,10 +1040,14 @@ export class AgentSession {
     await this.clearFailedAssistantMessage(messageId, "compaction-retry");
   }
 
-  private isSonnet45Model(modelString: string): boolean {
+  private supports1MContextRetry(modelString: string): boolean {
     const normalized = normalizeGatewayModel(modelString);
     const [provider, modelName] = normalized.split(":", 2);
-    return provider === "anthropic" && modelName?.toLowerCase().startsWith("claude-sonnet-4-5");
+    const lower = modelName?.toLowerCase() ?? "";
+    return (
+      provider === "anthropic" &&
+      (lower.startsWith("claude-sonnet-4-5") || lower.startsWith("claude-opus-4-6"))
+    );
   }
 
   private withAnthropic1MContext(
@@ -1094,13 +1098,13 @@ export class AgentSession {
     }
 
     const isGptClass = this.isGptClassModel(context.modelString);
-    const isSonnet45 = this.isSonnet45Model(context.modelString);
+    const is1MCapable = this.supports1MContextRetry(context.modelString);
 
-    if (!isGptClass && !isSonnet45) {
+    if (!isGptClass && !is1MCapable) {
       return false;
     }
 
-    if (isSonnet45) {
+    if (is1MCapable) {
       const use1MContext = context.options?.providerOptions?.anthropic?.use1MContext ?? false;
       if (use1MContext) {
         return false;
@@ -1113,7 +1117,7 @@ export class AgentSession {
 
     this.compactionRetryAttempts.add(context.id);
 
-    const retryLabel = isSonnet45 ? "Anthropic 1M context" : "OpenAI truncation";
+    const retryLabel = is1MCapable ? "Anthropic 1M context" : "OpenAI truncation";
     log.info(`Compaction hit context limit; retrying once with ${retryLabel}`, {
       workspaceId: this.workspaceId,
       model: context.modelString,
@@ -1122,7 +1126,7 @@ export class AgentSession {
 
     await this.finalizeCompactionRetry(data.messageId);
 
-    const retryOptions = isSonnet45
+    const retryOptions = is1MCapable
       ? this.withAnthropic1MContext(context.modelString, context.options)
       : context.options;
     this.streamStarting = true;

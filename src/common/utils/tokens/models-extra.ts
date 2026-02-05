@@ -23,8 +23,9 @@ interface ModelData {
 
 export const modelsExtra: Record<string, ModelData> = {
   // Claude Opus 4.6 - Released February 2026
-  // $5/M input, $25/M output (same pricing as Opus 4.5)
-  // 128K max output tokens (doubled from Opus 4.5's 64K)
+  // Standard: $5/M input, $25/M output (≤200k context)
+  // Premium (1M context): $10/M input, $37.50/M output
+  // 128K max output tokens
   "claude-opus-4-6": {
     max_input_tokens: 200000,
     max_output_tokens: 128000,

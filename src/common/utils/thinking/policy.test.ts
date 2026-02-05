@@ -189,6 +189,31 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 5 levels including max for Opus 4.6", () => {
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-6")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-6-20260201")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    // Behind gateway
+    expect(getThinkingPolicyForModel("mux-gateway:anthropic/claude-opus-4-6")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+  });
+
   test("returns low/high for Gemini 3 Pro", () => {
     expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
   });

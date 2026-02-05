@@ -11,7 +11,7 @@ export const AgentIdSchema = z
   .regex(/^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/);
 
 const AgentDefinitionUiRequirementSchema = z.enum(["plan"]);
-const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 const AgentDefinitionUiSchema = z
   .object({
