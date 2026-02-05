@@ -1,6 +1,7 @@
 import { useRename } from "@/browser/contexts/WorkspaceRenameContext";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
+import { decodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
@@ -230,6 +231,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
+  const remoteWorkspaceInfo = decodeRemoteWorkspaceId(workspaceId);
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const isCreating = status === "creating";
   const isDisabled = isCreating || isArchiving;
@@ -504,27 +506,32 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               />
             ) : (
               <HoverCard openDelay={300} closeDelay={100}>
-                <HoverCardTrigger asChild>
-                  <span
-                    className={cn(
-                      "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer"
-                    )}
-                    onDoubleClick={(e) => {
-                      if (isDisabled) return;
-                      e.stopPropagation();
-                      startEditing();
-                    }}
-                  >
-                    {/* Always render text in same structure; Shimmer just adds animation class */}
-                    <Shimmer
-                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
-                      colorClass="var(--color-foreground)"
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <HoverCardTrigger asChild>
+                    <span
+                      className={cn(
+                        "text-foreground block min-w-0 flex-1 truncate text-left text-[13px] transition-colors duration-200",
+                        !isDisabled && "cursor-pointer"
+                      )}
+                      onDoubleClick={(e) => {
+                        if (isDisabled) return;
+                        e.stopPropagation();
+                        startEditing();
+                      }}
                     >
-                      {displayTitle}
-                    </Shimmer>
-                  </span>
-                </HoverCardTrigger>
+                      {/* Always render text in same structure; Shimmer just adds animation class */}
+                      <Shimmer
+                        className={cn(
+                          "w-full truncate",
+                          !(isWorking || isCreating) && "no-shimmer"
+                        )}
+                        colorClass="var(--color-foreground)"
+                      >
+                        {displayTitle}
+                      </Shimmer>
+                    </span>
+                  </HoverCardTrigger>
+                </div>
                 <HoverCardContent
                   align="start"
                   side="top"
@@ -539,9 +546,16 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       projectName={projectName}
                       workspaceName={metadata.name}
                       namedWorkspacePath={namedWorkspacePath}
+                      remoteServerId={remoteWorkspaceInfo?.serverId}
                       runtimeConfig={metadata.runtimeConfig}
                       isWorking={isWorking}
                     />
+                    {remoteWorkspaceInfo && (
+                      <div className="text-muted text-xs">
+                        Mux server:{" "}
+                        <span className="font-mono">{remoteWorkspaceInfo.serverId}</span>
+                      </div>
+                    )}
                   </div>
                 </HoverCardContent>
               </HoverCard>

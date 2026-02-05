@@ -1278,6 +1278,106 @@ export const server = {
   },
 };
 
+// Remote mux servers
+const RemoteMuxServerProjectMappingSchema = z
+  .object({
+    localProjectPath: z.string(),
+    remoteProjectPath: z.string(),
+  })
+  .strict();
+
+const RemoteMuxServerConfigSchema = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    baseUrl: z.url(),
+    enabled: z.boolean().optional(),
+    projectMappings: z.array(RemoteMuxServerProjectMappingSchema),
+  })
+  .strict();
+
+const RemoteMuxServerListEntrySchema = z
+  .object({
+    config: RemoteMuxServerConfigSchema,
+    hasAuthToken: z.boolean(),
+  })
+  .strict();
+
+const RemoteMuxServerProjectSuggestionSchema = z
+  .object({
+    path: z.string(),
+    label: z.string(),
+  })
+  .strict();
+
+export const remoteServers = {
+  list: {
+    input: z.void(),
+    output: z.array(RemoteMuxServerListEntrySchema),
+  },
+  upsert: {
+    input: z
+      .object({
+        config: RemoteMuxServerConfigSchema,
+        authToken: z.string().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void()),
+  },
+  remove: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(z.void()),
+  },
+  clearAuthToken: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(z.void()),
+  },
+  ping: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(
+      z
+        .object({
+          version: z.any(),
+        })
+        .strict()
+    ),
+  },
+  listRemoteProjects: {
+    input: z
+      .object({
+        id: z.string(),
+      })
+      .strict(),
+    output: ResultSchema(z.array(RemoteMuxServerProjectSuggestionSchema)),
+  },
+  workspaceCreate: {
+    input: z
+      .object({
+        serverId: z.string(),
+        localProjectPath: z.string(),
+        branchName: z.string(),
+        trunkBranch: z.string().optional(),
+        title: z.string().optional(),
+        runtimeConfig: RuntimeConfigSchema.optional(),
+        sectionId: z.string().optional(),
+      })
+      .strict(),
+    output: workspace.create.output,
+  },
+};
+
 // Config (global settings)
 const SubagentAiDefaultsEntrySchema = z
   .object({

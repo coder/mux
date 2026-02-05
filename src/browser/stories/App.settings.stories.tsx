@@ -5,6 +5,7 @@
  * - General (theme toggle)
  * - Agents (task parallelism / nesting)
  * - Providers (API key configuration)
+ * - Remote Servers (remote mux server configuration)
  * - Models (custom model management)
  * - Modes (per-mode default model / reasoning)
  * - Experiments
@@ -18,7 +19,7 @@ import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace } from "./storyHelpers";
-import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { createMockORPCClient, type RemoteMuxServerListEntry } from "@/browser/stories/mocks/orpc";
 import { within, userEvent, waitFor } from "@storybook/test";
 import {
   getExperimentKey,
@@ -48,6 +49,7 @@ function setupSettingsStory(options: {
   providersList?: string[];
   agentAiDefaults?: AgentAiDefaults;
   taskSettings?: Partial<TaskSettings>;
+  remoteServers?: RemoteMuxServerListEntry[];
   /** Pre-set experiment states in localStorage before render */
   experiments?: Partial<Record<string, boolean>>;
 }): APIClient {
@@ -66,6 +68,7 @@ function setupSettingsStory(options: {
   return createMockORPCClient({
     projects: groupWorkspacesByProject(workspaces),
     workspaces,
+    remoteServers: options.remoteServers,
     providersConfig: options.providersConfig ?? {},
     agentAiDefaults: options.agentAiDefaults,
     providersList: options.providersList ?? ["anthropic", "openai", "xai"],
@@ -470,6 +473,89 @@ export const System1: AppStory = {
         throw new Error(`Expected timeoutSeconds=9, got ${JSON.stringify(timeoutSeconds)}`);
       }
     });
+  },
+};
+
+/** Remote Servers section - experiment gated */
+export const RemoteServers: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSettingsStory({
+          experiments: { [EXPERIMENT_IDS.REMOTE_MUX_SERVERS]: true },
+          remoteServers: [
+            {
+              config: {
+                id: "server-work",
+                label: "Work desktop",
+                baseUrl: "https://mux-work.example.com",
+                enabled: true,
+                projectMappings: [
+                  {
+                    localProjectPath: "/home/user/projects/my-app",
+                    remoteProjectPath: "/Users/alex/projects/my-app",
+                  },
+                  {
+                    localProjectPath: "/home/user/projects/backend",
+                    remoteProjectPath: "/Users/alex/projects/backend",
+                  },
+                ],
+              },
+              hasAuthToken: true,
+            },
+            {
+              config: {
+                id: "server-staging",
+                label: "Staging mux",
+                baseUrl: "http://staging.mux.internal:9876",
+                enabled: false,
+                projectMappings: [
+                  {
+                    localProjectPath: "/home/user/projects/my-app",
+                    remoteProjectPath: "/srv/my-app",
+                  },
+                ],
+              },
+              hasAuthToken: false,
+            },
+          ],
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToSection(canvasElement, "remote servers");
+
+    const body = within(canvasElement.ownerDocument.body);
+    const dialog = await body.findByRole("dialog");
+    const dialogCanvas = within(dialog);
+
+    await dialogCanvas.findByRole("heading", { name: /remote servers/i });
+    await dialogCanvas.findByText(/Work desktop/i);
+
+    const editButtons = await dialogCanvas.findAllByRole("button", { name: /^Edit$/i });
+    if (editButtons.length < 1) {
+      throw new Error("Expected at least one remote server Edit button");
+    }
+
+    await userEvent.click(editButtons[0]);
+
+    // Editor header includes the server label/id (e.g., "Edit Work desktop").
+    await dialogCanvas.findByText(/^Edit Work desktop$/i);
+    await dialogCanvas.findByRole("button", { name: /^Clear local token$/i });
+
+    // Verify mappings are loaded into the editor.
+    await dialogCanvas.findByDisplayValue("/home/user/projects/my-app");
+    await dialogCanvas.findByDisplayValue("/Users/alex/projects/my-app");
+
+    const pingButtons = await dialogCanvas.findAllByRole("button", { name: /^Ping$/i });
+    if (pingButtons.length < 1) {
+      throw new Error("Expected at least one remote server Ping button");
+    }
+
+    await userEvent.click(pingButtons[0]);
+
+    await dialogCanvas.findByText(/OK — Mux v0\.0\.0-mock/i);
   },
 };
 

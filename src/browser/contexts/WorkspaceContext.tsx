@@ -34,7 +34,10 @@ import {
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { isRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import {
   readPersistedState,
   updatePersistedState,
@@ -437,6 +440,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     pendingDraftId,
   } = useRouter();
 
+  const remoteMuxServersEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
+
   const workspaceStore = useWorkspaceStoreRaw();
   const [workspaceMetadata, setWorkspaceMetadataState] = useState<
     Map<string, FrontendWorkspaceMetadata>
@@ -744,6 +749,25 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [navigateToWorkspace, navigateToHome]
   );
 
+  // Best-effort: when the remote mux servers experiment is disabled, make sure we
+  // don't stay routed to a remote workspace id (which would otherwise show a
+  // confusing "workspace not found" state).
+  useEffect(() => {
+    if (remoteMuxServersEnabled) {
+      return;
+    }
+
+    if (!currentWorkspaceId) {
+      return;
+    }
+
+    if (!isRemoteWorkspaceId(currentWorkspaceId)) {
+      return;
+    }
+
+    setSelectedWorkspace(null);
+  }, [currentWorkspaceId, remoteMuxServersEnabled, setSelectedWorkspace]);
+
   // Used by async subscription handlers to safely access the most recent metadata map
   // without triggering render-phase state updates.
   const workspaceMetadataRef = useRef(workspaceMetadata);
@@ -785,6 +809,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       const metadataList = await api.workspace.list();
       const metadataMap = new Map<string, FrontendWorkspaceMetadata>();
       for (const metadata of metadataList) {
+        if (!remoteMuxServersEnabled && isRemoteWorkspaceId(metadata.id)) continue;
+
         // Skip archived workspaces - they should not be tracked by the app
         if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) continue;
         ensureCreatedAt(metadata);
@@ -799,7 +825,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       setWorkspaceMetadata(new Map());
       return true; // Still return true - we tried to load, just got empty result
     }
-  }, [setWorkspaceMetadata, api]);
+  }, [setWorkspaceMetadata, api, remoteMuxServersEnabled]);
 
   // Load metadata once on mount (and again when api becomes available)
   useEffect(() => {
@@ -887,6 +913,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
         for await (const event of iterator) {
           if (signal.aborted) break;
+
+          // Hide remote workspaces unless the experiment is explicitly enabled.
+          if (!remoteMuxServersEnabled && isRemoteWorkspaceId(event.workspaceId)) {
+            continue;
+          }
 
           const meta = event.metadata;
 
@@ -1000,7 +1031,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     return () => {
       controller.abort();
     };
-  }, [navigateToProject, refreshProjects, setSelectedWorkspace, setWorkspaceMetadata, api]);
+  }, [
+    navigateToProject,
+    refreshProjects,
+    setSelectedWorkspace,
+    setWorkspaceMetadata,
+    api,
+    remoteMuxServersEnabled,
+  ]);
 
   const createWorkspace = useCallback(
     async (

@@ -11,6 +11,7 @@ import type {
   ProjectConfig,
   ProjectsConfig,
   FeatureFlagOverride,
+  RemoteMuxServerConfig,
 } from "@/common/types/project";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -24,6 +25,7 @@ import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { isRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
 // Re-export project types from dedicated types file (for preload usage)
@@ -88,6 +90,105 @@ function parseOptionalPort(value: unknown): number | undefined {
 
   return value;
 }
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const REMOTE_MUX_SERVER_ID_RE = /^[a-zA-Z0-9._-]+$/;
+
+function parseRemoteMuxServerId(value: unknown): string | undefined {
+  const id = parseOptionalNonEmptyString(value);
+  if (!id) {
+    return undefined;
+  }
+
+  return REMOTE_MUX_SERVER_ID_RE.test(id) ? id : undefined;
+}
+
+function parseRemoteMuxProjectMappings(value: unknown): RemoteMuxServerConfig["projectMappings"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const mappings: RemoteMuxServerConfig["projectMappings"] = [];
+  for (const item of value) {
+    if (!isPlainObject(item)) {
+      continue;
+    }
+
+    const localProjectPath = parseOptionalNonEmptyString(item.localProjectPath);
+    const remoteProjectPath = parseOptionalNonEmptyString(item.remoteProjectPath);
+    if (!localProjectPath || !remoteProjectPath) {
+      continue;
+    }
+
+    mappings.push({ localProjectPath, remoteProjectPath });
+  }
+
+  return mappings;
+}
+
+function parseRemoteMuxServerConfig(value: unknown): RemoteMuxServerConfig | null {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const id = parseRemoteMuxServerId(value.id);
+  const label = parseOptionalNonEmptyString(value.label);
+  const baseUrlRaw = parseOptionalNonEmptyString(value.baseUrl);
+  const baseUrl = baseUrlRaw ? stripTrailingSlashes(baseUrlRaw) : undefined;
+
+  if (!id || !label || !baseUrl) {
+    return null;
+  }
+
+  // Defensive: avoid persisting invalid base URLs that would later break ORPC output validation.
+  try {
+    const url = new URL(baseUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return {
+    id,
+    label,
+    baseUrl,
+    enabled: parseOptionalBoolean(value.enabled),
+    projectMappings: parseRemoteMuxProjectMappings(value.projectMappings),
+  };
+}
+
+function parseRemoteMuxServerConfigs(value: unknown): RemoteMuxServerConfig[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const servers: RemoteMuxServerConfig[] = [];
+  const seenIds = new Set<string>();
+
+  for (let i = 0; i < value.length; i++) {
+    const parsed = parseRemoteMuxServerConfig(value[i]);
+    if (!parsed) {
+      log.warn("Filtering out malformed remote server config", { index: i });
+      continue;
+    }
+
+    if (seenIds.has(parsed.id)) {
+      log.warn("Filtering out remote server config with duplicate id", { id: parsed.id });
+      continue;
+    }
+
+    seenIds.add(parsed.id);
+    servers.push(parsed);
+  }
+
+  return servers.length > 0 ? servers : undefined;
+}
+
 export type ProvidersConfig = Record<string, ProviderConfig>;
 
 /**
@@ -125,6 +226,7 @@ export class Config {
           mdnsAdvertisementEnabled?: unknown;
           mdnsServiceName?: unknown;
           serverSshHost?: string;
+          remoteServers?: unknown;
           viewedSplashScreens?: string[];
           featureFlagOverrides?: Record<string, "default" | "on" | "off">;
           layoutPresets?: unknown;
@@ -178,6 +280,8 @@ export class Config {
             ? undefined
             : layoutPresetsRaw;
 
+          const remoteServers = parseRemoteMuxServerConfigs(parsed.remoteServers);
+
           return {
             projects: projectsMap,
             apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -188,6 +292,7 @@ export class Config {
             mdnsAdvertisementEnabled: parseOptionalBoolean(parsed.mdnsAdvertisementEnabled),
             mdnsServiceName: parseOptionalNonEmptyString(parsed.mdnsServiceName),
             serverSshHost: parsed.serverSshHost,
+            remoteServers,
             viewedSplashScreens: parsed.viewedSplashScreens,
             layoutPresets,
             taskSettings,
@@ -231,6 +336,7 @@ export class Config {
         mdnsAdvertisementEnabled?: boolean;
         mdnsServiceName?: string;
         serverSshHost?: string;
+        remoteServers?: ProjectsConfig["remoteServers"];
         viewedSplashScreens?: string[];
         layoutPresets?: ProjectsConfig["layoutPresets"];
         featureFlagOverrides?: ProjectsConfig["featureFlagOverrides"];
@@ -284,6 +390,11 @@ export class Config {
 
       if (config.serverSshHost) {
         data.serverSshHost = config.serverSshHost;
+      }
+
+      const remoteServers = parseRemoteMuxServerConfigs(config.remoteServers);
+      if (remoteServers) {
+        data.remoteServers = remoteServers;
       }
       if (config.featureFlagOverrides) {
         data.featureFlagOverrides = config.featureFlagOverrides;
@@ -536,6 +647,15 @@ export class Config {
    * Get the session directory for a specific workspace
    */
   getSessionDir(workspaceId: string): string {
+    if (isRemoteWorkspaceId(workspaceId)) {
+      // Guardrail: remote workspaces are served by a separate mux server and should never
+      // read/write to the local ~/.mux/sessions directory.
+      throw new Error(
+        `Config.getSessionDir called with remote workspace ID: ${workspaceId}. ` +
+          "Remote workspaces do not have local session directories."
+      );
+    }
+
     return path.join(this.sessionsDir, workspaceId);
   }
 

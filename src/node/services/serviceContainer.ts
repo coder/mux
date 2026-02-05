@@ -29,6 +29,7 @@ import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
 import { TokenizerService } from "@/node/services/tokenizerService";
 import { ServerService } from "@/node/services/serverService";
+import { RemoteServersService } from "@/node/services/remoteServersService";
 import { MenuEventService } from "@/node/services/menuEventService";
 import { VoiceService } from "@/node/services/voiceService";
 import { TelemetryService } from "@/node/services/telemetryService";
@@ -102,6 +103,7 @@ export class ServiceContainer {
   public readonly updateService: UpdateService;
   public readonly tokenizerService: TokenizerService;
   public readonly serverService: ServerService;
+  public readonly remoteServersService: RemoteServersService;
   public readonly menuEventService: MenuEventService;
   public readonly voiceService: VoiceService;
   public readonly mcpConfigService: MCPConfigService;
@@ -201,6 +203,7 @@ export class ServiceContainer {
     this.updateService = new UpdateService();
     this.tokenizerService = new TokenizerService(this.sessionUsageService);
     this.serverService = new ServerService();
+    this.remoteServersService = new RemoteServersService(config);
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
     this.telemetryService = new TelemetryService(config.rootDir);

@@ -117,6 +117,7 @@ const mockWindow: BrowserWindow = {
     updateService: serviceContainer.updateService,
     tokenizerService: serviceContainer.tokenizerService,
     serverService: serviceContainer.serverService,
+    remoteServersService: serviceContainer.remoteServersService,
     menuEventService: serviceContainer.menuEventService,
     workspaceMcpOverridesService: serviceContainer.workspaceMcpOverridesService,
     mcpConfigService: serviceContainer.mcpConfigService,

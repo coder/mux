@@ -50,6 +50,19 @@ function resetStorybookPersistedStateForStory(): void {
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(SELECTED_WORKSPACE_KEY);
     localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
+
+    // Experiments are persisted in localStorage (experiment:<id>). Clear them so a story
+    // enabling an experiment doesn't leak that state into later stories.
+    const experimentKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("experiment:")) {
+        experimentKeys.push(key);
+      }
+    }
+    for (const key of experimentKeys) {
+      localStorage.removeItem(key);
+    }
   }
 }
 function getStorybookStoryId(): string | null {

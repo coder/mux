@@ -64,8 +64,10 @@ async function waitForQueuedMessageEvent(
   while (Date.now() - startTime < timeoutMs) {
     const events = collector.getEvents().filter(isQueuedMessageChanged);
     if (events.length > currentCount) {
-      // Return the newest event
-      return events[events.length - 1];
+      // Return the FIRST new event after the baseline count.
+      // This avoids races where the queue is updated twice before we poll
+      // (e.g. message queued, then immediately cleared on auto-send).
+      return events[currentCount];
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -95,7 +97,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start initial stream
+        const collector1 = createStreamCollector(env.orpc, workspaceId);
+        collector1.start();
+        await collector1.waitForSubscription();
+
+        // Start initial stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -103,11 +109,10 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector1 = createStreamCollector(env.orpc, workspaceId);
-        collector1.start();
         await collector1.waitForEvent("stream-start", 5000);
 
         // Queue a message while streaming
+        const queuedEventPromise = waitForQueuedMessageEvent(collector1);
         const queueResult = await sendMessageWithModel(
           env,
           workspaceId,
@@ -117,25 +122,26 @@ describeIntegration("Queued messages", () => {
         expect(queueResult.success).toBe(true);
 
         // Verify message was queued (not sent directly)
-        const queuedEvent = await waitForQueuedMessageEvent(collector1);
+        const queuedEvent = await queuedEventPromise;
         expect(queuedEvent).toBeDefined();
         expect(queuedEvent?.queuedMessages).toEqual(["Say 'SECOND' and nothing else"]);
         expect(queuedEvent?.displayText).toBe("Say 'SECOND' and nothing else");
 
         // Wait for first stream to complete (this triggers auto-send)
+        const clearEventPromise = waitForQueuedMessageEvent(collector1, 5000);
         await collector1.waitForEvent("stream-end", 15000);
 
         // Wait for queue to be cleared (happens before auto-send starts new stream)
         // The sendQueuedMessages() clears queue and emits event before sending
-        const clearEvent = await waitForQueuedMessageEvent(collector1, 5000);
+        const clearEvent = await clearEventPromise;
         expect(clearEvent?.queuedMessages).toEqual([]);
 
         // Wait for auto-send to emit second user message (happens async after stream-end)
         // The second stream starts after auto-send - wait for the second stream-start
-        await collector1.waitForEvent("stream-start", 5000);
+        await collector1.waitForEventN("stream-start", 2, 10000);
 
         // Wait for second stream to complete
-        await collector1.waitForEvent("stream-end", 15000);
+        await collector1.waitForEventN("stream-end", 2, 15000);
 
         // Verify queue is still empty (check current state)
         const queuedAfter = await getQueuedMessages(collector1, { wait: false });
@@ -153,7 +159,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start a stream
+        const collector = createStreamCollector(env.orpc, workspaceId);
+        collector.start();
+        await collector.waitForSubscription();
+
+        // Start a stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -161,21 +171,22 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector = createStreamCollector(env.orpc, workspaceId);
-        collector.start();
         await collector.waitForEvent("stream-start", 5000);
 
-        // Queue a message
-        await sendMessageWithModel(
+        // Queue a message (capture the queue-add event deterministically)
+        const queuedEventPromise = waitForQueuedMessageEvent(collector);
+        const queueResult = await sendMessageWithModel(
           env,
           workspaceId,
           "This message should be restored",
           modelString("anthropic", "claude-sonnet-4-5")
         );
+        expect(queueResult.success).toBe(true);
 
-        // Verify message was queued
-        const queued = await getQueuedMessages(collector);
-        expect(queued).toEqual(["This message should be restored"]);
+        // Verify message was queued (avoid reading the latest state which may already be cleared)
+        const queuedEvent = await queuedEventPromise;
+        expect(queuedEvent).toBeDefined();
+        expect(queuedEvent?.queuedMessages).toEqual(["This message should be restored"]);
 
         // Capture event count BEFORE interrupt to avoid race condition
         // (clear event may arrive before or with stream-abort)
@@ -225,7 +236,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start a stream
+        const collector = createStreamCollector(env.orpc, workspaceId);
+        collector.start();
+        await collector.waitForSubscription();
+
+        // Start a stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -233,21 +248,22 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector = createStreamCollector(env.orpc, workspaceId);
-        collector.start();
         await collector.waitForEvent("stream-start", 5000);
 
-        // Queue a message
-        await sendMessageWithModel(
+        // Queue a message (capture the queue-add event deterministically)
+        const queuedEventPromise = waitForQueuedMessageEvent(collector);
+        const queueResult = await sendMessageWithModel(
           env,
           workspaceId,
           "This message should be sent immediately",
           modelString("anthropic", "claude-sonnet-4-5")
         );
+        expect(queueResult.success).toBe(true);
 
-        // Verify message was queued
-        const queued = await getQueuedMessages(collector);
-        expect(queued).toEqual(["This message should be sent immediately"]);
+        // Verify message was queued (avoid reading the latest state which may already be cleared)
+        const queuedEvent = await queuedEventPromise;
+        expect(queuedEvent).toBeDefined();
+        expect(queuedEvent?.queuedMessages).toEqual(["This message should be sent immediately"]);
 
         // Interrupt the stream with sendQueuedImmediately flag
         const client = resolveOrpcClient(env);
@@ -259,6 +275,10 @@ describeIntegration("Queued messages", () => {
 
         // Wait for stream abort
         await collector.waitForEvent("stream-abort", 5000);
+
+        const preAutoSendStreamEndCount = collector
+          .getEvents()
+          .filter((e) => "type" in e && e.type === "stream-end").length;
 
         // Should NOT get restore-to-input event (message is sent, not restored)
         // Instead, we should see the queued message being sent as a new user message
@@ -275,8 +295,8 @@ describeIntegration("Queued messages", () => {
         expect(queuedAfter).toEqual([]);
 
         // Wait for the immediately-sent message's stream to start and complete
-        await collector.waitForEvent("stream-start", 5000);
-        await collector.waitForEvent("stream-end", 15000);
+        await collector.waitForEventN("stream-start", 2, 10000);
+        await collector.waitForEventN("stream-end", preAutoSendStreamEndCount + 1, 15000);
         collector.stop();
       } finally {
         await cleanup();
@@ -290,7 +310,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start a stream
+        const collector1 = createStreamCollector(env.orpc, workspaceId);
+        collector1.start();
+        await collector1.waitForSubscription();
+
+        // Start a stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -298,19 +322,20 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector1 = createStreamCollector(env.orpc, workspaceId);
-        collector1.start();
         await collector1.waitForEvent("stream-start", 5000);
 
         // Queue multiple messages, waiting for each queued-message-changed event
+        const message1Queued = waitForQueuedMessageEvent(collector1);
         await sendMessage(env, workspaceId, "Message 1");
-        await waitForQueuedMessageEvent(collector1);
+        await message1Queued;
 
+        const message2Queued = waitForQueuedMessageEvent(collector1);
         await sendMessage(env, workspaceId, "Message 2");
-        await waitForQueuedMessageEvent(collector1);
+        await message2Queued;
 
+        const message3Queued = waitForQueuedMessageEvent(collector1);
         await sendMessage(env, workspaceId, "Message 3");
-        await waitForQueuedMessageEvent(collector1);
+        await message3Queued;
 
         // Verify all messages queued (check current state, don't wait for new event)
         const queued = await getQueuedMessages(collector1, { wait: false });
@@ -339,7 +364,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start a stream
+        const collector1 = createStreamCollector(env.orpc, workspaceId);
+        collector1.start();
+        await collector1.waitForSubscription();
+
+        // Start a stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -347,32 +376,32 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector1 = createStreamCollector(env.orpc, workspaceId);
-        collector1.start();
         await collector1.waitForEvent("stream-start", 5000);
 
         // Queue message with image
+        const queuedEventPromise = waitForQueuedMessageEvent(collector1);
         await sendMessage(env, workspaceId, "Describe this image", {
           model: "anthropic:claude-sonnet-4-5",
           fileParts: [TEST_IMAGES.RED_PIXEL],
         });
 
         // Verify queued with image
-        const queuedEvent = await waitForQueuedMessageEvent(collector1);
+        const queuedEvent = await queuedEventPromise;
         expect(queuedEvent?.queuedMessages).toEqual(["Describe this image"]);
         expect(queuedEvent?.fileParts).toHaveLength(1);
         expect(queuedEvent?.fileParts?.[0]).toMatchObject(TEST_IMAGES.RED_PIXEL);
 
         // Wait for first stream to complete (this triggers auto-send)
+        const clearEventPromise = waitForQueuedMessageEvent(collector1, 5000);
         await collector1.waitForEvent("stream-end", 15000);
 
         // Wait for queue to be cleared
-        const clearEvent = await waitForQueuedMessageEvent(collector1, 5000);
+        const clearEvent = await clearEventPromise;
         expect(clearEvent?.queuedMessages).toEqual([]);
 
         // Wait for auto-send stream to start and complete
-        await collector1.waitForEvent("stream-start", 5000);
-        await collector1.waitForEvent("stream-end", 15000);
+        await collector1.waitForEventN("stream-start", 2, 10000);
+        await collector1.waitForEventN("stream-end", 2, 15000);
 
         // Verify queue is still empty
         const queuedAfter = await getQueuedMessages(collector1, { wait: false });
@@ -390,7 +419,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start a stream
+        const collector1 = createStreamCollector(env.orpc, workspaceId);
+        collector1.start();
+        await collector1.waitForSubscription();
+
+        // Start a stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -398,18 +431,17 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector1 = createStreamCollector(env.orpc, workspaceId);
-        collector1.start();
         await collector1.waitForEvent("stream-start", 5000);
 
         // Queue image-only message (empty text)
+        const queuedEventPromise = waitForQueuedMessageEvent(collector1);
         await sendMessage(env, workspaceId, "", {
           model: "anthropic:claude-sonnet-4-5",
           fileParts: [TEST_IMAGES.RED_PIXEL],
         });
 
         // Verify queued (no text messages, but has image)
-        const queuedEvent = await waitForQueuedMessageEvent(collector1);
+        const queuedEvent = await queuedEventPromise;
         expect(queuedEvent?.queuedMessages).toEqual([]);
         expect(queuedEvent?.displayText).toBe("");
         expect(queuedEvent?.fileParts).toHaveLength(1);
@@ -418,8 +450,8 @@ describeIntegration("Queued messages", () => {
         await collector1.waitForEvent("stream-end", 15000);
 
         // Wait for auto-send stream to start and complete
-        await collector1.waitForEvent("stream-start", 5000);
-        await collector1.waitForEvent("stream-end", 15000);
+        await collector1.waitForEventN("stream-start", 2, 10000);
+        await collector1.waitForEventN("stream-end", 2, 15000);
 
         // Verify queue was cleared after auto-send
         // Use wait: false since the queue-clearing event already happened
@@ -438,7 +470,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start a stream
+        const collector1 = createStreamCollector(env.orpc, workspaceId);
+        collector1.start();
+        await collector1.waitForSubscription();
+
+        // Start a stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -446,8 +482,6 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector1 = createStreamCollector(env.orpc, workspaceId);
-        collector1.start();
         await collector1.waitForEvent("stream-start", 5000);
 
         // Queue messages with different options
@@ -464,12 +498,12 @@ describeIntegration("Queued messages", () => {
         await collector1.waitForEvent("stream-end", 15000);
 
         // Wait for auto-send stream to start (verifies the second stream began)
-        const streamStart = await collector1.waitForEvent("stream-start", 5000);
+        const streamStart = await collector1.waitForEventN("stream-start", 2, 10000);
         if (streamStart && "model" in streamStart) {
           expect(streamStart.model).toContain("claude-sonnet-4-5");
         }
 
-        await collector1.waitForEvent("stream-end", 15000);
+        await collector1.waitForEventN("stream-end", 2, 15000);
         collector1.stop();
       } finally {
         await cleanup();
@@ -483,7 +517,11 @@ describeIntegration("Queued messages", () => {
     async () => {
       const { env, workspaceId, cleanup } = await setupWorkspace("anthropic");
       try {
-        // Start a stream
+        const collector1 = createStreamCollector(env.orpc, workspaceId);
+        collector1.start();
+        await collector1.waitForSubscription();
+
+        // Start a stream (must happen after StreamCollector is subscribed)
         void sendMessageWithModel(
           env,
           workspaceId,
@@ -491,8 +529,6 @@ describeIntegration("Queued messages", () => {
           modelString("anthropic", "claude-sonnet-4-5")
         );
 
-        const collector1 = createStreamCollector(env.orpc, workspaceId);
-        collector1.start();
         await collector1.waitForEvent("stream-start", 5000);
 
         // Queue a compaction request
@@ -502,25 +538,27 @@ describeIntegration("Queued messages", () => {
           parsed: { maxOutputTokens: 3000 },
         };
 
+        const queuedEventPromise = waitForQueuedMessageEvent(collector1);
         await sendMessage(env, workspaceId, "Summarize this conversation into a compact form...", {
           model: "anthropic:claude-sonnet-4-5",
           muxMetadata: compactionMetadata,
         });
 
         // Wait for queued-message-changed event
-        const queuedEvent = await waitForQueuedMessageEvent(collector1);
+        const queuedEvent = await queuedEventPromise;
         expect(queuedEvent?.displayText).toBe("/compact -t 3000");
 
         // Wait for first stream to complete (this triggers auto-send)
+        const clearEventPromise = waitForQueuedMessageEvent(collector1, 5000);
         await collector1.waitForEvent("stream-end", 15000);
 
         // Wait for queue to be cleared
-        const clearEvent = await waitForQueuedMessageEvent(collector1, 5000);
+        const clearEvent = await clearEventPromise;
         expect(clearEvent?.queuedMessages).toEqual([]);
 
         // Wait for auto-send stream to start and complete
-        await collector1.waitForEvent("stream-start", 5000);
-        await collector1.waitForEvent("stream-end", 15000);
+        await collector1.waitForEventN("stream-start", 2, 10000);
+        await collector1.waitForEventN("stream-end", 2, 15000);
 
         // Verify queue is still empty
         const queuedAfter = await getQueuedMessages(collector1, { wait: false });

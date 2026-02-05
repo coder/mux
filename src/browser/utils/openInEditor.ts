@@ -13,6 +13,7 @@ import {
 } from "@/common/constants/storage";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { isSSHRuntime, isDockerRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
+import { isRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import type { APIClient } from "@/browser/contexts/API";
 
 export interface OpenInEditorResult {
@@ -100,6 +101,16 @@ export async function openInEditor(args: {
 
   const isSSH = isSSHRuntime(args.runtimeConfig);
   const isDocker = isDockerRuntime(args.runtimeConfig);
+
+  // Remote workspaces have paths that refer to a different machine. Until we support
+  // propagating SSH context (or another transport) for remote workspaces, avoid generating
+  // local editor deep links that point at a non-existent local path.
+  if (isRemoteWorkspaceId(args.workspaceId) && !isSSH) {
+    return {
+      success: false,
+      error: "Opening remote workspaces in editor is not yet supported.",
+    };
+  }
 
   // For custom editor with no command configured, open settings (if available)
   if (editorConfig.editor === "custom" && !editorConfig.customCommand) {

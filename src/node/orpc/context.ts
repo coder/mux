@@ -12,6 +12,7 @@ import type { WindowService } from "@/node/services/windowService";
 import type { UpdateService } from "@/node/services/updateService";
 import type { TokenizerService } from "@/node/services/tokenizerService";
 import type { ServerService } from "@/node/services/serverService";
+import type { RemoteServersService } from "@/node/services/remoteServersService";
 import type { MenuEventService } from "@/node/services/menuEventService";
 import type { VoiceService } from "@/node/services/voiceService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
@@ -43,6 +44,7 @@ export interface ORPCContext {
   updateService: UpdateService;
   tokenizerService: TokenizerService;
   serverService: ServerService;
+  remoteServersService: RemoteServersService;
   menuEventService: MenuEventService;
   voiceService: VoiceService;
   mcpConfigService: MCPConfigService;

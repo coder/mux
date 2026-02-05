@@ -156,6 +156,12 @@ interface UseCreationWorkspaceReturn {
   setDefaultRuntimeChoice: (choice: RuntimeChoice) => void;
   toast: Toast | null;
   setToast: (toast: Toast | null) => void;
+  /** Whether to create the workspace on a remote mux server (vs locally). */
+  createOnRemote: boolean;
+  setCreateOnRemote: (createOnRemote: boolean) => void;
+  /** Remote server ID to create the workspace on (only used when createOnRemote is true). */
+  remoteServerId: string | null;
+  setRemoteServerId: (remoteServerId: string | null) => void;
   isSending: boolean;
   handleSend: (
     message: string,
@@ -218,6 +224,8 @@ export function useCreationWorkspace({
   const [recommendedTrunk, setRecommendedTrunk] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [createOnRemote, setCreateOnRemote] = useState(false);
+  const [remoteServerId, setRemoteServerId] = useState<string | null>(null);
   // The confirmed identity being used for workspace creation (set after waitForGeneration resolves)
   const [creatingWithIdentity, setCreatingWithIdentity] = useState<WorkspaceIdentity | null>(null);
   const [runtimeAvailabilityState, setRuntimeAvailabilityState] =
@@ -320,35 +328,50 @@ export function useCreationWorkspace({
         return { success: false };
       }
 
-      // Build runtime config early (used later for workspace creation)
-      let runtimeSelection = settings.selectedRuntime;
-
-      if (runtimeSelection.mode === RUNTIME_MODE.DEVCONTAINER) {
-        const devcontainerSelection = resolveDevcontainerSelection({
-          selectedRuntime: runtimeSelection,
-          availabilityState: runtimeAvailabilityState,
+      const trimmedRemoteServerId = typeof remoteServerId === "string" ? remoteServerId.trim() : "";
+      if (createOnRemote && !trimmedRemoteServerId.length) {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: "Select a remote server before creating the workspace.",
         });
-
-        if (!devcontainerSelection.isCreatable) {
-          setToast({
-            id: Date.now().toString(),
-            type: "error",
-            message: "Select a devcontainer configuration before creating the workspace.",
-          });
-          return { success: false };
-        }
-
-        // Update selection with resolved config if different (persist the resolved value)
-        if (devcontainerSelection.configPath !== runtimeSelection.configPath) {
-          runtimeSelection = {
-            ...runtimeSelection,
-            configPath: devcontainerSelection.configPath,
-          };
-          setSelectedRuntime(runtimeSelection);
-        }
+        return { success: false };
       }
 
-      const runtimeConfig: RuntimeConfig | undefined = buildRuntimeConfig(runtimeSelection);
+      // Build runtime config early (used later for local workspace creation).
+      // Remote workspace creation intentionally avoids sending the local runtimeConfig to
+      // prevent leaking local filesystem paths into the remote server.
+      let runtimeConfig: RuntimeConfig | undefined;
+      if (!createOnRemote) {
+        let runtimeSelection = settings.selectedRuntime;
+
+        if (runtimeSelection.mode === RUNTIME_MODE.DEVCONTAINER) {
+          const devcontainerSelection = resolveDevcontainerSelection({
+            selectedRuntime: runtimeSelection,
+            availabilityState: runtimeAvailabilityState,
+          });
+
+          if (!devcontainerSelection.isCreatable) {
+            setToast({
+              id: Date.now().toString(),
+              type: "error",
+              message: "Select a devcontainer configuration before creating the workspace.",
+            });
+            return { success: false };
+          }
+
+          // Update selection with resolved config if different (persist the resolved value)
+          if (devcontainerSelection.configPath !== runtimeSelection.configPath) {
+            runtimeSelection = {
+              ...runtimeSelection,
+              configPath: devcontainerSelection.configPath,
+            };
+            setSelectedRuntime(runtimeSelection);
+          }
+        }
+
+        runtimeConfig = buildRuntimeConfig(runtimeSelection);
+      }
 
       setIsSending(true);
       setToast(null);
@@ -427,15 +450,25 @@ export function useCreationWorkspace({
           }
         }
 
-        // Create the workspace with the generated name and title
-        const createResult = await api.workspace.create({
-          projectPath,
-          branchName: identity.name,
-          trunkBranch: settings.trunkBranch,
-          title: createTitle,
-          runtimeConfig,
-          sectionId: sectionId ?? undefined,
-        });
+        // Create the workspace with the generated name and title.
+        const createResult = await (createOnRemote
+          ? api.remoteServers.workspaceCreate({
+              serverId: trimmedRemoteServerId,
+              localProjectPath: projectPath,
+              branchName: identity.name,
+              trunkBranch: settings.trunkBranch,
+              title: createTitle,
+              // Intentionally omit runtimeConfig when creating on a remote server.
+              sectionId: sectionId ?? undefined,
+            })
+          : api.workspace.create({
+              projectPath,
+              branchName: identity.name,
+              trunkBranch: settings.trunkBranch,
+              title: createTitle,
+              runtimeConfig,
+              sectionId: sectionId ?? undefined,
+            }));
 
         if (!createResult.success) {
           setToast({
@@ -558,6 +591,8 @@ export function useCreationWorkspace({
     [
       api,
       isSending,
+      createOnRemote,
+      remoteServerId,
       projectPath,
       projectScopeId,
       onWorkspaceCreated,
@@ -589,6 +624,10 @@ export function useCreationWorkspace({
     setDefaultRuntimeChoice,
     toast,
     setToast,
+    createOnRemote,
+    setCreateOnRemote,
+    remoteServerId,
+    setRemoteServerId,
     isSending,
     handleSend,
     // Workspace name/title state (for CreationControls)

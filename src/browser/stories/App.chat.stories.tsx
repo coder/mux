@@ -25,6 +25,8 @@ import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { getModelKey } from "@/common/constants/storage";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
+import { encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { waitForChatMessagesLoaded } from "./storyPlayHelpers.js";
 import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
 import { within, userEvent, waitFor } from "@storybook/test";
@@ -154,6 +156,70 @@ export const WithSkillCommand: AppStory = {
       }
     />
   ),
+};
+
+/** Remote workspace selected (experiment gated) */
+export const RemoteWorkspaceSelected: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        window.localStorage.setItem(
+          getExperimentKey(EXPERIMENT_IDS.REMOTE_MUX_SERVERS),
+          JSON.stringify(true)
+        );
+
+        const serverId = "server-work";
+        const workspaceId = encodeRemoteWorkspaceId(serverId, "ws-remote-456");
+
+        return setupSimpleChatStory({
+          workspaceId,
+          workspaceName: "feature/remote",
+          messages: [
+            createUserMessage("msg-1", "Show me the workspace view for this remote server.", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 120000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "Sure — remote workspaces should behave like local ones in the UI.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 110000,
+              }
+            ),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatMessagesLoaded(storyRoot);
+
+    const canvas = within(storyRoot);
+    const header = await canvas.findByTestId("workspace-header");
+    const headerCanvas = within(header);
+
+    const globe = await headerCanvas.findByLabelText(
+      /Remote workspace \(Mux server: server-work\)/i
+    );
+
+    // Hover to open the globe tooltip and keep it open for the Chromatic snapshot.
+    await userEvent.hover(globe);
+
+    await waitFor(
+      () => {
+        const tooltip = document.querySelector('[role="tooltip"]');
+        if (!tooltip) throw new Error("Tooltip not visible");
+
+        const tooltipText = tooltip.textContent ?? "";
+        if (!tooltipText.includes("Remote workspace (Mux server: server-work)")) {
+          throw new Error(`Unexpected tooltip text: ${JSON.stringify(tooltipText)}`);
+        }
+      },
+      { timeout: 2000, interval: 50 }
+    );
+  },
 };
 
 /** Basic chat conversation with various message types */

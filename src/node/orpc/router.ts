@@ -1,6 +1,7 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
+import type { z } from "zod";
 import {
   MUX_GATEWAY_ORIGIN,
   MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
@@ -17,11 +18,27 @@ import type {
 } from "@/common/orpc/types";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
+import { createFederationMiddleware } from "./federationMiddleware";
+import {
+  buildRemoteProjectPathMap,
+  encodeRemoteIdBestEffort,
+  getRemoteServersForWorkspaceViews,
+  resolveRemoteWorkspaceProxy,
+  rewriteRemoteFrontendWorkspaceMetadataForLocalProject,
+  rewriteRemoteFrontendWorkspaceMetadataIds,
+  rewriteRemoteTaskToolPartsInMessage,
+  rewriteRemoteWorkspaceChatMessageIds,
+  sleepMs,
+  type RemoteMuxOrpcClient,
+} from "./remoteMuxProxying";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import { decodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
+import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { hasNonEmptyPlanFile, readPlanFile } from "@/node/utils/runtime/helpers";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { secretsToRecord } from "@/common/types/secrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
@@ -268,7 +285,10 @@ async function findSubagentTranscriptEntryByScanningSessions(params: {
 }
 
 export const router = (authToken?: string) => {
-  const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
+  const t = os
+    .$context<ORPCContext>()
+    .use(createAuthMiddleware(authToken))
+    .use(createFederationMiddleware());
 
   return t.router({
     tokenizer: {
@@ -466,6 +486,217 @@ export const router = (authToken?: string) => {
             configuredPort,
             configuredServeWebUi,
           };
+        }),
+    },
+    remoteServers: {
+      list: t
+        .input(schemas.remoteServers.list.input)
+        .output(schemas.remoteServers.list.output)
+        .handler(({ context }) => {
+          return context.remoteServersService.list();
+        }),
+      upsert: t
+        .input(schemas.remoteServers.upsert.input)
+        .output(schemas.remoteServers.upsert.output)
+        .handler(async ({ context, input }) => {
+          try {
+            await context.remoteServersService.upsert({
+              config: input.config,
+              authToken: input.authToken,
+            });
+            return Ok(undefined);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      remove: t
+        .input(schemas.remoteServers.remove.input)
+        .output(schemas.remoteServers.remove.output)
+        .handler(async ({ context, input }) => {
+          try {
+            await context.remoteServersService.remove({ id: input.id });
+            return Ok(undefined);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      clearAuthToken: t
+        .input(schemas.remoteServers.clearAuthToken.input)
+        .output(schemas.remoteServers.clearAuthToken.output)
+        .handler(async ({ context, input }) => {
+          try {
+            await context.remoteServersService.clearAuthToken({ id: input.id });
+            return Ok(undefined);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      ping: t
+        .input(schemas.remoteServers.ping.input)
+        .output(schemas.remoteServers.ping.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const version = await context.remoteServersService.ping({ id: input.id });
+            return Ok({ version });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      listRemoteProjects: t
+        .input(schemas.remoteServers.listRemoteProjects.input)
+        .output(schemas.remoteServers.listRemoteProjects.output)
+        .handler(async ({ context, input }) => {
+          const serverId = input.id.trim();
+          if (!serverId) {
+            return Err("Remote server id is required");
+          }
+
+          const config = context.config.loadConfigOrDefault();
+          const server = config.remoteServers?.find((entry) => entry.id === serverId) ?? null;
+          if (!server) {
+            return Err(`Remote server not found: ${serverId}`);
+          }
+
+          const authToken =
+            context.remoteServersService.getAuthToken({ id: serverId }) ?? undefined;
+
+          type RemoteProjectsListOutput = z.infer<typeof schemas.projects.list.output>;
+          interface RemoteMuxProjectsClient {
+            projects: {
+              list: () => Promise<RemoteProjectsListOutput>;
+            };
+          }
+
+          let client: RemoteMuxProjectsClient;
+          try {
+            client = createRemoteClient<RemoteMuxProjectsClient>({
+              baseUrl: server.baseUrl,
+              authToken,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+
+          try {
+            const projects = await client.projects.list();
+
+            const suggestions = projects
+              .map(([projectPath]) => stripTrailingSlashes(projectPath.trim()))
+              .filter((projectPath) => projectPath.length > 0)
+              .map((projectPath) => {
+                const label = projectPath
+                  .replace(/[/\\]+$/g, "")
+                  .split(/[/\\]/)
+                  .slice(-1)[0];
+                return {
+                  path: projectPath,
+                  label: label ? label : projectPath,
+                };
+              })
+              .sort((a, b) => a.label.localeCompare(b.label) || a.path.localeCompare(b.path));
+
+            return Ok(suggestions);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return Err(message);
+          }
+        }),
+      workspaceCreate: t
+        .input(schemas.remoteServers.workspaceCreate.input)
+        .output(schemas.remoteServers.workspaceCreate.output)
+        .handler(async ({ context, input }) => {
+          const serverId = input.serverId.trim();
+          if (!serverId) {
+            return { success: false, error: "Remote server id is required" };
+          }
+
+          const config = context.config.loadConfigOrDefault();
+          const server = config.remoteServers?.find((entry) => entry.id === serverId) ?? null;
+          if (!server) {
+            return { success: false, error: `Remote server not found: ${serverId}` };
+          }
+
+          if (server.enabled === false) {
+            return { success: false, error: `Remote server is disabled: ${serverId}` };
+          }
+
+          const localProjectPath = stripTrailingSlashes(input.localProjectPath.trim());
+          if (!localProjectPath) {
+            return { success: false, error: "localProjectPath is required" };
+          }
+
+          const mapping =
+            server.projectMappings.find(
+              (entry) => stripTrailingSlashes(entry.localProjectPath.trim()) === localProjectPath
+            ) ?? null;
+          if (!mapping) {
+            return {
+              success: false,
+              error: `No remote project mapping found for local project: ${localProjectPath}`,
+            };
+          }
+
+          const remoteProjectPath = stripTrailingSlashes(mapping.remoteProjectPath.trim());
+          if (!remoteProjectPath) {
+            return {
+              success: false,
+              error: `Remote project mapping for ${localProjectPath} has empty remoteProjectPath`,
+            };
+          }
+
+          const authToken =
+            context.remoteServersService.getAuthToken({ id: serverId }) ?? undefined;
+
+          let client: RemoteMuxOrpcClient;
+          try {
+            client = createRemoteClient<RemoteMuxOrpcClient>({
+              baseUrl: server.baseUrl,
+              authToken,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { success: false, error: message };
+          }
+
+          let result: z.infer<typeof schemas.workspace.create.output>;
+          try {
+            result = await client.workspace.create({
+              projectPath: remoteProjectPath,
+              branchName: input.branchName,
+              trunkBranch: input.trunkBranch,
+              title: input.title,
+              runtimeConfig: input.runtimeConfig,
+              sectionId: input.sectionId,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { success: false, error: message };
+          }
+
+          if (!result.success) {
+            return { success: false, error: result.error };
+          }
+
+          const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+          const rewritten = rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
+            result.metadata,
+            serverId,
+            remoteProjectPathMap
+          );
+
+          if (!rewritten) {
+            return {
+              success: false,
+              error: `Remote workspace created for unmapped project path: ${result.metadata.projectPath}`,
+            };
+          }
+
+          return { success: true, metadata: rewritten };
         }),
     },
     features: {
@@ -672,6 +903,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agents.list({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -761,6 +1002,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agents.get({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -774,6 +1025,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.list.input)
         .output(schemas.agentSkills.list.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agentSkills.list({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -785,6 +1046,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.listDiagnostics.input)
         .output(schemas.agentSkills.listDiagnostics.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agentSkills.listDiagnostics({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -796,6 +1067,16 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.get.input)
         .output(schemas.agentSkills.get.output)
         .handler(async ({ context, input }) => {
+          const remote = input.workspaceId
+            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
+            : null;
+          if (remote) {
+            return remote.client.agentSkills.get({
+              ...input,
+              workspaceId: remote.remoteWorkspaceId,
+            });
+          }
+
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -2134,12 +2415,55 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.list.output)
         .handler(async ({ context, input }) => {
           const allWorkspaces = await context.workspaceService.list();
+
           // Filter by archived status (derived from timestamps via shared utility)
-          if (input?.archived) {
-            return allWorkspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
-          }
-          // Default: return non-archived workspaces
-          return allWorkspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
+          const localWorkspaces = input?.archived
+            ? allWorkspaces.filter((w) => isWorkspaceArchived(w.archivedAt, w.unarchivedAt))
+            : allWorkspaces.filter((w) => !isWorkspaceArchived(w.archivedAt, w.unarchivedAt));
+
+          const remoteServers = getRemoteServersForWorkspaceViews(context);
+
+          const remoteWorkspaces = (
+            await Promise.all(
+              remoteServers.map(async (server) => {
+                const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+
+                try {
+                  const authToken =
+                    context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                  const client = createRemoteClient<RemoteMuxOrpcClient>({
+                    baseUrl: server.baseUrl,
+                    authToken,
+                  });
+
+                  const workspaces = await client.workspace.list(input);
+
+                  const mapped: FrontendWorkspaceMetadataSchemaType[] = [];
+                  for (const metadata of workspaces) {
+                    const rewritten = rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
+                      metadata,
+                      server.id,
+                      remoteProjectPathMap
+                    );
+                    if (rewritten) {
+                      mapped.push(rewritten);
+                    }
+                  }
+
+                  return mapped;
+                } catch (error) {
+                  log.warn("Failed to list workspaces from remote server", {
+                    serverId: server.id,
+                    baseUrl: server.baseUrl,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  return [];
+                }
+              })
+            )
+          ).flat();
+
+          return [...localWorkspaces, ...remoteWorkspaces];
         }),
       create: t
         .input(schemas.workspace.create.input)
@@ -2207,12 +2531,22 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.archive.input)
         .output(schemas.workspace.archive.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.archive({ workspaceId: remote.remoteWorkspaceId });
+          }
+
           return context.workspaceService.archive(input.workspaceId);
         }),
       unarchive: t
         .input(schemas.workspace.unarchive.input)
         .output(schemas.workspace.unarchive.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.unarchive({ workspaceId: remote.remoteWorkspaceId });
+          }
+
           return context.workspaceService.unarchive(input.workspaceId);
         }),
       archiveMergedInProject: t
@@ -2242,6 +2576,15 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.sendMessage.input)
         .output(schemas.workspace.sendMessage.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.sendMessage({
+              workspaceId: remote.remoteWorkspaceId,
+              message: input.message,
+              options: input.options,
+            });
+          }
+
           const result = await context.workspaceService.sendMessage(
             input.workspaceId,
             input.message,
@@ -2258,6 +2601,15 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.answerAskUserQuestion.input)
         .output(schemas.workspace.answerAskUserQuestion.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.answerAskUserQuestion({
+              workspaceId: remote.remoteWorkspaceId,
+              toolCallId: input.toolCallId,
+              answers: input.answers,
+            });
+          }
+
           const result = await context.workspaceService.answerAskUserQuestion(
             input.workspaceId,
             input.toolCallId,
@@ -2274,6 +2626,14 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.resumeStream.input)
         .output(schemas.workspace.resumeStream.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.resumeStream({
+              workspaceId: remote.remoteWorkspaceId,
+              options: input.options,
+            });
+          }
+
           const result = await context.workspaceService.resumeStream(
             input.workspaceId,
             input.options
@@ -2291,6 +2651,14 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.interruptStream.input)
         .output(schemas.workspace.interruptStream.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            return remote.client.workspace.interruptStream({
+              workspaceId: remote.remoteWorkspaceId,
+              options: input.options,
+            });
+          }
+
           const result = await context.workspaceService.interruptStream(
             input.workspaceId,
             input.options
@@ -2347,6 +2715,17 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getInfo.input)
         .output(schemas.workspace.getInfo.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            const metadata = await remote.client.workspace.getInfo({
+              workspaceId: remote.remoteWorkspaceId,
+            });
+
+            return metadata
+              ? rewriteRemoteFrontendWorkspaceMetadataIds(metadata, remote.serverId)
+              : metadata;
+          }
+
           return context.workspaceService.getInfo(input.workspaceId);
         }),
       getLastLlmRequest: t
@@ -2359,6 +2738,17 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getFullReplay.input)
         .output(schemas.workspace.getFullReplay.output)
         .handler(async ({ context, input }) => {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            const events = await remote.client.workspace.getFullReplay({
+              workspaceId: remote.remoteWorkspaceId,
+            });
+
+            return events.map((event) =>
+              rewriteRemoteWorkspaceChatMessageIds(event, remote.serverId)
+            );
+          }
+
           return context.workspaceService.getFullReplay(input.workspaceId);
         }),
       getSubagentTranscript: t
@@ -2367,6 +2757,45 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const taskId = input.taskId.trim();
           assert(taskId.length > 0, "workspace.getSubagentTranscript: taskId must be non-empty");
+
+          const remoteTask = resolveRemoteWorkspaceProxy(context, taskId);
+          if (remoteTask) {
+            const requestingWorkspaceIdTrimmedForRemote = input.workspaceId?.trim();
+            let remoteRequestingWorkspaceId: string | undefined;
+
+            if (
+              requestingWorkspaceIdTrimmedForRemote &&
+              requestingWorkspaceIdTrimmedForRemote.length > 0
+            ) {
+              const decodedRequesting = decodeRemoteWorkspaceId(
+                requestingWorkspaceIdTrimmedForRemote
+              );
+              if (decodedRequesting) {
+                const requestingServerId = decodedRequesting.serverId.trim();
+                assert(
+                  requestingServerId === remoteTask.serverId,
+                  "workspace.getSubagentTranscript: requesting workspace must be on the same remote server"
+                );
+
+                const remoteIdTrimmed = decodedRequesting.remoteId.trim();
+                if (remoteIdTrimmed.length > 0) {
+                  remoteRequestingWorkspaceId = remoteIdTrimmed;
+                }
+              }
+            }
+
+            const transcript = await remoteTask.client.workspace.getSubagentTranscript({
+              taskId: remoteTask.remoteWorkspaceId,
+              workspaceId: remoteRequestingWorkspaceId,
+            });
+
+            return {
+              ...transcript,
+              messages: transcript.messages.map((message) =>
+                rewriteRemoteTaskToolPartsInMessage(message, remoteTask.serverId)
+              ),
+            };
+          }
 
           const requestingWorkspaceIdTrimmed = input.workspaceId?.trim();
           const requestingWorkspaceId =
@@ -2563,6 +2992,40 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.onChat.input)
         .output(schemas.workspace.onChat.output)
         .handler(async function* ({ context, input, signal }) {
+          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
+          if (remote) {
+            const controller = new AbortController();
+
+            const onRemoteAbort = () => {
+              controller.abort();
+            };
+
+            if (signal) {
+              if (signal.aborted) {
+                onRemoteAbort();
+              } else {
+                signal.addEventListener("abort", onRemoteAbort, { once: true });
+              }
+            }
+
+            try {
+              const iterator = await remote.client.workspace.onChat(
+                { workspaceId: remote.remoteWorkspaceId },
+                { signal: controller.signal }
+              );
+
+              for await (const event of iterator) {
+                yield rewriteRemoteWorkspaceChatMessageIds(event, remote.serverId);
+              }
+            } finally {
+              // Best-effort: abort the underlying HTTP stream if the local subscription ends.
+              signal?.removeEventListener("abort", onRemoteAbort);
+              controller.abort();
+            }
+
+            return;
+          }
+
           const session = context.workspaceService.getOrCreateSession(input.workspaceId);
           const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
 
@@ -2611,6 +3074,8 @@ export const router = (authToken?: string) => {
         .output(schemas.workspace.onMetadata.output)
         .handler(async function* ({ context, signal }) {
           const service = context.workspaceService;
+          const controller = new AbortController();
+          const remoteServers = getRemoteServersForWorkspaceViews(context);
 
           interface MetadataEvent {
             workspaceId: string;
@@ -2641,6 +3106,7 @@ export const router = (authToken?: string) => {
           const onAbort = () => {
             if (ended) return;
             ended = true;
+            controller.abort();
 
             if (resolveNext) {
               const resolve = resolveNext;
@@ -2655,6 +3121,104 @@ export const router = (authToken?: string) => {
             } else {
               signal.addEventListener("abort", onAbort, { once: true });
             }
+          }
+
+          for (const server of remoteServers) {
+            const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+            const visibleWorkspaceIds = new Set<string>();
+
+            const pumpRemoteMetadata = async () => {
+              const BASE_BACKOFF_MS = 250;
+              const MAX_BACKOFF_MS = 5_000;
+              let backoffMs = BASE_BACKOFF_MS;
+
+              while (!controller.signal.aborted) {
+                try {
+                  const authToken =
+                    context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                  const client = createRemoteClient<RemoteMuxOrpcClient>({
+                    baseUrl: server.baseUrl,
+                    authToken,
+                  });
+
+                  const iterator = await client.workspace.onMetadata(undefined, {
+                    signal: controller.signal,
+                  });
+
+                  backoffMs = BASE_BACKOFF_MS;
+
+                  for await (const event of iterator) {
+                    if (controller.signal.aborted) {
+                      break;
+                    }
+
+                    const remoteWorkspaceId = event.workspaceId.trim();
+                    if (!remoteWorkspaceId) {
+                      continue;
+                    }
+
+                    const encodedWorkspaceId = encodeRemoteIdBestEffort(
+                      server.id,
+                      remoteWorkspaceId
+                    );
+
+                    if (event.metadata) {
+                      const rewritten = rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
+                        event.metadata,
+                        server.id,
+                        remoteProjectPathMap
+                      );
+
+                      if (rewritten) {
+                        visibleWorkspaceIds.add(remoteWorkspaceId);
+                        const metadata =
+                          rewritten.id === encodedWorkspaceId
+                            ? rewritten
+                            : { ...rewritten, id: encodedWorkspaceId };
+                        push({ workspaceId: encodedWorkspaceId, metadata });
+                      } else if (visibleWorkspaceIds.has(remoteWorkspaceId)) {
+                        visibleWorkspaceIds.delete(remoteWorkspaceId);
+                        push({ workspaceId: encodedWorkspaceId, metadata: null });
+                      }
+
+                      continue;
+                    }
+
+                    if (!visibleWorkspaceIds.has(remoteWorkspaceId)) {
+                      continue;
+                    }
+
+                    visibleWorkspaceIds.delete(remoteWorkspaceId);
+                    push({ workspaceId: encodedWorkspaceId, metadata: null });
+                  }
+                } catch (error) {
+                  if (controller.signal.aborted) {
+                    break;
+                  }
+
+                  log.warn("Remote workspace.onMetadata subscription failed", {
+                    serverId: server.id,
+                    baseUrl: server.baseUrl,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                }
+
+                if (controller.signal.aborted) {
+                  break;
+                }
+
+                await sleepMs(backoffMs, controller.signal);
+                backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+              }
+            };
+
+            void pumpRemoteMetadata().catch((error) => {
+              log.error("Remote workspace.onMetadata pump crashed", {
+                serverId: server.id,
+                baseUrl: server.baseUrl,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            });
           }
 
           try {
@@ -2677,6 +3241,7 @@ export const router = (authToken?: string) => {
           } finally {
             ended = true;
             signal?.removeEventListener("abort", onAbort);
+            controller.abort();
             service.off("metadata", onMetadata);
           }
         }),
@@ -2685,13 +3250,101 @@ export const router = (authToken?: string) => {
           .input(schemas.workspace.activity.list.input)
           .output(schemas.workspace.activity.list.output)
           .handler(async ({ context }) => {
-            return context.workspaceService.getActivityList();
+            const localActivity = await context.workspaceService.getActivityList();
+            const remoteServers = getRemoteServersForWorkspaceViews(context);
+
+            const remoteActivityRecords = await Promise.all(
+              remoteServers.map(async (server) => {
+                const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+
+                try {
+                  const authToken =
+                    context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                  const client = createRemoteClient<RemoteMuxOrpcClient>({
+                    baseUrl: server.baseUrl,
+                    authToken,
+                  });
+
+                  const allowedWorkspaceIds = new Set<string>();
+
+                  try {
+                    const workspaces = await client.workspace.list(undefined);
+                    for (const metadata of workspaces) {
+                      if (remoteProjectPathMap.has(metadata.projectPath)) {
+                        allowedWorkspaceIds.add(metadata.id);
+                      }
+                    }
+                  } catch (error) {
+                    log.warn("Failed to list workspaces from remote server for activity", {
+                      serverId: server.id,
+                      baseUrl: server.baseUrl,
+                      archived: false,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                  }
+
+                  try {
+                    const workspaces = await client.workspace.list({ archived: true });
+                    for (const metadata of workspaces) {
+                      if (remoteProjectPathMap.has(metadata.projectPath)) {
+                        allowedWorkspaceIds.add(metadata.id);
+                      }
+                    }
+                  } catch (error) {
+                    log.warn("Failed to list archived workspaces from remote server for activity", {
+                      serverId: server.id,
+                      baseUrl: server.baseUrl,
+                      archived: true,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                  }
+
+                  if (allowedWorkspaceIds.size === 0) {
+                    return {};
+                  }
+
+                  const remoteActivity = await client.workspace.activity.list(undefined);
+
+                  const mapped: Record<string, WorkspaceActivitySnapshot> = {};
+                  for (const [remoteWorkspaceIdRaw, activity] of Object.entries(remoteActivity)) {
+                    const remoteWorkspaceId = remoteWorkspaceIdRaw.trim();
+                    if (!remoteWorkspaceId || !allowedWorkspaceIds.has(remoteWorkspaceId)) {
+                      continue;
+                    }
+
+                    const encodedWorkspaceId = encodeRemoteIdBestEffort(
+                      server.id,
+                      remoteWorkspaceId
+                    );
+                    mapped[encodedWorkspaceId] = activity;
+                  }
+
+                  return mapped;
+                } catch (error) {
+                  log.warn("Failed to list workspace activity from remote server", {
+                    serverId: server.id,
+                    baseUrl: server.baseUrl,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                  return {};
+                }
+              })
+            );
+
+            const merged: Record<string, WorkspaceActivitySnapshot> = { ...localActivity };
+            for (const record of remoteActivityRecords) {
+              Object.assign(merged, record);
+            }
+
+            return merged;
           }),
         subscribe: t
           .input(schemas.workspace.activity.subscribe.input)
           .output(schemas.workspace.activity.subscribe.output)
           .handler(async function* ({ context, signal }) {
             const service = context.workspaceService;
+            const controller = new AbortController();
+            const remoteServers = getRemoteServersForWorkspaceViews(context);
 
             interface ActivityEvent {
               workspaceId: string;
@@ -2722,6 +3375,7 @@ export const router = (authToken?: string) => {
             const onAbort = () => {
               if (ended) return;
               ended = true;
+              controller.abort();
 
               if (resolveNext) {
                 const resolve = resolveNext;
@@ -2736,6 +3390,124 @@ export const router = (authToken?: string) => {
               } else {
                 signal.addEventListener("abort", onAbort, { once: true });
               }
+            }
+
+            for (const server of remoteServers) {
+              const remoteProjectPathMap = buildRemoteProjectPathMap(server.projectMappings);
+
+              const pumpRemoteActivity = async () => {
+                const BASE_BACKOFF_MS = 250;
+                const MAX_BACKOFF_MS = 5_000;
+                let backoffMs = BASE_BACKOFF_MS;
+
+                while (!controller.signal.aborted) {
+                  try {
+                    const authToken =
+                      context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
+                    const client = createRemoteClient<RemoteMuxOrpcClient>({
+                      baseUrl: server.baseUrl,
+                      authToken,
+                    });
+
+                    const allowedWorkspaceIds = new Set<string>();
+
+                    try {
+                      const workspaces = await client.workspace.list(undefined);
+                      for (const metadata of workspaces) {
+                        if (remoteProjectPathMap.has(metadata.projectPath)) {
+                          allowedWorkspaceIds.add(metadata.id);
+                        }
+                      }
+                    } catch (error) {
+                      log.warn(
+                        "Failed to list workspaces from remote server for activity subscribe",
+                        {
+                          serverId: server.id,
+                          baseUrl: server.baseUrl,
+                          archived: false,
+                          error: error instanceof Error ? error.message : String(error),
+                        }
+                      );
+                    }
+
+                    try {
+                      const workspaces = await client.workspace.list({ archived: true });
+                      for (const metadata of workspaces) {
+                        if (remoteProjectPathMap.has(metadata.projectPath)) {
+                          allowedWorkspaceIds.add(metadata.id);
+                        }
+                      }
+                    } catch (error) {
+                      log.warn(
+                        "Failed to list archived workspaces from remote server for activity subscribe",
+                        {
+                          serverId: server.id,
+                          baseUrl: server.baseUrl,
+                          archived: true,
+                          error: error instanceof Error ? error.message : String(error),
+                        }
+                      );
+                    }
+
+                    if (allowedWorkspaceIds.size === 0) {
+                      await sleepMs(backoffMs, controller.signal);
+                      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+                      continue;
+                    }
+
+                    const iterator = await client.workspace.activity.subscribe(undefined, {
+                      signal: controller.signal,
+                    });
+
+                    backoffMs = BASE_BACKOFF_MS;
+
+                    for await (const event of iterator) {
+                      if (controller.signal.aborted) {
+                        break;
+                      }
+
+                      const remoteWorkspaceId = event.workspaceId.trim();
+                      if (!remoteWorkspaceId || !allowedWorkspaceIds.has(remoteWorkspaceId)) {
+                        continue;
+                      }
+
+                      const encodedWorkspaceId = encodeRemoteIdBestEffort(
+                        server.id,
+                        remoteWorkspaceId
+                      );
+                      push({
+                        workspaceId: encodedWorkspaceId,
+                        activity: event.activity,
+                      });
+                    }
+                  } catch (error) {
+                    if (controller.signal.aborted) {
+                      break;
+                    }
+
+                    log.warn("Remote workspace.activity.subscribe failed", {
+                      serverId: server.id,
+                      baseUrl: server.baseUrl,
+                      error: error instanceof Error ? error.message : String(error),
+                    });
+                  }
+
+                  if (controller.signal.aborted) {
+                    break;
+                  }
+
+                  await sleepMs(backoffMs, controller.signal);
+                  backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+                }
+              };
+
+              void pumpRemoteActivity().catch((error) => {
+                log.error("Remote workspace.activity.subscribe pump crashed", {
+                  serverId: server.id,
+                  baseUrl: server.baseUrl,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              });
             }
 
             try {
@@ -2758,6 +3530,7 @@ export const router = (authToken?: string) => {
             } finally {
               ended = true;
               signal?.removeEventListener("abort", onAbort);
+              controller.abort();
               service.off("activity", onActivity);
             }
           }),
