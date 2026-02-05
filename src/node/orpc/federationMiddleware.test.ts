@@ -14,10 +14,10 @@ import { createFederationMiddleware } from "./federationMiddleware";
 
 type RPCHandlerRouter = ConstructorParameters<typeof RPCHandler>[0];
 
-type TestOrpcServer = {
+interface TestOrpcServer {
   baseUrl: string;
   close: () => Promise<void>;
-};
+}
 
 async function createTestOrpcServer(params: {
   router: RPCHandlerRouter;
@@ -109,7 +109,7 @@ describe("createFederationMiddleware", () => {
         getPlanContent: remoteT
           .input(workspaceIdInput)
           .output(getPlanContentOutput)
-          .handler(async ({ input }) => {
+          .handler(({ input }) => {
             remoteGetPlanInputs.push(input.workspaceId);
             return { workspaceId: input.workspaceId, content: "remote-plan" };
           }),
@@ -119,6 +119,7 @@ describe("createFederationMiddleware", () => {
             .output(eventIterator(backgroundBashEventOutput))
             .handler(async function* ({ input }) {
               remoteSubscribeInputs.push(input.workspaceId);
+              await Promise.resolve();
               yield { workspaceId: input.workspaceId, event: "hello" };
             }),
         },
@@ -127,7 +128,7 @@ describe("createFederationMiddleware", () => {
         create: remoteT
           .input(workspaceIdInput)
           .output(tasksCreateOutput)
-          .handler(async ({ input }) => {
+          .handler(({ input }) => {
             remoteTaskCreateInputs.push(input.workspaceId);
             return { workspaceId: input.workspaceId, taskId: `task-${input.workspaceId}` };
           }),
@@ -141,14 +142,14 @@ describe("createFederationMiddleware", () => {
         getPlanContent: localT
           .input(workspaceIdInput)
           .output(getPlanContentOutput)
-          .handler(async () => {
+          .handler(() => {
             throw new Error("local workspace.getPlanContent handler should not be invoked");
           }),
         backgroundBashes: {
           subscribe: localT
             .input(workspaceIdInput)
             .output(eventIterator(backgroundBashEventOutput))
-            .handler(async function* () {
+            .handler(() => {
               throw new Error(
                 "local workspace.backgroundBashes.subscribe handler should not be invoked"
               );
@@ -159,7 +160,7 @@ describe("createFederationMiddleware", () => {
         create: localT
           .input(workspaceIdInput)
           .output(tasksCreateOutput)
-          .handler(async () => {
+          .handler(() => {
             throw new Error("local tasks.create handler should not be invoked");
           }),
       },
@@ -176,6 +177,8 @@ describe("createFederationMiddleware", () => {
         context: remoteContext as ORPCContext,
       });
 
+      const remoteBaseUrl = remoteServer.baseUrl;
+
       const localContext: Partial<ORPCContext> = {
         config: {
           loadConfigOrDefault: () =>
@@ -184,7 +187,7 @@ describe("createFederationMiddleware", () => {
                 {
                   id: remoteServerId,
                   label: "Test remote",
-                  baseUrl: remoteServer.baseUrl,
+                  baseUrl: remoteBaseUrl,
                   projectMappings: [],
                 },
               ],

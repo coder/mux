@@ -33,6 +33,11 @@ describe("remoteMuxProxying", () => {
 
       const rewritten = rewriteRemoteWorkspaceChatMessageIds(message, serverId);
 
+      expect(rewritten.type).toBe("tool-call-start");
+      if (rewritten.type !== "tool-call-start") {
+        throw new Error(`Expected tool-call-start message but got: ${rewritten.type}`);
+      }
+
       expect(rewritten.workspaceId).toBe(encodeRemoteWorkspaceId(serverId, "workspace-root"));
 
       const argsUnknown: unknown = rewritten.args;
@@ -63,6 +68,11 @@ describe("remoteMuxProxying", () => {
       };
 
       const rewritten = rewriteRemoteWorkspaceChatMessageIds(message, serverId);
+
+      expect(rewritten.type).toBe("tool-call-end");
+      if (rewritten.type !== "tool-call-end") {
+        throw new Error(`Expected tool-call-end message but got: ${rewritten.type}`);
+      }
 
       const resultUnknown: unknown = rewritten.result;
       expect(resultUnknown && typeof resultUnknown).toBe("object");
