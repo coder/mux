@@ -501,11 +501,12 @@ describe("Vim Command Integration Tests", () => {
     });
 
     test("s at end of text does nothing", () => {
-      const state = executeVimCommands(
-        { ...initialState, text: "hello", cursor: 5, mode: "normal" },
-        ["s"]
-      );
-      expect(state.text).toBe("hello");
+      // Normal-mode cursor cannot be `cursor === text.length` for non-empty text.
+      // Use an empty buffer to represent being at the end of the text.
+      const state = executeVimCommands({ ...initialState, text: "", cursor: 0, mode: "normal" }, [
+        "s",
+      ]);
+      expect(state.text).toBe("");
       expect(state.mode).toBe("normal");
     });
 
@@ -583,7 +584,7 @@ describe("Vim Command Integration Tests", () => {
         ["d", "$"]
       );
       expect(state.text).toBe("hello ");
-      expect(state.cursor).toBe(6);
+      expect(state.cursor).toBe(5); // Normal mode clamps to last char
       expect(state.yankBuffer).toBe("world");
     });
 
@@ -593,7 +594,7 @@ describe("Vim Command Integration Tests", () => {
         ["D"]
       );
       expect(state.text).toBe("hello ");
-      expect(state.cursor).toBe(6);
+      expect(state.cursor).toBe(5); // Normal mode clamps to last char
     });
 
     test("d0 deletes to beginning of line", () => {
@@ -829,11 +830,12 @@ describe("Vim Command Integration Tests", () => {
     });
 
     test("x at end of text does nothing", () => {
-      const state = executeVimCommands(
-        { ...initialState, text: "hello", cursor: 5, mode: "normal" },
-        ["x"]
-      );
-      expect(state.text).toBe("hello");
+      // Normal-mode cursor cannot be `cursor === text.length` for non-empty text.
+      // Use an empty buffer to represent being at the end of the text.
+      const state = executeVimCommands({ ...initialState, text: "", cursor: 0, mode: "normal" }, [
+        "x",
+      ]);
+      expect(state.text).toBe("");
     });
   });
 
