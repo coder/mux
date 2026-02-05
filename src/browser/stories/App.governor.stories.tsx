@@ -5,6 +5,9 @@
  * - Not enrolled (default)
  * - Enrolled with active policy
  * - Enrolled with policy disabled
+ * - Enrolled with env override
+ * - Policy blocked (fully restricted)
+ * - Rich policy (many providers with varied restrictions)
  *
  * Uses play functions to open the settings modal and navigate to the Governor section.
  */
@@ -12,7 +15,7 @@
 import type { APIClient } from "@/browser/contexts/API";
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
-import { selectWorkspace } from "./storyHelpers";
+import { selectWorkspace, expandProjects, collapseRightSidebar } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { within, userEvent } from "@storybook/test";
 import type { PolicyGetResponse, PolicySource, EffectivePolicy } from "@/common/orpc/types";
@@ -35,11 +38,22 @@ interface GovernorStoryOptions {
   policy?: EffectivePolicy | null;
 }
 
-/** Setup basic workspace for Governor stories */
+/** Setup workspaces across multiple projects for a lived-in sidebar */
 function setupGovernorStory(options: GovernorStoryOptions = {}): APIClient {
-  const workspaces = [createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" })];
+  const workspaces = [
+    createWorkspace({ id: "ws-1", name: "main", projectName: "my-app" }),
+    createWorkspace({ id: "ws-2", name: "feat/auth", projectName: "my-app" }),
+    createWorkspace({ id: "ws-3", name: "hotfix/login", projectName: "my-app" }),
+    createWorkspace({ id: "ws-4", name: "main", projectName: "infra-tools" }),
+    createWorkspace({ id: "ws-5", name: "migrate-db", projectName: "infra-tools" }),
+  ];
 
   selectWorkspace(workspaces[0]);
+
+  // Expand both projects so sidebar looks populated behind the modal
+  const projectPaths = [...new Set(workspaces.map((w) => w.projectPath))];
+  expandProjects(projectPaths);
+  collapseRightSidebar();
 
   // Enable the Governor experiment so the section appears in Settings
   const experimentKey = getExperimentKey(EXPERIMENT_IDS.MUX_GOVERNOR);
@@ -165,6 +179,69 @@ export const EnrolledEnvOverride: AppStory = {
             providerAccess: [{ id: "anthropic", allowedModels: null }],
             mcp: { allowUserDefined: { stdio: true, remote: true } },
             runtimes: null,
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToGovernor(canvasElement);
+  },
+};
+
+/** Governor section - enrolled with policy blocking all operations (no providers, no MCP) */
+export const PolicyBlocked: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupGovernorStory({
+          muxGovernorUrl: "https://governor.example.com",
+          muxGovernorEnrolled: true,
+          policySource: "governor",
+          policyState: "blocked",
+          policy: {
+            policyFormatVersion: "0.1",
+            serverVersion: "1.2.0",
+            providerAccess: [], // no providers allowed
+            mcp: { allowUserDefined: { stdio: false, remote: false } },
+            runtimes: ["local"], // only local allowed
+          },
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    await openSettingsToGovernor(canvasElement);
+  },
+};
+
+/** Governor section - enrolled with a comprehensive policy showing many providers with varied restrictions */
+export const RichPolicy: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupGovernorStory({
+          muxGovernorUrl: "https://governor.example.com",
+          muxGovernorEnrolled: true,
+          policySource: "governor",
+          policyState: "enforced",
+          policy: {
+            policyFormatVersion: "0.1",
+            serverVersion: "2.0.0",
+            providerAccess: [
+              {
+                id: "anthropic",
+                allowedModels: ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"],
+              },
+              {
+                id: "openai",
+                allowedModels: ["gpt-4o", "gpt-4o-mini"],
+                forcedBaseUrl: "https://proxy.corp.example.com/v1",
+              },
+              { id: "google", allowedModels: null }, // all models allowed
+            ],
+            mcp: { allowUserDefined: { stdio: true, remote: false } },
+            runtimes: ["local", "worktree"],
           },
         })
       }
