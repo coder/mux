@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import * as schemas from "@/common/orpc/schemas";
+import type * as schemas from "@/common/orpc/schemas";
 import type {
   FrontendWorkspaceMetadataSchemaType,
   WorkspaceActivitySnapshot,
@@ -209,7 +209,6 @@ export function rewriteRemoteFrontendWorkspaceMetadataForLocalProject(
       if (mappedRuntimeProjectPath && mappedRuntimeProjectPath !== runtimeProjectPathRaw) {
         // Type assertion is safe: runtimeConfig is a Zod-inferred union that permits extra keys.
         // We cast through unknown to satisfy TS's non-overlapping union check.
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
         runtimeConfig = {
           ...runtimeConfigRecord,
           projectPath: mappedRuntimeProjectPath,
@@ -512,11 +511,11 @@ export function rewriteRemoteWorkspaceChatMessageIds(
     // Some legacy tool result shapes wrap IDs inside result.metadata.id.
     // Best-effort: rewrite this nested field without over-encoding every `id`.
     if (isPlainObject(rewrittenResult)) {
-      const record = rewrittenResult as Record<string, unknown>;
+      const record = rewrittenResult;
       const metadataValue = record.metadata;
 
       if (isPlainObject(metadataValue)) {
-        const metadataRecord = metadataValue as Record<string, unknown>;
+        const metadataRecord = metadataValue;
         const idValue = metadataRecord.id;
 
         if (typeof idValue === "string") {

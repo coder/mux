@@ -105,6 +105,9 @@ function wrapAsyncIterable(params: {
       await end(undefined);
       throw error;
     },
+    async [Symbol.asyncDispose]() {
+      await end(undefined);
+    },
     [Symbol.asyncIterator]() {
       return this;
     },
@@ -128,12 +131,12 @@ function decodeRemoteIdForFederation(
   return { serverId, remoteId };
 }
 
-type FederationInputRewrite = {
+interface FederationInputRewrite {
   serverId: string;
   rewrittenInput: unknown;
   /** Set of raw remote IDs we decoded (useful for rewriting record keys on output). */
   decodedRemoteIds: ReadonlySet<string>;
-};
+}
 
 function rewriteFederationInputIds(input: unknown): FederationInputRewrite | null {
   let serverId: string | null = null;
@@ -277,9 +280,10 @@ function rewriteRemoteFrontendMetadataBestEffort(params: {
     params.remoteProjectPathMap
   );
 
-  return rewrittenForLocalProject
-    ? rewrittenForLocalProject
-    : rewriteRemoteFrontendWorkspaceMetadataIds(params.metadata, params.serverId);
+  return (
+    rewrittenForLocalProject ??
+    rewriteRemoteFrontendWorkspaceMetadataIds(params.metadata, params.serverId)
+  );
 }
 
 function rewriteFederationOutputValue(params: {

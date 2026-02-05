@@ -32,7 +32,7 @@ import {
   type RemoteMuxOrpcClient,
 } from "./remoteMuxProxying";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
-import { decodeRemoteWorkspaceId, encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
+import { decodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
