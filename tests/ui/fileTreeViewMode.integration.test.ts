@@ -9,7 +9,7 @@ import {
   cleanupSharedRepo,
   configureTestRetries,
   createSharedRepo,
-  withSharedWorkspace,
+  withSharedWorkspaceNoProvider,
 } from "../ipc/sendMessageTestHelpers";
 
 import { installDom } from "./dom";
@@ -30,7 +30,7 @@ describeIntegration("ReviewPanel FileTree view mode (UI + ORPC)", () => {
   });
 
   test("Flat mode shows a full-path file list (no directories)", async () => {
-    await withSharedWorkspace("anthropic", async ({ env, workspaceId, metadata }) => {
+    await withSharedWorkspaceNoProvider(async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
       // Force HEAD so the diff reflects the working tree.
@@ -39,7 +39,7 @@ describeIntegration("ReviewPanel FileTree view mode (UI + ORPC)", () => {
 
       const bashRes = await env.orpc.workspace.executeBash({
         workspaceId,
-        script: "mkdir -p a/b && echo 'x' > a/b/c.ts",
+        script: "mkdir -p a/b && echo 'x' > a/b/c.ts && git add a/b/c.ts",
       });
       expect(bashRes.success).toBe(true);
       if (!bashRes.success) return;
@@ -54,7 +54,7 @@ describeIntegration("ReviewPanel FileTree view mode (UI + ORPC)", () => {
         await setupWorkspaceView(view, metadata, workspaceId);
         await view.selectTab("review");
 
-        const fileTree = view.getByTestId("review-file-tree");
+        const fileTree = await view.findByTestId("review-file-tree", {}, { timeout: 60_000 });
 
         // Structured mode shows directories.
         await within(fileTree).findByText("a", {}, { timeout: 60_000 });
