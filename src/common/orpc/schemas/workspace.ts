@@ -67,10 +67,6 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",
   }),
-  status: z.enum(["creating"]).optional().meta({
-    description:
-      "Workspace creation status. 'creating' = pending setup (ephemeral, not persisted). Absent = ready.",
-  }),
   archivedAt: z.string().optional().meta({
     description:
       "ISO 8601 timestamp when workspace was last archived. Workspace is considered archived if archivedAt > unarchivedAt (or unarchivedAt is absent).",
@@ -94,6 +90,10 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
   }),
   isRemoving: z.boolean().optional().meta({
     description: "True if this workspace is currently being deleted (deletion in progress).",
+  }),
+  isInitializing: z.boolean().optional().meta({
+    description:
+      "True if this workspace is currently initializing (postCreateSetup or initWorkspace running).",
   }),
 });
 

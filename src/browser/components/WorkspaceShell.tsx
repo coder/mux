@@ -24,8 +24,8 @@ interface WorkspaceShellProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   className?: string;
-  /** If 'creating', workspace is still being set up (git operations in progress) */
-  status?: "creating";
+  /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
+  isInitializing?: boolean;
 }
 
 const WorkspacePlaceholder: React.FC<{
@@ -122,7 +122,6 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         leftSidebarCollapsed={props.leftSidebarCollapsed}
         onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
         runtimeConfig={props.runtimeConfig}
-        status={props.status}
         onOpenTerminal={handleOpenTerminal}
       />
 
@@ -135,7 +134,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         onStartResize={startResize}
         isResizing={isResizing}
         onReviewNote={handleReviewNote}
-        isCreating={props.status === "creating"}
+        isCreating={props.isInitializing === true}
         addTerminalRef={addTerminalRef}
       />
 

@@ -16,7 +16,7 @@ export const WorkspaceStatusIndicator = memo<{
   const { workspaceMetadata } = useWorkspaceContext();
 
   const metadata = workspaceMetadata.get(workspaceId);
-  const isCreating = metadata?.status === "creating";
+  const isInitializing = metadata?.isInitializing === true;
 
   // Show prompt when ask_user_question is pending - make it prominent
   if (awaitingUserQuestion) {
@@ -55,7 +55,7 @@ export const WorkspaceStatusIndicator = memo<{
 
   const phase: "starting" | "streaming" | null = canInterrupt
     ? "streaming"
-    : isStarting || isCreating
+    : isStarting || isInitializing
       ? "starting"
       : null;
 

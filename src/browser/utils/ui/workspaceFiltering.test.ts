@@ -182,7 +182,7 @@ describe("buildSortedWorkspacesByProject", () => {
   const createWorkspace = (
     id: string,
     projectPath: string,
-    status?: "creating",
+    isInitializing?: boolean,
     parentWorkspaceId?: string
   ): FrontendWorkspaceMetadata => ({
     id,
@@ -191,7 +191,7 @@ describe("buildSortedWorkspacesByProject", () => {
     projectPath,
     namedWorkspacePath: `${projectPath}/workspace-${id}`,
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
-    status,
+    isInitializing,
     parentWorkspaceId,
   });
 
@@ -215,7 +215,7 @@ describe("buildSortedWorkspacesByProject", () => {
     ]);
     const metadata = new Map<string, FrontendWorkspaceMetadata>([
       ["ws1", createWorkspace("ws1", "/project/a")],
-      ["pending1", createWorkspace("pending1", "/project/a", "creating")],
+      ["pending1", createWorkspace("pending1", "/project/a", true)],
     ]);
 
     const result = buildSortedWorkspacesByProject(projects, metadata, {});
@@ -228,9 +228,9 @@ describe("buildSortedWorkspacesByProject", () => {
   it("should handle multiple concurrent pending workspaces", () => {
     const projects = new Map<string, ProjectConfig>([["/project/a", { workspaces: [] }]]);
     const metadata = new Map<string, FrontendWorkspaceMetadata>([
-      ["pending1", createWorkspace("pending1", "/project/a", "creating")],
-      ["pending2", createWorkspace("pending2", "/project/a", "creating")],
-      ["pending3", createWorkspace("pending3", "/project/a", "creating")],
+      ["pending1", createWorkspace("pending1", "/project/a", true)],
+      ["pending2", createWorkspace("pending2", "/project/a", true)],
+      ["pending3", createWorkspace("pending3", "/project/a", true)],
     ]);
 
     const result = buildSortedWorkspacesByProject(projects, metadata, {});
@@ -241,7 +241,7 @@ describe("buildSortedWorkspacesByProject", () => {
   it("should add pending workspaces for projects not yet in config", () => {
     const projects = new Map<string, ProjectConfig>();
     const metadata = new Map<string, FrontendWorkspaceMetadata>([
-      ["pending1", createWorkspace("pending1", "/new/project", "creating")],
+      ["pending1", createWorkspace("pending1", "/new/project", true)],
     ]);
 
     const result = buildSortedWorkspacesByProject(projects, metadata, {});
@@ -369,13 +369,13 @@ describe("buildSortedWorkspacesByProject", () => {
   });
 
   it("should not duplicate workspaces that exist in both config and have creating status", () => {
-    // Edge case: workspace was saved to config but still has status: "creating"
+    // Edge case: workspace was saved to config but still reports isInitializing
     // (this shouldn't happen in practice but tests defensive coding)
     const projects = new Map<string, ProjectConfig>([
       ["/project/a", { workspaces: [{ path: "/a/ws1", id: "ws1" }] }],
     ]);
     const metadata = new Map<string, FrontendWorkspaceMetadata>([
-      ["ws1", createWorkspace("ws1", "/project/a", "creating")],
+      ["ws1", createWorkspace("ws1", "/project/a", true)],
     ]);
 
     const result = buildSortedWorkspacesByProject(projects, metadata, {});

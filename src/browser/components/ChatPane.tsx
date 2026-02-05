@@ -81,7 +81,6 @@ interface ChatPaneProps {
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
-  status?: "creating";
   onOpenTerminal: (options?: TerminalSessionCreateOptions) => void;
 }
 

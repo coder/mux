@@ -644,6 +644,7 @@ export class WorkspaceService extends EventEmitter {
   ) {
     super();
     this.setupMetadataListeners();
+    this.setupInitMetadataListeners();
   }
 
   private telemetryService?: TelemetryService;
@@ -741,6 +742,21 @@ export class WorkspaceService extends EventEmitter {
       if (isStreamAbortEvent(data)) {
         void this.updateStreamingStatus(data.workspaceId, false);
       }
+    });
+  }
+
+  private setupInitMetadataListeners(): void {
+    const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+    const isWorkspaceEvent = (v: unknown): v is { workspaceId: string } =>
+      isObj(v) && "workspaceId" in v && typeof v.workspaceId === "string";
+
+    // When init completes, refresh metadata so the UI can clear isInitializing and swap
+    // "Cancel creation" back to the normal archive affordance.
+    this.initStateManager.on("init-end", (event: unknown) => {
+      if (!isWorkspaceEvent(event)) {
+        return;
+      }
+      void this.refreshAndEmitMetadata(event.workspaceId);
     });
   }
 
@@ -1308,7 +1324,7 @@ export class WorkspaceService extends EventEmitter {
         return Err("Failed to retrieve workspace metadata");
       }
 
-      session.emitMetadata(completeMetadata);
+      session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
 
       // Background init: run postCreateSetup (if present) then initWorkspace
       const secrets = secretsToRecord(this.config.getEffectiveSecrets(projectPath));
@@ -1336,7 +1352,7 @@ export class WorkspaceService extends EventEmitter {
         this.initAbortControllers.delete(workspaceId);
       }
 
-      return Ok({ metadata: completeMetadata });
+      return Ok({ metadata: this.enrichFrontendMetadata(completeMetadata) });
     } catch (error) {
       initLogger.logComplete(-1);
       const message = error instanceof Error ? error.message : String(error);
@@ -1584,14 +1600,28 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private enrichFrontendMetadata(metadata: FrontendWorkspaceMetadata): FrontendWorkspaceMetadata {
+    return {
+      ...metadata,
+      isRemoving: this.removingWorkspaces.has(metadata.id) || undefined,
+      isInitializing:
+        this.initStateManager.getInitState(metadata.id)?.status === "running" || undefined,
+    };
+  }
+
+  private enrichMaybeFrontendMetadata(
+    metadata: FrontendWorkspaceMetadata | null
+  ): FrontendWorkspaceMetadata | null {
+    if (!metadata) {
+      return null;
+    }
+    return this.enrichFrontendMetadata(metadata);
+  }
+
   async list(): Promise<FrontendWorkspaceMetadata[]> {
     try {
       const workspaces = await this.config.getAllWorkspaceMetadata();
-      // Enrich with isRemoving status for UI to show deletion spinners
-      return workspaces.map((w) => ({
-        ...w,
-        isRemoving: this.removingWorkspaces.has(w.id) || undefined,
-      }));
+      return workspaces.map((w) => this.enrichFrontendMetadata(w));
     } catch (error) {
       log.error("Failed to list workspaces:", error);
       return [];
@@ -1652,7 +1682,8 @@ export class WorkspaceService extends EventEmitter {
   }
   async getInfo(workspaceId: string): Promise<FrontendWorkspaceMetadata | null> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
-    return allMetadata.find((m) => m.id === workspaceId) ?? null;
+    const found = allMetadata.find((m) => m.id === workspaceId) ?? null;
+    return this.enrichMaybeFrontendMetadata(found);
   }
 
   /**
@@ -1743,11 +1774,13 @@ export class WorkspaceService extends EventEmitter {
         return Err("Failed to retrieve updated workspace metadata");
       }
 
+      const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+
       const session = this.sessions.get(workspaceId);
       if (session) {
-        session.emitMetadata(updatedMetadata);
+        session.emitMetadata(enrichedMetadata);
       } else {
-        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
       }
 
       return Ok({ newWorkspaceId: workspaceId });
@@ -1789,11 +1822,12 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
         const session = this.sessions.get(workspaceId);
         if (session) {
-          session.emitMetadata(updatedMetadata);
+          session.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -1884,11 +1918,12 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
         const session = this.sessions.get(workspaceId);
         if (session) {
-          session.emitMetadata(updatedMetadata);
+          session.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -1949,11 +1984,12 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
         const session = this.sessions.get(workspaceId);
         if (session) {
-          session.emitMetadata(updatedMetadata);
+          session.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -2138,12 +2174,13 @@ export class WorkspaceService extends EventEmitter {
     if (options?.emitMetadata !== false) {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+      const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
 
       const session = this.sessions.get(workspaceId);
       if (session) {
-        session.emitMetadata(updatedMetadata);
+        session.emitMetadata(enrichedMetadata);
       } else {
-        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
       }
     }
 
@@ -2343,11 +2380,12 @@ export class WorkspaceService extends EventEmitter {
       if (forkResult.sourceRuntimeConfig) {
         const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
         const updatedMetadata = allMetadataUpdated.find((m) => m.id === sourceWorkspaceId) ?? null;
+        const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
         const sourceSession = this.sessions.get(sourceWorkspaceId);
         if (sourceSession) {
-          sourceSession.emitMetadata(updatedMetadata);
+          sourceSession.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId: sourceWorkspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId: sourceWorkspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -2367,9 +2405,11 @@ export class WorkspaceService extends EventEmitter {
       };
 
       await this.config.addWorkspace(foundProjectPath, metadata);
-      session.emitMetadata(metadata);
 
-      return Ok({ metadata, projectPath: foundProjectPath });
+      const enrichedMetadata = this.enrichFrontendMetadata(metadata);
+      session.emitMetadata(enrichedMetadata);
+
+      return Ok({ metadata: enrichedMetadata, projectPath: foundProjectPath });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to fork workspace: ${message}`);

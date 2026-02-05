@@ -238,10 +238,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   } = props;
 
   // Destructure metadata for convenience
-  const { id: workspaceId, namedWorkspacePath, status } = metadata;
+  const { id: workspaceId, namedWorkspacePath } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
-  const isCreating = status === "creating";
-  const isDisabled = isCreating || isArchiving;
+  const isInitializing = metadata.isInitializing === true;
+  const isDisabled = isInitializing || isArchiving;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
@@ -316,12 +316,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     listener: true,
   });
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
-  const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
+  const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing;
   // Note: we intentionally render the secondary row even while the workspace is still
-  // "creating" so users can see early streaming/status information immediately.
+  // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
 
-  const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
+  const showUnreadBar = !isInitializing && !isEditing && isUnread && !(isSelected && !isDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -397,7 +397,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
         aria-label={
-          isCreating
+          isInitializing
             ? `Creating workspace ${displayTitle}`
             : isArchiving
               ? `Archiving workspace ${displayTitle}`
@@ -414,7 +414,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         {/* Action button - centered when status text visible, top-aligned otherwise */}
         {!isMuxHelpChat && !isEditing && (
           <ActionButtonWrapper hasSubtitle={hasStatusText}>
-            {isCreating ? (
+            {isInitializing ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -493,7 +493,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     {/* Always render text in same structure; Shimmer just adds animation class */}
                     <Shimmer
-                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
+                      className={cn(
+                        "w-full truncate",
+                        !(isWorking || isInitializing) && "no-shimmer"
+                      )}
                       colorClass="var(--color-foreground)"
                     >
                       {displayTitle}
@@ -522,7 +525,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               </HoverCard>
             )}
 
-            {!isCreating && !isEditing && (
+            {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
                 <GitStatusIndicator
                   gitStatus={gitStatus}
