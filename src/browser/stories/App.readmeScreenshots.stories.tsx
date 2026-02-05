@@ -174,58 +174,198 @@ export const ProductHero: AppStory = {
         const workspaceId = "ws-hero";
         const terminalSessionId = "term-hero";
 
-        const workspaces = [
+        const TERMINAL_BENCH_PROJECT_NAME = "terminal-bench";
+        const TERMINAL_BENCH_PROJECT_PATH = `/home/user/projects/${TERMINAL_BENCH_PROJECT_NAME}`;
+        const DOCS_PROJECT_NAME = "mux-docs";
+        const DOCS_PROJECT_PATH = `/home/user/projects/${DOCS_PROJECT_NAME}`;
+        const INFRA_PROJECT_NAME = "mux-infra";
+        const INFRA_PROJECT_PATH = `/home/user/projects/${INFRA_PROJECT_NAME}`;
+
+        const SECTION_FEATURES = "f00dbabe";
+        const SECTION_REFACTORS = "c0ffeec0";
+        const SECTION_DEPLOY = "d15ea5ed";
+
+        const wsHero = createWorkspace({
+          id: workspaceId,
+          name: "readme/product-hero",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+          createdAt: new Date(NOW - 30 * 60_000).toISOString(),
+        });
+
+        const wsReview = createWorkspace({
+          id: "ws-review",
+          name: "feature/right-sidebar",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+          createdAt: new Date(NOW - 2 * 60 * 60_000).toISOString(),
+        });
+        wsReview.sectionId = SECTION_FEATURES;
+
+        const wsAhead = createWorkspace({
+          id: "ws-ahead",
+          name: "feature/tooling",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+          createdAt: new Date(NOW - 3 * 60 * 60_000).toISOString(),
+        });
+        wsAhead.sectionId = SECTION_FEATURES;
+
+        const wsDirty = createWorkspace({
+          id: "ws-dirty",
+          name: "bugfix/sidebar-scroll",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+          createdAt: new Date(NOW - 4 * 60 * 60_000).toISOString(),
+        });
+        wsDirty.sectionId = SECTION_FEATURES;
+
+        const wsDiverged = createWorkspace({
+          id: "ws-diverged",
+          name: "refactor/workspace-store",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+          createdAt: new Date(NOW - 5 * 60 * 60_000).toISOString(),
+        });
+        wsDiverged.sectionId = SECTION_REFACTORS;
+
+        const wsSsh = createSSHWorkspace({
+          id: "ws-ssh",
+          name: "deploy/staging",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+          host: "staging.example.com",
+          createdAt: new Date(NOW - 6 * 60 * 60_000).toISOString(),
+        });
+        wsSsh.sectionId = SECTION_DEPLOY;
+
+        const wsClean = createWorkspace({
+          id: "ws-clean",
+          name: "main",
+          projectName: README_PROJECT_NAME,
+          projectPath: README_PROJECT_PATH,
+          createdAt: new Date(NOW - 7 * 60 * 60_000).toISOString(),
+        });
+
+        const terminalBenchWorkspaces = [
           createWorkspace({
-            id: workspaceId,
-            name: "readme/product-hero",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            createdAt: new Date(NOW - 30 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-review",
-            name: "feature/right-sidebar",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            createdAt: new Date(NOW - 2 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-ahead",
-            name: "feature/tooling",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            createdAt: new Date(NOW - 3 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-dirty",
-            name: "bugfix/sidebar-scroll",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            createdAt: new Date(NOW - 4 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-diverged",
-            name: "refactor/workspace-store",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            createdAt: new Date(NOW - 5 * 60 * 60_000).toISOString(),
-          }),
-          createSSHWorkspace({
-            id: "ws-ssh",
-            name: "deploy/staging",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            host: "staging.example.com",
-            createdAt: new Date(NOW - 6 * 60 * 60_000).toISOString(),
-          }),
-          createWorkspace({
-            id: "ws-clean",
+            id: "ws-tb-main",
             name: "main",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            createdAt: new Date(NOW - 7 * 60 * 60_000).toISOString(),
+            projectName: TERMINAL_BENCH_PROJECT_NAME,
+            projectPath: TERMINAL_BENCH_PROJECT_PATH,
+            createdAt: new Date(NOW - 8 * 60 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-tb-flakes",
+            name: "bugfix/flakes",
+            projectName: TERMINAL_BENCH_PROJECT_NAME,
+            projectPath: TERMINAL_BENCH_PROJECT_PATH,
+            createdAt: new Date(NOW - 9 * 60 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-tb-profiles",
+            name: "perf/profiles",
+            projectName: TERMINAL_BENCH_PROJECT_NAME,
+            projectPath: TERMINAL_BENCH_PROJECT_PATH,
+            createdAt: new Date(NOW - 10 * 60 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-tb-ci",
+            name: "chore/ci",
+            projectName: TERMINAL_BENCH_PROJECT_NAME,
+            projectPath: TERMINAL_BENCH_PROJECT_PATH,
+            createdAt: new Date(NOW - 11 * 60 * 60_000).toISOString(),
           }),
         ];
+
+        const docsWorkspaces = [
+          createWorkspace({
+            id: "ws-docs-main",
+            name: "main",
+            projectName: DOCS_PROJECT_NAME,
+            projectPath: DOCS_PROJECT_PATH,
+            createdAt: new Date(NOW - 12 * 60 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-docs-readme",
+            name: "docs/readme-refresh",
+            projectName: DOCS_PROJECT_NAME,
+            projectPath: DOCS_PROJECT_PATH,
+            createdAt: new Date(NOW - 13 * 60 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-docs-site",
+            name: "feature/site-nav",
+            projectName: DOCS_PROJECT_NAME,
+            projectPath: DOCS_PROJECT_PATH,
+            createdAt: new Date(NOW - 14 * 60 * 60_000).toISOString(),
+          }),
+        ];
+
+        const infraWorkspaces = [
+          createWorkspace({
+            id: "ws-infra-main",
+            name: "main",
+            projectName: INFRA_PROJECT_NAME,
+            projectPath: INFRA_PROJECT_PATH,
+            createdAt: new Date(NOW - 15 * 60 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-infra-terraform",
+            name: "feature/terraform",
+            projectName: INFRA_PROJECT_NAME,
+            projectPath: INFRA_PROJECT_PATH,
+            createdAt: new Date(NOW - 16 * 60 * 60_000).toISOString(),
+          }),
+          createWorkspace({
+            id: "ws-infra-alerts",
+            name: "chore/alerts",
+            projectName: INFRA_PROJECT_NAME,
+            projectPath: INFRA_PROJECT_PATH,
+            createdAt: new Date(NOW - 17 * 60 * 60_000).toISOString(),
+          }),
+        ];
+
+        const workspaces = [
+          wsHero,
+          wsReview,
+          wsAhead,
+          wsDirty,
+          wsDiverged,
+          wsSsh,
+          wsClean,
+          ...terminalBenchWorkspaces,
+          ...docsWorkspaces,
+          ...infraWorkspaces,
+        ];
+
+        const projects = groupWorkspacesByProject(workspaces);
+        const muxConfig = projects.get(README_PROJECT_PATH);
+        if (muxConfig) {
+          projects.set(README_PROJECT_PATH, {
+            ...muxConfig,
+            sections: [
+              {
+                id: SECTION_FEATURES,
+                name: "Features",
+                color: "#4dabf7",
+                nextId: SECTION_REFACTORS,
+              },
+              {
+                id: SECTION_REFACTORS,
+                name: "Refactors",
+                color: "#ff6b6b",
+                nextId: SECTION_DEPLOY,
+              },
+              {
+                id: SECTION_DEPLOY,
+                name: "Deploy",
+                color: "#51cf66",
+                nextId: null,
+              },
+            ],
+          });
+        }
 
         const gitStatus = new Map<string, GitStatusFixture>([
           [workspaceId, { dirty: 2, outgoingAdditions: 420, outgoingDeletions: 18 }],
@@ -238,6 +378,12 @@ export const ProductHero: AppStory = {
           ],
           ["ws-ssh", { behind: 4, originCommit: "Update deployment" }],
           ["ws-clean", {}],
+
+          // Extra workspaces/projects for a busier sidebar.
+          ["ws-tb-flakes", { dirty: 3 }],
+          ["ws-tb-profiles", { ahead: 2, dirty: 1 }],
+          ["ws-docs-readme", { ahead: 1, dirty: 1 }],
+          ["ws-infra-terraform", { behind: 2 }],
         ]);
 
         const gitDiff = new Map([
@@ -270,9 +416,9 @@ export const ProductHero: AppStory = {
           ],
         ]);
 
-        // Make the project look expanded/busy, matching the README hero composition.
-        expandProjects([README_PROJECT_PATH]);
-        selectWorkspace(workspaces[0]);
+        // Make the sidebar look expanded/busy, matching the README hero composition.
+        expandProjects([README_PROJECT_PATH, TERMINAL_BENCH_PROJECT_PATH]);
+        selectWorkspace(wsHero);
 
         // Force a split layout: Review (top) + Terminal (bottom).
         const layout: RightSidebarLayoutState = {
@@ -316,7 +462,7 @@ export const ProductHero: AppStory = {
         ];
 
         return createMockORPCClient({
-          projects: groupWorkspacesByProject(workspaces),
+          projects,
           workspaces,
           onChat: createOnChatAdapter(chatHandlers),
           executeBash: createGitStatusExecutor(gitStatus, gitDiff),
