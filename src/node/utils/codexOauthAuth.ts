@@ -21,6 +21,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
 export function parseCodexOauthAuth(value: unknown): CodexOauthAuth | null {
   if (!isPlainObject(value)) {
     return null;
@@ -91,7 +95,7 @@ export function extractAccountIdFromClaims(claims: Record<string, unknown>): str
   }
 
   const organizations = claims.organizations;
-  if (Array.isArray(organizations) && organizations.length > 0) {
+  if (isUnknownArray(organizations) && organizations.length > 0) {
     const first = organizations[0];
     if (isPlainObject(first)) {
       const candidate = first.id;
