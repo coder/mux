@@ -89,6 +89,17 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+
+  // Node may normalize IPv4 loopback to an IPv6-mapped address.
+  if (address === "::ffff:127.0.0.1") {
+    return true;
+  }
+
+  return address === "127.0.0.1" || address === "::1";
+}
+
 function parseOptionalNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -100,6 +111,25 @@ function parseOptionalNumber(value: unknown): number | null {
   }
 
   return null;
+}
+
+function isInvalidGrantError(errorText: string): boolean {
+  const trimmed = errorText.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  try {
+    const json = JSON.parse(trimmed) as unknown;
+    if (isPlainObject(json) && json.error === "invalid_grant") {
+      return true;
+    }
+  } catch {
+    // Ignore parse failures - fall back to substring checks.
+  }
+
+  const lower = trimmed.toLowerCase();
+  return lower.includes("invalid_grant") || lower.includes("revoked");
 }
 
 export class CodexOauthService {
@@ -131,6 +161,12 @@ export class CodexOauthService {
     const redirectUri = CODEX_OAUTH_BROWSER_REDIRECT_URI;
 
     const server = http.createServer((req, res) => {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.statusCode = 403;
+        res.end("Forbidden");
+        return;
+      }
+
       const reqUrl = req.url ?? "/";
       const url = new URL(reqUrl, "http://localhost");
 
@@ -164,7 +200,7 @@ export class CodexOauthService {
     try {
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
-        server.listen(1455, "127.0.0.1", () => resolve());
+        server.listen(1455, "localhost", () => resolve());
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -577,6 +613,19 @@ export class CodexOauthService {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
+
+        // When the refresh token is invalid/revoked, clear persisted auth so subsequent
+        // requests fall back to the existing "not connected" behavior.
+        if (isInvalidGrantError(errorText)) {
+          log.debug("[Codex OAuth] Refresh token rejected; clearing stored auth");
+          const disconnectResult = this.disconnect();
+          if (!disconnectResult.success) {
+            log.warn(
+              `[Codex OAuth] Failed to clear stored auth after refresh failure: ${disconnectResult.error}`
+            );
+          }
+        }
+
         const prefix = `Codex OAuth refresh failed (${response.status})`;
         return Err(errorText ? `${prefix}: ${errorText}` : prefix);
       }
