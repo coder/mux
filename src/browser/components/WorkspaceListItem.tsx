@@ -139,12 +139,8 @@ function SelectionBar(props: { isSelected: boolean; showUnread?: boolean; isDraf
 /** Action button wrapper (archive/delete) with consistent sizing and alignment */
 function ActionButtonWrapper(props: { hasSubtitle: boolean; children: React.ReactNode }) {
   return (
-    <div
-      className={cn(
-        "relative inline-flex h-4 w-4 shrink-0 items-center",
-        props.hasSubtitle ? "self-center" : "self-start mt-0.5"
-      )}
-    >
+    <div className={cn("relative inline-flex h-4 w-4 shrink-0 items-center self-center")}>
+      {/* Keep the hamburger vertically centered even for single-row items. */}
       {props.children}
     </div>
   );
