@@ -95,6 +95,7 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
     setError(null);
     setCopied(false);
     setIsUploading(false);
+    setIsUpdatingExpiration(false);
   }, [props.workspaceId]);
 
   useEffect(() => {
