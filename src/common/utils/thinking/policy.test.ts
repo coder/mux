@@ -152,26 +152,6 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
-  test("returns 5 levels including xhigh for Opus 4.6", () => {
-    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-6")).toEqual([
-      "off",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
-  });
-
-  test("returns 5 levels for Opus 4.6 behind mux-gateway", () => {
-    expect(getThinkingPolicyForModel("mux-gateway:anthropic/claude-opus-4-6")).toEqual([
-      "off",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
-  });
-
   test("returns all levels for Opus 4.5 (uses default policy)", () => {
     // Opus 4.5 uses the default policy - no special case needed
     // The effort parameter handles the "off" case by setting effort="low"
@@ -313,13 +293,13 @@ describe("enforceThinkingPolicy", () => {
     });
   });
 
-  describe("Opus 4.6 (5 levels including xhigh)", () => {
-    test("allows all 5 levels including xhigh", () => {
+  describe("Opus 4.6 (5 levels including max)", () => {
+    test("allows all 5 levels including max", () => {
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "off")).toBe("off");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "low")).toBe("low");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "medium")).toBe("medium");
       expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "high")).toBe("high");
-      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "xhigh")).toBe("xhigh");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "max")).toBe("max");
     });
   });
 

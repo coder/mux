@@ -697,6 +697,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         medium: "Medium — balanced reasoning",
         high: "High — maximum reasoning depth",
         xhigh: "Max — highest reasoning depth",
+        max: "Max — deepest possible reasoning",
       };
       const currentLevel = p.getThinkingLevel(workspaceId);
 

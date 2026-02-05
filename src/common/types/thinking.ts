@@ -118,6 +118,7 @@ export const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {
   medium: "medium",
   high: "high",
   xhigh: "high", // Opus 4.6 overrides this to "max" in providerOptions.ts
+  max: "max", // Claude Opus 4.6 only; policy.ts gates access per model
 };
 
 /**
@@ -129,6 +130,7 @@ export const ANTHROPIC_EFFORT_MAX: Record<ThinkingLevel, AnthropicEffortLevel> =
   medium: "medium",
   high: "high",
   xhigh: "max",
+  max: "max",
 };
 
 /**

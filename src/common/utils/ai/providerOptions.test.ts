@@ -76,19 +76,19 @@ describe("buildProviderOptions - Anthropic", () => {
       expect(anthropic.effort).toBe("medium");
     });
 
-    test("should map xhigh to max effort for Opus 4.6", () => {
-      const result = buildProviderOptions("anthropic:claude-opus-4-6", "xhigh");
+    test("should map max to max effort for Opus 4.6", () => {
+      const result = buildProviderOptions("anthropic:claude-opus-4-6", "max");
       const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
 
       expect(anthropic.thinking).toEqual({ type: "adaptive" });
       expect(anthropic.effort).toBe("max");
     });
 
-    test("should use adaptive thinking with low effort when off for Opus 4.6", () => {
+    test("should use disabled thinking when off for Opus 4.6", () => {
       const result = buildProviderOptions("anthropic:claude-opus-4-6", "off");
       const anthropic = (result as Record<string, unknown>).anthropic as Record<string, unknown>;
 
-      expect(anthropic.thinking).toEqual({ type: "adaptive" });
+      expect(anthropic.thinking).toEqual({ type: "disabled" });
       expect(anthropic.effort).toBe("low");
     });
   });
