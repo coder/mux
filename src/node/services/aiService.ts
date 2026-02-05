@@ -979,6 +979,48 @@ export class AIService extends EventEmitter {
                     json.truncation = "disabled";
                   }
 
+                  // Codex OAuth (chatgpt.com/backend-api/codex/responses) rejects requests unless
+                  // `instructions` is present and non-empty. The AI SDK maps `system` prompts into
+                  // the `input` array (role: system|developer) but does *not* automatically populate
+                  // `instructions`, so we lift the system prompt into `instructions` when routing
+                  // through Codex OAuth.
+                  if (shouldRouteThroughCodexOauth) {
+                    const existingInstructions =
+                      typeof json.instructions === "string" ? json.instructions.trim() : "";
+
+                    if (existingInstructions.length === 0) {
+                      let derivedInstructions: string | undefined;
+
+                      const responseInput = json.input;
+                      if (Array.isArray(responseInput)) {
+                        const responseInputArray: unknown[] = responseInput;
+
+                        for (let i = 0; i < responseInputArray.length; i++) {
+                          const item = responseInputArray[i];
+                          if (!item || typeof item !== "object") continue;
+
+                          const role = (item as { role?: unknown }).role;
+                          if (role !== "system" && role !== "developer") continue;
+
+                          const content = (item as { content?: unknown }).content;
+                          if (typeof content === "string" && content.trim().length > 0) {
+                            derivedInstructions = content;
+                            // Avoid double-system prompts by removing the system/developer message.
+                            json.input = [
+                              ...responseInputArray.slice(0, i),
+                              ...responseInputArray.slice(i + 1),
+                            ];
+                          }
+                          break;
+                        }
+                      }
+
+                      json.instructions = derivedInstructions?.trim().length
+                        ? derivedInstructions.trim()
+                        : "You are a helpful assistant.";
+                    }
+                  }
+
                   // Clone headers to avoid mutating caller-provided objects
                   const headers = new Headers(init?.headers);
                   // Remove content-length if present, since body will change

@@ -27,6 +27,7 @@ import { createTaskTool } from "./tools/task";
 import { createTestToolConfig } from "./tools/testHelpers";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
 describe("AIService", () => {
   let service: AIService;
@@ -266,6 +267,149 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
 
     expect(result.success).toBe(true);
+  });
+
+  it("ensures Codex OAuth routed Responses requests include non-empty instructions", async () => {
+    using muxHome = new DisposableTempDir("codex-oauth-instructions");
+
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const partialService = new PartialService(config, historyService);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+
+    const service = new AIService(
+      config,
+      historyService,
+      partialService,
+      initStateManager,
+      providerService
+    );
+
+    const requests: Array<{
+      input: Parameters<typeof fetch>[0];
+      init?: Parameters<typeof fetch>[1];
+    }> = [];
+
+    const baseFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      requests.push({ input, init });
+
+      // Minimal valid OpenAI Responses payload for the provider's response schema.
+      const responseBody = {
+        id: "resp_test",
+        created_at: 0,
+        model: "gpt-5.2-codex",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            id: "msg_test",
+            content: [{ type: "output_text", text: "ok", annotations: [] }],
+          },
+        ],
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+        },
+      };
+
+      return Promise.resolve(
+        new Response(JSON.stringify(responseBody), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        })
+      );
+    };
+
+    // Ensure createModel sees a function fetch (providers.jsonc can't store functions).
+    config.loadProvidersConfig = () => ({
+      openai: {
+        apiKey: "test-openai-api-key",
+        codexOauth: {
+          type: "oauth",
+          access: "test-access-token",
+          refresh: "test-refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "test-account-id",
+        },
+        fetch: baseFetch,
+      },
+    });
+
+    // fetchWithOpenAITruncation closes over codexOauthService during createModel.
+    // @ts-expect-error - accessing private field for testing
+    service.codexOauthService = {
+      getValidAuth: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account-id",
+          },
+        }),
+    };
+
+    const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    expect(modelResult.success).toBe(true);
+    if (!modelResult.success) return;
+
+    const model = modelResult.data;
+    if (typeof model === "string") {
+      throw new Error("Expected a LanguageModelV2 instance, got a model id string");
+    }
+
+    const systemPrompt = "Test system prompt";
+
+    await model.doGenerate({
+      prompt: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Hello" }],
+        },
+      ],
+    });
+
+    expect(requests.length).toBeGreaterThan(0);
+
+    const lastRequest = requests[requests.length - 1];
+
+    // URL rewrite to chatgpt.com
+    expect(lastRequest.input).toBe(CODEX_ENDPOINT);
+
+    // Auth header injection
+    const headers = new Headers(lastRequest.init?.headers);
+    expect(headers.get("authorization")).toBe("Bearer test-access-token");
+    expect(headers.get("chatgpt-account-id")).toBe("test-account-id");
+
+    // Body mutation: non-empty instructions
+    const bodyString = lastRequest.init?.body;
+    expect(typeof bodyString).toBe("string");
+    if (typeof bodyString !== "string") {
+      throw new Error("Expected request body to be a string");
+    }
+
+    const parsedBody = JSON.parse(bodyString) as unknown;
+    if (!parsedBody || typeof parsedBody !== "object") {
+      throw new Error("Expected request body to parse as an object");
+    }
+
+    const instructions = (parsedBody as { instructions?: unknown }).instructions;
+    expect(typeof instructions).toBe("string");
+    if (typeof instructions !== "string") {
+      throw new Error("Expected instructions to be a string");
+    }
+
+    expect(instructions.trim().length).toBeGreaterThan(0);
+    expect(instructions).toBe(systemPrompt);
   });
 });
 
