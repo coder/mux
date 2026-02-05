@@ -38,6 +38,7 @@ Hard rules (delegate-first):
 - For correctness claims, an `explore` sub-agent report counts as having read the referenced files.
 - **Do not do broad repo investigation here.** If you need context, spawn an `explore` sub-agent with a narrow prompt (keeps this agent focused on coordination).
 - **Do not implement features/bugfixes directly here.** Spawn an `exec` sub-agent and have it complete the work end-to-end.
+- **Never read or scan session storage.** This includes `~/.mux/sessions/**` and `~/.mux/sessions/subagent-patches/**`. Treat session storage as an internal implementation detail; do not shell out to locate patch artifacts on disk. Only use `task_apply_git_patch` to access patches.
 
 Delegation guide:
 
@@ -103,10 +104,18 @@ Patch integration loop (default):
 1. Identify a batch of independent subtasks.
 2. Spawn one `exec` sub-agent task per subtask with `run_in_background: true`.
 3. Await the batch via `task_await`.
-4. For each successful exec task:
+4. For each successful `exec` task:
    - Dry-run apply: `task_apply_git_patch` with `dry_run: true`.
-   - If dry-run succeeds, apply for real.
-   - If apply fails, stop and delegate reconciliation (rebase/regenerate patch). Avoid hand-editing lots of code here.
+   - If dry-run succeeds, apply for real: `task_apply_git_patch` with `dry_run: false`.
+   - If dry-run fails, treat it as a patch conflict. Choose one:
+     - **Resolve locally (small/obvious conflicts only):**
+       1. Apply for real: `task_apply_git_patch` with `dry_run: false` (this may fail but will leave the repo in a `git am` conflict state).
+       2. Inspect with `git status` / `git diff`.
+       3. Resolve conflicts, then `git add -A`.
+       4. Finish with `git am --continue`.
+       5. If messy/unclear, abort and delegate: `git am --abort`.
+     - **Delegate reconciliation (preferred for large/confusing conflicts):**
+       - Spawn a dedicated `exec` task that replays the patch via `task_apply_git_patch`, resolves conflicts in its own workspace, commits the resolved result, and reports back with a new patch to apply cleanly.
 5. Verify + review:
    - Spawn a narrow `explore` task to sanity-check the diff and run verification (`make fmt-check`, `make lint`, `make typecheck`, `make test`, etc.).
    - PASS: summary-only (no long logs).
@@ -115,7 +124,7 @@ Patch integration loop (default):
 Sequential protocol (only for dependency chains):
 
 1. Spawn the prerequisite `exec` task with `run_in_background: false` (or spawn, then immediately `task_await`).
-2. Dry-run apply its patch; then apply for real.
+2. Dry-run apply its patch (`dry_run: true`); then apply for real (`dry_run: false`). If dry-run fails, follow the conflict playbook above.
 3. Only after the patch is applied, spawn the dependent `exec` task.
 4. Repeat until the dependency chain is complete.
 
