@@ -647,10 +647,19 @@ export class StreamManager extends EventEmitter {
     part: CompletedMessagePart,
     schedulePartialWrite = false
   ): Promise<void> {
-    streamInfo.parts.push(part);
-    await this.emitPartAsEvent(workspaceId, streamInfo.messageId, part);
-    if (schedulePartialWrite) {
-      void this.schedulePartialWrite(workspaceId, streamInfo);
+    // Emit BEFORE adding to streamInfo.parts.
+    //
+    // On reconnect, we call replayStream() which snapshots streamInfo.parts. If we push a part to
+    // streamInfo.parts and then await tokenization/emit, replay can include the "in-flight" part
+    // and then the live emit still happens, causing duplicate deltas in the renderer.
+    try {
+      await this.emitPartAsEvent(workspaceId, streamInfo.messageId, part);
+    } finally {
+      // Always persist the part in-memory (and to partial.json, if enabled), even if emit fails.
+      streamInfo.parts.push(part);
+      if (schedulePartialWrite) {
+        void this.schedulePartialWrite(workspaceId, streamInfo);
+      }
     }
   }
 

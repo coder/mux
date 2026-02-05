@@ -2049,7 +2049,40 @@ export const router = (authToken?: string) => {
           const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
 
           // 1. Subscribe to new events (including those triggered by replay)
+          //
+          // IMPORTANT: We subscribe before replay so we can receive stream replay (`replayStream()`)
+          // and init replay events (which do not set `replay: true`).
+          //
+          // However, this means live stream deltas can arrive while replay is still in progress.
+          // If those live deltas overlap with replayed deltas, the frontend will double-append
+          // text (and double-count tokens). To make reconnect/replay idempotent, buffer live
+          // deltas during replay and flush them after `caught-up`, skipping any that were
+          // already replayed.
+          type DeltaMessage = Extract<
+            WorkspaceChatMessage,
+            { type: "stream-delta" | "reasoning-delta" }
+          >;
+
+          const isDeltaMessage = (message: WorkspaceChatMessage): message is DeltaMessage =>
+            message.type === "stream-delta" || message.type === "reasoning-delta";
+
+          const deltaKey = (message: DeltaMessage): string =>
+            JSON.stringify([message.type, message.messageId, message.timestamp, message.delta]);
+
+          let isReplaying = true;
+          const bufferedLiveDeltas: DeltaMessage[] = [];
+          const replayedDeltaKeys = new Set<string>();
+
           const unsubscribe = session.onChatEvent(({ message }) => {
+            if (isReplaying && isDeltaMessage(message)) {
+              if (message.replay === true) {
+                replayedDeltaKeys.add(deltaKey(message));
+              } else {
+                bufferedLiveDeltas.push(message);
+                return;
+              }
+            }
+
             push(message);
           });
 
@@ -2057,6 +2090,15 @@ export const router = (authToken?: string) => {
           await session.replayHistory(({ message }) => {
             push(message);
           });
+
+          // Flush buffered live deltas after replay (`caught-up` already queued by replayHistory).
+          for (const message of bufferedLiveDeltas) {
+            if (replayedDeltaKeys.has(deltaKey(message))) {
+              continue;
+            }
+            push(message);
+          }
+          isReplaying = false;
 
           // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
           // Client uses this to detect stalled connections vs. intentionally idle streams.
