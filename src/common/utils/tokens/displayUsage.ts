@@ -60,6 +60,9 @@ export function createDisplayUsage(
   // Get model stats for cost calculation
   const modelStats = getModelStats(model);
 
+  const costsIncluded =
+    (providerMetadata?.mux as { costsIncluded?: boolean } | undefined)?.costsIncluded === true;
+
   // Calculate costs based on model stats (undefined if model unknown)
   let inputCost: number | undefined;
   let cachedCost: number | undefined;
@@ -75,6 +78,13 @@ export function createDisplayUsage(
     reasoningCost = reasoningTokens * modelStats.output_cost_per_token;
   }
 
+  if (costsIncluded) {
+    inputCost = 0;
+    cachedCost = 0;
+    cacheCreateCost = 0;
+    outputCost = 0;
+    reasoningCost = 0;
+  }
   return {
     input: {
       tokens: inputTokens,

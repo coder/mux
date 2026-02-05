@@ -132,6 +132,50 @@ describe("createDisplayUsage", () => {
     expect(result!.cached.tokens).toBe(0);
   });
 
+  describe("Subscription-covered usage costs", () => {
+    test("returns $0 costs when providerMetadata.mux.costsIncluded is true", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1000, // OpenAI includes cached tokens
+        outputTokens: 500,
+        totalTokens: 1500,
+        cachedInputTokens: 200,
+      };
+
+      const result = createDisplayUsage(usage, "openai:gpt-5.2", {
+        mux: { costsIncluded: true },
+      });
+
+      expect(result).toBeDefined();
+      // Token handling remains unchanged
+      expect(result!.input.tokens).toBe(800);
+      expect(result!.cached.tokens).toBe(200);
+
+      expect(result!.input.cost_usd).toBe(0);
+      expect(result!.cached.cost_usd).toBe(0);
+      expect(result!.cacheCreate.cost_usd).toBe(0);
+      expect(result!.output.cost_usd).toBe(0);
+      expect(result!.reasoning.cost_usd).toBe(0);
+    });
+
+    test("returns $0 costs even when model pricing is unknown", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+      };
+
+      const result = createDisplayUsage(usage, "openai:some-unknown-model", {
+        mux: { costsIncluded: true },
+      });
+
+      expect(result).toBeDefined();
+      expect(result!.input.cost_usd).toBe(0);
+      expect(result!.cached.cost_usd).toBe(0);
+      expect(result!.cacheCreate.cost_usd).toBe(0);
+      expect(result!.output.cost_usd).toBe(0);
+      expect(result!.reasoning.cost_usd).toBe(0);
+    });
+  });
   describe("Anthropic cache creation tokens from providerMetadata", () => {
     // Cache creation tokens are Anthropic-specific and only available in
     // providerMetadata.anthropic.cacheCreationInputTokens, not in LanguageModelV2Usage.

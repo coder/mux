@@ -145,6 +145,26 @@ function stripEncryptedContent(output: unknown): unknown {
   return output;
 }
 
+function markProviderMetadataCostsIncluded(
+  providerMetadata: Record<string, unknown> | undefined,
+  costsIncluded: boolean | undefined
+): Record<string, unknown> | undefined {
+  if (!costsIncluded) return providerMetadata;
+
+  const muxMetadata = providerMetadata?.mux;
+  const existingMux =
+    muxMetadata && typeof muxMetadata === "object"
+      ? (muxMetadata as Record<string, unknown>)
+      : undefined;
+
+  return {
+    ...(providerMetadata ?? {}),
+    mux: {
+      ...(existingMux ?? {}),
+      costsIncluded: true,
+    },
+  };
+}
 // Comprehensive stream info
 interface WorkspaceStreamInfo {
   state: StreamState;
@@ -774,7 +794,10 @@ export class StreamManager extends EventEmitter {
     const contextProviderMetadata = streamInfo.lastStepProviderMetadata;
 
     // Include provider metadata for accurate cost calculation
-    const providerMetadata = streamInfo.cumulativeProviderMetadata;
+    const providerMetadata = markProviderMetadataCostsIncluded(
+      streamInfo.cumulativeProviderMetadata,
+      streamInfo.initialMetadata?.costsIncluded
+    );
 
     // Record session usage for aborted streams (mirrors stream-end path)
     // This ensures tokens consumed before abort are tracked for cost display
@@ -1622,7 +1645,10 @@ export class StreamManager extends EventEmitter {
               streamMeta.contextProviderMetadata ?? streamInfo.lastStepProviderMetadata;
             const duration = streamMeta.duration;
             // Aggregated provider metadata across all steps (for cost calculation with cache tokens)
-            const providerMetadata = await this.getAggregatedProviderMetadata(streamInfo);
+            const providerMetadata = markProviderMetadataCostsIncluded(
+              await this.getAggregatedProviderMetadata(streamInfo),
+              streamInfo.initialMetadata?.costsIncluded
+            );
             const canonicalModel = normalizeGatewayModel(streamInfo.model);
             const routedThroughGateway =
               streamInfo.initialMetadata?.routedThroughGateway ??

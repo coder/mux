@@ -356,6 +356,11 @@ export interface MuxMetadata {
   model?: string;
   /** True when this response was routed through Mux Gateway (model stays canonical). */
   routedThroughGateway?: boolean;
+  /**
+   * True when usage costs are included in a subscription (e.g., ChatGPT subscription routing).
+   * Token counts are still tracked, but the UI should display costs as $0.
+   */
+  costsIncluded?: boolean;
   // Total usage across all steps (for cost calculation)
   usage?: LanguageModelV2Usage;
   // Last step's usage only (for context window display - inputTokens = current context size)
