@@ -1213,6 +1213,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           await context.codexOauthService.cancelDeviceFlow(input.flowId);
         }),
+      disconnect: t
+        .input(schemas.codexOauth.disconnect.input)
+        .output(schemas.codexOauth.disconnect.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.disconnect();
+        }),
     },
     general: {
       listDirectory: t

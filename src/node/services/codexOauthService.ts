@@ -112,6 +112,11 @@ export class CodexOauthService {
     private readonly windowService?: WindowService
   ) {}
 
+  disconnect(): Result<void, string> {
+    // Clear stored ChatGPT OAuth tokens so Codex-only models are hidden again.
+    return this.providerService.setConfigValue("openai", ["codexOauth"], undefined);
+  }
+
   async startDesktopFlow(): Promise<Result<{ flowId: string; authorizeUrl: string }, string>> {
     const flowId = randomBase64Url();
 

@@ -288,6 +288,10 @@ export const codexOauth = {
     input: z.object({ flowId: z.string() }).strict(),
     output: z.void(),
   },
+  disconnect: {
+    input: z.void(),
+    output: ResultSchema(z.void(), z.string()),
+  },
 };
 // Mux Gateway
 export const muxGateway = {
