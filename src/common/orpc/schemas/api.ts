@@ -1306,6 +1306,9 @@ export const config = {
       }),
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
+      defaultModel: z.string().optional(),
+      hiddenModels: z.array(z.string()).optional(),
+      preferredCompactionModel: z.string().optional(),
       stopCoderWorkspaceOnArchive: z.boolean(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
@@ -1343,6 +1346,14 @@ export const config = {
     input: z.object({
       muxGatewayEnabled: z.boolean(),
       muxGatewayModels: z.array(z.string()),
+    }),
+    output: z.void(),
+  },
+  updateModelPreferences: {
+    input: z.object({
+      defaultModel: z.string().optional(),
+      hiddenModels: z.array(z.string()).optional(),
+      preferredCompactionModel: z.string().optional(),
     }),
     output: z.void(),
   },

@@ -67,6 +67,22 @@ export interface ProjectsConfig {
   muxGatewayEnabled?: boolean;
   muxGatewayModels?: string[];
 
+  /**
+   * Default model used for new workspaces (shared via ~/.mux/config.json).
+   * Mirrors the browser localStorage cache (DEFAULT_MODEL_KEY).
+   */
+  defaultModel?: string;
+  /**
+   * Hidden model IDs (shared via ~/.mux/config.json).
+   * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).
+   */
+  hiddenModels?: string[];
+  /**
+   * Preferred model for compaction requests (shared via ~/.mux/config.json).
+   * Mirrors the browser localStorage cache (PREFERRED_COMPACTION_MODEL_KEY).
+   */
+  preferredCompactionModel?: string;
+
   /** Default model + thinking overrides per agentId (applies to UI agents and subagents). */
   agentAiDefaults?: AgentAiDefaults;
   /** @deprecated Legacy per-subagent default model + thinking overrides. */

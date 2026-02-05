@@ -9,9 +9,7 @@ import { migrateGatewayModel } from "./useGatewayModels";
 import { isValidProvider } from "@/common/constants/providers";
 import { isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-
-const HIDDEN_MODELS_KEY = "hidden-models";
-const DEFAULT_MODEL_KEY = "model-default";
+import { DEFAULT_MODEL_KEY, HIDDEN_MODELS_KEY } from "@/common/constants/storage";
 
 const BUILT_IN_MODELS: string[] = Object.values(KNOWN_MODELS).map((m) => m.id);
 const BUILT_IN_MODEL_SET = new Set<string>(BUILT_IN_MODELS);
@@ -74,12 +72,37 @@ export function useModelsFromSettings() {
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
   const { api } = useAPI();
+
+  const persistModelPrefs = useCallback(
+    (patch: { defaultModel?: string; hiddenModels?: string[] }) => {
+      if (!api?.config?.updateModelPreferences) {
+        return;
+      }
+
+      api.config.updateModelPreferences(patch).catch(() => {
+        // Best-effort only; startup seeding will heal the cache next time.
+      });
+    },
+    [api]
+  );
   const { config, refresh } = useProvidersConfig();
 
   const [defaultModel, setDefaultModel] = usePersistedState<string>(
     DEFAULT_MODEL_KEY,
     WORKSPACE_DEFAULTS.model,
     { listener: true }
+  );
+
+  const setDefaultModelAndPersist = useCallback(
+    (next: string | ((prev: string) => string)) => {
+      setDefaultModel((prev) => {
+        const resolved = typeof next === "function" ? next(prev) : next;
+        const canonical = migrateGatewayModel(resolved).trim();
+        persistModelPrefs({ defaultModel: canonical });
+        return canonical;
+      });
+    },
+    [persistModelPrefs, setDefaultModel]
   );
 
   const [hiddenModels, setHiddenModels] = usePersistedState<string[]>(HIDDEN_MODELS_KEY, [], {
@@ -142,9 +165,18 @@ export function useModelsFromSettings() {
       if (!canonical) {
         return;
       }
-      setHiddenModels((prev) => (prev.includes(canonical) ? prev : [...prev, canonical]));
+
+      setHiddenModels((prev) => {
+        if (prev.includes(canonical)) {
+          return prev;
+        }
+
+        const nextHiddenModels = [...prev, canonical];
+        persistModelPrefs({ hiddenModels: nextHiddenModels });
+        return nextHiddenModels;
+      });
     },
-    [setHiddenModels]
+    [persistModelPrefs, setHiddenModels]
   );
 
   const unhideModel = useCallback(
@@ -153,9 +185,18 @@ export function useModelsFromSettings() {
       if (!canonical) {
         return;
       }
-      setHiddenModels((prev) => prev.filter((m) => m !== canonical));
+
+      setHiddenModels((prev) => {
+        const nextHiddenModels = prev.filter((m) => m !== canonical);
+        if (nextHiddenModels.length === prev.length) {
+          return prev;
+        }
+
+        persistModelPrefs({ hiddenModels: nextHiddenModels });
+        return nextHiddenModels;
+      });
     },
-    [setHiddenModels]
+    [persistModelPrefs, setHiddenModels]
   );
 
   return {
@@ -166,6 +207,6 @@ export function useModelsFromSettings() {
     hideModel,
     unhideModel,
     defaultModel,
-    setDefaultModel,
+    setDefaultModel: setDefaultModelAndPersist,
   };
 }

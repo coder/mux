@@ -275,6 +275,20 @@ export function getLastRuntimeConfigKey(projectPath: string): string {
 }
 
 /**
+ * Get the localStorage key for the default model (global).
+ *
+ * Note: This is used as a fallback when creating new workspaces.
+ * Format: "model-default"
+ */
+export const DEFAULT_MODEL_KEY = "model-default";
+
+/**
+ * Get the localStorage key for the hidden models list (global).
+ * Format: "hidden-models"
+ */
+export const HIDDEN_MODELS_KEY = "hidden-models";
+
+/**
  * Get the localStorage key for the preferred compaction model (global)
  * Format: "preferredCompactionModel"
  */

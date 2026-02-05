@@ -28,8 +28,11 @@ import {
   getWorkspaceNameStateKey,
   migrateWorkspaceStorage,
   AGENT_AI_DEFAULTS_KEY,
+  DEFAULT_MODEL_KEY,
   GATEWAY_ENABLED_KEY,
   GATEWAY_MODELS_KEY,
+  HIDDEN_MODELS_KEY,
+  PREFERRED_COMPACTION_MODEL_KEY,
   SELECTED_WORKSPACE_KEY,
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
@@ -37,6 +40,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
   readPersistedState,
+  readPersistedString,
   updatePersistedState,
   usePersistedState,
 } from "@/browser/hooks/usePersistedState";
@@ -397,6 +401,17 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           updatePersistedState(GATEWAY_MODELS_KEY, cfg.muxGatewayModels);
         }
 
+        // Seed global model preferences from backend so switching ports doesn't reset the UI.
+        if (cfg.defaultModel !== undefined) {
+          updatePersistedState(DEFAULT_MODEL_KEY, cfg.defaultModel);
+        }
+        if (cfg.hiddenModels !== undefined) {
+          updatePersistedState(HIDDEN_MODELS_KEY, cfg.hiddenModels);
+        }
+        if (cfg.preferredCompactionModel !== undefined) {
+          updatePersistedState(PREFERRED_COMPACTION_MODEL_KEY, cfg.preferredCompactionModel);
+        }
+
         // One-time best-effort migration: if the backend doesn't have gateway prefs yet,
         // persist non-default localStorage values so future port changes keep them.
         if (api.config.updateMuxGatewayPrefs) {
@@ -416,6 +431,50 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
               .catch(() => {
                 // Best-effort only.
               });
+          }
+        }
+
+        // One-time best-effort migration: if the backend doesn't have model prefs yet,
+        // persist non-default localStorage values so future port changes keep them.
+        if (api.config.updateModelPreferences) {
+          const localDefaultModel = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
+          const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
+          const localPreferredCompactionModel = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
+
+          const patch: {
+            defaultModel?: string;
+            hiddenModels?: string[];
+            preferredCompactionModel?: string;
+          } = {};
+
+          if (
+            cfg.defaultModel === undefined &&
+            typeof localDefaultModel === "string" &&
+            localDefaultModel.trim()
+          ) {
+            patch.defaultModel = localDefaultModel;
+          }
+
+          if (
+            cfg.hiddenModels === undefined &&
+            Array.isArray(localHiddenModels) &&
+            localHiddenModels.length > 0
+          ) {
+            patch.hiddenModels = localHiddenModels;
+          }
+
+          if (
+            cfg.preferredCompactionModel === undefined &&
+            typeof localPreferredCompactionModel === "string" &&
+            localPreferredCompactionModel.trim()
+          ) {
+            patch.preferredCompactionModel = localPreferredCompactionModel;
+          }
+
+          if (Object.keys(patch).length > 0) {
+            api.config.updateModelPreferences(patch).catch(() => {
+              // Best-effort only.
+            });
           }
         }
       })
