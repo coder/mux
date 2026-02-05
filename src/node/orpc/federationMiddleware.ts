@@ -79,35 +79,34 @@ function wrapAsyncIterable(params: {
   iterable: AsyncIterable<unknown>;
   mapValue: (value: unknown) => unknown;
   abortController: AbortController;
-}): AsyncIterable<unknown> {
+}): AsyncIteratorObject<unknown, unknown, void> {
+  const iterator = params.iterable[Symbol.asyncIterator]();
+
+  const end = async (value: unknown) => {
+    // Best-effort: abort the underlying HTTP stream if the local subscription ends early.
+    params.abortController.abort();
+    await iterator.return?.(value);
+  };
+
   return {
+    async next() {
+      const result = await iterator.next();
+      if (result.done) {
+        return result;
+      }
+
+      return { done: false as const, value: params.mapValue(result.value) };
+    },
+    async return(value?: unknown) {
+      await end(value);
+      return { done: true as const, value };
+    },
+    async throw(error?: unknown) {
+      await end(undefined);
+      throw error;
+    },
     [Symbol.asyncIterator]() {
-      const iterator = params.iterable[Symbol.asyncIterator]();
-
-      const end = async (value: unknown) => {
-        // Best-effort: abort the underlying HTTP stream if the local subscription ends early.
-        params.abortController.abort();
-        await iterator.return?.(value);
-      };
-
-      return {
-        async next() {
-          const result = await iterator.next();
-          if (result.done) {
-            return result;
-          }
-
-          return { done: false as const, value: params.mapValue(result.value) };
-        },
-        async return(value) {
-          await end(value);
-          return { done: true as const, value };
-        },
-        async throw(error) {
-          await end(undefined);
-          throw error;
-        },
-      };
+      return this;
     },
   };
 }
