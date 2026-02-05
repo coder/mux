@@ -499,6 +499,24 @@ export function ProvidersSection() {
   };
 
   const [muxGatewayLoginStatus, setMuxGatewayLoginStatus] = useState<MuxGatewayLoginStatus>("idle");
+  const cancelCodexOauth = () => {
+    codexOauthAttemptRef.current++;
+
+    if (api) {
+      if (codexOauthDesktopFlowId) {
+        void api.codexOauth.cancelDesktopFlow({ flowId: codexOauthDesktopFlowId });
+      }
+      if (codexOauthDeviceFlow) {
+        void api.codexOauth.cancelDeviceFlow({ flowId: codexOauthDeviceFlow.flowId });
+      }
+    }
+
+    setCodexOauthDesktopFlowId(null);
+    setCodexOauthDeviceFlow(null);
+    setCodexOauthStatus("idle");
+    setCodexOauthError(null);
+  };
+
   const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
 
   const muxGatewayApplyDefaultModelsOnSuccessRef = useRef(false);
@@ -1203,6 +1221,12 @@ export function ProvidersSection() {
                       >
                         Connect (Device)
                       </Button>
+
+                      {codexOauthLoginInProgress && (
+                        <Button variant="secondary" size="sm" onClick={cancelCodexOauth}>
+                          Cancel
+                        </Button>
+                      )}
 
                       {codexOauthIsConnected && (
                         <Button
