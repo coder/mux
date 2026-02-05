@@ -226,7 +226,6 @@ export async function processSlashCommand(
 
       setInput("");
       setPreferredModel(canonicalModel);
-      onModelChange?.(canonicalModel);
       trackCommandUsed("model");
       setToast({
         id: Date.now().toString(),
