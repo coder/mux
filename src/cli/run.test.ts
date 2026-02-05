@@ -131,7 +131,7 @@ describe("mux CLI", () => {
     test("shows default model as opus", async () => {
       const result = await runCli(["run", "--help"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("anthropic:claude-opus-4-5");
+      expect(result.stdout).toContain("anthropic:claude-opus-4-6");
     });
 
     test("no message shows error", async () => {

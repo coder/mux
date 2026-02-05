@@ -29,7 +29,7 @@ interface KnownModel extends KnownModelDefinition {
 const MODEL_DEFINITIONS = {
   OPUS: {
     provider: "anthropic",
-    providerModelId: "claude-opus-4-5",
+    providerModelId: "claude-opus-4-6",
     aliases: ["opus"],
     warm: true,
   },

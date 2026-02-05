@@ -44,6 +44,11 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   //   mux-gateway:openai/gpt-5.2-pro -> openai/gpt-5.2-pro -> gpt-5.2-pro
   const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
 
+  // Claude Opus 4.6 supports 5 levels including xhigh (mapped to "max" effort)
+  if (withoutProviderNamespace.includes("opus-4-6")) {
+    return ["off", "low", "medium", "high", "xhigh"];
+  }
+
   // GPT-5.1-Codex-Max supports 5 reasoning levels including xhigh (Extra High)
   if (
     withoutProviderNamespace.startsWith("gpt-5.1-codex-max") ||

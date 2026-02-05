@@ -80,21 +80,21 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
 };
 
 /**
- * Anthropic Opus 4.5 effort parameter mapping
+ * Anthropic effort parameter mapping (Opus 4.5+)
  *
- * The effort parameter is a new feature ONLY available for Claude Opus 4.5.
- * It controls how much computational work the model applies to each task.
+ * The effort parameter controls how much computational work the model applies.
+ * Available on Opus 4.5 and Opus 4.6.
  *
+ * Note: Opus 4.6 also supports a "max" effort level (mapped from xhigh in
+ * providerOptions.ts) but it's not in this base mapping since only 4.6 supports it.
  * Other Anthropic models must use the thinking.budgetTokens approach instead.
- *
- * @see https://www.anthropic.com/news/claude-opus-4-5
  */
 export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high"> = {
   off: "low",
   low: "low",
   medium: "medium",
   high: "high",
-  xhigh: "high", // Fallback to high - Anthropic doesn't support xhigh
+  xhigh: "high", // Opus 4.6 overrides this to "max" in providerOptions.ts
 };
 
 /**
