@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import { SplashScreen } from "@/browser/components/splashScreens/SplashScreen";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
@@ -7,12 +8,6 @@ import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatew
 function getServerAuthToken(): string | null {
   const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
   return urlToken?.length ? urlToken : getStoredAuthToken();
-}
-
-function getBackendBaseUrl(): string {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
-  // @ts-ignore - import.meta is available in Vite
-  return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
 }
 
 export function MuxGatewaySessionExpiredDialog() {
@@ -81,8 +76,8 @@ export function MuxGatewaySessionExpiredDialog() {
         throw new Error("Popup blocked - please allow popups and try again.");
       }
 
-      const backendBaseUrl = getBackendBaseUrl();
-      const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
+      const backendBaseUrl = getBrowserBackendBaseUrl();
+      const startUrl = new URL(`${backendBaseUrl}/auth/mux-gateway/start`);
       const authToken = getServerAuthToken();
 
       let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };

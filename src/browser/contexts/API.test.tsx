@@ -117,6 +117,20 @@ describe("API reconnection", () => {
     globalThis.document = undefined as unknown as Document;
   });
 
+  test("constructs WebSocket URL with app proxy prefix", () => {
+    window.location.href = "https://coder.example.com/@u/ws/apps/mux/?token=abc";
+
+    render(
+      <APIProvider createWebSocket={createMockWebSocket}>
+        <APIStateObserver onState={() => undefined} />
+      </APIProvider>
+    );
+
+    const ws1 = MockWebSocket.lastInstance();
+    expect(ws1).toBeDefined();
+    expect(ws1!.url).toBe("wss://coder.example.com/@u/ws/apps/mux/orpc/ws?token=abc");
+  });
+
   test("reconnects on close without showing auth_required when previously connected", async () => {
     const states: string[] = [];
 
