@@ -1,5 +1,5 @@
 import { describe, it, expect, mock } from "bun:test";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 import { createBashTool } from "./bash";
 import { createTaskAwaitTool } from "./task_await";
@@ -9,7 +9,7 @@ import type { BackgroundProcessManager } from "@/node/services/backgroundProcess
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { TaskService } from "@/node/services/taskService";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

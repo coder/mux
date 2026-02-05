@@ -45,7 +45,7 @@ export const ModelSettings: React.FC<ModelSettingsProps> = (props) => {
       "1M",
       options.anthropic?.use1MContext ?? false,
       (checked) => setAnthropicOptions({ ...options.anthropic, use1MContext: checked }),
-      "Enable 1M token context window (beta feature for Claude Sonnet 4/4.5)"
+      "Enable 1M token context window (beta feature for Claude Sonnet 4/4.5 and Opus 4.6)"
     );
   }
 

@@ -7,12 +7,12 @@ import { isMuxMdUrl, parseMuxMdUrl, uploadToMuxMd, deleteFromMuxMd } from "@/com
 import * as fs from "fs/promises";
 import * as path from "path";
 
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 // ToolCallOptions stub for testing
 
 const itIntegration = process.env.TEST_INTEGRATION === "1" ? it : it.skip;
-const toolCallOptions: ToolCallOptions = {
+const toolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

@@ -12,6 +12,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   ANTHROPIC_EFFORT,
+  ANTHROPIC_EFFORT_MAX,
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
@@ -99,14 +100,12 @@ export function buildProviderOptions(
     const supportsEffort = isOpus45 || isOpus46;
 
     if (supportsEffort) {
-      // Opus 4.6 supports "max" effort level (mapped from xhigh); 4.5 caps at "high"
-      const effortLevel: string =
-        isOpus46 && effectiveThinking === "xhigh" ? "max" : ANTHROPIC_EFFORT[effectiveThinking];
-
       if (isOpus46) {
         // Opus 4.6: Use adaptive thinking (recommended) + effort parameter.
         // Adaptive thinking lets Claude dynamically decide when and how much to think.
         // budget_tokens / type:"enabled" are deprecated on Opus 4.6.
+        // Opus 4.6 supports "max" effort level (mapped from xhigh in ANTHROPIC_EFFORT_MAX)
+        const effortLevel = ANTHROPIC_EFFORT_MAX[effectiveThinking];
         log.debug("buildProviderOptions: Anthropic Opus 4.6 config", {
           effort: effortLevel,
           thinkingLevel: effectiveThinking,
@@ -116,15 +115,16 @@ export function buildProviderOptions(
           anthropic: {
             disableParallelToolUse: false,
             sendReasoning: true,
-            // SDK types haven't added "adaptive" yet, but the Anthropic API accepts it for Opus 4.6
-            thinking: { type: "adaptive" as "enabled" },
-            // Cast: SDK types haven't added "max" yet, but the API accepts it for Opus 4.6
-            effort: effortLevel as AnthropicProviderOptions["effort"],
+            thinking: { type: "adaptive" },
+            effort: effortLevel,
           },
         };
         log.debug("buildProviderOptions: Returning Anthropic Opus 4.6 options", options);
         return options;
       }
+
+      // Opus 4.5: caps at "high" (no "max" support)
+      const effortLevel = ANTHROPIC_EFFORT[effectiveThinking];
 
       // Opus 4.5: Use effort parameter AND optionally thinking for visible reasoning
       // - "off" or "low" → effort: "low", no thinking (fast, no visible reasoning for off)

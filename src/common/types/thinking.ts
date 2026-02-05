@@ -94,21 +94,39 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
 };
 
 /**
+ * Anthropic effort type - matches SDK's AnthropicProviderOptions["effort"]
+ */
+export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
+
+/**
  * Anthropic effort parameter mapping (Opus 4.5+)
  *
  * The effort parameter controls how much computational work the model applies.
  * Available on Opus 4.5 and Opus 4.6.
  *
- * Note: Opus 4.6 also supports a "max" effort level (mapped from xhigh in
- * providerOptions.ts) but it's not in this base mapping since only 4.6 supports it.
- * Other Anthropic models must use the thinking.budgetTokens approach instead.
+ * - Opus 4.5 supports: low, medium, high
+ * - Opus 4.6 supports: low, medium, high, max
+ *
+ * This base mapping uses "high" as the ceiling for xhigh. The providerOptions
+ * builder upgrades to "max" specifically for Opus 4.6.
  */
-export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high"> = {
+export const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {
   off: "low",
   low: "low",
   medium: "medium",
   high: "high",
   xhigh: "high", // Opus 4.6 overrides this to "max" in providerOptions.ts
+};
+
+/**
+ * Anthropic effort mapping specifically for Opus 4.6+ that supports "max" effort
+ */
+export const ANTHROPIC_EFFORT_MAX: Record<ThinkingLevel, AnthropicEffortLevel> = {
+  off: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "max",
 };
 
 /**

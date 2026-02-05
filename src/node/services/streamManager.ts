@@ -466,7 +466,7 @@ export class StreamManager extends EventEmitter {
   }> {
     // Helper: wrap promise with independent timeout + error handling
     // Each promise resolves independently - one failure doesn't mask others
-    const withTimeout = <T>(promise: Promise<T>): Promise<T | undefined> =>
+    const withTimeout = <T>(promise: PromiseLike<T>): Promise<T | undefined> =>
       Promise.race([
         promise,
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),

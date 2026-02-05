@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { execSync } from "node:child_process";
 
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import {
@@ -15,7 +15,7 @@ import {
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getTestDeps } from "@/node/services/tools/testHelpers";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

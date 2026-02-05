@@ -90,7 +90,6 @@ export async function generateWorkspaceIdentity(
       const result = await generateObject({
         model: modelResult.data,
         schema: workspaceIdentitySchema,
-        mode: "json",
         prompt: `Generate a workspace name and title for this development task:
 
 "${message}"

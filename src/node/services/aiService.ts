@@ -1874,7 +1874,7 @@ export class AIService extends EventEmitter {
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const rawModelMessages = convertToModelMessages(messagesWithToolMediaExtracted as any, {
+      const rawModelMessages = await convertToModelMessages(messagesWithToolMediaExtracted as any, {
         // Drop unfinished tool calls (input-streaming/input-available) so downstream
         // transforms only see tool calls that actually produced outputs.
         ignoreIncompleteToolCalls: true,
