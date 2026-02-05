@@ -105,8 +105,11 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
           const res = await api.workspace.getPlanContent({ workspaceId });
           if (res.success) {
             planSnapshot = { path: res.data.path, content: res.data.content };
+          } else {
+            console.warn("Failed to read plan content for transcript sharing:", res.error);
           }
-        } catch {
+        } catch (err) {
+          console.warn("Failed to read plan content for transcript sharing:", err);
           // Ignore failures - plan content is optional for sharing.
         }
       }
