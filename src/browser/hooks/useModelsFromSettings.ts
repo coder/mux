@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { readPersistedString, usePersistedState } from "./usePersistedState";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { isCodexOauthRequiredModelId } from "@/common/constants/codexOAuth";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
@@ -122,7 +123,14 @@ export function useModelsFromSettings() {
   }, [config, hiddenModels, effectivePolicy]);
 
   const models = useMemo(() => {
-    const next = filterHiddenModels(getSuggestedModels(config), hiddenModels);
+    const suggested = filterHiddenModels(getSuggestedModels(config), hiddenModels);
+
+    // Codex OAuth-required models should not be selectable until the user connects ChatGPT.
+    const codexOauthSet = config?.openai?.codexOauthSet === true;
+    const next = codexOauthSet
+      ? suggested
+      : suggested.filter((modelId) => !isCodexOauthRequiredModelId(modelId));
+
     return effectivePolicy ? next.filter((m) => isModelAllowedByPolicy(effectivePolicy, m)) : next;
   }, [config, hiddenModels, effectivePolicy]);
 

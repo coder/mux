@@ -106,8 +106,10 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
 export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>(CODEX_OAUTH_ALLOWED_MODELS);
 
 function normalizeCodexOauthModelId(modelId: string): string {
-  // Historically we treat OpenAI model IDs as "provider:model" strings.
-  // For convenience, accept bare provider model IDs (e.g. "gpt-5.2-codex").
+  // Most UI code uses the canonical provider:model format.
+  //
+  // Some settings store the provider model id without prefix, so accept both to
+  // keep callers simple.
   if (modelId.includes(":")) {
     return modelId;
   }
