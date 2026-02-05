@@ -69,14 +69,21 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     useEffect(() => {
       if (!vimEnabled) {
         setVimMode("insert");
+        setVisualAnchor(null);
+        setDesiredColumn(null);
+        setCount(null);
+        setPending(null);
+        cursorRef.current = 0;
       }
     }, [vimEnabled]);
 
     const [desiredColumn, setDesiredColumn] = useState<number | null>(null);
     const [count, setCount] = useState<number | null>(null);
     const [pending, setPending] = useState<vim.Pending | null>(null);
+    const [visualAnchor, setVisualAnchor] = useState<number | null>(null);
     const yankBufferRef = useRef<string>("");
     const lastFindRef = useRef<vim.LastFind | null>(null);
+    const cursorRef = useRef<number>(0);
 
     useAutoResizeTextarea(textareaRef, value, 50);
 
@@ -87,19 +94,46 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       return { start: el.selectionStart, end: el.selectionEnd };
     };
 
-    const setCursor = (pos: number, mode?: vim.VimMode) => {
+    const applyDomSelection = (next: Pick<vim.VimState, "cursor" | "mode" | "visualAnchor">) => {
       const el = textareaRef.current!;
-      const p = Math.max(0, Math.min(value.length, pos));
-      el.selectionStart = p;
-      // In normal mode, show a 1-char selection (block cursor effect) when possible
-      // Show cursor if there's a character under it (including at end of line before newline)
-      const effectiveMode = mode ?? vimMode;
-      if (effectiveMode === "normal" && p < value.length) {
-        el.selectionEnd = p + 1;
-      } else {
+      const domText = el.value;
+      const clamp = (pos: number) => Math.max(0, Math.min(domText.length, pos));
+
+      cursorRef.current = next.cursor;
+
+      if (next.mode === "insert") {
+        const p = clamp(next.cursor);
+        el.selectionStart = p;
         el.selectionEnd = p;
+        return;
       }
-      setDesiredColumn(null);
+
+      if (next.mode === "normal") {
+        const p = clamp(next.cursor);
+        el.selectionStart = p;
+        // In normal mode, show a 1-char selection (block cursor effect) when possible.
+        // Show cursor if there's a character under it (including at end of line before newline).
+        el.selectionEnd = p < domText.length ? p + 1 : p;
+        return;
+      }
+
+      const range = vim.getVisualRange({
+        text: domText,
+        cursor: next.cursor,
+        mode: next.mode,
+        visualAnchor: next.visualAnchor,
+      });
+
+      if (!range) {
+        // Shouldn't happen, but avoid setting an invalid selection.
+        const p = clamp(next.cursor);
+        el.selectionStart = p;
+        el.selectionEnd = p;
+        return;
+      }
+
+      el.selectionStart = clamp(range.start);
+      el.selectionEnd = clamp(range.end);
     };
 
     const handleKeyDownInternal = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -113,10 +147,18 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       if (suppressSet.has(e.key)) return;
 
       // Build current Vim state
+      const selection = withSelection();
+      const cursor =
+        vimMode === "visual" || vimMode === "visualLine" ? cursorRef.current : selection.start;
+
+      // Keep the cursor ref in sync for mode transitions (normal -> visual, etc.).
+      cursorRef.current = cursor;
+
       const vimState: vim.VimState = {
         text: value,
-        cursor: withSelection().start,
+        cursor,
         mode: vimMode,
+        visualAnchor,
         yankBuffer: yankBufferRef.current,
         desiredColumn,
         lastFind: lastFindRef.current,
@@ -153,11 +195,17 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       // Apply new state to React
       const newState = result.newState;
 
+      // Cursor position is required in visual mode even though the DOM selection is a range.
+      cursorRef.current = newState.cursor;
+
       if (newState.text !== value) {
         onChange(newState.text);
       }
       if (newState.mode !== vimMode) {
         setVimMode(newState.mode);
+      }
+      if (newState.visualAnchor !== visualAnchor) {
+        setVisualAnchor(newState.visualAnchor);
       }
       if (newState.yankBuffer !== yankBufferRef.current) {
         yankBufferRef.current = newState.yankBuffer;
@@ -175,13 +223,14 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         setPending(newState.pending);
       }
 
-      // Set cursor after React state updates (important for mode transitions)
-      // Pass the new mode explicitly to avoid stale closure issues
-      setTimeout(() => setCursor(newState.cursor, newState.mode), 0);
+      // Apply DOM selection after React state updates (important for mode transitions)
+      setTimeout(() => applyDomSelection(newState), 0);
     };
 
     // Build mode indicator content
-    const showVimMode = vimEnabled && vimMode === "normal";
+    const showVimMode = vimEnabled && vimMode !== "insert";
+    const modeLabel =
+      vimMode === "normal" ? "normal" : vimMode === "visual" ? "visual" : "visual line";
     const pendingCommand = showVimMode ? vim.formatPendingCommand(pending, count) : "";
 
     return (
@@ -222,7 +271,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
                     for full command reference.
                   </TooltipContent>
                 </Tooltip>
-                <span className="uppercase">normal</span>
+                <span className="uppercase">{modeLabel}</span>
                 {pendingCommand && <span>{pendingCommand}</span>}
               </>
             )}
@@ -258,9 +307,9 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               isEditing
                 ? "bg-editing-mode-alpha border-editing-mode focus:border-editing-mode"
                 : "bg-dark border-border-light focus:border-[var(--focus-border-color)]",
-              vimMode === "normal"
-                ? "caret-transparent selection:bg-white/50"
-                : "caret-current selection:bg-selection",
+              vimMode === "insert"
+                ? "caret-current selection:bg-selection"
+                : "caret-transparent selection:bg-white/50",
               rest.className
             )}
           />
