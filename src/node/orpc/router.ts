@@ -2156,6 +2156,10 @@ export const router = (authToken?: string) => {
           }
           isReplaying = false;
 
+          // Avoid retaining replay delta keys (including delta text) for the lifetime of the subscription.
+          replayedDeltaKeyCounts.clear();
+          bufferedLiveStreamMessages.length = 0;
+
           // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
           // Client uses this to detect stalled connections vs. intentionally idle streams.
           const HEARTBEAT_INTERVAL_MS = 5_000;
