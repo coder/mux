@@ -154,6 +154,12 @@ interface WorkspaceStreamInfo {
   messageId: string;
   token: StreamToken;
   startTime: number;
+
+  // Used to ensure part timestamps are strictly monotonic, even when multiple deltas land in the
+  // same millisecond. This avoids collisions in reconnect replay dedupe logic which keys off of
+  // (messageId, timestamp, delta).
+  lastPartTimestamp: number;
+
   model: string;
   initialMetadata?: Partial<MuxMetadata>;
   request: StreamRequestConfig;
@@ -191,6 +197,18 @@ interface WorkspaceStreamInfo {
   lastStepUsage?: LanguageModelV2Usage;
   // Last step's provider metadata (for context window cache display)
   lastStepProviderMetadata?: Record<string, unknown>;
+}
+
+// Ensure per-stream part timestamps are strictly monotonic.
+//
+// Date.now() is millisecond-granularity, so two distinct chunks with identical text emitted in the
+// same millisecond can otherwise collide on (timestamp, delta) during reconnect replay buffering.
+function nextPartTimestamp(streamInfo: WorkspaceStreamInfo): number {
+  const now = Date.now();
+  const last = streamInfo.lastPartTimestamp;
+  const timestamp = now <= last ? last + 1 : now;
+  streamInfo.lastPartTimestamp = timestamp;
+  return timestamp;
 }
 
 /**
@@ -978,6 +996,7 @@ export class StreamManager extends EventEmitter {
       throw error;
     }
 
+    const startTime = Date.now();
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
       streamResult,
@@ -985,7 +1004,8 @@ export class StreamManager extends EventEmitter {
       abortController,
       messageId,
       token: streamToken,
-      startTime: Date.now(),
+      startTime,
+      lastPartTimestamp: startTime,
       model: modelString,
       initialMetadata,
       didRetryPreviousResponseIdAtStep: false,
@@ -1068,7 +1088,7 @@ export class StreamManager extends EventEmitter {
       toolCallId,
       toolName,
       result: output,
-      timestamp: Date.now(),
+      timestamp: nextPartTimestamp(streamInfo),
     } as ToolCallEndEvent);
   }
 
@@ -1301,7 +1321,7 @@ export class StreamManager extends EventEmitter {
                 const textPart = {
                   type: "text" as const,
                   text: deltaText,
-                  timestamp: Date.now(),
+                  timestamp: nextPartTimestamp(streamInfo),
                 };
                 await this.appendPartAndEmit(workspaceId, streamInfo, textPart, true);
                 break;
@@ -1334,7 +1354,7 @@ export class StreamManager extends EventEmitter {
                       messageId: streamInfo.messageId,
                       delta: "",
                       tokens: 0,
-                      timestamp: Date.now(),
+                      timestamp: nextPartTimestamp(streamInfo),
                       signature,
                     });
                     void this.schedulePartialWrite(workspaceId, streamInfo);
@@ -1347,7 +1367,7 @@ export class StreamManager extends EventEmitter {
                 const newPart = {
                   type: "reasoning" as const,
                   text: delta,
-                  timestamp: Date.now(),
+                  timestamp: nextPartTimestamp(streamInfo),
                   signature, // May be undefined, will be filled by subsequent signature delta
                   providerOptions: signature ? { anthropic: { signature } } : undefined,
                 };
@@ -1386,7 +1406,7 @@ export class StreamManager extends EventEmitter {
                   state: "input-available" as const,
                   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                   input: part.input,
-                  timestamp: Date.now(),
+                  timestamp: nextPartTimestamp(streamInfo),
                 };
 
                 // Emit using shared logic (ensures replay consistency)
