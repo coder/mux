@@ -178,6 +178,7 @@ const TreeNodeContent: React.FC<{
   const isDeletedFile = changeType === "deleted";
   const isRenamedFile = changeType === "renamed" && !!node.stats?.oldPath;
   const oldFileName = node.stats?.oldPath?.split("/").pop() ?? node.stats?.oldPath ?? "";
+  const shouldShowRenameArrow = isRenamedFile && oldFileName !== fallbackFileName;
 
   // Compute read status for files and directories
   let isFullyRead = false;
@@ -285,8 +286,8 @@ const TreeNodeContent: React.FC<{
             >
               {fileLabelMode === "path" ? (
                 <span className="flex min-w-0 items-baseline gap-2">
-                  <span className="shrink-0">
-                    {isRenamedFile ? (
+                  <span className={cn("min-w-0 truncate", fileDirPath && "max-w-[60%]")}>
+                    {shouldShowRenameArrow ? (
                       <>
                         <span className="text-muted">{oldFileName}</span>
                         <span className="text-muted">{" -> "}</span>
@@ -300,7 +301,7 @@ const TreeNodeContent: React.FC<{
                     <span className="text-muted min-w-0 flex-1 truncate">{fileDirPath}</span>
                   ) : null}
                 </span>
-              ) : isRenamedFile ? (
+              ) : shouldShowRenameArrow ? (
                 <>
                   <span className="text-muted">{oldFileName}</span>
                   <span className="text-muted">{" -> "}</span>
