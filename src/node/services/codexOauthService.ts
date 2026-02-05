@@ -848,9 +848,11 @@ export class CodexOauthService {
     }
   }
 
-  private async finishDeviceFlow(flowId: string, result: Result<void, string>): Promise<void> {
+  private finishDeviceFlow(flowId: string, result: Result<void, string>): Promise<void> {
     const flow = this.deviceFlows.get(flowId);
-    if (!flow || flow.settled) return;
+    if (!flow || flow.settled) {
+      return Promise.resolve();
+    }
 
     flow.settled = true;
     clearTimeout(flow.timeout);
@@ -866,6 +868,8 @@ export class CodexOauthService {
         this.deviceFlows.delete(flowId);
       }, COMPLETED_FLOW_TTL_MS);
     }
+
+    return Promise.resolve();
   }
 }
 

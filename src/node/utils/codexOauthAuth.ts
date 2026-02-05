@@ -78,9 +78,8 @@ export function extractChatGptAccountIdFromClaims(claims: Record<string, unknown
   // Known patterns used by OpenAI/Auth0-style JWTs.
   const openAiAuth = claims["https://api.openai.com/auth"];
   if (isPlainObject(openAiAuth)) {
-    const candidate = (openAiAuth.chatgpt_account_id ??
-      openAiAuth.account_id ??
-      openAiAuth.accountId) as unknown;
+    const candidate =
+      openAiAuth.chatgpt_account_id ?? openAiAuth.account_id ?? openAiAuth.accountId;
     if (typeof candidate === "string" && candidate) {
       return candidate;
     }
