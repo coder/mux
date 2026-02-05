@@ -181,6 +181,82 @@ describe("buildChatJsonlForSharing", () => {
     expect((originalOutput as Record<string, unknown>).planContent).toBeUndefined();
   });
 
+  it("preserves propose_plan output (with planContent) while stripping other tool outputs when includeToolOutput=false", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-plan",
+            toolName: "propose_plan",
+            state: "output-available",
+            input: { title: "My Plan" },
+            output: { success: true, planPath: "/tmp/plan.md", message: "Plan saved" },
+          },
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-bash",
+            toolName: "bash",
+            state: "output-available",
+            input: { script: "echo hi" },
+            output: { success: true, output: "hi" },
+          },
+        ],
+      },
+    ];
+
+    const planSnapshot = { path: "/tmp/plan.md", content: "# My Plan\n\n- Step 1" };
+
+    const jsonl = buildChatJsonlForSharing(messages, {
+      includeToolOutput: false,
+      planSnapshot,
+    });
+
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+
+    const planPart = parsed.parts[0];
+    if (planPart.type !== "dynamic-tool" || planPart.state !== "output-available") {
+      throw new Error("Expected completed propose_plan tool part");
+    }
+
+    const planOutput = planPart.output;
+    if (planOutput === null || typeof planOutput !== "object") {
+      throw new Error("Expected propose_plan output object");
+    }
+
+    expect((planOutput as Record<string, unknown>).planContent).toBe(planSnapshot.content);
+
+    const strippedPart = parsed.parts[1];
+    if (strippedPart.type !== "dynamic-tool") {
+      throw new Error("Expected tool part");
+    }
+
+    expect(strippedPart.state).toBe("input-available");
+    expect(strippedPart).not.toHaveProperty("output");
+
+    // Original messages should be unchanged (no mutation during injection/stripping)
+    const originalPlanPart = messages[0].parts[0];
+    if (originalPlanPart.type !== "dynamic-tool" || originalPlanPart.state !== "output-available") {
+      throw new Error("Expected completed propose_plan tool part");
+    }
+
+    const originalPlanOutput = originalPlanPart.output;
+    if (originalPlanOutput === null || typeof originalPlanOutput !== "object") {
+      throw new Error("Expected propose_plan output object");
+    }
+
+    expect((originalPlanOutput as Record<string, unknown>).planContent).toBeUndefined();
+
+    const originalStrippedPart = messages[0].parts[1];
+    if (originalStrippedPart.type !== "dynamic-tool") {
+      throw new Error("Expected tool part");
+    }
+
+    expect(originalStrippedPart.state).toBe("output-available");
+    expect(originalStrippedPart).toHaveProperty("output");
+  });
   it("does not overwrite propose_plan planContent when already present", () => {
     const messages: MuxMessage[] = [
       {

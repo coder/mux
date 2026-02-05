@@ -115,6 +115,12 @@ function stripNestedToolCallOutput(call: NestedToolCall): NestedToolCall {
 function stripToolPartOutput(part: MuxToolPart): MuxToolPart {
   const nestedCalls = part.nestedCalls?.map(stripNestedToolCallOutput);
 
+  // Keep propose_plan output even when stripping other tool outputs.
+  // Shared transcripts need the plan content to be portable (mux-md can't read plan files from disk).
+  if (part.toolName === "propose_plan") {
+    return nestedCalls ? { ...part, nestedCalls } : part;
+  }
+
   if (part.state !== "output-available") {
     return nestedCalls ? { ...part, nestedCalls } : part;
   }
@@ -220,11 +226,13 @@ export function buildChatJsonlForSharing(
 
   const includeToolOutput = options.includeToolOutput ?? true;
 
+  const withPlanInlined = options.planSnapshot
+    ? inlinePlanContentForSharing(messages, options.planSnapshot)
+    : messages;
+
   const sanitized = includeToolOutput
-    ? options.planSnapshot
-      ? inlinePlanContentForSharing(messages, options.planSnapshot)
-      : messages
-    : stripToolOutputsForSharing(messages);
+    ? withPlanInlined
+    : stripToolOutputsForSharing(withPlanInlined);
 
   const compacted = compactMessagePartsForSharing(sanitized);
 

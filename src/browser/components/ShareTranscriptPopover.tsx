@@ -100,11 +100,7 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
       const workspaceState = store.getWorkspaceState(workspaceId);
 
       let planSnapshot: { path: string; content: string } | undefined;
-      if (
-        includeToolOutput &&
-        api &&
-        transcriptContainsProposePlanToolCall(workspaceState.muxMessages)
-      ) {
+      if (api && transcriptContainsProposePlanToolCall(workspaceState.muxMessages)) {
         try {
           const res = await api.workspace.getPlanContent({ workspaceId });
           if (res.success) {
@@ -216,7 +212,9 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
               checked={includeToolOutput}
               onCheckedChange={(checked) => setIncludeToolOutput(checked === true)}
             />
-            <span className="text-muted-foreground text-xs">Include tool output</span>
+            <span className="text-muted-foreground text-xs">
+              Include tool output (plans always included)
+            </span>
           </label>
 
           <Button
