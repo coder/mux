@@ -1,7 +1,7 @@
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useThinkingLevel } from "./useThinkingLevel";
 import { useAgent } from "@/browser/contexts/AgentContext";
 import { usePersistedState } from "./usePersistedState";
-import { getDefaultModel } from "./useModelsFromSettings";
 import {
   buildSendMessageOptions,
   normalizeModelPreference,
@@ -9,6 +9,7 @@ import {
   normalizeSystem1ThinkingLevel,
 } from "@/browser/utils/messages/buildSendMessageOptions";
 import {
+  DEFAULT_MODEL_KEY,
   getModelKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
   PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY,
@@ -35,12 +36,22 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
   const [thinkingLevel] = useThinkingLevel();
   const { agentId, disableWorkspaceAgents } = useAgent();
   const { options: providerOptions } = useProviderOptions();
-  const defaultModel = getDefaultModel();
-  const [preferredModel] = usePersistedState<string>(
-    getModelKey(workspaceId),
-    defaultModel, // Default to the Settings default model
-    { listener: true } // Listen for changes from ModelSelector and other sources
+
+  // Subscribe to the global default model preference so backend-seeded values apply
+  // immediately on fresh origins (e.g., when switching ports).
+  const [defaultModelPref] = usePersistedState<string>(
+    DEFAULT_MODEL_KEY,
+    WORKSPACE_DEFAULTS.model,
+    { listener: true }
   );
+  const defaultModel = normalizeModelPreference(defaultModelPref, WORKSPACE_DEFAULTS.model);
+
+  // Workspace-scoped model preference. If unset, fall back to the global default model.
+  // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
+  // initialValue is sticky and would lock in the fallback before startup seeding.
+  const [preferredModel] = usePersistedState<string | null>(getModelKey(workspaceId), null, {
+    listener: true,
+  });
 
   // Subscribe to local override state so toggles apply immediately.
   // If undefined, the backend will apply the PostHog assignment.
