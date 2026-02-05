@@ -28,7 +28,6 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
