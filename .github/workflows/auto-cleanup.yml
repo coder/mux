@@ -28,7 +28,8 @@ jobs:
         run: |
           [ -z "$OPENAI_API_KEY" ] && echo "Skipping (no API key)" && exit 0
 
-          cat .github/prompts/auto-cleanup.md | bunx mux@next run \
+          bunx mux@next run \
             --model openai:gpt-5.2 \
             --thinking xhigh \
-            --service-tier priority
+            --service-tier priority \
+            < .github/prompts/auto-cleanup.md
