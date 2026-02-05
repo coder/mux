@@ -22,6 +22,12 @@ export function formatSendMessageError(error: SendMessageError): FormattedError 
         resolutionHint: `Open Settings → Providers and add an API key for ${error.provider}.`,
       };
 
+    case "oauth_not_connected":
+      return {
+        message: `OAuth not connected for ${error.provider}.`,
+        resolutionHint: `Open Settings → Providers and connect your ${error.provider} account.`,
+      };
+
     case "provider_not_supported":
       return {
         message: `Provider ${error.provider} is not supported yet.`,

@@ -141,6 +141,24 @@ export const createErrorToast = (error: SendMessageErrorType): Toast => {
       };
     }
 
+    case "oauth_not_connected": {
+      const formatted = formatSendMessageError(error);
+      return {
+        id: Date.now().toString(),
+        type: "error",
+        title: "OAuth Not Connected",
+        message: `The ${error.provider} provider requires an OAuth connection to function.`,
+        solution: (
+          <>
+            <SolutionLabel>Fix:</SolutionLabel>
+            {formatted.resolutionHint ?? "Open Settings → Providers and connect your account."}
+            <br />
+            <DocsLink path="/config/providers">mux.coder.com/providers</DocsLink>
+          </>
+        ),
+      };
+    }
+
     case "provider_not_supported": {
       const formatted = formatSendMessageError(error);
       return {

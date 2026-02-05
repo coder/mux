@@ -52,6 +52,7 @@ export function isNonRetryableSendError(error: SendMessageError): boolean {
 
   switch (error.type) {
     case "api_key_not_found": // Missing API key - user must configure
+    case "oauth_not_connected": // Missing OAuth connection - user must connect/sign in
     case "provider_not_supported": // Unsupported provider - user must switch
     case "invalid_model_string": // Bad model format - user must fix
     case "incompatible_workspace": // Workspace from newer mux version - user must upgrade

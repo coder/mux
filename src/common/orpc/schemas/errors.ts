@@ -1,12 +1,15 @@
 import { z } from "zod";
 
 /**
- * Discriminated union for all possible sendMessage errors
- * The frontend is responsible for language and messaging for api_key_not_found and
- * provider_not_supported errors. Other error types include details needed for display.
+ * Discriminated union for all possible sendMessage errors.
+ *
+ * The frontend is responsible for language and messaging for api_key_not_found,
+ * oauth_not_connected, and provider_not_supported errors. Other error types include
+ * details needed for display.
  */
 export const SendMessageErrorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("api_key_not_found"), provider: z.string() }),
+  z.object({ type: z.literal("oauth_not_connected"), provider: z.string() }),
   z.object({ type: z.literal("provider_not_supported"), provider: z.string() }),
   z.object({ type: z.literal("invalid_model_string"), message: z.string() }),
   z.object({ type: z.literal("incompatible_workspace"), message: z.string() }),

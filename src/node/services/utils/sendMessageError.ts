@@ -48,6 +48,13 @@ export const formatSendMessageError = (
         message: `API key not configured for ${error.provider}. Please add your API key in settings.`,
         errorType: "authentication",
       };
+    case "oauth_not_connected":
+      return {
+        message:
+          `OAuth not connected for ${error.provider}. ` +
+          `Please connect your account in Settings → Providers.`,
+        errorType: "authentication",
+      };
     case "provider_not_supported":
       return {
         message: `Provider "${error.provider}" is not supported.`,
