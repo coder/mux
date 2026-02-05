@@ -24,6 +24,24 @@ Vim mode is always enabled. Press **ESC** to enter normal mode from insert mode.
 - Pending commands are shown (e.g., "NORMAL d" when delete is pending)
 - Press **i**, **a**, **I**, **A**, **o**, or **O** to return to insert mode
 
+### Visual Mode
+
+- Visual selection mode for operating on highlighted text
+- Enter with **v** (characterwise) or **V** (linewise)
+- Motions extend the selection (e.g. **h/j/k/l**, **w/b/e**, **0/$**)
+- Press **Esc** to exit visual mode back to normal mode (cursor returns to the start of the selection)
+
+Supported operators in visual mode:
+
+- **d** - Delete selection
+- **c** - Change selection (delete and enter insert mode)
+- **y** - Yank (copy) selection
+
+Notes:
+
+- Counts apply to motions (e.g. `v3w`)
+- Operators act on the current selection (no extra motion required)
+
 ## Navigation
 
 ### Basic Movement
@@ -188,7 +206,8 @@ Text objects work from anywhere within the word - you don't need to be at the st
 
 ## Visual Feedback
 
-- **Cursor**: Thin blinking cursor in insert mode, solid block in normal mode
+- **Cursor**: Thin blinking cursor in insert mode, solid block in normal/visual modes
+- **Selection**: Visual mode uses the textarea selection highlight
 - **Mode Indicator**: Shows current mode and pending commands (e.g., "NORMAL d" when waiting for motion)
 
 ## Keybind Conflicts
@@ -224,6 +243,6 @@ Features that may be added in the future:
 
 - **ge** - Backward end of word motion
 - **i"**, **i'**, **i(**, **i[**, **i\{** - More text objects
-- **Visual mode** - Character, line, and block selection
+- **Visual block mode (Ctrl-v)** - Blockwise selection
 - **Macros** - Recording and replaying command sequences
 - **Marks** - Named cursor positions
