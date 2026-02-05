@@ -34,11 +34,13 @@ void mock.module("@/browser/contexts/API", () => ({
 import { PolicyProvider, usePolicy } from "./PolicyContext";
 
 const buildBlockedResponse = (reason: string): PolicyGetResponse => ({
+  source: "governor",
   status: { state: "blocked", reason },
   policy: null,
 });
 
 const buildEnforcedResponse = (): PolicyGetResponse => ({
+  source: "governor",
   status: { state: "enforced" },
   policy: {
     policyFormatVersion: "0.1",
