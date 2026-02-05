@@ -33,6 +33,12 @@ const MODEL_DEFINITIONS = {
     aliases: ["opus"],
     warm: true,
   },
+  OPUS_45: {
+    provider: "anthropic",
+    providerModelId: "claude-opus-4-5",
+    aliases: ["opus-4.5"],
+    warm: false,
+  },
   SONNET: {
     provider: "anthropic",
     providerModelId: "claude-sonnet-4-5",
