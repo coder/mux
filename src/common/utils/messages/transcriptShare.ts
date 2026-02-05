@@ -12,6 +12,92 @@ interface ChatJsonlEntry extends MuxMessage {
   workspaceId?: string;
 }
 
+/**
+ * chat.jsonl can contain *streaming deltas* (especially in older history), which means assistant
+ * messages may have thousands of tiny {type:"text"|"reasoning"} parts.
+ *
+ * For sharing, we compact adjacent text/reasoning runs into a single part each to drastically
+ * reduce file size.
+ */
+function mergeAdjacentTextAndReasoningPartsForSharing(
+  parts: MuxMessage["parts"]
+): MuxMessage["parts"] {
+  if (parts.length <= 1) return parts;
+
+  const merged: MuxMessage["parts"] = [];
+  let pendingTexts: string[] = [];
+  let pendingTextTimestamp: number | undefined;
+  let pendingReasonings: string[] = [];
+  let pendingReasoningTimestamp: number | undefined;
+
+  const flushText = () => {
+    if (pendingTexts.length === 0) {
+      return;
+    }
+
+    const text = pendingTexts.join("");
+    if (pendingTextTimestamp === undefined) {
+      merged.push({ type: "text", text });
+    } else {
+      merged.push({ type: "text", text, timestamp: pendingTextTimestamp });
+    }
+
+    pendingTexts = [];
+    pendingTextTimestamp = undefined;
+  };
+
+  const flushReasoning = () => {
+    if (pendingReasonings.length === 0) {
+      return;
+    }
+
+    const text = pendingReasonings.join("");
+    if (pendingReasoningTimestamp === undefined) {
+      merged.push({ type: "reasoning", text });
+    } else {
+      merged.push({ type: "reasoning", text, timestamp: pendingReasoningTimestamp });
+    }
+
+    pendingReasonings = [];
+    pendingReasoningTimestamp = undefined;
+  };
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      flushReasoning();
+      pendingTexts.push(part.text);
+      pendingTextTimestamp ??= part.timestamp;
+    } else if (part.type === "reasoning") {
+      flushText();
+      pendingReasonings.push(part.text);
+      pendingReasoningTimestamp ??= part.timestamp;
+    } else {
+      // Tool/file part - flush and keep as-is.
+      flushText();
+      flushReasoning();
+      merged.push(part);
+    }
+  }
+
+  flushText();
+  flushReasoning();
+
+  return merged;
+}
+
+function compactMessagePartsForSharing(messages: MuxMessage[]): MuxMessage[] {
+  return messages.map((msg) => {
+    const parts = mergeAdjacentTextAndReasoningPartsForSharing(msg.parts);
+    if (parts === msg.parts) {
+      return msg;
+    }
+    return {
+      ...msg,
+      parts,
+    };
+  });
+}
+
 function stripNestedToolCallOutput(call: NestedToolCall): NestedToolCall {
   if (call.state !== "output-available") {
     return call;
@@ -62,8 +148,8 @@ function stripToolOutputsForSharing(messages: MuxMessage[]): MuxMessage[] {
 /**
  * Build a JSONL transcript (one message per line, trailing newline) suitable for sharing.
  *
- * NOTE: This is intentionally not the same as the UI-rendered transcript.
- * It preserves raw message structure from chat.jsonl, with an option to strip tool outputs.
+ * NOTE: This preserves chat.jsonl-compatible message structure (tool calls, files, etc), but
+ * compacts adjacent text/reasoning deltas into a single part each to keep shared transcripts small.
  */
 export function buildChatJsonlForSharing(
   messages: MuxMessage[],
@@ -73,9 +159,10 @@ export function buildChatJsonlForSharing(
 
   const includeToolOutput = options.includeToolOutput ?? true;
   const sanitized = includeToolOutput ? messages : stripToolOutputsForSharing(messages);
+  const compacted = compactMessagePartsForSharing(sanitized);
 
   return (
-    sanitized
+    compacted
       .map((msg): ChatJsonlEntry => {
         if (options.workspaceId === undefined) {
           return msg;

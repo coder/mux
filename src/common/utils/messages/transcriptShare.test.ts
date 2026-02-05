@@ -148,6 +148,48 @@ describe("buildChatJsonlForSharing", () => {
     expect(buildChatJsonlForSharing([])).toBe("");
   });
 
+  it("merges adjacent text/reasoning parts to keep transcripts small", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "a", timestamp: 1 },
+          { type: "reasoning", text: "b", timestamp: 2 },
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "bash",
+            state: "input-available",
+            input: { script: "echo hi" },
+          },
+          { type: "text", text: "hello", timestamp: 3 },
+          { type: "text", text: " world", timestamp: 4 },
+          { type: "reasoning", text: "c" },
+        ],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: true });
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+
+    expect(parsed.parts).toEqual([
+      { type: "reasoning", text: "ab", timestamp: 1 },
+      {
+        type: "dynamic-tool",
+        toolCallId: "tc-1",
+        toolName: "bash",
+        state: "input-available",
+        input: { script: "echo hi" },
+      },
+      { type: "text", text: "hello world", timestamp: 3 },
+      { type: "reasoning", text: "c" },
+    ]);
+
+    // Original messages should be unchanged (no mutation during compaction)
+    expect(messages[0].parts).toHaveLength(6);
+  });
+
   it("produces valid JSONL (each line parses, trailing newline)", () => {
     const messages: MuxMessage[] = [
       {
