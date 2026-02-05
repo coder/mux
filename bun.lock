@@ -536,7 +536,7 @@
 
     "@chevrotain/utils": ["@chevrotain/utils@11.0.3", "", {}, "sha512-YslZMgtJUyuMbZ+aKvfF3x1f5liK4mWNxghFRv7jqRR9C3R3fAOGTTKvxXDa2Y1s9zSbcpuO0cAxDYsc9SrXoQ=="],
 
-    "@coder/mux-md-client": ["@coder/mux-md-client@0.1.0-main.21", "", { "dependencies": { "@noble/curves": "^2.0.1", "@noble/ed25519": "^3.0.0", "@noble/hashes": "^2.0.1" } }, "sha512-4VaT0fbNIr/d8vY2O4dK8bOHawld2yELCmSismVRo099kG8PrPDPcrrrnUs/QCrrywcyn2xJu6azjtkPj+yYRA=="],
+    "@coder/mux-md-client": ["@coder/mux-md-client@0.1.0-main.27", "", { "dependencies": { "@noble/curves": "^2.0.1", "@noble/ed25519": "^3.0.0", "@noble/hashes": "^2.0.1" } }, "sha512-nGSy4YK9qTawBkDqVdHQ7bN+QMEmmbQ+YMCYoK70xPziMCRf5rewakcFJb6hzE9U36gdhfJ7Xp9TK6zUnv3taQ=="],
 
     "@csstools/color-helpers": ["@csstools/color-helpers@6.0.1", "", {}, "sha512-NmXRccUJMk2AWA5A7e5a//3bCIMyOu2hAtdRYrhPPHjDxINuCwX1w6rnIZ4xjLcp0ayv6h8Pc3X0eJUGiAAXHQ=="],
 
