@@ -746,14 +746,15 @@ describeIntegration("RightSidebar (UI)", () => {
       // Width should persist when switching to Costs (verify via UI)
       expect(getSidebarWidth()).toBe(widthAfterReviewResize);
 
-      // Resize again on Costs tab
+      // Resize again on Costs tab (shrink).
+      // The sidebar may already be clamped to its max width depending on the viewport,
+      // so shrinking is the most reliable way to ensure a second drag produces a change.
       fireEvent.mouseDown(resizeHandle, { clientX: 800 });
-      fireEvent.mouseMove(document, { clientX: 500 });
+      fireEvent.mouseMove(document, { clientX: 900 });
       fireEvent.mouseUp(document);
 
       await waitFor(() => {
         const width = getSidebarWidth();
-        // Width should have changed
         if (width === widthAfterReviewResize) throw new Error("Width should have changed");
       });
 
@@ -766,6 +767,65 @@ describeIntegration("RightSidebar (UI)", () => {
       });
 
       expect(getSidebarWidth()).toBe(widthAfterCostsResize);
+    } finally {
+      await cleanupView(view, cleanupDom);
+    }
+  }, 60_000);
+
+  test("sidebar cannot be resized beyond available width", async () => {
+    const cleanupDom = installDom();
+
+    // Force a narrow viewport so the right sidebar max clamp is exercised.
+    Object.defineProperty(window, "innerWidth", { value: 900, configurable: true });
+    window.dispatchEvent(new Event("resize"));
+
+    const view = renderApp({
+      apiClient: env.orpc,
+      metadata,
+    });
+
+    try {
+      await setupWorkspaceView(view, metadata, workspaceId);
+
+      const sidebar = await waitFor(
+        () => {
+          const el = view.container.querySelector(
+            '[role="complementary"][aria-label="Workspace insights"]'
+          );
+          if (!el) throw new Error("RightSidebar not found");
+          return el as HTMLElement;
+        },
+        { timeout: 10_000 }
+      );
+
+      const resizeHandle = await waitFor(
+        () => {
+          const handle = sidebar.querySelector('[class*="cursor-col-resize"]') as HTMLElement;
+          if (!handle) throw new Error("Resize handle not found");
+          return handle;
+        },
+        { timeout: 5_000 }
+      );
+
+      const chatMinWidthPx = 384; // ChatPane uses tailwind `min-w-96`
+      const expectedMaxWidth = 900 - chatMinWidthPx;
+
+      fireEvent.mouseDown(resizeHandle, { clientX: 1000 });
+      // Move far left to try to exceed max width.
+      fireEvent.mouseMove(document, { clientX: 0 });
+      fireEvent.mouseUp(document);
+
+      await waitFor(() => {
+        const styleWidth = sidebar.style.width;
+        if (!styleWidth.endsWith("px")) {
+          throw new Error("Expected sidebar width to be set inline");
+        }
+
+        const width = parseInt(styleWidth, 10);
+        if (width > expectedMaxWidth) {
+          throw new Error(`Expected width <= ${expectedMaxWidth}, got ${width}`);
+        }
+      });
     } finally {
       await cleanupView(view, cleanupDom);
     }

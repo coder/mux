@@ -3,6 +3,7 @@ import React, { useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { RIGHT_SIDEBAR_WIDTH_KEY } from "@/common/constants/storage";
 import { useResizableSidebar } from "@/browser/hooks/useResizableSidebar";
+import { useResizeObserver } from "@/browser/hooks/useResizeObserver";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { RightSidebar } from "./RightSidebar";
 import { PopoverError } from "./PopoverError";
@@ -13,6 +14,17 @@ import { useReviews } from "@/browser/hooks/useReviews";
 import type { ReviewNoteData } from "@/common/types/review";
 import { ConnectionStatusToast } from "./ConnectionStatusToast";
 import { ChatPane } from "./ChatPane";
+
+// ChatPane uses tailwind `min-w-96`.
+const CHAT_PANE_MIN_WIDTH_PX = 384;
+
+const RIGHT_SIDEBAR_DEFAULT_WIDTH_PX = 400;
+const RIGHT_SIDEBAR_MIN_WIDTH_PX = 300;
+const RIGHT_SIDEBAR_ABS_MAX_WIDTH_PX = 1200;
+
+// Guard against subpixel rounding (e.g. zoom/devicePixelRatio) producing a 1px horizontal
+// overflow that would trigger the WorkspaceShell scrollbar.
+const RIGHT_SIDEBAR_OVERFLOW_GUARD_PX = 1;
 
 interface WorkspaceShellProps {
   workspaceId: string;
@@ -52,11 +64,40 @@ const WorkspacePlaceholder: React.FC<{
 );
 
 export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
+  const shellRef = useRef<HTMLDivElement>(null);
+  const shellSize = useResizeObserver(shellRef);
+
+  // WorkspaceShell switches to flex-col at this breakpoint, so in that stacked mode the
+  // right sidebar doesn't need to "leave room" for ChatPane beside it.
+  const isStacked =
+    typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
+
+  const containerWidthPx = shellSize?.width ?? 0;
+  // happy-dom / early-mount fallback: treat 0 as "unknown"
+  const usableWidthPx =
+    containerWidthPx > 0
+      ? containerWidthPx
+      : typeof window !== "undefined"
+        ? window.innerWidth
+        : 1200;
+
+  // Prevent ChatPane + RightSidebar from overflowing the workspace shell (which would show a
+  // horizontal scrollbar due to WorkspaceShell's `overflow-x-auto`).
+  const effectiveMaxWidthPx = isStacked
+    ? RIGHT_SIDEBAR_ABS_MAX_WIDTH_PX
+    : Math.min(
+        RIGHT_SIDEBAR_ABS_MAX_WIDTH_PX,
+        Math.max(
+          RIGHT_SIDEBAR_MIN_WIDTH_PX,
+          usableWidthPx - CHAT_PANE_MIN_WIDTH_PX - RIGHT_SIDEBAR_OVERFLOW_GUARD_PX
+        )
+      );
+
   const sidebar = useResizableSidebar({
     enabled: true,
-    defaultWidth: 400,
-    minWidth: 300,
-    maxWidth: 1200,
+    defaultWidth: RIGHT_SIDEBAR_DEFAULT_WIDTH_PX,
+    minWidth: RIGHT_SIDEBAR_MIN_WIDTH_PX,
+    maxWidth: effectiveMaxWidthPx,
     storageKey: RIGHT_SIDEBAR_WIDTH_KEY,
   });
 
@@ -104,6 +145,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
 
   return (
     <div
+      ref={shellRef}
       className={cn(
         "flex flex-1 flex-row bg-dark text-light overflow-x-auto overflow-y-hidden [@media(max-width:768px)]:flex-col",
         props.className

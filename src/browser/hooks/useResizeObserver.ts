@@ -34,10 +34,51 @@ interface Size {
 export function useResizeObserver(ref: RefObject<HTMLElement>): Size | null {
   const [size, setSize] = useState<Size | null>(null);
   const frameRef = useRef<number | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+  const observedElementRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
+    return () => {
+      if (frameRef.current) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+      observedElementRef.current = null;
+    };
+  }, []);
+
+  // Intentionally runs after every render.
+  // `ref.current` can change (e.g. when rendering a placeholder first) without the
+  // ref object itself changing, so a `[ref]` dependency array would fail to attach.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- Ref lifecycle is managed manually via observedElementRef.
+  useEffect(() => {
     const element = ref.current;
-    if (!element) return;
+
+    if (observedElementRef.current === element) {
+      return;
+    }
+
+    // Element mounted/unmounted/changed: tear down previous observer.
+    if (frameRef.current) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    observedElementRef.current = element;
+
+    if (!element) {
+      setSize(null);
+      return;
+    }
+
+    if (typeof ResizeObserver === "undefined") {
+      const { width, height } = element.getBoundingClientRect();
+      setSize({ width: Math.round(width), height: Math.round(height) });
+      return;
+    }
 
     const observer = new ResizeObserver((entries) => {
       // Throttle updates using requestAnimationFrame
@@ -65,19 +106,13 @@ export function useResizeObserver(ref: RefObject<HTMLElement>): Size | null {
       });
     });
 
+    observerRef.current = observer;
     observer.observe(element);
 
     // Set initial size
     const { width, height } = element.getBoundingClientRect();
     setSize({ width: Math.round(width), height: Math.round(height) });
-
-    return () => {
-      if (frameRef.current) {
-        cancelAnimationFrame(frameRef.current);
-      }
-      observer.disconnect();
-    };
-  }, [ref]);
+  });
 
   return size;
 }
