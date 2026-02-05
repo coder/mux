@@ -49,6 +49,10 @@ Vim mode is always enabled. Press **ESC** to enter normal mode from insert mode.
 - **$** - Move to end of line
 - **Home** - Same as **0**
 - **End** - Same as **$**
+- **gg** - Go to first line
+- **{count}gg** - Go to line {count} (1-indexed)
+- **G** - Go to last line
+- **{count}G** - Go to line {count} (1-indexed)
 
 ### Column Preservation
 
@@ -143,7 +147,7 @@ Many motions and commands support numeric count prefixes:
 
 Counts currently apply to:
 
-- Motions: **h/j/k/l**, **w/W**, **b/B**, **e/E**, **0**, **$**, **\_**
+- Motions: **h/j/k/l**, **w/W**, **b/B**, **e/E**, **0**, **$**, **\_**, **gg**, **G**
 - Edits: **x**, **~**
 - Operator + motion combos, including **dd/yy/cc**
 
