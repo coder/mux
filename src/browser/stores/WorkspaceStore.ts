@@ -681,8 +681,8 @@ export class WorkspaceStore {
       return;
     }
 
-    // Enable subscriptions for already-added workspaces.
-    for (const workspaceId of this.ipcUnsubscribers.keys()) {
+    // Enable subscriptions for any workspaces that already have UI consumers.
+    for (const workspaceId of this.statsListenerCounts.keys()) {
       this.subscribeToStats(workspaceId);
     }
   }
@@ -709,8 +709,9 @@ export class WorkspaceStore {
       return;
     }
 
+    // If timing stats are enabled, re-subscribe any workspaces that already have UI consumers.
     if (this.statsEnabled) {
-      for (const workspaceId of this.ipcUnsubscribers.keys()) {
+      for (const workspaceId of this.statsListenerCounts.keys()) {
         this.subscribeToStats(workspaceId);
       }
     }
@@ -1785,6 +1786,7 @@ export class WorkspaceStore {
         console.warn(`Failed to fetch session usage for ${workspaceId}:`, error);
       });
 
+    // Stats snapshots are subscribed lazily via subscribeStats().
     if (this.statsEnabled) {
       this.subscribeToStats(workspaceId);
     }

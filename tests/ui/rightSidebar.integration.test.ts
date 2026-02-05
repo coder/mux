@@ -219,12 +219,9 @@ describeIntegration("RightSidebar (UI)", () => {
     }
   }, 60_000);
 
-  // Regression: enabling the Stats tab in the full App must not steal default focus.
-  test("stats tab enabled does not steal default focus", async () => {
+  // Regression: the Stats tab must not steal default focus.
+  test("stats tab appears by default and does not steal focus", async () => {
     const cleanupDom = installDom();
-
-    const previousStatsTabState = await env.orpc.features.getStatsTabState();
-    await env.orpc.features.setStatsTabOverride({ override: "on" });
 
     // Clear any persisted state
     updatePersistedState(RIGHT_SIDEBAR_TAB_KEY, null);
@@ -266,11 +263,7 @@ describeIntegration("RightSidebar (UI)", () => {
         expect(statsTab.getAttribute("aria-selected")).toBe("false");
       });
     } finally {
-      try {
-        await env.orpc.features.setStatsTabOverride({ override: previousStatsTabState.override });
-      } finally {
-        await cleanupView(view, cleanupDom);
-      }
+      await cleanupView(view, cleanupDom);
     }
   }, 60_000);
 

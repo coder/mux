@@ -11,6 +11,7 @@ import { Input } from "@/browser/components/ui/input";
 import { Switch } from "@/browser/components/ui/switch";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
+import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import {
   EDITOR_CONFIG_KEY,
   DEFAULT_EDITOR_CONFIG,
@@ -224,6 +225,17 @@ export function GeneralSection() {
     [api]
   );
 
+  const { statsTabState, setStatsTabEnabled } = useFeatureFlags();
+
+  const handleStatsTabToggle = useCallback(
+    (enabled: boolean) => {
+      setStatsTabEnabled(enabled).catch(() => {
+        // ignore
+      });
+    },
+    [setStatsTabEnabled]
+  );
+
   // Load SSH host from server on mount (browser mode only)
   useEffect(() => {
     if (isBrowserMode && api) {
@@ -326,6 +338,25 @@ export function GeneralSection() {
                 handleTerminalFontSizeChange(e.target.value)
               }
               className="border-border-medium bg-background-secondary h-9 w-28"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-foreground mb-4 text-sm font-medium">Workspace insights</h3>
+        <div className="divide-border-light divide-y">
+          <div className="flex items-center justify-between py-3">
+            <div className="flex-1 pr-4">
+              <div className="text-foreground text-sm">Stats tab</div>
+              <div className="text-muted mt-0.5 text-xs">
+                Show timing statistics in the right sidebar
+              </div>
+            </div>
+            <Switch
+              checked={statsTabState?.enabled ?? true}
+              onCheckedChange={handleStatsTabToggle}
+              aria-label="Toggle Stats tab"
             />
           </div>
         </div>
