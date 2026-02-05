@@ -9,7 +9,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { uploadToMuxMd } from "@/common/lib/muxMd";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import { uploadToMuxMd, type FileInfo } from "@/common/lib/muxMd";
 import { cn } from "@/common/lib/utils";
 import { buildChatJsonlForSharing } from "@/common/utils/messages/transcriptShare";
 
@@ -98,10 +99,14 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
         return;
       }
 
-      const fileInfo = {
+      const sendOptions = getSendOptionsFromStorage(workspaceId);
+
+      const fileInfo: FileInfo = {
         name: getTranscriptFileName(props.workspaceName),
         type: "application/x-ndjson",
         size: new TextEncoder().encode(chatJsonl).length,
+        model: workspaceState.currentModel ?? sendOptions.model,
+        thinking: sendOptions.thinkingLevel,
       };
 
       const result = await uploadToMuxMd(chatJsonl, fileInfo);
