@@ -12,7 +12,7 @@ assert.equal(typeof Symbol.dispose, "symbol");
 
 // Many renderer components gate test-only behavior on `import.meta.env.MODE === "test"`.
 // In Jest, `import.meta.env` is rewritten to `process.env` by our Babel plugin.
-process.env.MODE ??= "test";
+process.env.MODE = "test";
 if (process.env.MUX_FORCE_REAL_TOKENIZER !== "1") {
   process.env.MUX_APPROX_TOKENIZER ??= "1";
 }

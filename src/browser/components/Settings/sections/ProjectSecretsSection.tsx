@@ -1,0 +1,361 @@
+/**
+ * Project secrets management section for Settings modal.
+ * Manages environment secrets that are injected into agent tools.
+ */
+
+import React, { useState, useEffect, useCallback } from "react";
+import { Eye, EyeOff, Trash2, Plus, Import, Loader2 } from "lucide-react";
+import { Button } from "@/browser/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
+import type { Secret } from "@/common/types/secrets";
+import { useProjectContext } from "@/browser/contexts/ProjectContext";
+
+interface ProjectSecretsSectionProps {
+  projectPath: string;
+  /** Called after secrets are successfully saved, with the new list of keys */
+  onSecretsChanged?: (keys: string[]) => void;
+  /** Called when hasChanges state changes, allowing parent to block project switching */
+  onHasChangesChange?: (hasChanges: boolean) => void;
+}
+
+export const ProjectSecretsSection: React.FC<ProjectSecretsSectionProps> = ({
+  projectPath,
+  onSecretsChanged,
+  onHasChangesChange,
+}) => {
+  const { projects, getSecrets, updateSecrets } = useProjectContext();
+  const [secrets, setSecrets] = useState<Secret[]>([]);
+  const [visibleSecrets, setVisibleSecrets] = useState<Set<number>>(new Set());
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const [originalSecrets, setOriginalSecrets] = useState<Secret[]>([]);
+  // Use test-only import buttons because Radix portals/select interactions are unreliable in happy-dom.
+  const isTestEnv = import.meta.env.MODE === "test";
+
+  // Get other projects (excluding current one) for import dropdown
+  const otherProjects = Array.from(projects.entries()).filter(([path]) => path !== projectPath);
+
+  // Load secrets when project changes
+  useEffect(() => {
+    // Guard against empty projectPath (happens during initial Settings render)
+    if (!projectPath) {
+      setSecrets([]);
+      setOriginalSecrets([]);
+      setIsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoading(true);
+    setHasChanges(false);
+    // Reset import state when project changes to avoid stuck isImporting
+    setIsImporting(false);
+
+    (async () => {
+      try {
+        const loaded = await getSecrets(projectPath);
+        if (cancelled) return;
+        setSecrets(loaded);
+        setOriginalSecrets(loaded);
+        setVisibleSecrets(new Set());
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Failed to load secrets:", err);
+        setSecrets([]);
+        setOriginalSecrets([]);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [getSecrets, projectPath]);
+
+  // Track changes and notify parent
+  useEffect(() => {
+    const changed =
+      secrets.length !== originalSecrets.length ||
+      secrets.some(
+        (s, i) => s.key !== originalSecrets[i]?.key || s.value !== originalSecrets[i]?.value
+      );
+    setHasChanges(changed);
+    onHasChangesChange?.(changed);
+  }, [secrets, originalSecrets, onHasChangesChange]);
+
+  const handleSave = async () => {
+    if (!projectPath) return; // Guard against empty projectPath
+    setIsSaving(true);
+    try {
+      // Filter out empty secrets
+      const validSecrets = secrets.filter((s) => s.key.trim() !== "" && s.value.trim() !== "");
+      await updateSecrets(projectPath, validSecrets);
+      setOriginalSecrets(validSecrets);
+      setSecrets(validSecrets);
+      setHasChanges(false);
+      // Notify parent so MCP section can update its known secret keys
+      onSecretsChanged?.(validSecrets.map((s) => s.key));
+    } catch (err) {
+      console.error("Failed to save secrets:", err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDiscard = () => {
+    setSecrets(originalSecrets);
+    setHasChanges(false);
+  };
+
+  const addSecret = () => {
+    setSecrets([...secrets, { key: "", value: "" }]);
+  };
+
+  const removeSecret = (index: number) => {
+    setSecrets(secrets.filter((_, i) => i !== index));
+    const newVisible = new Set(visibleSecrets);
+    newVisible.delete(index);
+    setVisibleSecrets(newVisible);
+  };
+
+  const updateSecret = (index: number, field: "key" | "value", value: string) => {
+    const newSecrets = [...secrets];
+    // Auto-capitalize key field for env variable convention
+    const processedValue = field === "key" ? value.toUpperCase() : value;
+    newSecrets[index] = { ...newSecrets[index], [field]: processedValue };
+    setSecrets(newSecrets);
+  };
+
+  const toggleVisibility = (index: number) => {
+    const newVisible = new Set(visibleSecrets);
+    if (newVisible.has(index)) {
+      newVisible.delete(index);
+    } else {
+      newVisible.add(index);
+    }
+    setVisibleSecrets(newVisible);
+  };
+
+  // Import secrets from another project (doesn't overwrite existing keys).
+  // Uses a ref updated via useLayoutEffect to ensure the check happens synchronously
+  // before any state updates in the same render cycle.
+  const projectPathRef = React.useRef(projectPath);
+  React.useLayoutEffect(() => {
+    projectPathRef.current = projectPath;
+  }, [projectPath]);
+
+  const handleImportFromProject = useCallback(
+    async (sourceProjectPath: string) => {
+      // Capture the project at invocation time
+      const targetProject = projectPathRef.current;
+      setIsImporting(true);
+      try {
+        const sourceSecrets = await getSecrets(sourceProjectPath);
+        // Cancel if project changed during the async fetch
+        if (projectPathRef.current !== targetProject) return;
+        if (sourceSecrets.length === 0) return;
+
+        setSecrets((current) => {
+          const existingKeys = new Set(current.map((s) => s.key.toUpperCase()));
+          const newSecrets = sourceSecrets.filter((s) => !existingKeys.has(s.key.toUpperCase()));
+          return newSecrets.length > 0 ? [...current, ...newSecrets] : current;
+        });
+      } catch (err) {
+        console.error("Failed to import secrets:", err);
+      } finally {
+        // Only clear importing if we're still on the same project
+        if (projectPathRef.current === targetProject) {
+          setIsImporting(false);
+        }
+      }
+    },
+    [getSecrets]
+  );
+
+  // Expose test-only helpers to avoid flaky UI interactions in happy-dom.
+  useEffect(() => {
+    if (!isTestEnv || typeof window === "undefined") {
+      return;
+    }
+
+    const testWindow = window as typeof window & {
+      __muxImportSecrets?: (path: string) => Promise<void>;
+      __muxGetSecretsState?: () => Secret[];
+    };
+    testWindow.__muxImportSecrets = handleImportFromProject;
+    testWindow.__muxGetSecretsState = () => secrets;
+    return () => {
+      if (testWindow.__muxImportSecrets === handleImportFromProject) {
+        delete testWindow.__muxImportSecrets;
+      }
+      if (testWindow.__muxGetSecretsState) {
+        delete testWindow.__muxGetSecretsState;
+      }
+    };
+  }, [handleImportFromProject, isTestEnv, secrets]);
+
+  if (isLoading) {
+    return (
+      <div className="text-muted flex items-center gap-2 py-4 text-sm">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading secrets…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Toolbar with Add + Import */}
+      <div className="flex items-center gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={addSecret}
+          disabled={isSaving || isImporting}
+          className="text-muted hover:text-foreground h-7 gap-1.5 px-2 text-xs"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add
+        </Button>
+        {otherProjects.length > 0 &&
+          (isTestEnv ? (
+            <div className="flex items-center gap-2" data-testid="project-secrets-import-list">
+              {otherProjects.map(([path]) => {
+                const name = path.split("/").pop() ?? path;
+                return (
+                  <button
+                    key={path}
+                    type="button"
+                    data-testid={`project-secrets-import-${path}`}
+                    onClick={() => void handleImportFromProject(path)}
+                    disabled={isSaving || isImporting}
+                    className="text-muted hover:text-foreground border-border-medium hover:bg-hover h-7 rounded border bg-transparent px-2 text-xs"
+                  >
+                    {isImporting ? "Importing..." : `Import ${name}`}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <Select
+              value=""
+              onValueChange={(path) => void handleImportFromProject(path)}
+              disabled={isSaving || isImporting}
+            >
+              <SelectTrigger className="text-muted hover:text-foreground border-border-medium hover:bg-hover h-7 w-auto gap-1.5 border bg-transparent px-2 text-xs">
+                <Import className="h-3.5 w-3.5" />
+                <SelectValue placeholder={isImporting ? "Importing..." : "Import"} />
+              </SelectTrigger>
+              <SelectContent>
+                {otherProjects.map(([path]) => {
+                  const name = path.split("/").pop() ?? path;
+                  return (
+                    <SelectItem key={path} value={path}>
+                      {name}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          ))}
+        {/* Save/Discard buttons when there are changes */}
+        {hasChanges && (
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleDiscard}
+              disabled={isSaving}
+              className="text-muted hover:text-foreground h-7 px-2 text-xs"
+            >
+              Discard
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void handleSave()}
+              disabled={isSaving}
+              className="h-7 px-2 text-xs"
+            >
+              {isSaving ? "Saving..." : "Save"}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Secrets list */}
+      {secrets.length === 0 ? (
+        <p className="text-muted py-2 text-sm">No secrets configured yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {/* Column headers */}
+          <div className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2 px-0.5">
+            <span className="text-muted text-[10px] tracking-wide uppercase">Key</span>
+            <span className="text-muted text-[10px] tracking-wide uppercase">Value</span>
+            <div className="w-7" />
+            <div className="w-7" />
+          </div>
+          {/* Secret rows */}
+          {secrets.map((secret, index) => (
+            <div key={index} className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2">
+              <input
+                type="text"
+                value={secret.key}
+                onChange={(e) => updateSecret(index, "key", e.target.value)}
+                placeholder="SECRET_NAME"
+                disabled={isSaving}
+                className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim h-8 w-full rounded border px-2.5 font-mono text-xs text-white focus:outline-none"
+              />
+              <input
+                type={visibleSecrets.has(index) ? "text" : "password"}
+                value={secret.value}
+                onChange={(e) => updateSecret(index, "value", e.target.value)}
+                placeholder="secret value"
+                disabled={isSaving}
+                className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim h-8 w-full rounded border px-2.5 font-mono text-xs text-white focus:outline-none"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => toggleVisibility(index)}
+                disabled={isSaving}
+                className="text-muted hover:text-foreground h-7 w-7"
+                aria-label={visibleSecrets.has(index) ? "Hide value" : "Show value"}
+              >
+                {visibleSecrets.has(index) ? (
+                  <EyeOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Eye className="h-3.5 w-3.5" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => removeSecret(index)}
+                disabled={isSaving}
+                className="text-muted hover:text-danger-light h-7 w-7"
+                aria-label="Delete secret"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Info text */}
+      <p className="text-muted text-xs">
+        Secrets are stored in <code className="text-accent">~/.mux/secrets.json</code> and injected
+        as environment variables to agent tools.
+      </p>
+    </div>
+  );
+};

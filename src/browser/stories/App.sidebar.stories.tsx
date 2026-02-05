@@ -684,3 +684,88 @@ export const WorkspaceDraftSelected: AppStory = {
     await userEvent.click(row);
   },
 };
+
+/**
+ * Project settings with secrets management.
+ * Shows the Settings modal → Projects section with secrets for multiple projects.
+ * Uses play function to open via the key icon button on a project header (now opens Settings → Projects).
+ */
+export const ProjectSettingsWithSecrets: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const sourceProjectPath = "/home/user/projects/source-project";
+        const targetProjectPath = "/home/user/projects/target-project";
+
+        const sourceWorkspace = createWorkspace({
+          id: "ws-source",
+          name: "source-branch",
+          title: "Source workspace",
+          projectName: "source-project",
+          projectPath: sourceProjectPath,
+          createdAt: new Date(NOW - 86400000).toISOString(),
+        });
+
+        const targetWorkspace = createWorkspace({
+          id: "ws-target",
+          name: "target-branch",
+          title: "Target workspace",
+          projectName: "target-project",
+          projectPath: targetProjectPath,
+          createdAt: new Date(NOW - 3600000).toISOString(),
+        });
+
+        const workspaces = [sourceWorkspace, targetWorkspace];
+
+        // Set up secrets for both projects
+        const projectSecrets = new Map<string, Array<{ key: string; value: string }>>();
+        projectSecrets.set(sourceProjectPath, [
+          { key: "SOURCE_API_KEY", value: "sk-source-12345" },
+          { key: "SHARED_TOKEN", value: "source-shared-value" },
+          { key: "SOURCE_SECRET", value: "source-only-secret" },
+        ]);
+        projectSecrets.set(targetProjectPath, [
+          { key: "SHARED_TOKEN", value: "target-shared-value" },
+          { key: "TARGET_DB_URL", value: "postgres://target:5432/db" },
+        ]);
+
+        expandProjects([sourceProjectPath, targetProjectPath]);
+
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          projectSecrets,
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    // Wait for the projects to load
+    await waitFor(
+      () => {
+        const settingsButton = canvasElement.querySelector<HTMLElement>(
+          '[aria-label="Configure target-project"]'
+        );
+        if (!settingsButton) throw new Error("Project settings button not found");
+      },
+      { timeout: 5000 }
+    );
+
+    // Click the key icon for target-project (now opens Settings → Projects)
+    const settingsButton = canvasElement.querySelector<HTMLElement>(
+      '[aria-label="Configure target-project"]'
+    )!;
+    await userEvent.click(settingsButton);
+
+    // Wait for Settings modal to open (portaled to body)
+    await waitFor(
+      () => {
+        const modal = document.body.querySelector<HTMLElement>('[role="dialog"]');
+        if (!modal) throw new Error("Settings modal not found");
+        // Should show Projects section with Secrets heading
+        within(modal).getByText("Secrets");
+      },
+      { timeout: 5000 }
+    );
+  },
+};
