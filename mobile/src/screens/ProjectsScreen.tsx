@@ -476,7 +476,7 @@ export function ProjectsScreen(): JSX.Element {
             <View style={{ paddingVertical: spacing.xxl, alignItems: "center" }}>
               <ActivityIndicator size="large" color={theme.colors.accent} />
               <ThemedText variant="caption" style={{ marginTop: spacing.sm }}>
-                Loading workspaces…
+                Loading workspaces...
               </ThemedText>
             </View>
           ) : hasError ? (

@@ -6,8 +6,12 @@ import React from "react";
 import { extractNewPath, type FileTreeNode } from "@/common/utils/git/numstatParser";
 import type { FileChangeType } from "@/common/types/review";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getFileTreeExpandStateKey } from "@/common/constants/storage";
+import {
+  getFileTreeExpandStateKey,
+  REVIEW_FILE_TREE_VIEW_MODE_KEY,
+} from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
+import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/browser/components/ui/tooltip";
 import { FileIcon } from "@/browser/components/FileIcon";
 
@@ -85,9 +89,31 @@ function getFileChangeBadge(
   }
 }
 
+type FileTreeViewMode = "structured" | "flat";
+
+type FileLabelMode = "name" | "path";
+
+const FILE_TREE_VIEW_MODE_OPTIONS: Array<ToggleOption<FileTreeViewMode>> = [
+  { value: "structured", label: "Structured" },
+  { value: "flat", label: "Flat" },
+];
+
+function collectLeafFileNodes(node: FileTreeNode): FileTreeNode[] {
+  if (!node.isDirectory) {
+    return [node];
+  }
+
+  const files: FileTreeNode[] = [];
+  for (const child of node.children) {
+    files.push(...collectLeafFileNodes(child));
+  }
+  return files;
+}
+
 const TreeNodeContent: React.FC<{
   node: FileTreeNode;
   depth: number;
+  fileLabelMode?: FileLabelMode;
   selectedPath: string | null;
   onSelectFile: (path: string | null) => void;
   getFileReadStatus?: (filePath: string) => { total: number; read: number } | null;
@@ -98,6 +124,7 @@ const TreeNodeContent: React.FC<{
 }> = ({
   node,
   depth,
+  fileLabelMode = "name",
   selectedPath,
   onSelectFile,
   getFileReadStatus,
@@ -143,6 +170,7 @@ const TreeNodeContent: React.FC<{
 
   const canonicalFilePath = node.isDirectory ? node.path : extractNewPath(node.path);
   const fallbackFileName = canonicalFilePath.split("/").pop() ?? "";
+  const fileDirPath = canonicalFilePath.split("/").slice(0, -1).join("/");
   const fileNameForIcon = fallbackFileName;
   const isSelected = selectedPath === node.path;
 
@@ -150,6 +178,7 @@ const TreeNodeContent: React.FC<{
   const isDeletedFile = changeType === "deleted";
   const isRenamedFile = changeType === "renamed" && !!node.stats?.oldPath;
   const oldFileName = node.stats?.oldPath?.split("/").pop() ?? node.stats?.oldPath ?? "";
+  const shouldShowRenameArrow = isRenamedFile && oldFileName !== fallbackFileName;
 
   // Compute read status for files and directories
   let isFullyRead = false;
@@ -175,6 +204,13 @@ const TreeNodeContent: React.FC<{
     !node.isDirectory && node.stats
       ? getFileChangeBadge(node.stats.changeType ?? "modified", node.stats.oldPath)
       : null;
+
+  const fileLabelTitle =
+    !node.isDirectory && fileLabelMode === "path"
+      ? isRenamedFile
+        ? `${node.stats?.oldPath ?? ""} -> ${canonicalFilePath}`
+        : canonicalFilePath
+      : undefined;
 
   return (
     <>
@@ -239,14 +275,33 @@ const TreeNodeContent: React.FC<{
             <span
               className={cn(
                 "flex-1",
+                fileLabelMode === "path" && "min-w-0",
                 isDeletedFile && "line-through",
                 isFullyRead &&
                   "text-dim line-through [text-decoration-color:var(--color-read)] [text-decoration-thickness:2px]",
                 isUnknownState && !isFullyRead && "text-dim",
                 !isFullyRead && !isUnknownState && "text-foreground"
               )}
+              title={fileLabelTitle}
             >
-              {isRenamedFile ? (
+              {fileLabelMode === "path" ? (
+                <span className="flex min-w-0 items-baseline gap-2">
+                  <span className={cn("min-w-0 truncate", fileDirPath && "max-w-[60%]")}>
+                    {shouldShowRenameArrow ? (
+                      <>
+                        <span className="text-muted">{oldFileName}</span>
+                        <span className="text-muted">{" -> "}</span>
+                        <span>{fallbackFileName}</span>
+                      </>
+                    ) : (
+                      fallbackFileName
+                    )}
+                  </span>
+                  {fileDirPath ? (
+                    <span className="text-muted min-w-0 flex-1 truncate">{fileDirPath}</span>
+                  ) : null}
+                </span>
+              ) : shouldShowRenameArrow ? (
                 <>
                   <span className="text-muted">{oldFileName}</span>
                   <span className="text-muted">{" -> "}</span>
@@ -290,6 +345,7 @@ const TreeNodeContent: React.FC<{
             key={child.path}
             node={child}
             depth={depth + 1}
+            fileLabelMode={fileLabelMode}
             selectedPath={selectedPath}
             onSelectFile={onSelectFile}
             getFileReadStatus={getFileReadStatus}
@@ -325,6 +381,12 @@ export const FileTree: React.FC<FileTreeExternalProps> = ({
     { listener: true }
   );
 
+  const [viewMode, setViewMode] = usePersistedState<FileTreeViewMode>(
+    REVIEW_FILE_TREE_VIEW_MODE_KEY,
+    "structured",
+    { listener: true }
+  );
+
   // Extract display name for filter indicator
   const filterDisplayName = selectedPath ? (selectedPath.split("/").pop() ?? selectedPath) : null;
 
@@ -332,33 +394,61 @@ export const FileTree: React.FC<FileTreeExternalProps> = ({
     <>
       <div className="border-border-light text-muted font-primary flex items-center gap-2 border-b px-2 py-1 text-[11px]">
         <span>Files</span>
-        {selectedPath && (
-          <button
-            className="bg-code-keyword-overlay text-foreground hover:bg-code-keyword-overlay/80 ml-auto flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
-            onClick={() => onSelectFile(null)}
-            title={`Filtering: ${selectedPath}\nClick to clear`}
-          >
-            <span className="max-w-[120px] truncate">{filterDisplayName}</span>
-            <span className="text-muted">✕</span>
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          <div data-testid="review-file-tree-view-mode">
+            <ToggleGroup
+              options={FILE_TREE_VIEW_MODE_OPTIONS}
+              value={viewMode}
+              onChange={(mode) => setViewMode(mode)}
+            />
+          </div>
+          {selectedPath && (
+            <button
+              className="bg-code-keyword-overlay text-foreground hover:bg-code-keyword-overlay/80 flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
+              onClick={() => onSelectFile(null)}
+              title={`Filtering: ${selectedPath}\nClick to clear`}
+            >
+              <span className="max-w-[120px] truncate">{filterDisplayName}</span>
+              <span className="text-muted">✕</span>
+            </button>
+          )}
+        </div>
       </div>
-      <div className="font-monospace min-h-0 flex-1 overflow-y-auto px-1 py-1 text-[11px]">
+      <div
+        className="font-monospace min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1 py-1 text-[11px]"
+        data-testid="review-file-tree"
+      >
         {isLoading && !root ? (
           <div className="text-muted py-5 text-center">Loading file tree...</div>
         ) : root ? (
-          root.children.map((child) => (
-            <TreeNodeContent
-              key={child.path}
-              node={child}
-              depth={0}
-              selectedPath={selectedPath}
-              onSelectFile={onSelectFile}
-              getFileReadStatus={getFileReadStatus}
-              expandStateMap={expandStateMap}
-              setExpandStateMap={setExpandStateMap}
-            />
-          ))
+          viewMode === "flat" ? (
+            collectLeafFileNodes(root).map((fileNode) => (
+              <TreeNodeContent
+                key={fileNode.path}
+                node={fileNode}
+                depth={0}
+                fileLabelMode="path"
+                selectedPath={selectedPath}
+                onSelectFile={onSelectFile}
+                getFileReadStatus={getFileReadStatus}
+                expandStateMap={expandStateMap}
+                setExpandStateMap={setExpandStateMap}
+              />
+            ))
+          ) : (
+            root.children.map((child) => (
+              <TreeNodeContent
+                key={child.path}
+                node={child}
+                depth={0}
+                selectedPath={selectedPath}
+                onSelectFile={onSelectFile}
+                getFileReadStatus={getFileReadStatus}
+                expandStateMap={expandStateMap}
+                setExpandStateMap={setExpandStateMap}
+              />
+            ))
+          )
         ) : (
           <div className="text-muted py-5 text-center">No files changed</div>
         )}

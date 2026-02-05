@@ -97,6 +97,7 @@ export const MuxMessageSchema = z.object({
       historySequence: z.number().optional(),
       timestamp: z.number().optional(),
       model: z.string().optional(),
+      routedThroughGateway: z.boolean().optional(),
       usage: z.any().optional(),
       contextUsage: z.any().optional(),
       providerMetadata: z.record(z.string(), z.unknown()).optional(),
@@ -111,12 +112,14 @@ export const MuxMessageSchema = z.object({
       agentId: AgentIdSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
+      uiVisible: z.boolean().optional(),
 
       agentSkillSnapshot: z
         .object({
           skillName: SkillNameSchema,
           scope: AgentSkillScopeSchema,
           sha256: z.string(),
+          frontmatterYaml: z.string().optional(),
         })
         .optional(),
       error: z.string().optional(),

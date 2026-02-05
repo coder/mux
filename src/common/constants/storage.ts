@@ -49,6 +49,11 @@ export const GLOBAL_SCOPE_ID = "__global__";
 export const UI_THEME_KEY = "uiTheme";
 
 /**
+ * LocalStorage key for the hidden Power Mode UI easter egg (global).
+ */
+export const POWER_MODE_ENABLED_KEY = "powerModeEnabled";
+
+/**
  * Get the localStorage key for the last selected provider when adding custom models (global)
  * Format: "lastCustomModelProvider"
  */
@@ -421,6 +426,12 @@ export function getReviewReadMoreKey(workspaceId: string): string {
 export function getFileTreeExpandStateKey(workspaceId: string): string {
   return `fileTreeExpandState:${workspaceId}`;
 }
+
+/**
+ * LocalStorage key for file tree view mode in the Review tab (global).
+ * Format: "reviewFileTreeViewMode"
+ */
+export const REVIEW_FILE_TREE_VIEW_MODE_KEY = "reviewFileTreeViewMode";
 
 /**
  * Get the localStorage key for persisted agent status for a workspace

@@ -32,6 +32,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { useSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
@@ -90,14 +91,21 @@ import {
   chatAttachmentsToFileParts,
   processAttachmentFiles,
 } from "@/browser/utils/attachmentsHandling";
+import type { PendingUserMessage } from "@/browser/utils/chatEditing";
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
-import { type MuxFrontendMetadata, prepareUserMessageForSend } from "@/common/types/message";
+import {
+  type MuxFrontendMetadata,
+  type ReviewNoteDataForDisplay,
+  prepareUserMessageForSend,
+} from "@/common/types/message";
+import type { Review } from "@/common/types/review";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { KNOWN_MODELS, MODEL_ABBREVIATION_EXAMPLES } from "@/common/constants/knownModels";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
+import { trackCommandUsed } from "@/common/telemetry";
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 
 import { CreationCenterContent } from "./CreationCenterContent";
@@ -107,6 +115,7 @@ import { CreationControls } from "./CreationControls";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
+import { usePowerMode } from "@/browser/contexts/PowerModeContext";
 import { useVoiceInput } from "@/browser/hooks/useVoiceInput";
 import { VoiceInputButton } from "./VoiceInputButton";
 import {
@@ -154,7 +163,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const policyState = usePolicy();
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
-  const mcpAllowUserDefined = effectivePolicy?.mcp.allowUserDefined;
   const runtimePolicy = useMemo(
     () => getAllowedRuntimeModesForUi(effectivePolicy),
     [effectivePolicy]
@@ -201,6 +209,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   })();
 
   const [input, setInput] = usePersistedState(storageKeys.inputKey, "", { listener: true });
+
+  // Keep a stable reference to the latest input value so event handlers don't need to rebind
+  // on same-length edits (e.g. selection-replace) to know the previous value.
+  const latestInputValueRef = useRef(input);
+  latestInputValueRef.current = input;
   // Track concurrent sends with a counter (not boolean) to handle queued follow-ups correctly.
   // When a follow-up is queued during stream-start, it resolves immediately but shouldn't
   // clear the "in flight" state until all sends complete.
@@ -255,6 +268,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const [attachments, setAttachmentsState] = useState<ChatAttachment[]>(() => {
     return readPersistedChatAttachments(storageKeys.attachmentsKey);
   });
+  // Reviews restored from edits/queued drafts override attached review state while active.
+  const [draftReviews, setDraftReviews] = useState<ReviewNoteDataForDisplay[] | null>(null);
   const persistAttachments = useCallback(
     (nextAttachments: ChatAttachment[]) => {
       if (nextAttachments.length === 0) {
@@ -304,7 +319,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     },
     [persistAttachments]
   );
-  // Attached reviews come from parent via props (persisted in pendingReviews state)
+  // Attached reviews come from parent via props (persisted in pendingReviews state).
+  // draftReviews takes precedence when restoring or editing message drafts.
   const attachedReviews = variant === "workspace" ? (props.attachedReviews ?? []) : [];
   // Creation sends can resolve after navigation; guard draft clears on unmounted inputs.
   const isMountedRef = useRef(true);
@@ -315,6 +331,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const modelSelectorRef = useRef<ModelSelectorRef>(null);
+  const powerMode = usePowerMode();
   const [atMentionCursorNonce, setAtMentionCursorNonce] = useState(0);
   const lastAtMentionCursorRef = useRef<number | null>(null);
   const handleAtMentionCursorActivity = useCallback(() => {
@@ -332,8 +349,33 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     setAtMentionCursorNonce((n) => n + 1);
   }, [input.length]);
 
-  // Draft state combines text input and attachments
-  // Reviews are managed separately via props (persisted in pendingReviews state)
+  const handleInputChange = useCallback(
+    (next: string) => {
+      if (powerMode.enabled) {
+        const prev = latestInputValueRef.current;
+        const delta = next.length - prev.length;
+        const el = inputRef.current;
+
+        if (el && next !== prev) {
+          // Power Mode should feel responsive on backspace/delete too.
+          if (delta > 0) {
+            powerMode.burstFromTextarea(el, Math.min(6, delta));
+          } else if (delta < 0) {
+            powerMode.burstFromTextarea(el, Math.min(6, -delta), "delete");
+          } else {
+            // Selection replace / overwrite with no net length change.
+            powerMode.burstFromTextarea(el, 1);
+          }
+        }
+      }
+
+      setInput(next);
+    },
+    [powerMode, setInput]
+  );
+
+  // Draft state combines text input and attachments.
+  // Reviews are sourced separately via attachedReviews unless draftReviews overrides them.
   interface DraftState {
     text: string;
     attachments: ChatAttachment[];
@@ -350,6 +392,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [setInput, setAttachments]
   );
   const preEditDraftRef = useRef<DraftState>({ text: "", attachments: [] });
+  const preEditReviewsRef = useRef<ReviewNoteDataForDisplay[] | null>(null);
   const { open } = useSettings();
   const { selectedWorkspace, beginWorkspaceCreation, updateWorkspaceDraftSection } =
     useWorkspaceContext();
@@ -412,7 +455,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     variant === "workspace" ? props.workspaceId : getProjectScopeId(props.projectPath)
   );
   // Extract models for convenience (don't create separate state - use hook as single source of truth)
-  // - preferredModel: gateway-transformed model for API calls
+  // - preferredModel: canonical model used for backend routing
   // - baseModel: canonical format for UI display and policy checks (e.g., ThinkingSlider)
   const preferredModel = sendMessageOptions.model;
   const baseModel = sendMessageOptions.baseModel;
@@ -456,11 +499,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
       const canonicalModel = migrateGatewayModel(model);
       ensureModelInSettings(canonicalModel); // Ensure model exists in Settings
-      updatePersistedState(storageKeys.modelKey, canonicalModel); // Update workspace or project-specific
 
-      // Notify parent of model change (for context switch warning)
-      // Called before early returns so warning works even offline or with custom agents
-      onModelChange?.(canonicalModel);
+      if (onModelChange) {
+        // Notify parent of model change (for context switch warning + persisted model metadata).
+        // Called before early returns so warnings work even offline or with custom agents.
+        onModelChange(canonicalModel);
+      } else {
+        const scopeId =
+          variant === "creation" ? getProjectScopeId(creationProjectPath) : workspaceId;
+        if (scopeId) {
+          setWorkspaceModelWithOrigin(scopeId, canonicalModel, "user");
+        }
+      }
 
       if (variant !== "workspace" || !workspaceId) {
         return;
@@ -513,12 +563,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [
       api,
       agentId,
-      storageKeys.modelKey,
+      creationProjectPath,
       ensureModelInSettings,
+      onModelChange,
       thinkingLevel,
       variant,
       workspaceId,
-      onModelChange,
     ]
   );
 
@@ -722,7 +772,27 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       : null;
   const hasTypedText = input.trim().length > 0;
   const hasImages = attachments.length > 0;
-  const hasReviews = attachedReviews.length > 0;
+  const reviewOverrideActive = draftReviews !== null;
+  const draftReviewItems = draftReviews ?? [];
+  const reviewData = reviewOverrideActive
+    ? draftReviewItems.length > 0
+      ? draftReviewItems
+      : undefined
+    : attachedReviews.length > 0
+      ? attachedReviews.map((review) => review.data)
+      : undefined;
+  const reviewIdsForCheck = reviewOverrideActive ? [] : attachedReviews.map((review) => review.id);
+  const reviewPanelItems: Review[] = reviewOverrideActive
+    ? draftReviewItems.map((data, index) => ({
+        id: `draft-review-${index}`,
+        data,
+        status: "attached",
+        createdAt: 0,
+      }))
+    : attachedReviews;
+  const hasReviews = reviewOverrideActive
+    ? draftReviewItems.length > 0
+    : attachedReviews.length > 0;
   // Disable send while Coder presets are loading (user could bypass preset validation)
   const policyBlocksCreateSend = variant === "creation" && creationRuntimePolicyError != null;
   const coderPresetsLoading =
@@ -734,10 +804,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     !coderPresetsLoading &&
     !policyBlocksCreateSend;
 
+  // User request: this sync effect runs on mount and when defaults/config change.
+  // Only treat *real* agent changes as explicit (origin "agent"); everything else is "sync".
+  const prevCreationAgentIdRef = useRef<string | null>(null);
+  const prevCreationScopeIdRef = useRef<string | null>(null);
   // Creation variant: keep the project-scoped model/thinking in sync with global agent defaults
   // so switching agents uses the configured defaults (and respects "inherit" semantics).
   useEffect(() => {
     if (variant !== "creation") {
+      // Reset tracking on variant transitions so creation entry never counts as an explicit switch.
+      prevCreationAgentIdRef.current = null;
+      prevCreationScopeIdRef.current = null;
       return;
     }
 
@@ -752,6 +829,15 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         ? agentId.trim().toLowerCase()
         : "exec";
 
+    const isExplicitAgentSwitch =
+      prevCreationAgentIdRef.current !== null &&
+      prevCreationScopeIdRef.current === scopeId &&
+      prevCreationAgentIdRef.current !== normalizedAgentId;
+
+    // Update refs for the next run (even if no model changes).
+    prevCreationAgentIdRef.current = normalizedAgentId;
+    prevCreationScopeIdRef.current = scopeId;
+
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
     const candidateModel = agentAiDefaults[normalizedAgentId]?.modelString ?? existingModel;
     const resolvedModel =
@@ -765,7 +851,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
     if (existingModel !== resolvedModel) {
-      updatePersistedState(modelKey, resolvedModel);
+      setWorkspaceModelWithOrigin(scopeId, resolvedModel, isExplicitAgentSwitch ? "agent" : "sync");
     }
 
     if (existingThinking !== resolvedThinking) {
@@ -795,6 +881,31 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       element.style.height = Math.min(element.scrollHeight, window.innerHeight * 0.5) + "px";
     });
   }, []);
+
+  const applyDraftFromPending = useCallback(
+    (pending: PendingUserMessage, attachmentKeyPrefix: string) => {
+      setDraft({
+        text: pending.content,
+        attachments: filePartsToChatAttachments(pending.fileParts, attachmentKeyPrefix),
+      });
+    },
+    [setDraft]
+  );
+
+  // Restore a full pending draft (text + attachments + reviews), e.g. queued message edits.
+  const restoreDraft = useCallback(
+    (pending: PendingUserMessage) => {
+      applyDraftFromPending(pending, `restored-${Date.now()}`);
+      setDraftReviews(pending.reviews);
+      focusMessageInput();
+    },
+    [applyDraftFromPending, focusMessageInput, setDraftReviews]
+  );
+
+  const restorePreEditDraft = useCallback(() => {
+    setDraft(preEditDraftRef.current);
+    setDraftReviews(preEditReviewsRef.current);
+  }, [setDraft, setDraftReviews]);
 
   // Method to restore text to input (used by compaction cancel)
   const restoreText = useCallback(
@@ -827,18 +938,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     [focusMessageInput, setInput]
   );
 
-  // Method to restore attachments to input (used by queued message edit)
-
   const handleSendRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const send = useCallback(() => {
     return handleSendRef.current();
   }, []);
-  const restoreAttachments = useCallback(
-    (fileParts: FilePart[]) => {
-      setAttachments(filePartsToChatAttachments(fileParts, `restored-${Date.now()}`));
-    },
-    [setAttachments]
-  );
 
   const onReady = props.onReady;
 
@@ -849,12 +952,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         focus: focusMessageInput,
         send,
         restoreText,
+        restoreDraft,
         appendText,
         prependText,
-        restoreAttachments,
       });
     }
-  }, [onReady, focusMessageInput, send, restoreText, appendText, prependText, restoreAttachments]);
+  }, [onReady, focusMessageInput, send, restoreText, restoreDraft, appendText, prependText]);
 
   useEffect(() => {
     const handleGlobalKeyDown = (event: KeyboardEvent) => {
@@ -891,10 +994,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     if (editingMessage) {
       preEditDraftRef.current = getDraft();
-      const editAttachments = editingMessage.fileParts
-        ? filePartsToChatAttachments(editingMessage.fileParts, `edit-${editingMessage.id}`)
-        : [];
-      setDraft({ text: editingMessage.content, attachments: editAttachments });
+      preEditReviewsRef.current = draftReviews;
+      applyDraftFromPending(editingMessage.pending, `edit-${editingMessage.id}`);
+      setDraftReviews(editingMessage.pending.reviews);
       // Auto-resize textarea and focus
       setTimeout(() => {
         if (inputRef.current) {
@@ -906,7 +1008,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }, 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only run when editingMessage changes
-  }, [editingMessage]);
+  }, [editingMessage, applyDraftFromPending]);
 
   // Watch input/cursor for @file mentions
   useEffect(() => {
@@ -1045,11 +1147,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
       variant,
-      mcpAllowUserDefined,
     });
     setCommandSuggestions(suggestions);
     setShowCommandSuggestions(suggestions.length > 0);
-  }, [input, agentSkillDescriptors, variant, mcpAllowUserDefined]);
+  }, [input, agentSkillDescriptors, variant]);
 
   // Load agent skills for suggestions
   useEffect(() => {
@@ -1108,8 +1209,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Voice input: track whether OpenAI API key is configured (subscribe to provider config changes)
   useEffect(() => {
     if (!api) return;
+
     const abortController = new AbortController();
-    const signal = abortController.signal;
+    const { signal } = abortController;
+
+    // Some oRPC iterators don't eagerly close on abort alone.
+    // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
+    let iterator: AsyncIterator<unknown> | null = null;
 
     const checkOpenAIKey = async () => {
       try {
@@ -1128,8 +1234,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // Subscribe to provider config changes via oRPC
     (async () => {
       try {
-        const iterator = await api.providers.onConfigChanged(undefined, { signal });
-        for await (const _ of iterator) {
+        const subscribedIterator = await api.providers.onConfigChanged(undefined, { signal });
+
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
+        iterator = subscribedIterator;
+
+        for await (const _ of subscribedIterator) {
           if (signal.aborted) break;
           void checkOpenAIKey();
         }
@@ -1138,7 +1252,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
     })();
 
-    return () => abortController.abort();
+    return () => {
+      abortController.abort();
+      void iterator?.return?.();
+    };
   }, [api]);
 
   // Allow external components (e.g., CommandPalette, Queued message edits) to insert text
@@ -1148,27 +1265,46 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         text: string;
         mode?: "append" | "replace";
         fileParts?: FilePart[];
+        reviews?: ReviewNoteDataForDisplay[];
       }>;
 
-      const { text, mode = "append", fileParts } = customEvent.detail;
+      const { text, mode = "append", fileParts, reviews } = customEvent.detail;
+      const hasFileParts = !!fileParts && fileParts.length > 0;
+      const hasReviews = !!reviews && reviews.length > 0;
 
       if (mode === "replace") {
         if (editingMessage) {
           return;
         }
-        restoreText(text);
+        if (hasFileParts || hasReviews) {
+          restoreDraft({
+            content: text,
+            fileParts: fileParts ?? [],
+            reviews: reviews ?? [],
+          });
+        } else {
+          restoreText(text);
+        }
+      } else if (hasFileParts || hasReviews) {
+        const currentText = getDraft().text;
+        const separator = currentText.trim() ? "\n\n" : "";
+        const nextText = currentText + separator + text;
+        applyDraftFromPending(
+          {
+            content: nextText,
+            fileParts: fileParts ?? [],
+            reviews: reviews ?? [],
+          },
+          `restored-${Date.now()}`
+        );
       } else {
         appendText(text);
-      }
-
-      if (fileParts && fileParts.length > 0) {
-        restoreAttachments(fileParts);
       }
     };
     window.addEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
     return () =>
       window.removeEventListener(CUSTOM_EVENTS.UPDATE_CHAT_INPUT, handler as EventListener);
-  }, [appendText, restoreText, restoreAttachments, editingMessage]);
+  }, [appendText, restoreText, restoreDraft, applyDraftFromPending, getDraft, editingMessage]);
 
   // Allow external components to open the Model Selector
   useEffect(() => {
@@ -1350,6 +1486,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return false;
     }
 
+    // /<model-alias> ... is a *send modifier* (one-shot model override), not a command with its own
+    // side effects. Let the normal send flow handle it so post-send behavior can't drift.
+    if (parsed.type === "model-oneshot") {
+      if (variant !== "workspace") {
+        setToast({
+          id: Date.now().toString(),
+          type: "error",
+          message: "Model one-shot is only available in workspace view",
+        });
+        return true;
+      }
+      return false;
+    }
+
     const isDestructive = parsed.type === "clear" || parsed.type === "truncate";
     if (isDestructive && variant === "workspace" && !options?.skipConfirmation) {
       setPendingDestructiveCommand({
@@ -1359,7 +1509,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return true;
     }
 
-    const reviewsData = attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
+    const reviewsData = reviewData;
+    // Prepare file parts for commands that need to send messages with attachments
+    const commandFileParts = chatAttachmentsToFileParts(attachments, { validate: true });
     const commandContext: SlashCommandContext = {
       api,
       variant,
@@ -1371,7 +1523,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       setAttachments,
       setSendingState: (increment: boolean) => setSendingCount((c) => c + (increment ? 1 : -1)),
       setToast,
-      onModelChange: props.onModelChange,
       setPreferredModel,
       setVimEnabled,
       onTruncateHistory: variant === "workspace" ? props.onTruncateHistory : undefined,
@@ -1383,18 +1534,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       editMessageId: editingMessage?.id,
       onCancelEdit: commandOnCancelEdit,
       reviews: reviewsData,
+      fileParts: commandFileParts.length > 0 ? commandFileParts : undefined,
+      onMessageSent: variant === "workspace" ? props.onMessageSent : undefined,
+      onCheckReviews: variant === "workspace" ? props.onCheckReviews : undefined,
+      attachedReviewIds: reviewIdsForCheck,
     };
 
     const result = await processSlashCommand(parsed, commandContext);
 
     if (!result.clearInput) {
       setInput(restoreInput);
-    } else if (variant === "workspace" && parsed.type === "compact") {
-      if (reviewsData && reviewsData.length > 0) {
-        const sentReviewIds = attachedReviews.map((r) => r.id);
-        props.onCheckReviews?.(sentReviewIds);
+    } else {
+      setDraftReviews(null);
+      if (variant === "workspace" && parsed.type === "compact") {
+        if (reviewIdsForCheck.length > 0) {
+          props.onCheckReviews?.(reviewIdsForCheck);
+        }
+        props.onMessageSent?.();
       }
-      props.onMessageSent?.();
     }
 
     return true;
@@ -1597,13 +1754,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (variant !== "workspace") return; // Type guard
 
     try {
-      const commandHandled = await executeParsedCommand(parsed, input);
+      const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
+      const commandHandled = modelOneShot ? false : await executeParsedCommand(parsed, input);
       if (commandHandled) {
         return;
       }
 
-      // Regular message - send directly via API
-      const messageTextForSend = skillInvocation?.userText ?? messageText;
+      const modelOverride = modelOneShot?.modelString;
+
+      // Regular message (or /<model-alias> one-shot override) - send directly via API
+      const messageTextForSend = modelOneShot?.message ?? skillInvocation?.userText ?? messageText;
       const skillMuxMetadata = skillInvocation
         ? buildSkillInvocationMetadata(messageText, skillInvocation.descriptor)
         : undefined;
@@ -1614,12 +1774,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
       setSendingCount((c) => c + 1);
 
+      const policyModel = modelOverride ?? baseModel;
+
       // Preflight: if the message includes PDFs, ensure the selected model can accept them.
       const pdfAttachments = attachments.filter(
         (attachment) => getBaseMediaType(attachment.mediaType) === PDF_MEDIA_TYPE
       );
       if (pdfAttachments.length > 0) {
-        const caps = getModelCapabilities(baseModel);
+        const caps = getModelCapabilities(policyModel);
         if (caps && !caps.supportsPdfInput) {
           const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
             .map((m) => m.id)
@@ -1632,7 +1794,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             type: "error",
             title: "PDF not supported",
             message:
-              `Model ${baseModel} does not support PDF input.` +
+              `Model ${policyModel} does not support PDF input.` +
               (pdfCapableExamples.length > 0
                 ? ` Try e.g.: ${pdfCapableExamples.join(", ")}${examplesSuffix}`
                 : " Choose a model with PDF support."),
@@ -1650,7 +1812,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               pushToast({
                 type: "error",
                 title: "PDF too large",
-                message: `${attachment.filename ?? "PDF"} is ${actualMb}MB, but ${baseModel} allows up to ${caps.maxPdfSizeMb}MB per PDF.`,
+                message: `${attachment.filename ?? "PDF"} is ${actualMb}MB, but ${policyModel} allows up to ${caps.maxPdfSizeMb}MB per PDF.`,
               });
               setSendingCount((c) => c - 1);
               return;
@@ -1660,6 +1822,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       }
       // Save current draft state for restoration on error
       const preSendDraft = getDraft();
+      const preSendReviews = draftReviews;
 
       // Auto-compaction check (workspace variant only)
       // Check if we should auto-compact before sending this message
@@ -1677,14 +1840,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         const fileParts = chatAttachmentsToFileParts(attachments);
 
         // Prepare reviews data for the continue message
-        const reviewsData =
-          attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
+        const reviewsData = reviewData;
 
         // Capture review IDs for marking as checked on success
-        const sentReviewIds = attachedReviews.map((r) => r.id);
+        const sentReviewIds = reviewIdsForCheck;
 
         // Clear input immediately for responsive UX
         setInput("");
+        setDraftReviews(null);
 
         const compactionSendMessageOptions: SendMessageOptions = {
           ...sendMessageOptions,
@@ -1709,6 +1872,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           if (!result.success) {
             // Restore on error
             setDraft(preSendDraft);
+            setDraftReviews(preSendReviews);
             pushToast({
               type: "error",
               title: "Auto-Compaction Failed",
@@ -1728,6 +1892,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         } catch (error) {
           // Restore on unexpected error
           setDraft(preSendDraft);
+          setDraftReviews(preSendReviews);
           pushToast({
             type: "error",
             title: "Auto-Compaction Failed",
@@ -1752,8 +1917,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             : undefined;
 
         // Prepare reviews data (used for both compaction continueMessage and normal send)
-        const reviewsData =
-          attachedReviews.length > 0 ? attachedReviews.map((r) => r.data) : undefined;
+        const reviewsData = reviewData;
 
         // When editing a /compact command, regenerate the actual summarization request
         let actualMessageText = messageTextForSend;
@@ -1802,13 +1966,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         muxMetadata = reviewMetadata;
 
+        const effectiveModel = modelOverride ?? compactionOptions.model ?? sendMessageOptions.model;
+        muxMetadata = muxMetadata
+          ? { ...muxMetadata, requestedModel: effectiveModel }
+          : {
+              type: "normal",
+              requestedModel: effectiveModel,
+            };
+
         // Capture review IDs before clearing (for marking as checked on success)
-        const sentReviewIds = attachedReviews.map((r) => r.id);
+        const sentReviewIds = reviewIdsForCheck;
 
         // Clear input, images, and hide reviews immediately for responsive UI
         // Text/images are restored if send fails; reviews remain "attached" in state
         // so they'll reappear naturally on failure (we only call onCheckReviews on success)
         setInput("");
+        setDraftReviews(null);
         setAttachments([]);
         setHideReviewsDuringSend(true);
         // Clear inline height style - VimTextArea's useLayoutEffect will handle sizing
@@ -1816,17 +1989,22 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           inputRef.current.style.height = "";
         }
 
+        // One-shot models shouldn't update the persisted session defaults.
+        const sendOptions = {
+          ...sendMessageOptions,
+          ...compactionOptions,
+          ...(modelOverride ? { model: modelOverride } : {}),
+          ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          additionalSystemInstructions,
+          editMessageId: editingMessage?.id,
+          fileParts: sendFileParts,
+          muxMetadata,
+        };
+
         const result = await api.workspace.sendMessage({
           workspaceId: props.workspaceId,
           message: finalMessageText,
-          options: {
-            ...sendMessageOptions,
-            ...compactionOptions,
-            additionalSystemInstructions,
-            editMessageId: editingMessage?.id,
-            fileParts: sendFileParts,
-            muxMetadata,
-          },
+          options: sendOptions,
         });
 
         if (!result.success) {
@@ -1836,16 +2014,21 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setToast(createErrorToast(result.error));
           // Restore draft on error so user can try again
           setDraft(preSendDraft);
+          setDraftReviews(preSendReviews);
         } else {
           // Track telemetry for successful message send
           telemetry.messageSent(
             props.workspaceId,
-            sendMessageOptions.model,
+            effectiveModel,
             sendMessageOptions.agentId ?? agentId ?? "exec",
             finalMessageText.length,
             runtimeType,
             sendMessageOptions.thinkingLevel ?? "off"
           );
+
+          if (modelOneShot) {
+            trackCommandUsed("model");
+          }
 
           // Mark workspace as read after sending a message.
           // This prevents the unread indicator from showing when the user
@@ -1875,6 +2058,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         );
         // Restore draft on error
         setDraft(preSendDraft);
+        setDraftReviews(preSendReviews);
       } finally {
         setSendingCount((c) => c - 1);
         setHideReviewsDuringSend(false);
@@ -1893,7 +2077,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Handler for Escape in vim normal mode - cancels edit if editing
   const handleEscapeInNormalMode = () => {
     if (variant === "workspace" && editingMessage && props.onCancelEdit) {
-      setDraft(preEditDraftRef.current);
+      restorePreEditDraft();
       props.onCancelEdit();
       inputRef.current?.blur();
     }
@@ -1942,7 +2126,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (variant === "workspace" && editingMessage && props.onCancelEdit && !vimEnabled) {
         e.preventDefault();
         stopKeyboardPropagation(e);
-        setDraft(preEditDraftRef.current);
+        restorePreEditDraft();
         props.onCancelEdit();
         const isFocused = document.activeElement === inputRef.current;
         if (isFocused) {
@@ -2078,12 +2262,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           {/* Hide during send to avoid duplicate display with the sent message */}
           {variant === "workspace" && !hideReviewsDuringSend && (
             <AttachedReviewsPanel
-              reviews={attachedReviews}
-              onDetachAll={props.onDetachAllReviews}
-              onDetach={props.onDetachReview}
-              onCheck={props.onCheckReview}
-              onDelete={props.onDeleteReview}
-              onUpdateNote={props.onUpdateReviewNote}
+              reviews={reviewPanelItems}
+              onDetachAll={reviewOverrideActive ? undefined : props.onDetachAllReviews}
+              onDetach={reviewOverrideActive ? undefined : props.onDetachReview}
+              onCheck={reviewOverrideActive ? undefined : props.onCheckReview}
+              onDelete={reviewOverrideActive ? undefined : props.onDeleteReview}
+              onUpdateNote={reviewOverrideActive ? undefined : props.onUpdateReviewNote}
             />
           )}
 
@@ -2131,7 +2315,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   value={input}
                   isEditing={!!editingMessage}
                   focusBorderColor={focusBorderColor}
-                  onChange={setInput}
+                  onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   onKeyUp={handleAtMentionCursorActivity}

@@ -10,6 +10,7 @@ import type { StreamingMessageAggregator } from "@/browser/utils/messages/Stream
 import { isCompactingStream, cancelCompaction } from "@/browser/utils/compaction/handler";
 import { useAPI } from "@/browser/contexts/API";
 import { disableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
+import type { EditingMessageState } from "@/browser/utils/chatEditing";
 
 interface UseAIViewKeybindsParams {
   workspaceId: string;
@@ -20,7 +21,7 @@ interface UseAIViewKeybindsParams {
   handleOpenTerminal: () => void;
   handleOpenInEditor: () => void;
   aggregator: StreamingMessageAggregator | undefined; // For compaction detection
-  setEditingMessage: (editing: { id: string; content: string } | undefined) => void;
+  setEditingMessage: (editing: EditingMessageState | undefined) => void;
   vimEnabled: boolean; // For vim-aware interrupt keybind
 }
 
@@ -73,9 +74,7 @@ export function useAIViewKeybinds({
           // Stores cancellation marker in localStorage (persists across reloads)
           e.preventDefault();
           if (api) {
-            void cancelCompaction(api, workspaceId, aggregator, (messageId, command) => {
-              setEditingMessage({ id: messageId, content: command });
-            });
+            void cancelCompaction(api, workspaceId, aggregator, setEditingMessage);
           }
           disableAutoRetryPreference(workspaceId);
           return;

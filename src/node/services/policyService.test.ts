@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
+import { Config } from "@/node/config";
 import { PolicyService } from "./policyService";
 
 const PREFIX = "mux-policy-service-test-";
@@ -10,11 +11,13 @@ const PREFIX = "mux-policy-service-test-";
 describe("PolicyService", () => {
   let tempDir: string;
   let policyPath: string;
+  let config: Config;
   let prevPolicyFileEnv: string | undefined;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(path.join(tmpdir(), PREFIX));
     policyPath = path.join(tempDir, "policy.json");
+    config = new Config(tempDir);
     prevPolicyFileEnv = process.env.MUX_POLICY_FILE;
   });
 
@@ -31,7 +34,7 @@ describe("PolicyService", () => {
   test("disabled when MUX_POLICY_FILE is unset", async () => {
     delete process.env.MUX_POLICY_FILE;
 
-    const service = new PolicyService();
+    const service = new PolicyService(config);
     await service.initialize();
     expect(service.getStatus()).toEqual({ state: "disabled" });
     expect(service.getEffectivePolicy()).toBeNull();
@@ -42,7 +45,7 @@ describe("PolicyService", () => {
     await writeFile(policyPath, '{"policy_format_version":"0.1",', "utf-8");
     process.env.MUX_POLICY_FILE = policyPath;
 
-    const service = new PolicyService();
+    const service = new PolicyService(config);
     await service.initialize();
 
     const status = service.getStatus();
@@ -65,7 +68,7 @@ describe("PolicyService", () => {
     );
     process.env.MUX_POLICY_FILE = policyPath;
 
-    const service = new PolicyService();
+    const service = new PolicyService(config);
     await service.initialize();
 
     const status = service.getStatus();
@@ -88,7 +91,7 @@ describe("PolicyService", () => {
     );
     process.env.MUX_POLICY_FILE = policyPath;
 
-    const service = new PolicyService();
+    const service = new PolicyService(config);
     await service.initialize();
 
     expect(service.isEnforced()).toBe(true);
@@ -111,7 +114,7 @@ describe("PolicyService", () => {
     );
     process.env.MUX_POLICY_FILE = policyPath;
 
-    const service = new PolicyService();
+    const service = new PolicyService(config);
     await service.initialize();
 
     expect(service.isEnforced()).toBe(true);
@@ -144,13 +147,208 @@ describe("PolicyService", () => {
 
       process.env.MUX_POLICY_FILE = `http://127.0.0.1:${address.port}/policy.json`;
 
-      const service = new PolicyService();
+      const service = new PolicyService(config);
       await service.initialize();
 
       expect(service.isEnforced()).toBe(true);
       expect(service.isProviderAllowed("openai")).toBe(true);
       expect(service.isModelAllowed("openai", "gpt-4")).toBe(true);
       expect(service.isModelAllowed("openai", "gpt-3.5")).toBe(false);
+
+      service.dispose();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("loads policy from Governor when enrolled", async () => {
+    delete process.env.MUX_POLICY_FILE;
+
+    const token = "governor-test-token";
+    const policy = {
+      policy_format_version: "0.1",
+      provider_access: [{ id: "openai", model_access: ["gpt-4"] }],
+    };
+
+    let receivedAuth: string | undefined;
+
+    const server = createServer((req, res) => {
+      receivedAuth = req.headers["mux-governor-session-token"] as string | undefined;
+
+      if (req.url !== "/api/v1/policy.json") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      if (req.headers["mux-governor-session-token"] !== token) {
+        res.writeHead(401);
+        res.end("Unauthorized");
+        return;
+      }
+
+      res.writeHead(200, {
+        "content-type": "application/json",
+      });
+      res.end(JSON.stringify(policy));
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind test server");
+      }
+
+      const governorOrigin = `http://127.0.0.1:${address.port}`;
+      await config.editConfig((existing) => ({
+        ...existing,
+        muxGovernorUrl: governorOrigin,
+        muxGovernorToken: token,
+      }));
+
+      const service = new PolicyService(config);
+      await service.initialize();
+
+      expect(service.getPolicyGetResponse().source).toBe("governor");
+      expect(service.isEnforced()).toBe(true);
+      expect(service.isProviderAllowed("openai")).toBe(true);
+      expect(service.isProviderAllowed("anthropic")).toBe(false);
+      expect(receivedAuth).toBe(token);
+
+      service.dispose();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("MUX_POLICY_FILE takes precedence over Governor enrollment", async () => {
+    const token = "governor-test-token";
+    const policy = {
+      policy_format_version: "0.1",
+      provider_access: [{ id: "anthropic", model_access: ["claude-3"] }],
+    };
+
+    let requestCount = 0;
+
+    const server = createServer((req, res) => {
+      requestCount += 1;
+
+      if (req.url !== "/api/v1/policy.json") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      res.writeHead(200, {
+        "content-type": "application/json",
+      });
+      res.end(JSON.stringify(policy));
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind test server");
+      }
+
+      const governorOrigin = `http://127.0.0.1:${address.port}`;
+      await config.editConfig((existing) => ({
+        ...existing,
+        muxGovernorUrl: governorOrigin,
+        muxGovernorToken: token,
+      }));
+
+      await writeFile(
+        policyPath,
+        JSON.stringify({
+          policy_format_version: "0.1",
+          provider_access: [{ id: "openai", model_access: ["gpt-4"] }],
+        }),
+        "utf-8"
+      );
+      process.env.MUX_POLICY_FILE = policyPath;
+
+      const service = new PolicyService(config);
+      await service.initialize();
+
+      expect(service.getPolicyGetResponse().source).toBe("env");
+      expect(service.isEnforced()).toBe(true);
+      expect(service.isProviderAllowed("openai")).toBe(true);
+      expect(service.isProviderAllowed("anthropic")).toBe(false);
+      expect(requestCount).toBe(0);
+
+      service.dispose();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("refreshNow returns Err on Governor errors and keeps last-known-good", async () => {
+    delete process.env.MUX_POLICY_FILE;
+
+    const token = "governor-test-token";
+    const policy = {
+      policy_format_version: "0.1",
+      provider_access: [{ id: "openai", model_access: ["gpt-4"] }],
+    };
+
+    let mode: "ok" | "error" = "ok";
+
+    const server = createServer((req, res) => {
+      if (req.url !== "/api/v1/policy.json") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+
+      if (mode === "error") {
+        res.writeHead(500);
+        res.end("boom");
+        return;
+      }
+
+      res.writeHead(200, {
+        "content-type": "application/json",
+      });
+      res.end(JSON.stringify(policy));
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Failed to bind test server");
+      }
+
+      const governorOrigin = `http://127.0.0.1:${address.port}`;
+      await config.editConfig((existing) => ({
+        ...existing,
+        muxGovernorUrl: governorOrigin,
+        muxGovernorToken: token,
+      }));
+
+      const service = new PolicyService(config);
+      await service.initialize();
+
+      expect(service.getPolicyGetResponse().source).toBe("governor");
+      expect(service.isEnforced()).toBe(true);
+
+      mode = "error";
+
+      const refresh = await service.refreshNow();
+      expect(refresh.success).toBe(false);
+      if (!refresh.success) {
+        expect(refresh.error).toContain("HTTP 500");
+      }
+
+      expect(service.isEnforced()).toBe(true);
+      expect(service.isProviderAllowed("openai")).toBe(true);
+      expect(service.isModelAllowed("openai", "gpt-4")).toBe(true);
 
       service.dispose();
     } finally {

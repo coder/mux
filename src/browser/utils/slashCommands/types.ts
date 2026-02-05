@@ -13,6 +13,7 @@ import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 
 export type ParsedCommand =
   | { type: "model-set"; modelString: string }
+  | { type: "model-oneshot"; modelString: string; message: string }
   | { type: "model-help" }
   | { type: "clear" }
   | { type: "truncate"; percentage: number }
@@ -27,10 +28,6 @@ export type ParsedCommand =
       startMessage?: string;
     }
   | { type: "vim-toggle" }
-  | { type: "mcp-add"; name: string; command: string }
-  | { type: "mcp-edit"; name: string; command: string }
-  | { type: "mcp-remove"; name: string }
-  | { type: "mcp-open" }
   | { type: "plan-show" }
   | { type: "plan-open" }
   | { type: "debug-llm-request" }
@@ -78,8 +75,6 @@ export interface SlashSuggestion {
 
 export interface SlashSuggestionContext {
   agentSkills?: AgentSkillDescriptor[];
-  /** Policy: allow/disallow user-defined MCP servers */
-  mcpAllowUserDefined?: { stdio: boolean; remote: boolean };
   /** Variant determines which commands are available */
   variant?: "workspace" | "creation";
 }

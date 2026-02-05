@@ -15,6 +15,8 @@ function createMockTelemetryService(): Pick<TelemetryService, "capture" | "getFe
   };
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 describe("SessionTimingService", () => {
   let tempDir: string;
   let config: Config;
@@ -861,5 +863,136 @@ describe("SessionTimingService", () => {
     });
 
     expect(invalidCalls.length).toBeGreaterThan(0);
+  });
+
+  it("throttles delta-driven change events per workspace", async () => {
+    const telemetry = createMockTelemetryService();
+    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+    service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+    const workspaceId = "test-workspace";
+    const messageId = "m1";
+    const model = "openai:gpt-4o";
+    const startTime = 5_000_000;
+
+    const onChange = mock<(workspaceId: string) => void>(() => undefined);
+
+    service.onStatsChange(onChange);
+    service.addSubscriber(workspaceId);
+
+    try {
+      service.handleStreamStart({
+        type: "stream-start",
+        workspaceId,
+        messageId,
+        model,
+        historySequence: 1,
+        startTime,
+        mode: "exec",
+      });
+
+      expect(onChange).toHaveBeenCalledTimes(1);
+
+      // First token should be emitted immediately so TTFT updates promptly.
+      service.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId,
+        messageId,
+        delta: "hi",
+        tokens: 1,
+        timestamp: startTime + 100,
+      });
+
+      expect(onChange).toHaveBeenCalledTimes(2);
+
+      // Burst of deltas should coalesce into a single trailing emit.
+      for (let i = 0; i < 25; i++) {
+        service.handleStreamDelta({
+          type: "stream-delta",
+          workspaceId,
+          messageId,
+          delta: "x",
+          tokens: 1,
+          timestamp: startTime + 200 + i,
+        });
+      }
+
+      // Still only the immediate start + first token emits.
+      expect(onChange).toHaveBeenCalledTimes(2);
+
+      await sleep(250);
+      expect(onChange).toHaveBeenCalledTimes(3);
+
+      // Without new deltas, we shouldn't keep emitting.
+      await sleep(250);
+      expect(onChange).toHaveBeenCalledTimes(3);
+    } finally {
+      service.offStatsChange(onChange);
+      service.removeSubscriber(workspaceId);
+    }
+  });
+
+  it("clears scheduled delta emits when the last subscriber disconnects", async () => {
+    const telemetry = createMockTelemetryService();
+    const service = new SessionTimingService(config, telemetry as unknown as TelemetryService);
+    service.setStatsTabState({ enabled: true, variant: "stats", override: "default" });
+
+    const workspaceId = "test-workspace";
+    const messageId = "m1";
+    const model = "openai:gpt-4o";
+    const startTime = 6_000_000;
+
+    const onChange = mock<(workspaceId: string) => void>(() => undefined);
+
+    service.onStatsChange(onChange);
+    service.addSubscriber(workspaceId);
+
+    try {
+      service.handleStreamStart({
+        type: "stream-start",
+        workspaceId,
+        messageId,
+        model,
+        historySequence: 1,
+        startTime,
+        mode: "exec",
+      });
+
+      service.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId,
+        messageId,
+        delta: "hi",
+        tokens: 1,
+        timestamp: startTime + 100,
+      });
+
+      expect(onChange).toHaveBeenCalledTimes(2);
+
+      // Schedule a throttled emit.
+      service.handleStreamDelta({
+        type: "stream-delta",
+        workspaceId,
+        messageId,
+        delta: "x",
+        tokens: 1,
+        timestamp: startTime + 200,
+      });
+
+      const deltaEmitState = (
+        service as unknown as { deltaEmitState: Map<string, { timer?: unknown }> }
+      ).deltaEmitState;
+      expect(deltaEmitState.get(workspaceId)?.timer).toBeDefined();
+
+      // Unsubscribe before the throttle window elapses; timer should be cleared.
+      service.removeSubscriber(workspaceId);
+      expect(deltaEmitState.has(workspaceId)).toBe(false);
+
+      await sleep(250);
+      expect(onChange).toHaveBeenCalledTimes(2);
+    } finally {
+      service.offStatsChange(onChange);
+      service.removeSubscriber(workspaceId);
+    }
   });
 });

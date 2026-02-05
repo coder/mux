@@ -6,7 +6,11 @@ import { describe, expect, test } from "bun:test";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { discoverAgentSkills, readAgentSkill } from "./agentSkillsService";
+import {
+  discoverAgentSkills,
+  discoverAgentSkillsDiagnostics,
+  readAgentSkill,
+} from "./agentSkillsService";
 
 async function writeSkill(root: string, name: string, description: string): Promise<void> {
   const skillDir = path.join(root, name);
@@ -113,5 +117,73 @@ describe("agentSkillsService", () => {
     const name = SkillNameSchema.parse("mux-docs");
     const resolved = await readAgentSkill(runtime, project.path, name, { roots });
     expect(resolved.package.scope).toBe("project");
+  });
+
+  test("discoverAgentSkillsDiagnostics surfaces invalid skills", async () => {
+    using project = new DisposableTempDir("agent-skills-project");
+    using global = new DisposableTempDir("agent-skills-global");
+
+    const projectSkillsRoot = path.join(project.path, ".mux", "skills");
+    const globalSkillsRoot = global.path;
+
+    await writeSkill(projectSkillsRoot, "foo", "valid");
+
+    // Invalid directory name (fails SkillNameSchema parsing)
+    const invalidDirName = "Bad_Skill";
+    const invalidDir = path.join(projectSkillsRoot, invalidDirName);
+    await fs.mkdir(invalidDir, { recursive: true });
+
+    // Valid directory name but missing SKILL.md
+    await fs.mkdir(path.join(projectSkillsRoot, "missing-skill"), { recursive: true });
+
+    // Invalid SKILL.md frontmatter (missing required description)
+    const badFrontmatterDir = path.join(projectSkillsRoot, "bad-frontmatter");
+    await fs.mkdir(badFrontmatterDir, { recursive: true });
+    await fs.writeFile(
+      path.join(badFrontmatterDir, "SKILL.md"),
+      `---\nname: bad-frontmatter\n---\nBody\n`,
+      "utf-8"
+    );
+
+    // Mismatched frontmatter.name vs directory name
+    const mismatchDir = path.join(projectSkillsRoot, "name-mismatch");
+    await fs.mkdir(mismatchDir, { recursive: true });
+    await fs.writeFile(
+      path.join(mismatchDir, "SKILL.md"),
+      `---\nname: other-name\ndescription: mismatch\n---\nBody\n`,
+      "utf-8"
+    );
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
+    const runtime = new LocalRuntime(project.path);
+
+    const diagnostics = await discoverAgentSkillsDiagnostics(runtime, project.path, { roots });
+
+    expect(diagnostics.skills.map((s) => s.name)).toEqual(["foo", "init", "mux-docs"]);
+
+    const invalidNames = diagnostics.invalidSkills.map((issue) => issue.directoryName).sort();
+    expect(invalidNames).toEqual(
+      [invalidDirName, "bad-frontmatter", "missing-skill", "name-mismatch"].sort()
+    );
+
+    for (const issue of diagnostics.invalidSkills) {
+      expect(issue.scope).toBe("project");
+      expect(issue.displayPath).toContain(issue.directoryName);
+      expect(issue.message.length).toBeGreaterThan(0);
+      expect(issue.hint?.length).toBeGreaterThan(0);
+    }
+
+    expect(
+      diagnostics.invalidSkills.find((i) => i.directoryName === invalidDirName)?.message
+    ).toContain("Invalid skill directory name");
+    expect(
+      diagnostics.invalidSkills.find((i) => i.directoryName === "missing-skill")?.message
+    ).toContain("SKILL.md is missing");
+    expect(
+      diagnostics.invalidSkills.find((i) => i.directoryName === "bad-frontmatter")?.message
+    ).toContain("Invalid SKILL.md frontmatter");
+    expect(
+      diagnostics.invalidSkills.find((i) => i.directoryName === "name-mismatch")?.message
+    ).toContain("must match directory name");
   });
 });

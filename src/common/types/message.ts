@@ -267,6 +267,13 @@ interface MuxFrontendMetadataBase {
   reviews?: ReviewNoteDataForDisplay[];
   /** Command prefix to highlight in UI (e.g., "/compact -m sonnet" or "/react-effects") */
   commandPrefix?: string;
+  /**
+   * Model used for the pending send (UI-only).
+   *
+   * We stash this so the "starting" label reflects the actual model for one-shot
+   * and compaction sends instead of whatever happens to be persisted in localStorage.
+   */
+  requestedModel?: string;
 }
 
 /** Status to display in sidebar during background operations */
@@ -347,6 +354,8 @@ export interface MuxMetadata {
   mode?: AgentMode;
   timestamp?: number;
   model?: string;
+  /** True when this response was routed through Mux Gateway (model stays canonical). */
+  routedThroughGateway?: boolean;
   // Total usage across all steps (for cost calculation)
   usage?: LanguageModelV2Usage;
   // Last step's usage only (for context window display - inputTokens = current context size)
@@ -358,6 +367,13 @@ export interface MuxMetadata {
   systemMessageTokens?: number; // Token count for system message sent with this request (calculated by AIService)
   partial?: boolean; // Whether this message was interrupted and is incomplete
   synthetic?: boolean; // Whether this message was synthetically generated (e.g., [CONTINUE] sentinel)
+  /**
+   * UI hint: show in the chat UI even when synthetic.
+   *
+   * Synthetic messages are hidden by default because most are for model context only.
+   * Set this flag for synthetic notices that should be visible to users.
+   */
+  uiVisible?: boolean;
   error?: string; // Error message if stream failed
   errorType?: StreamErrorType; // Error type/category if stream failed
   // Compaction source: "user" (manual /compact), "idle" (auto-triggered), or legacy boolean `true`
@@ -381,6 +397,11 @@ export interface MuxMetadata {
     skillName: string;
     scope: AgentSkillScope;
     sha256: string;
+    /**
+     * YAML frontmatter for the resolved skill (no `---` delimiters).
+     * Optional for backwards compatibility with older histories.
+     */
+    frontmatterYaml?: string;
   };
 }
 
@@ -456,6 +477,14 @@ export type DisplayedMessage =
       agentSkill?: {
         skillName: string;
         scope: AgentSkillScope;
+        /**
+         * Optional snapshot content attached later by message aggregation (e.g. tooltips).
+         * Not persisted on the user message itself.
+         */
+        snapshot?: {
+          frontmatterYaml?: string;
+          body?: string;
+        };
       };
       /** Present when this message is a /compact command */
       compactionRequest?: {
@@ -477,6 +506,7 @@ export type DisplayedMessage =
       isCompacted: boolean; // Whether this is a compacted summary
       isIdleCompacted: boolean; // Whether this compaction was auto-triggered due to inactivity
       model?: string;
+      routedThroughGateway?: boolean;
       agentId?: string; // Agent id active when this message was sent (assistant messages only)
       /** @deprecated Legacy base mode derived from agent definition. */
       mode?: AgentMode;
@@ -529,6 +559,7 @@ export type DisplayedMessage =
       historySequence: number; // Global ordering across all messages
       timestamp?: number;
       model?: string;
+      routedThroughGateway?: boolean;
       errorCount?: number; // Number of consecutive identical errors merged into this message
     }
   | {

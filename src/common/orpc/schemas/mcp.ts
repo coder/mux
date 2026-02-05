@@ -15,7 +15,7 @@ export const WorkspaceMCPOverridesSchema = z.object({
 
   /**
    * Per-server tool allowlist.
-   * Key: server name (from .mux/mcp.jsonc)
+   * Key: server name
    * Value: raw MCP tool names (NOT namespaced)
    *
    * If omitted for a server => expose all tools from that server.
@@ -61,49 +61,80 @@ export const MCPServerInfoSchema = z.discriminatedUnion("transport", [
 
 export const MCPServerMapSchema = z.record(z.string(), MCPServerInfoSchema);
 
-export const MCPAddParamsSchema = z
-  .object({
-    projectPath: z.string(),
-    name: z.string(),
+export const MCPListParamsSchema = z.object({
+  projectPath: z.string().optional(),
+});
 
-    // Backward-compatible: if transport omitted, interpret as stdio.
-    transport: MCPTransportSchema.optional(),
+const MCPAddParamsBaseSchema = z.object({
+  name: z.string(),
 
-    command: z.string().optional(),
-    url: z.string().optional(),
-    headers: MCPHeadersSchema.optional(),
-  })
-  .superRefine((input, ctx) => {
-    const transport = input.transport ?? "stdio";
+  // Backward-compatible: if transport omitted, interpret as stdio.
+  transport: MCPTransportSchema.optional(),
 
-    if (transport === "stdio") {
-      if (!input.command?.trim()) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "command is required for stdio" });
-      }
-      return;
+  command: z.string().optional(),
+  url: z.string().optional(),
+  headers: MCPHeadersSchema.optional(),
+});
+
+type MCPAddParamsLike = z.infer<typeof MCPAddParamsBaseSchema>;
+
+function refineMcpAddParams(input: MCPAddParamsLike, ctx: z.RefinementCtx): void {
+  const transport = input.transport ?? "stdio";
+
+  if (transport === "stdio") {
+    if (!input.command?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "command is required for stdio" });
     }
+    return;
+  }
 
-    if (!input.url?.trim()) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "url is required for http/sse/auto" });
-    }
-  });
+  if (!input.url?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "url is required for http/sse/auto" });
+  }
+}
 
-export const MCPRemoveParamsSchema = z.object({
+/** Global MCP config mutation (no projectPath). */
+export const MCPAddGlobalParamsSchema = MCPAddParamsBaseSchema.superRefine(refineMcpAddParams);
+
+/** @deprecated Legacy project-scoped API shape (writes now apply to global config). */
+export const MCPAddParamsSchema = MCPAddParamsBaseSchema.extend({
   projectPath: z.string(),
+}).superRefine(refineMcpAddParams);
+
+const MCPRemoveParamsBaseSchema = z.object({
   name: z.string(),
 });
 
-export const MCPSetEnabledParamsSchema = z.object({
+export const MCPRemoveGlobalParamsSchema = MCPRemoveParamsBaseSchema;
+
+/** @deprecated Legacy project-scoped API shape (writes now apply to global config). */
+export const MCPRemoveParamsSchema = MCPRemoveParamsBaseSchema.extend({
   projectPath: z.string(),
+});
+
+const MCPSetEnabledParamsBaseSchema = z.object({
   name: z.string(),
   enabled: z.boolean(),
 });
 
-export const MCPSetToolAllowlistParamsSchema = z.object({
+export const MCPSetEnabledGlobalParamsSchema = MCPSetEnabledParamsBaseSchema;
+
+/** @deprecated Legacy project-scoped API shape (writes now apply to global config). */
+export const MCPSetEnabledParamsSchema = MCPSetEnabledParamsBaseSchema.extend({
   projectPath: z.string(),
+});
+
+const MCPSetToolAllowlistParamsBaseSchema = z.object({
   name: z.string(),
   /** Tool names to allow. Empty array = no tools allowed. */
   toolAllowlist: z.array(z.string()),
+});
+
+export const MCPSetToolAllowlistGlobalParamsSchema = MCPSetToolAllowlistParamsBaseSchema;
+
+/** @deprecated Legacy project-scoped API shape (writes now apply to global config). */
+export const MCPSetToolAllowlistParamsSchema = MCPSetToolAllowlistParamsBaseSchema.extend({
+  projectPath: z.string(),
 });
 
 /**
@@ -115,39 +146,50 @@ export const MCPSetToolAllowlistParamsSchema = z.object({
  * For pending-server tests (e.g. add-server form), callers may also provide
  * name+url+transport so the backend can attach stored OAuth credentials.
  */
-export const MCPTestParamsSchema = z
-  .object({
-    projectPath: z.string(),
-    name: z.string().optional(),
+const MCPTestParamsBaseSchema = z.object({
+  name: z.string().optional(),
 
-    transport: MCPTransportSchema.optional(),
-    command: z.string().optional(),
-    url: z.string().optional(),
-    headers: MCPHeadersSchema.optional(),
-  })
-  .superRefine((input, ctx) => {
-    const hasName = Boolean(input.name?.trim());
-    const hasCommand = Boolean(input.command?.trim());
-    const hasUrl = Boolean(input.url?.trim());
+  transport: MCPTransportSchema.optional(),
+  command: z.string().optional(),
+  url: z.string().optional(),
+  headers: MCPHeadersSchema.optional(),
+});
 
-    if (!hasName && !hasCommand && !hasUrl) {
+type MCPTestParamsLike = z.infer<typeof MCPTestParamsBaseSchema>;
+
+function refineMcpTestParams(input: MCPTestParamsLike, ctx: z.RefinementCtx): void {
+  const hasName = Boolean(input.name?.trim());
+  const hasCommand = Boolean(input.command?.trim());
+  const hasUrl = Boolean(input.url?.trim());
+
+  if (!hasName && !hasCommand && !hasUrl) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Either name, command, or url is required",
+    });
+    return;
+  }
+
+  if (hasUrl) {
+    const transport = input.transport;
+    if (transport !== "http" && transport !== "sse" && transport !== "auto") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Either name, command, or url is required",
+        message: "transport must be http|sse|auto when testing by url",
       });
-      return;
     }
+  }
+}
 
-    if (hasUrl) {
-      const transport = input.transport;
-      if (transport !== "http" && transport !== "sse" && transport !== "auto") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "transport must be http|sse|auto when testing by url",
-        });
-      }
-    }
-  });
+/** Test endpoint input with optional projectPath (global-only secrets when omitted). */
+export const MCPTestGlobalParamsSchema = MCPTestParamsBaseSchema.extend({
+  projectPath: z.string().optional(),
+}).superRefine(refineMcpTestParams);
+
+/** @deprecated Legacy project-scoped API shape. */
+export const MCPTestParamsSchema = MCPTestParamsBaseSchema.extend({
+  projectPath: z.string(),
+}).superRefine(refineMcpTestParams);
 
 export const BearerChallengeSchema = z.object({
   scope: z.string().optional(),

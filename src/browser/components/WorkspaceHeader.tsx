@@ -34,7 +34,8 @@ import { DebugLlmRequestModal } from "./DebugLlmRequestModal";
 import { WorkspaceLinks } from "./WorkspaceLinks";
 import { SkillIndicator } from "./SkillIndicator";
 import { useAPI } from "@/browser/contexts/API";
-import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import { useAgent } from "@/browser/contexts/AgentContext";
+import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
 interface WorkspaceHeaderProps {
   workspaceId: string;
@@ -61,6 +62,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   onOpenTerminal,
 }) => {
   const { api } = useAPI();
+  const { disableWorkspaceAgents } = useAgent();
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
@@ -72,6 +74,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const [debugLlmRequestOpen, setDebugLlmRequestOpen] = useState(false);
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [availableSkills, setAvailableSkills] = useState<AgentSkillDescriptor[]>([]);
+  const [invalidSkills, setInvalidSkills] = useState<AgentSkillIssue[]>([]);
 
   const [rightSidebarCollapsed] = usePersistedState<boolean>(RIGHT_SIDEBAR_COLLAPSED_KEY, false, {
     // This state is toggled from RightSidebar, so we need cross-component updates.
@@ -142,10 +145,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => window.removeEventListener("keydown", handler);
   }, [setNotifyOnResponse]);
 
-  // Fetch available skills for this project
+  // Fetch available skills + diagnostics for this workspace
   useEffect(() => {
     if (!api) {
       setAvailableSkills([]);
+      setInvalidSkills([]);
       return;
     }
 
@@ -153,14 +157,18 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
 
     const loadSkills = async () => {
       try {
-        const skills = await api.agentSkills.list({ projectPath });
-        if (isMounted && Array.isArray(skills)) {
-          setAvailableSkills(skills);
-        }
+        const diagnostics = await api.agentSkills.listDiagnostics({
+          workspaceId,
+          disableWorkspaceAgents: disableWorkspaceAgents || undefined,
+        });
+        if (!isMounted) return;
+        setAvailableSkills(Array.isArray(diagnostics.skills) ? diagnostics.skills : []);
+        setInvalidSkills(Array.isArray(diagnostics.invalidSkills) ? diagnostics.invalidSkills : []);
       } catch (error) {
         console.error("Failed to load available skills:", error);
         if (isMounted) {
           setAvailableSkills([]);
+          setInvalidSkills([]);
         }
       }
     };
@@ -170,7 +178,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [api, projectPath]);
+  }, [api, workspaceId, disableWorkspaceAgents]);
 
   // On Windows/Linux, the native window controls overlay the top-right of the app.
   // When the right sidebar is collapsed (20px), this header stretches underneath
@@ -335,7 +343,11 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
             </div>
           </PopoverContent>
         </Popover>
-        <SkillIndicator loadedSkills={loadedSkills} availableSkills={availableSkills} />
+        <SkillIndicator
+          loadedSkills={loadedSkills}
+          availableSkills={availableSkills}
+          invalidSkills={invalidSkills}
+        />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
           <TooltipTrigger asChild>

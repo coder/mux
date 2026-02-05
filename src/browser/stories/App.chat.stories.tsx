@@ -23,6 +23,7 @@ import {
 
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { getModelKey } from "@/common/constants/storage";
 import { waitForChatMessagesLoaded } from "./storyPlayHelpers.js";
 import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
@@ -876,9 +877,9 @@ export const ModeHelpTooltip: AppStory = {
 /**
  * Model selector pretty display with mux-gateway enabled.
  *
- * Regression test: when gateway is enabled, `useSendMessageOptions().model` becomes
- * `mux-gateway:provider/model`, but the UI should still display the canonical
- * provider:model form (e.g. GPT-4o, not \"Openai/gpt 4o\").
+ * Regression test: when gateway is enabled, routing happens in the backend,
+ * but the UI should still display the canonical provider:model form
+ * (e.g. GPT-4o, not \"Openai/gpt 4o\").
  */
 export const ModelSelectorPrettyWithGateway: AppStory = {
   render: () => (
@@ -887,7 +888,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
         const workspaceId = "ws-gateway-model";
         const baseModel = "openai:gpt-4o";
 
-        // Ensure the gateway transform actually kicks in (so the regression would reproduce).
+        // Ensure the gateway indicator is active (so the regression would reproduce).
         updatePersistedState(getModelKey(workspaceId), baseModel);
         updatePersistedState("gateway-enabled", true);
         updatePersistedState("gateway-available", true);
@@ -920,9 +921,15 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
       throw new Error(`Unexpected gateway-formatted model label: ${ugly.textContent ?? "(empty)"}`);
     }
 
-    // Sanity check that the gateway indicator exists.
-    const gatewayIndicator = canvasElement.querySelector('[aria-label="Using Mux Gateway"]');
-    if (!gatewayIndicator) throw new Error("Gateway indicator not found");
+    // Sanity check that the gateway indicator exists (moved to the titlebar).
+    const gatewayIndicator = await waitFor(
+      () => {
+        const el = canvasElement.querySelector('[aria-label="Mux Gateway"]');
+        if (!el) throw new Error("Gateway indicator not found");
+        return el;
+      },
+      { timeout: 2000, interval: 50 }
+    );
 
     // Hover to prove the gateway tooltip is wired up (and keep it visible for snapshot).
     await userEvent.hover(gatewayIndicator);
@@ -930,6 +937,9 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
       () => {
         const tooltip = document.querySelector('[role="tooltip"]');
         if (!tooltip) throw new Error("Tooltip not visible");
+        if (!tooltip.textContent?.includes("Mux Gateway")) {
+          throw new Error("Gateway tooltip not visible");
+        }
       },
       { timeout: 2000, interval: 50 }
     );
@@ -1993,19 +2003,17 @@ export const ToolHooksOutputExpanded: AppStory = {
  * Scenario: Workspace has ~150K tokens of context. The user switches from Sonnet (200K+ limit)
  * to GPT-4o (128K limit). Since 150K > 90% of 128K, the warning banner appears.
  */
+const contextSwitchWorkspaceId = "ws-context-switch";
+
 export const ContextSwitchWarning: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        const workspaceId = "ws-context-switch";
-
-        // Set GPT-4o as current model (128K limit)
-        // Previous message was from Sonnet with 150K tokens
-        // On mount, effect sees model "changed" from Sonnet → GPT-4o and triggers warning
-        updatePersistedState(getModelKey(workspaceId), "openai:gpt-4o");
+        // Start on Sonnet so the explicit switch to GPT-4o triggers the warning.
+        updatePersistedState(getModelKey(contextSwitchWorkspaceId), "anthropic:claude-sonnet-4-5");
 
         return setupSimpleChatStory({
-          workspaceId,
+          workspaceId: contextSwitchWorkspaceId,
           messages: [
             createUserMessage("msg-1", "Help me refactor this large codebase", {
               historySequence: 1,
@@ -2031,6 +2039,11 @@ export const ContextSwitchWarning: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatMessagesLoaded(storyRoot);
+    setWorkspaceModelWithOrigin(contextSwitchWorkspaceId, "openai:gpt-4o", "user");
+  },
   parameters: {
     docs: {
       description: {

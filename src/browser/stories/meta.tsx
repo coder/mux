@@ -9,7 +9,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { FC } from "react";
 import { useRef } from "react";
 import { AppLoader } from "../components/AppLoader";
-import { SELECTED_WORKSPACE_KEY } from "@/common/constants/storage";
+import { SELECTED_WORKSPACE_KEY, UI_THEME_KEY } from "@/common/constants/storage";
 import type { APIClient } from "@/browser/contexts/API";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -23,7 +23,10 @@ export const appMeta: Meta<typeof AppLoader> = {
     layout: "fullscreen",
     backgrounds: {
       default: "dark",
-      values: [{ name: "dark", value: "#1e1e1e" }],
+      values: [
+        { name: "dark", value: "#1e1e1e" },
+        { name: "light", value: "#f5f6f8" },
+      ],
     },
     chromatic: { delay: 500 },
   },
@@ -43,9 +46,10 @@ interface AppWithMocksProps {
 
 function resetStorybookPersistedStateForStory(): void {
   // Storybook/Chromatic can preserve localStorage across story captures.
-  // Clear workspace selection so each story starts from a known route.
+  // Reset persisted state so each story starts from a known route + theme.
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem(SELECTED_WORKSPACE_KEY);
+    localStorage.setItem(UI_THEME_KEY, JSON.stringify("dark"));
   }
 }
 function getStorybookStoryId(): string | null {

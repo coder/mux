@@ -406,7 +406,10 @@ export function TasksSection() {
                 return;
               }
 
-              setAgentsLoaded(false);
+              // Refresh in the background so enablement inheritance stays accurate after saving
+              // defaults, but keep the existing list rendered to avoid a "Loading agents…" flash
+              // while the user tweaks values.
+              setAgentsLoadFailed(false);
               void Promise.all([
                 api.agents.list({ projectPath, workspaceId }),
                 api.agents.list({ projectPath, workspaceId, includeDisabled: true }),

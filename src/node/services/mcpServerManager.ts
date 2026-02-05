@@ -739,8 +739,6 @@ export class MCPServerManager {
       if (this.mcpOauthService) {
         try {
           hasOauthTokens = await this.mcpOauthService.hasAuthTokens({
-            projectPath,
-            serverName: name,
             serverUrl: info.url,
           });
         } catch (error) {
@@ -994,7 +992,6 @@ export class MCPServerManager {
         const resolved = resolveHeaders(server.headers, projectSecrets);
 
         const authProvider = await this.mcpOauthService?.getAuthProviderForServer({
-          projectPath,
           serverName: trimmedName,
           serverUrl: server.url,
         });
@@ -1038,7 +1035,6 @@ export class MCPServerManager {
 
         const authProvider = trimmedName
           ? await this.mcpOauthService?.getAuthProviderForServer({
-              projectPath,
               serverName: trimmedName,
               serverUrl,
             })
@@ -1255,7 +1251,6 @@ export class MCPServerManager {
     // Passing an authProvider with no tokens can trigger user-interactive auth flows
     // on background MCP calls (undesirable).
     const authProvider = await this.mcpOauthService?.getAuthProviderForServer({
-      projectPath,
       serverName: name,
       serverUrl: info.url,
     });

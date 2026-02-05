@@ -49,6 +49,7 @@ export {
 export {
   AgentSkillDescriptorSchema,
   AgentSkillFrontmatterSchema,
+  AgentSkillIssueSchema,
   AgentSkillPackageSchema,
   AgentSkillScopeSchema,
   SkillNameSchema,
@@ -75,6 +76,7 @@ export { SecretSchema } from "./schemas/secrets";
 // Policy schemas
 export {
   PolicyFileSchema,
+  PolicySourceSchema,
   PolicyStatusSchema,
   EffectivePolicySchema,
   PolicyGetResponseSchema,
@@ -178,9 +180,13 @@ export {
   agents,
   nameGeneration,
   projects,
+  mcpOauth,
+  mcp,
+  secrets,
   ProviderConfigInfoSchema,
   muxGateway,
   muxGatewayOauth,
+  muxGovernorOauth,
   policy,
   providers,
   ProvidersConfigMapSchema,

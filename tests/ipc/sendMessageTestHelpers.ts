@@ -136,9 +136,31 @@ export async function withSharedWorkspace(
   try {
     await testFn({ env, workspaceId, metadata, collector });
   } finally {
-    collector.stop();
-    // Cleanup workspace
-    await env.orpc.workspace.remove({ workspaceId });
+    const stopPromise = collector.waitForStop().catch((error) => {
+      console.warn("Failed to stop StreamCollector during test cleanup:", error);
+    });
+
+    const stopTimedOut = await Promise.race([
+      stopPromise.then(() => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 2000)),
+    ]);
+
+    if (stopTimedOut) {
+      console.warn("[tests] StreamCollector did not stop within 2s; continuing cleanup.");
+    }
+
+    // Cleanup workspace (force=true to avoid worktree removal hangs from lingering processes)
+    try {
+      const removeResult = await env.orpc.workspace.remove({
+        workspaceId,
+        options: { force: true },
+      });
+      if (!removeResult.success) {
+        console.warn("Failed to remove workspace during test cleanup:", removeResult.error);
+      }
+    } catch (error) {
+      console.warn("Failed to remove workspace during test cleanup:", error);
+    }
   }
 }
 
@@ -182,9 +204,31 @@ export async function withSharedWorkspaceNoProvider(
   try {
     await testFn({ env, workspaceId, metadata, collector });
   } finally {
-    collector.stop();
-    // Cleanup workspace
-    await env.orpc.workspace.remove({ workspaceId });
+    const stopPromise = collector.waitForStop().catch((error) => {
+      console.warn("Failed to stop StreamCollector during test cleanup:", error);
+    });
+
+    const stopTimedOut = await Promise.race([
+      stopPromise.then(() => false),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 2000)),
+    ]);
+
+    if (stopTimedOut) {
+      console.warn("[tests] StreamCollector did not stop within 2s; continuing cleanup.");
+    }
+
+    // Cleanup workspace (force=true to avoid worktree removal hangs from lingering processes)
+    try {
+      const removeResult = await env.orpc.workspace.remove({
+        workspaceId,
+        options: { force: true },
+      });
+      if (!removeResult.success) {
+        console.warn("Failed to remove workspace during test cleanup:", removeResult.error);
+      }
+    } catch (error) {
+      console.warn("Failed to remove workspace during test cleanup:", error);
+    }
   }
 }
 

@@ -50,12 +50,18 @@ export const UntrackedStatus: React.FC<UntrackedStatusProps> = ({
 
         if (cancelled || !result) return;
 
-        if (result.success) {
+        if (result.success && result.data.success) {
           const files = (result.data.output ?? "")
             .split("\n")
             .map((f: string) => f.trim())
             .filter(Boolean);
           setUntrackedFiles(files);
+        } else {
+          const text = !result.success ? result.error : (result.data.output ?? "");
+          if (typeof text === "string" && !/fatal:\s*not a git repository\b/i.test(text)) {
+            console.error("Failed to load untracked files:", text);
+          }
+          setUntrackedFiles([]);
         }
 
         hasLoadedOnce.current = true;

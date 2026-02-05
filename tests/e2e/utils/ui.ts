@@ -175,7 +175,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
 
     /**
      * Set the thinking level using paddle controls.
-     * Values map to: 0=OFF, 1=LOW, 2=MED, 3=HIGH, 4=MAX
+     * Values map to: 0=OFF, 1=LOW, 2=MED, 3=HIGH, 4=XHIGH
      */
     async setThinkingLevel(targetLevel: number): Promise<void> {
       if (!Number.isInteger(targetLevel)) {
@@ -185,7 +185,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
         throw new Error(`Thinking level ${targetLevel} is outside expected range 0-4`);
       }
 
-      const levelLabels = ["OFF", "LOW", "MED", "HIGH", "MAX"];
+      const levelLabels = ["OFF", "LOW", "MED", "HIGH", "XHIGH"];
       const targetLabel = levelLabels[targetLevel];
 
       const label = thinkingLevelLabel(page);
@@ -198,7 +198,10 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
       // Get current level by reading the label text
       const getCurrentLevel = async (): Promise<number> => {
         const text = await label.textContent();
-        const labelIndex = levelLabels.findIndex((l) => text?.includes(l));
+        const normalized = text?.trim().toUpperCase() ?? "";
+
+        // Note: XHIGH contains HIGH as a substring, so we must avoid includes()-based matching here.
+        const labelIndex = levelLabels.findIndex((l) => normalized === l);
         return labelIndex === -1 ? 0 : labelIndex;
       };
 

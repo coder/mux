@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
+import { secretsToRecord } from "@/common/types/secrets";
 
 describe("Config", () => {
   let tempDir: string;
@@ -176,6 +177,103 @@ describe("Config", () => {
       expect(workspace.id).toBe(legacyId);
       expect(workspace.name).toBe(workspaceName);
       expect(workspace.createdAt).toBe("2025-01-01T00:00:00.000Z");
+    });
+  });
+
+  describe("secrets", () => {
+    it("supports global secrets stored under a sentinel key", async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_A", value: "1" }]);
+
+      expect(config.getGlobalSecrets()).toEqual([{ key: "GLOBAL_A", value: "1" }]);
+
+      const raw = fs.readFileSync(path.join(tempDir, "secrets.json"), "utf-8");
+      const parsed = JSON.parse(raw) as { __global__?: unknown };
+      expect(parsed.__global__).toEqual([{ key: "GLOBAL_A", value: "1" }]);
+    });
+
+    it("merges global + project secrets with project overriding by key", async () => {
+      await config.updateGlobalSecrets([
+        { key: "TOKEN", value: "global" },
+        { key: "A", value: "1" },
+      ]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: "project" },
+        { key: "B", value: "2" },
+      ]);
+
+      const effective = config.getEffectiveSecrets(projectPath);
+      const record = secretsToRecord(effective);
+
+      expect(record).toEqual({
+        TOKEN: "project",
+        A: "1",
+        B: "2",
+      });
+    });
+
+    it('resolves project secret aliases to global secrets via {secret:"KEY"}', async () => {
+      await config.updateGlobalSecrets([{ key: "GLOBAL_TOKEN", value: "abc" }]);
+
+      const projectPath = "/fake/project";
+      await config.updateProjectSecrets(projectPath, [
+        { key: "TOKEN", value: { secret: "GLOBAL_TOKEN" } },
+      ]);
+
+      const record = secretsToRecord(config.getEffectiveSecrets(projectPath));
+      expect(record).toEqual({
+        GLOBAL_TOKEN: "abc",
+        TOKEN: "abc",
+      });
+    });
+
+    it("omits missing referenced secrets when resolving secretsToRecord", () => {
+      const record = secretsToRecord([
+        { key: "GLOBAL", value: "1" },
+        { key: "A", value: { secret: "MISSING" } },
+      ]);
+
+      expect(record).toEqual({ GLOBAL: "1" });
+    });
+
+    it("omits cyclic secret references when resolving secretsToRecord", () => {
+      const record = secretsToRecord([
+        { key: "A", value: { secret: "B" } },
+        { key: "B", value: { secret: "A" } },
+        { key: "OK", value: "y" },
+      ]);
+
+      expect(record).toEqual({ OK: "y" });
+    });
+    it("normalizes project paths so trailing slashes don't split secrets", async () => {
+      const projectPath = "/repo";
+      const projectPathWithSlash = "/repo/";
+
+      await config.updateProjectSecrets(projectPathWithSlash, [{ key: "A", value: "1" }]);
+
+      expect(config.getProjectSecrets(projectPath)).toEqual([{ key: "A", value: "1" }]);
+      expect(config.getProjectSecrets(projectPathWithSlash)).toEqual([{ key: "A", value: "1" }]);
+
+      const raw = fs.readFileSync(path.join(tempDir, "secrets.json"), "utf-8");
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      expect(parsed[projectPath]).toEqual([{ key: "A", value: "1" }]);
+      expect(parsed[projectPathWithSlash]).toBeUndefined();
+    });
+
+    it("treats malformed store shapes as empty arrays", () => {
+      const secretsFile = path.join(tempDir, "secrets.json");
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: { key: "NOPE", value: "1" },
+          "/repo": "not-an-array",
+          "/repo/": [{ key: "A", value: "1" }, null, { key: 123, value: "x" }],
+        })
+      );
+
+      expect(config.getGlobalSecrets()).toEqual([]);
+      expect(config.getProjectSecrets("/repo")).toEqual([{ key: "A", value: "1" }]);
     });
   });
 });

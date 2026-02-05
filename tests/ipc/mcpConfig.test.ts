@@ -130,62 +130,67 @@ function assertValidScreenshotResult(
   return { mediaItems, textItems };
 }
 
-describeIntegration("MCP project configuration", () => {
+describeIntegration("MCP global configuration", () => {
   test.concurrent("add, list, and remove MCP servers", async () => {
     const env = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
     const client = resolveOrpcClient(env);
 
+    const globalConfigPath = path.join(env.config.rootDir, "mcp.jsonc");
+
     try {
-      // Register project
+      // Register project (not required for global MCP config, but mirrors real usage)
       const createResult = await client.projects.create({ projectPath: repoPath });
       expect(createResult.success).toBe(true);
 
-      // Initially empty
-      const initial = await client.projects.mcp.list({ projectPath: repoPath });
+      // Initially empty (merged global + repo overrides)
+      const initial = await client.mcp.list({ projectPath: repoPath });
       expect(initial).toEqual({});
 
-      // Add server
-      const addResult = await client.projects.mcp.add({
-        projectPath: repoPath,
+      // Add server (writes to global <muxHome>/mcp.jsonc)
+      const addResult = await client.mcp.add({
         name: "chrome-devtools",
         command: CHROME_DEVTOOLS_MCP_NPX,
       });
       expect(addResult.success).toBe(true);
 
       // Should list the added server
-      const listed = await client.projects.mcp.list({ projectPath: repoPath });
-      expect(listed).toEqual({
+      const listed = await client.mcp.list({ projectPath: repoPath });
+      expect(listed).toMatchObject({
         "chrome-devtools": {
           transport: "stdio",
           command: CHROME_DEVTOOLS_MCP_NPX,
           disabled: false,
         },
       });
+      expect(Object.keys(listed)).toEqual(["chrome-devtools"]);
 
-      // Config file should be written
-      const configPath = path.join(repoPath, ".mux", "mcp.jsonc");
-      const file = await fs.readFile(configPath, "utf-8");
+      // Global config file should be written
+      const file = await fs.readFile(globalConfigPath, "utf-8");
       expect(JSON.parse(file)).toEqual({
         servers: { "chrome-devtools": CHROME_DEVTOOLS_MCP_NPX },
       });
 
       // Disable server
-      const disableResult = await client.projects.mcp.setEnabled({
-        projectPath: repoPath,
+      const disableResult = await client.mcp.setEnabled({
         name: "chrome-devtools",
         enabled: false,
       });
       expect(disableResult.success).toBe(true);
 
       // Should still be listed but disabled
-      const disabledList = await client.projects.mcp.list({ projectPath: repoPath });
-      expect(disabledList).toEqual({
-        "chrome-devtools": { transport: "stdio", command: CHROME_DEVTOOLS_MCP_NPX, disabled: true },
+      const disabledList = await client.mcp.list({ projectPath: repoPath });
+      expect(disabledList).toMatchObject({
+        "chrome-devtools": {
+          transport: "stdio",
+          command: CHROME_DEVTOOLS_MCP_NPX,
+          disabled: true,
+        },
       });
+      expect(Object.keys(disabledList)).toEqual(["chrome-devtools"]);
 
       // Config file should have disabled format
-      const disabledConfig = await fs.readFile(configPath, "utf-8");
+      const disabledConfig = await fs.readFile(globalConfigPath, "utf-8");
       expect(JSON.parse(disabledConfig)).toEqual({
         servers: {
           "chrome-devtools": { command: CHROME_DEVTOOLS_MCP_NPX, disabled: true },
@@ -193,36 +198,94 @@ describeIntegration("MCP project configuration", () => {
       });
 
       // Re-enable server
-      const enableResult = await client.projects.mcp.setEnabled({
-        projectPath: repoPath,
+      const enableResult = await client.mcp.setEnabled({
         name: "chrome-devtools",
         enabled: true,
       });
       expect(enableResult.success).toBe(true);
 
       // Should be enabled again, config file back to string format
-      const enabledList = await client.projects.mcp.list({ projectPath: repoPath });
-      expect(enabledList).toEqual({
+      const enabledList = await client.mcp.list({ projectPath: repoPath });
+      expect(enabledList).toMatchObject({
         "chrome-devtools": {
           transport: "stdio",
           command: CHROME_DEVTOOLS_MCP_NPX,
           disabled: false,
         },
       });
-      const enabledConfig = await fs.readFile(configPath, "utf-8");
+      expect(Object.keys(enabledList)).toEqual(["chrome-devtools"]);
+
+      const enabledConfig = await fs.readFile(globalConfigPath, "utf-8");
       expect(JSON.parse(enabledConfig)).toEqual({
         servers: { "chrome-devtools": CHROME_DEVTOOLS_MCP_NPX },
       });
 
       // Remove server
-      const removeResult = await client.projects.mcp.remove({
-        projectPath: repoPath,
-        name: "chrome-devtools",
-      });
+      const removeResult = await client.mcp.remove({ name: "chrome-devtools" });
       expect(removeResult.success).toBe(true);
 
-      const finalList = await client.projects.mcp.list({ projectPath: repoPath });
+      const finalList = await client.mcp.list({ projectPath: repoPath });
       expect(finalList).toEqual({});
+    } finally {
+      await cleanupTestEnvironment(env);
+      await cleanupTempGitRepo(repoPath);
+    }
+  });
+
+  test.concurrent("repo .mux/mcp.jsonc overrides global servers by name", async () => {
+    const env = await createTestEnvironment();
+    const repoPath = await createTempGitRepo();
+    const client = resolveOrpcClient(env);
+
+    try {
+      const globalCommand = "echo global";
+      const overrideCommand = "echo override";
+      const repoOnlyCommand = "echo repo-only";
+
+      const addResult = await client.mcp.add({ name: "chrome-devtools", command: globalCommand });
+      expect(addResult.success).toBe(true);
+
+      const overridePath = path.join(repoPath, ".mux", "mcp.jsonc");
+      await fs.mkdir(path.dirname(overridePath), { recursive: true });
+      await fs.writeFile(
+        overridePath,
+        JSON.stringify(
+          {
+            servers: {
+              "chrome-devtools": overrideCommand,
+              "repo-only": repoOnlyCommand,
+            },
+          },
+          null,
+          2
+        ),
+        "utf-8"
+      );
+
+      const merged = await client.mcp.list({ projectPath: repoPath });
+      expect(merged).toMatchObject({
+        "chrome-devtools": {
+          transport: "stdio",
+          command: overrideCommand,
+          disabled: false,
+        },
+        "repo-only": {
+          transport: "stdio",
+          command: repoOnlyCommand,
+          disabled: false,
+        },
+      });
+      expect(Object.keys(merged).sort()).toEqual(["chrome-devtools", "repo-only"].sort());
+
+      const globalList = await client.mcp.list({});
+      expect(globalList).toMatchObject({
+        "chrome-devtools": {
+          transport: "stdio",
+          command: globalCommand,
+          disabled: false,
+        },
+      });
+      expect(Object.keys(globalList)).toEqual(["chrome-devtools"]);
     } finally {
       await cleanupTestEnvironment(env);
       await cleanupTempGitRepo(repoPath);
@@ -258,8 +321,7 @@ describeIntegration("MCP server integration with model", () => {
 
       try {
         // Add Chrome DevTools MCP server (headless + no-sandbox for CI)
-        const addResult = await client.projects.mcp.add({
-          projectPath: tempGitRepo,
+        const addResult = await client.mcp.add({
           name: "chrome",
           command: TEST_SCREENSHOT_MCP_SERVER_COMMAND,
         });
@@ -327,8 +389,7 @@ describeIntegration("MCP server integration with model", () => {
       try {
         // Add the memory MCP server to the project
         console.log("[MCP Test] Adding MCP server...");
-        const addResult = await client.projects.mcp.add({
-          projectPath: tempGitRepo,
+        const addResult = await client.mcp.add({
           name: "memory server",
           command: "npx -y @modelcontextprotocol/server-memory",
         });

@@ -57,6 +57,7 @@ const AgentSkillSnapshotMetadataSchema = z.object({
   skillName: z.string().min(1),
   scope: z.enum(["project", "global", "built-in"]),
   sha256: z.string().optional(),
+  frontmatterYaml: z.string().optional(),
 });
 
 /** Re-export for consumers that need the loaded skill type */
@@ -98,6 +99,7 @@ interface StreamingContext {
   isCompacting: boolean;
   hasCompactionContinue: boolean;
   model: string;
+  routedThroughGateway?: boolean;
 
   /** Timestamp of first content token (text or reasoning delta) - backend Date.now() */
   serverFirstTokenTime: number | null;
@@ -193,6 +195,41 @@ function mergeAdjacentParts(parts: MuxMessage["parts"]): MuxMessage["parts"] {
   return merged;
 }
 
+function extractAgentSkillSnapshotBody(snapshotText: string): string | null {
+  assert(typeof snapshotText === "string", "extractAgentSkillSnapshotBody requires snapshotText");
+
+  // Expected format (backend):
+  // <agent-skill ...>\n{body}\n</agent-skill>
+  if (!snapshotText.startsWith("<agent-skill")) {
+    return null;
+  }
+
+  const openTagEnd = snapshotText.indexOf(">\n");
+  if (openTagEnd === -1) {
+    return null;
+  }
+
+  const closeTag = "\n</agent-skill>";
+  const closeTagStart = snapshotText.lastIndexOf(closeTag);
+  if (closeTagStart === -1) {
+    return null;
+  }
+
+  const bodyStart = openTagEnd + ">\n".length;
+  if (closeTagStart < bodyStart) {
+    return null;
+  }
+
+  // Be strict about trailing content: if we can't confidently extract the body,
+  // avoid showing a misleading preview.
+  const trailing = snapshotText.slice(closeTagStart + closeTag.length);
+  if (trailing.trim().length > 0) {
+    return null;
+  }
+
+  return snapshotText.slice(bodyStart, closeTagStart);
+}
+
 export class StreamingMessageAggregator {
   private messages = new Map<string, MuxMessage>();
   private activeStreams = new Map<string, StreamingContext>();
@@ -201,7 +238,7 @@ export class StreamingMessageAggregator {
   // Adding a new cached value? Add it here and it will auto-invalidate.
   private displayedMessageCache = new Map<
     string,
-    { version: number; messages: DisplayedMessage[] }
+    { version: number; agentSkillSnapshotCacheKey?: string; messages: DisplayedMessage[] }
   >();
   private messageVersions = new Map<string, number>();
   private cache: {
@@ -283,6 +320,10 @@ export class StreamingMessageAggregator {
   // Pending compaction request metadata for the next stream (set when user message arrives).
   // This is used for UI before we receive stream-start (e.g., show compaction model while "starting").
   private pendingCompactionRequest: CompactionRequestData | null = null;
+
+  // Model used for the pending send (set on user message) so the "starting" UI
+  // reflects one-shot/compaction overrides instead of stale localStorage values.
+  private pendingStreamModel: string | null = null;
 
   // Last completed stream timing stats (preserved after stream ends for display)
   // Unlike activeStreams, this persists until the next stream starts
@@ -857,6 +898,11 @@ export class StreamingMessageAggregator {
     return this.pendingCompactionRequest?.model ?? null;
   }
 
+  getPendingStreamModel(): string | null {
+    if (this.pendingStreamStartTime === null) return null;
+    return this.pendingStreamModel;
+  }
+
   private getLatestCompactionRequest(): CompactionRequestData | null {
     if (this.pendingCompactionRequest) {
       return this.pendingCompactionRequest;
@@ -880,6 +926,7 @@ export class StreamingMessageAggregator {
     this.pendingStreamStartTime = time;
     if (time === null) {
       this.pendingCompactionRequest = null;
+      this.pendingStreamModel = null;
     }
   }
 
@@ -1196,6 +1243,7 @@ export class StreamingMessageAggregator {
       isCompacting,
       hasCompactionContinue,
       model: data.model,
+      routedThroughGateway: data.routedThroughGateway,
       serverFirstTokenTime: null,
       toolExecutionMs: 0,
       pendingToolStarts: new Map(),
@@ -1211,6 +1259,7 @@ export class StreamingMessageAggregator {
       historySequence: data.historySequence,
       timestamp: Date.now(),
       model: data.model,
+      routedThroughGateway: data.routedThroughGateway,
       mode: data.mode,
     });
 
@@ -1859,6 +1908,8 @@ export class StreamingMessageAggregator {
         this.pendingCompactionRequest =
           muxMetadata?.type === "compaction-request" ? muxMetadata.parsed : null;
 
+        this.pendingStreamModel = muxMetadata?.requestedModel ?? null;
+
         if (muxMeta?.displayStatus) {
           // Background operation - show requested status (don't persist)
           this.agentStatus = muxMeta.displayStatus;
@@ -1874,7 +1925,10 @@ export class StreamingMessageAggregator {
     }
   }
 
-  private buildDisplayedMessagesForMessage(message: MuxMessage): DisplayedMessage[] {
+  private buildDisplayedMessagesForMessage(
+    message: MuxMessage,
+    agentSkillSnapshot?: { frontmatterYaml?: string; body?: string }
+  ): DisplayedMessage[] {
     const displayedMessages: DisplayedMessage[] = [];
     const baseTimestamp = message.metadata?.timestamp;
     const historySequence = message.metadata?.historySequence ?? 0;
@@ -1917,7 +1971,11 @@ export class StreamingMessageAggregator {
 
       const agentSkill =
         muxMeta?.type === "agent-skill"
-          ? { skillName: muxMeta.skillName, scope: muxMeta.scope }
+          ? {
+              skillName: muxMeta.skillName,
+              scope: muxMeta.scope,
+              snapshot: agentSkillSnapshot,
+            }
           : undefined;
 
       const compactionFollowUp = getCompactionFollowUpContent(muxMeta);
@@ -2032,6 +2090,7 @@ export class StreamingMessageAggregator {
             isCompacted: !!message.metadata?.compacted,
             isIdleCompacted: message.metadata?.compacted === "idle",
             model: message.metadata?.model,
+            routedThroughGateway: message.metadata?.routedThroughGateway,
             mode: message.metadata?.mode,
             agentId: message.metadata?.agentId ?? message.metadata?.mode,
             timestamp: part.timestamp ?? baseTimestamp,
@@ -2119,6 +2178,7 @@ export class StreamingMessageAggregator {
           errorType: message.metadata.errorType ?? "unknown",
           historySequence,
           model: message.metadata.model,
+          routedThroughGateway: message.metadata?.routedThroughGateway,
           timestamp: baseTimestamp,
         });
       }
@@ -2170,23 +2230,79 @@ export class StreamingMessageAggregator {
       const showSyntheticMessages =
         typeof window !== "undefined" && window.api?.debugLlmRequest === true;
 
-      for (const message of allMessages) {
-        const isSynthetic = message.metadata?.synthetic === true;
+      // Synthetic agent-skill snapshot messages are hidden from the transcript unless
+      // debugLlmRequest is enabled. We still want to surface their content in the UI by
+      // attaching the resolved snapshot (frontmatterYaml + body) to the *subsequent*
+      // /{skillName} invocation message.
+      const latestAgentSkillSnapshotByKey = new Map<
+        string,
+        { sha256?: string; frontmatterYaml?: string; body: string }
+      >();
 
-        // Synthetic messages are typically for model context only, but can be shown in debug mode.
-        if (isSynthetic && !showSyntheticMessages) {
+      for (const message of allMessages) {
+        const snapshotMeta = message.metadata?.agentSkillSnapshot;
+        if (snapshotMeta) {
+          const parsed = AgentSkillSnapshotMetadataSchema.safeParse(snapshotMeta);
+          if (parsed.success) {
+            const snapshotText = message.parts
+              .filter((p) => p.type === "text")
+              .map((p) => p.text)
+              .join("");
+            const body = extractAgentSkillSnapshotBody(snapshotText);
+            if (body !== null) {
+              const key = `${parsed.data.scope}:${parsed.data.skillName}`;
+              latestAgentSkillSnapshotByKey.set(key, {
+                sha256: parsed.data.sha256,
+                frontmatterYaml: parsed.data.frontmatterYaml,
+                body,
+              });
+            }
+          }
+        }
+
+        const isSynthetic = message.metadata?.synthetic === true;
+        const isUiVisibleSynthetic = message.metadata?.uiVisible === true;
+
+        // Synthetic messages are typically for model context only.
+        // Show them only in debug mode, or when explicitly marked as UI-visible.
+        if (isSynthetic && !showSyntheticMessages && !isUiVisibleSynthetic) {
           continue;
         }
 
+        const muxMeta = message.metadata?.muxMetadata;
+        const agentSkillSnapshotKey =
+          message.role === "user" && muxMeta?.type === "agent-skill"
+            ? `${muxMeta.scope}:${muxMeta.skillName}`
+            : undefined;
+
+        const agentSkillSnapshot = agentSkillSnapshotKey
+          ? latestAgentSkillSnapshotByKey.get(agentSkillSnapshotKey)
+          : undefined;
+
+        const agentSkillSnapshotForDisplay = agentSkillSnapshot
+          ? { frontmatterYaml: agentSkillSnapshot.frontmatterYaml, body: agentSkillSnapshot.body }
+          : undefined;
+
+        const agentSkillSnapshotCacheKey = agentSkillSnapshot
+          ? `${agentSkillSnapshot.sha256 ?? ""}\n${agentSkillSnapshot.frontmatterYaml ?? ""}`
+          : undefined;
+
         const version = this.messageVersions.get(message.id) ?? 0;
         const cached = this.displayedMessageCache.get(message.id);
-        const messageDisplay =
-          cached?.version === version
-            ? cached.messages
-            : this.buildDisplayedMessagesForMessage(message);
+        const canReuse =
+          cached?.version === version &&
+          cached.agentSkillSnapshotCacheKey === agentSkillSnapshotCacheKey;
 
-        if (cached?.version !== version) {
-          this.displayedMessageCache.set(message.id, { version, messages: messageDisplay });
+        const messageDisplay = canReuse
+          ? cached.messages
+          : this.buildDisplayedMessagesForMessage(message, agentSkillSnapshotForDisplay);
+
+        if (!canReuse) {
+          this.displayedMessageCache.set(message.id, {
+            version,
+            agentSkillSnapshotCacheKey,
+            messages: messageDisplay,
+          });
         }
 
         if (messageDisplay.length > 0) {

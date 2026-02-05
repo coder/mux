@@ -2,13 +2,20 @@ import React from "react";
 import { FileText } from "lucide-react";
 import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
+import { cn } from "@/common/lib/utils";
 import { ReviewBlockFromData } from "../shared/ReviewBlock";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "../ui/hover-card";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface UserMessageContentProps {
   content: string;
   commandPrefix?: string;
+  /**
+   * Optional agent-skill snapshot content for /{skillName} invocations.
+   * When present, the command prefix badge shows a hover preview.
+   */
+  agentSkillSnapshot?: { frontmatterYaml?: string; body?: string };
   reviews?: ReviewNoteDataForDisplay[];
   fileParts?: FilePart[];
   /** Controls styling: "sent" for full styling, "queued" for muted preview */
@@ -38,6 +45,26 @@ const imageContainerStyles = {
 } as const;
 
 const markdownClassName = "user-message-markdown";
+
+function buildAgentSkillSnapshotMarkdown(
+  snapshot: UserMessageContentProps["agentSkillSnapshot"]
+): string | null {
+  if (!snapshot) return null;
+
+  const frontmatterYaml =
+    typeof snapshot.frontmatterYaml === "string" && snapshot.frontmatterYaml.trim().length > 0
+      ? snapshot.frontmatterYaml.trimEnd()
+      : undefined;
+  const body = typeof snapshot.body === "string" ? snapshot.body : undefined;
+
+  if (!frontmatterYaml && !body) {
+    return null;
+  }
+
+  const yamlBlock = frontmatterYaml ? `\`\`\`yaml\n---\n${frontmatterYaml}\n---\n\`\`\`\n\n` : "";
+
+  return `${yamlBlock}${body ?? ""}`;
+}
 
 function dataUrlToBlob(dataUrl: string): Blob | null {
   if (!dataUrl.startsWith("data:")) return null;
@@ -78,11 +105,22 @@ const imageStyles = {
 } as const;
 
 /** Styled command prefix (e.g., "/compact" or "/skill-name") */
-const CommandPrefixBadge: React.FC<{ prefix: string }> = (props) => (
-  <span className="font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]">
-    {props.prefix}
+const CommandPrefixBadge = React.forwardRef<
+  HTMLSpanElement,
+  React.HTMLAttributes<HTMLSpanElement> & { prefix: string }
+>(({ prefix, className, ...rest }, ref) => (
+  <span
+    ref={ref}
+    className={cn(
+      "font-mono text-[13px] font-medium text-[var(--color-plan-mode-light)]",
+      className
+    )}
+    {...rest}
+  >
+    {prefix}
   </span>
-);
+));
+CommandPrefixBadge.displayName = "CommandPrefixBadge";
 
 /**
  * Shared content renderer for user messages (sent and queued).
@@ -131,11 +169,30 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
     const hasSpaceAfterPrefix = charAfterPrefix === " ";
     const hasNewlineAfterPrefix = charAfterPrefix === "\n";
 
+    const snapshotMarkdown = buildAgentSkillSnapshotMarkdown(props.agentSkillSnapshot);
+
+    const badge = snapshotMarkdown ? (
+      <HoverCard openDelay={150}>
+        <HoverCardTrigger asChild>
+          <CommandPrefixBadge prefix={shouldHighlightPrefix} className="cursor-help" />
+        </HoverCardTrigger>
+        <HoverCardContent
+          align="start"
+          side="top"
+          className="border-border-medium max-h-[360px] w-[520px] max-w-[80vw] overflow-auto border-2 p-3"
+        >
+          <MarkdownRenderer content={snapshotMarkdown} preserveLineBreaks />
+        </HoverCardContent>
+      </HoverCard>
+    ) : (
+      <CommandPrefixBadge prefix={shouldHighlightPrefix} />
+    );
+
     // Newline after prefix: block layout (badge on own line)
     // Space after prefix: inline layout (badge + content on same line)
     return (
       <div className={hasNewlineAfterPrefix ? "" : "flex flex-wrap items-baseline"}>
-        <CommandPrefixBadge prefix={shouldHighlightPrefix} />
+        {badge}
         {hasSpaceAfterPrefix && <span>&nbsp;</span>}
         {remainingContent.trim() && (
           <MarkdownRenderer

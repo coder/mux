@@ -95,8 +95,13 @@ export function useProvidersConfig() {
 
   useEffect(() => {
     if (!api) return;
+
     const abortController = new AbortController();
-    const signal = abortController.signal;
+    const { signal } = abortController;
+
+    // Some oRPC iterators don't eagerly close on abort alone.
+    // Ensure we `return()` them so backend subscriptions clean up EventEmitter listeners.
+    let iterator: AsyncIterator<unknown> | null = null;
 
     // Initial fetch
     void refresh();
@@ -104,8 +109,16 @@ export function useProvidersConfig() {
     // Subscribe to provider config changes via oRPC (for external changes)
     (async () => {
       try {
-        const iterator = await api.providers.onConfigChanged(undefined, { signal });
-        for await (const _ of iterator) {
+        const subscribedIterator = await api.providers.onConfigChanged(undefined, { signal });
+
+        if (signal.aborted) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
+        iterator = subscribedIterator;
+
+        for await (const _ of subscribedIterator) {
           if (signal.aborted) break;
           void refresh();
         }
@@ -114,7 +127,10 @@ export function useProvidersConfig() {
       }
     })();
 
-    return () => abortController.abort();
+    return () => {
+      abortController.abort();
+      void iterator?.return?.();
+    };
   }, [api, refresh]);
 
   return { config, loading, refresh, updateOptimistically, updateModelsOptimistically };

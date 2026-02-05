@@ -18,6 +18,7 @@ import {
 import { HistoryService } from "./historyService";
 import { PartialService } from "./partialService";
 import { InitStateManager } from "./initStateManager";
+import { ProviderService } from "./providerService";
 import { Config } from "@/node/config";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -25,6 +26,7 @@ import { DisposableTempDir } from "@/node/services/tempDir";
 import { createTaskTool } from "./tools/task";
 import { createTestToolConfig } from "./tools/testHelpers";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
+import { KNOWN_MODELS } from "@/common/constants/knownModels";
 
 describe("AIService", () => {
   let service: AIService;
@@ -34,7 +36,14 @@ describe("AIService", () => {
     const historyService = new HistoryService(config);
     const partialService = new PartialService(config, historyService);
     const initStateManager = new InitStateManager(config);
-    service = new AIService(config, historyService, partialService, initStateManager);
+    const providerService = new ProviderService(config);
+    service = new AIService(
+      config,
+      historyService,
+      partialService,
+      initStateManager,
+      providerService
+    );
   });
 
   // Note: These tests are placeholders as Bun doesn't support Jest mocking
@@ -44,6 +53,163 @@ describe("AIService", () => {
   it("should create an AIService instance", () => {
     expect(service).toBeDefined();
     expect(service).toBeInstanceOf(AIService);
+  });
+});
+
+describe("AIService.resolveGatewayModelString", () => {
+  async function writeMuxConfig(
+    root: string,
+    config: { muxGatewayEnabled?: boolean; muxGatewayModels?: string[] }
+  ): Promise<void> {
+    await fs.writeFile(
+      path.join(root, "config.json"),
+      JSON.stringify(
+        {
+          projects: [],
+          ...config,
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+  }
+
+  async function writeProvidersConfig(root: string, config: object): Promise<void> {
+    await fs.writeFile(
+      path.join(root, "providers.jsonc"),
+      JSON.stringify(config, null, 2),
+      "utf-8"
+    );
+  }
+
+  function toGatewayModelString(modelString: string): string {
+    const colonIndex = modelString.indexOf(":");
+    const provider = colonIndex === -1 ? modelString : modelString.slice(0, colonIndex);
+    const modelId = colonIndex === -1 ? "" : modelString.slice(colonIndex + 1);
+    return `mux-gateway:${provider}/${modelId}`;
+  }
+
+  function createService(root: string): AIService {
+    const config = new Config(root);
+    const historyService = new HistoryService(config);
+    const partialService = new PartialService(config, historyService);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    return new AIService(config, historyService, partialService, initStateManager, providerService);
+  }
+
+  it("routes allowlisted models when gateway is enabled + configured", async () => {
+    using muxHome = new DisposableTempDir("gateway-routing");
+
+    await writeMuxConfig(muxHome.path, {
+      muxGatewayEnabled: true,
+      muxGatewayModels: [KNOWN_MODELS.SONNET.id],
+    });
+    await writeProvidersConfig(muxHome.path, {
+      "mux-gateway": { couponCode: "test-coupon" },
+    });
+
+    const service = createService(muxHome.path);
+
+    // @ts-expect-error - accessing private method for testing
+    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
+
+    expect(resolved).toBe(toGatewayModelString(KNOWN_MODELS.SONNET.id));
+  });
+
+  it("does not route when gateway is disabled", async () => {
+    using muxHome = new DisposableTempDir("gateway-routing-disabled");
+
+    await writeMuxConfig(muxHome.path, {
+      muxGatewayEnabled: false,
+      muxGatewayModels: [KNOWN_MODELS.SONNET.id],
+    });
+    await writeProvidersConfig(muxHome.path, {
+      "mux-gateway": { couponCode: "test-coupon" },
+    });
+
+    const service = createService(muxHome.path);
+
+    // @ts-expect-error - accessing private method for testing
+    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
+
+    expect(resolved).toBe(KNOWN_MODELS.SONNET.id);
+  });
+
+  it("does not route when gateway is not configured", async () => {
+    using muxHome = new DisposableTempDir("gateway-routing-unconfigured");
+
+    await writeMuxConfig(muxHome.path, {
+      muxGatewayEnabled: true,
+      muxGatewayModels: [KNOWN_MODELS.SONNET.id],
+    });
+
+    const service = createService(muxHome.path);
+
+    // @ts-expect-error - accessing private method for testing
+    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
+
+    expect(resolved).toBe(KNOWN_MODELS.SONNET.id);
+  });
+
+  it("does not route unsupported providers even when allowlisted", async () => {
+    using muxHome = new DisposableTempDir("gateway-routing-unsupported-provider");
+
+    const modelString = "openrouter:some-model";
+    await writeMuxConfig(muxHome.path, {
+      muxGatewayEnabled: true,
+      muxGatewayModels: [modelString],
+    });
+    await writeProvidersConfig(muxHome.path, {
+      "mux-gateway": { couponCode: "test-coupon" },
+    });
+
+    const service = createService(muxHome.path);
+
+    // @ts-expect-error - accessing private method for testing
+    const resolved = service.resolveGatewayModelString(modelString);
+
+    expect(resolved).toBe(modelString);
+  });
+
+  it("routes model variants when the base model is allowlisted via modelKey", async () => {
+    using muxHome = new DisposableTempDir("gateway-routing-model-key");
+
+    const variant = "xai:grok-4-1-fast-reasoning";
+    await writeMuxConfig(muxHome.path, {
+      muxGatewayEnabled: true,
+      muxGatewayModels: [KNOWN_MODELS.GROK_4_1.id],
+    });
+    await writeProvidersConfig(muxHome.path, {
+      "mux-gateway": { couponCode: "test-coupon" },
+    });
+
+    const service = createService(muxHome.path);
+
+    // @ts-expect-error - accessing private method for testing
+    const resolved = service.resolveGatewayModelString(variant, KNOWN_MODELS.GROK_4_1.id);
+
+    expect(resolved).toBe(toGatewayModelString(variant));
+  });
+
+  it("honors explicit mux-gateway prefixes from legacy clients", async () => {
+    using muxHome = new DisposableTempDir("gateway-routing-explicit");
+
+    await writeMuxConfig(muxHome.path, {
+      muxGatewayEnabled: true,
+      muxGatewayModels: [],
+    });
+    await writeProvidersConfig(muxHome.path, {
+      "mux-gateway": { couponCode: "test-coupon" },
+    });
+
+    const service = createService(muxHome.path);
+
+    // @ts-expect-error - accessing private method for testing
+    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.GPT.id, undefined, true);
+
+    expect(resolved).toBe(toGatewayModelString(KNOWN_MODELS.GPT.id));
   });
 });
 

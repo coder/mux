@@ -18,11 +18,28 @@ export type { Keybind };
 export function isMac(): boolean {
   try {
     if (typeof window === "undefined") return false;
+
+    // Prefer Electron's preload API when available.
     interface MinimalAPI {
-      platform: string;
+      platform?: string;
     }
     const api = (window as unknown as { api?: MinimalAPI }).api;
-    return api?.platform === "darwin";
+    if (api?.platform != null) {
+      return api.platform === "darwin";
+    }
+
+    // Browser mode fallback: detect platform via Navigator.
+    if (typeof navigator === "undefined") return false;
+    interface MinimalNavigator {
+      platform?: string;
+      userAgent?: string;
+      userAgentData?: {
+        platform?: string;
+      };
+    }
+    const nav = navigator as unknown as MinimalNavigator;
+    const platform = nav.userAgentData?.platform ?? nav.platform ?? nav.userAgent ?? "";
+    return /mac|iphone|ipad|ipod/i.test(platform);
   } catch {
     return false;
   }
@@ -348,6 +365,8 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+N, Win/Linux: Ctrl+Shift+N
   // "N" for Notifications
   TOGGLE_NOTIFICATIONS: { key: "N", ctrl: true, shift: true },
+
+  TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;
 
 /**

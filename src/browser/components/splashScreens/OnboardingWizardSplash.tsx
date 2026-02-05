@@ -841,12 +841,15 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         <>
           <p>
             MCP servers extend Mux with tools (memory, ticketing, databases, internal APIs).
-            Configure them per project and optionally override per workspace.
+            Configure them globally, with optional repo overrides and per-workspace overrides.
           </p>
 
           <div className="mt-3 grid gap-2">
-            <Card icon={<Server className="h-4 w-4" />} title="Project config">
-              <code className="text-accent">.mux/mcp.jsonc</code>
+            <Card icon={<Server className="h-4 w-4" />} title="Global config">
+              <code className="text-accent">~/.mux/mcp.jsonc</code>
+            </Card>
+            <Card icon={<Server className="h-4 w-4" />} title="Repo overrides">
+              <code className="text-accent">./.mux/mcp.jsonc</code>
             </Card>
             <Card icon={<Server className="h-4 w-4" />} title="Workspace overrides">
               <code className="text-accent">.mux/mcp.local.jsonc</code>
@@ -854,8 +857,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
           </div>
 
           <p className="mt-3">
-            Manage servers in <span className="text-foreground">Settings → Projects</span> or via{" "}
-            <code className="text-accent">/mcp</code>.
+            Manage servers in <span className="text-foreground">Settings → MCP</span>.
           </p>
         </>
       ),

@@ -1,8 +1,14 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
-import type { EffectivePolicy, PolicyGetResponse, PolicyStatus } from "@/common/orpc/types";
+import type {
+  EffectivePolicy,
+  PolicyGetResponse,
+  PolicySource,
+  PolicyStatus,
+} from "@/common/orpc/types";
 import { useAPI } from "@/browser/contexts/API";
 
 interface PolicyContextValue {
+  source: PolicySource;
   status: PolicyStatus;
   policy: EffectivePolicy | null;
   loading: boolean;
@@ -10,6 +16,10 @@ interface PolicyContextValue {
 }
 
 const PolicyContext = createContext<PolicyContextValue | null>(null);
+
+// User request: keep churn guard while still surfacing updated policy reasons.
+const getPolicySignature = (response: PolicyGetResponse): string =>
+  JSON.stringify({ status: response.status, policy: response.policy });
 
 export function PolicyProvider(props: { children: React.ReactNode }) {
   const apiState = useAPI();
@@ -26,9 +36,18 @@ export function PolicyProvider(props: { children: React.ReactNode }) {
 
     try {
       const next = await api.policy.get();
-      setResponse(next);
+      // User request: avoid churn from identical payloads while letting reason updates through.
+      setResponse((prev) => {
+        if (!prev) {
+          return next;
+        }
+        if (getPolicySignature(prev) === getPolicySignature(next)) {
+          return prev;
+        }
+        return next;
+      });
     } catch {
-      setResponse(null);
+      setResponse((prev) => (prev ? null : prev));
     } finally {
       setLoading(false);
     }
@@ -63,11 +82,12 @@ export function PolicyProvider(props: { children: React.ReactNode }) {
     return () => abortController.abort();
   }, [api, refresh]);
 
+  const source: PolicySource = response?.source ?? "none";
   const status: PolicyStatus = response?.status ?? { state: "disabled" };
   const policy = response?.policy ?? null;
 
   return (
-    <PolicyContext.Provider value={{ status, policy, loading, refresh }}>
+    <PolicyContext.Provider value={{ source, status, policy, loading, refresh }}>
       {props.children}
     </PolicyContext.Provider>
   );

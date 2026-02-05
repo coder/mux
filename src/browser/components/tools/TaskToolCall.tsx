@@ -480,14 +480,13 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   ).length;
 
   const workspaceContext = useOptionalWorkspaceContext();
+  const workspaceMetadata = workspaceContext?.workspaceMetadata;
   const messageListContext = useOptionalMessageListContext();
   const workspaceId = messageListContext?.workspaceId;
   const backgroundProcesses = useBackgroundProcesses(workspaceId);
 
   const awaitedRows: TaskRowProps[] = [];
   if (status === "executing" && results.length === 0 && Array.isArray(taskIds)) {
-    const workspaceMetadata = workspaceContext?.workspaceMetadata;
-
     for (const taskId of taskIds) {
       const processId = fromBashTaskId(taskId);
       if (processId) {
@@ -523,6 +522,14 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
     }
   }
 
+  function getWorkspaceTitle(taskId: string): string | undefined {
+    const metadata = workspaceMetadata?.get(taskId);
+    const title = metadata?.title?.trim();
+    if (title && title.length > 0) return title;
+
+    const name = metadata?.name?.trim();
+    return name && name.length > 0 ? name : undefined;
+  }
   // Keep task_await collapsed by default, but auto-expand when failures are present.
   // This avoids hiding failures behind a "completed" badge in the header.
   const shouldAutoExpand = failedCount > 0;
@@ -565,15 +572,25 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             {/* Results */}
             {results.length > 0 ? (
               <div className="space-y-3">
-                {results.map((r, idx) => (
-                  <TaskAwaitResult
-                    key={r.taskId ?? idx}
-                    result={r}
-                    suppressReport={
-                      typeof r.taskId === "string" && suppressReportInAwaitTaskIds?.has(r.taskId)
-                    }
-                  />
-                ))}
+                {results.map((r, idx) => {
+                  const taskId = typeof r.taskId === "string" ? r.taskId : null;
+
+                  const spawnTitle = taskId
+                    ? taskReportLinking?.spawnTitleByTaskId.get(taskId)
+                    : undefined;
+                  const fallbackTitle =
+                    (spawnTitle && spawnTitle.trim().length > 0 ? spawnTitle.trim() : undefined) ??
+                    (taskId ? getWorkspaceTitle(taskId) : undefined);
+
+                  return (
+                    <TaskAwaitResult
+                      key={taskId ?? idx}
+                      result={r}
+                      fallbackTitle={fallbackTitle}
+                      suppressReport={taskId ? suppressReportInAwaitTaskIds?.has(taskId) : false}
+                    />
+                  );
+                })}
               </div>
             ) : status === "executing" ? (
               <div className="space-y-2">
@@ -598,11 +615,21 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
 // Individual task_await result display
 const TaskAwaitResult: React.FC<{
   result: TaskAwaitToolSuccessResult["results"][number];
+  fallbackTitle?: string;
   suppressReport?: boolean;
-}> = ({ result, suppressReport }) => {
+}> = ({ result, fallbackTitle, suppressReport }) => {
   const isCompleted = result.status === "completed";
   const reportMarkdown = isCompleted ? result.reportMarkdown : undefined;
-  const title = isCompleted ? result.title : undefined;
+
+  const rawReportTitle = isCompleted ? result.title : undefined;
+  const reportTitle =
+    typeof rawReportTitle === "string" && rawReportTitle.trim().length > 0
+      ? rawReportTitle.trim()
+      : undefined;
+
+  const title =
+    reportTitle ??
+    (fallbackTitle && fallbackTitle.trim().length > 0 ? fallbackTitle.trim() : undefined);
 
   const output = "output" in result ? result.output : undefined;
   const note = "note" in result ? result.note : undefined;

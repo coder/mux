@@ -1,16 +1,16 @@
-import type { FilePart } from "@/common/orpc/types";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { TelemetryRuntimeType } from "@/common/telemetry/payload";
 import type { AutoCompactionCheckResult } from "@/browser/utils/compaction/autoCompactionCheck";
 import type { Review } from "@/common/types/review";
+import type { EditingMessageState, PendingUserMessage } from "@/browser/utils/chatEditing";
 
 export interface ChatInputAPI {
   focus: () => void;
   send: () => Promise<void>;
   restoreText: (text: string) => void;
+  restoreDraft: (pending: PendingUserMessage) => void;
   appendText: (text: string) => void;
   prependText: (text: string) => void;
-  restoreAttachments: (fileParts: FilePart[]) => void;
 }
 
 export interface WorkspaceCreatedOptions {
@@ -29,7 +29,7 @@ export interface ChatInputWorkspaceVariant {
   onModelChange?: (model: string) => void;
   isCompacting?: boolean;
   isStreamStarting?: boolean;
-  editingMessage?: { id: string; content: string; fileParts?: FilePart[] };
+  editingMessage?: EditingMessageState;
   onCancelEdit?: () => void;
   onEditLastUserMessage?: () => void;
   canInterrupt?: boolean;

@@ -1,5 +1,4 @@
 import React from "react";
-import type { FilePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { ButtonConfig } from "./MessageWindow";
 import { MessageWindow } from "./MessageWindow";
@@ -8,7 +7,10 @@ import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
-import { getEditableUserMessageText } from "@/browser/utils/messages/messageUtils";
+import {
+  buildEditingStateFromDisplayed,
+  type EditingMessageState,
+} from "@/browser/utils/chatEditing";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { ChevronLeft, ChevronRight, Clipboard, ClipboardCheck, Pencil } from "lucide-react";
@@ -26,7 +28,7 @@ export interface UserMessageNavigation {
 interface UserMessageProps {
   message: DisplayedMessage & { type: "user" };
   className?: string;
-  onEdit?: (messageId: string, content: string, fileParts?: FilePart[]) => void;
+  onEdit?: (message: EditingMessageState) => void;
   isCompacting?: boolean;
   clipboardWriteText?: (data: string) => Promise<void>;
   /** Navigation info for backward/forward between user messages */
@@ -64,8 +66,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
 
   const handleEdit = () => {
     if (onEdit && !isLocalCommandOutput && !isSynthetic) {
-      const editText = getEditableUserMessageText(message);
-      onEdit(message.historyId, editText, message.fileParts);
+      onEdit(buildEditingStateFromDisplayed(message));
     }
   };
 
@@ -158,6 +159,7 @@ export const UserMessage: React.FC<UserMessageProps> = ({
       <UserMessageContent
         content={content}
         commandPrefix={message.commandPrefix}
+        agentSkillSnapshot={message.agentSkill?.snapshot}
         reviews={message.reviews}
         fileParts={message.fileParts}
         variant="sent"

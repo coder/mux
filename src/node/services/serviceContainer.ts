@@ -20,6 +20,7 @@ import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import { ProjectService } from "@/node/services/projectService";
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
+import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import { ProviderService } from "@/node/services/providerService";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { TerminalService } from "@/node/services/terminalService";
@@ -54,6 +55,11 @@ import { IdleCompactionService } from "@/node/services/idleCompactionService";
 import { TaskService } from "@/node/services/taskService";
 import { getSigningService, type SigningService } from "@/node/services/signingService";
 import { coderService, type CoderService } from "@/node/services/coderService";
+import { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
+import {
+  createStartCoderOnUnarchiveHook,
+  createStopCoderOnArchiveHook,
+} from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { PolicyService } from "@/node/services/policyService";
 
@@ -89,6 +95,7 @@ export class ServiceContainer {
   public readonly taskService: TaskService;
   public readonly providerService: ProviderService;
   public readonly muxGatewayOauthService: MuxGatewayOauthService;
+  public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -122,7 +129,7 @@ export class ServiceContainer {
     this.projectService = new ProjectService(config);
     this.initStateManager = new InitStateManager(config);
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
-    this.mcpConfigService = new MCPConfigService();
+    this.mcpConfigService = new MCPConfigService(config);
     this.extensionMetadata = new ExtensionMetadataService(
       path.join(config.rootDir, "extensionMetadata.json")
     );
@@ -131,11 +138,13 @@ export class ServiceContainer {
     );
     this.mcpServerManager = new MCPServerManager(this.mcpConfigService);
     this.sessionUsageService = new SessionUsageService(config, this.historyService);
+    this.providerService = new ProviderService(config);
     this.aiService = new AIService(
       config,
       this.historyService,
       this.partialService,
       this.initStateManager,
+      this.providerService,
       this.backgroundProcessManager,
       this.sessionUsageService,
       this.workspaceMcpOverridesService
@@ -171,10 +180,16 @@ export class ServiceContainer {
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(config, this.mcpConfigService, this.windowService);
     this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
-    this.providerService = new ProviderService(config);
+
+    this.policyService = new PolicyService(config);
     this.muxGatewayOauthService = new MuxGatewayOauthService(
       this.providerService,
       this.windowService
+    );
+    this.muxGovernorOauthService = new MuxGovernorOauthService(
+      config,
+      this.windowService,
+      this.policyService
     );
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
@@ -202,7 +217,22 @@ export class ServiceContainer {
     this.signingService = getSigningService();
     this.coderService = coderService;
 
-    this.policyService = new PolicyService();
+    const workspaceLifecycleHooks = new WorkspaceLifecycleHooks();
+    workspaceLifecycleHooks.registerBeforeArchive(
+      createStopCoderOnArchiveHook({
+        coderService: this.coderService,
+        shouldStopOnArchive: () =>
+          this.config.loadConfigOrDefault().stopCoderWorkspaceOnArchive !== false,
+      })
+    );
+    workspaceLifecycleHooks.registerAfterUnarchive(
+      createStartCoderOnUnarchiveHook({
+        coderService: this.coderService,
+        shouldStopOnArchive: () =>
+          this.config.loadConfigOrDefault().stopCoderWorkspaceOnArchive !== false,
+      })
+    );
+    this.workspaceService.setWorkspaceLifecycleHooks(workspaceLifecycleHooks);
 
     // PolicyService is a cross-cutting dependency; use setter injection to avoid
     // constructor cycles between services.
@@ -376,6 +406,7 @@ export class ServiceContainer {
     this.mcpServerManager.dispose();
     await this.mcpOauthService.dispose();
     await this.muxGatewayOauthService.dispose();
+    await this.muxGovernorOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

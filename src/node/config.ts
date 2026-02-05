@@ -134,6 +134,9 @@ export class Config {
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           useSSH2Transport?: unknown;
+          muxGovernorUrl?: unknown;
+          muxGovernorToken?: unknown;
+          stopCoderWorkspaceOnArchive?: unknown;
         };
 
         // Config is stored as array of [path, config] pairs
@@ -160,6 +163,10 @@ export class Config {
           const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
           const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
           const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
+
+          // Default ON: store `false` only so config.json stays minimal.
+          const stopCoderWorkspaceOnArchive =
+            parseOptionalBoolean(parsed.stopCoderWorkspaceOnArchive) === false ? false : undefined;
 
           const agentAiDefaults =
             parsed.agentAiDefaults !== undefined
@@ -191,6 +198,9 @@ export class Config {
             subagentAiDefaults: legacySubagentAiDefaults,
             featureFlagOverrides: parsed.featureFlagOverrides,
             useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
+            muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
+            muxGovernorToken: parseOptionalNonEmptyString(parsed.muxGovernorToken),
+            stopCoderWorkspaceOnArchive,
           };
         }
       }
@@ -230,6 +240,9 @@ export class Config {
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         useSSH2Transport?: boolean;
+        muxGovernorUrl?: string;
+        muxGovernorToken?: string;
+        stopCoderWorkspaceOnArchive?: boolean;
       } = {
         projects: Array.from(config.projects.entries()),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
@@ -304,6 +317,21 @@ export class Config {
 
       if (config.useSSH2Transport !== undefined) {
         data.useSSH2Transport = config.useSSH2Transport;
+      }
+
+      const muxGovernorUrl = parseOptionalNonEmptyString(config.muxGovernorUrl);
+      if (muxGovernorUrl) {
+        data.muxGovernorUrl = muxGovernorUrl;
+      }
+
+      const muxGovernorToken = parseOptionalNonEmptyString(config.muxGovernorToken);
+      if (muxGovernorToken) {
+        data.muxGovernorToken = muxGovernorToken;
+      }
+
+      // Default ON: persist `false` only.
+      if (config.stopCoderWorkspaceOnArchive === false) {
+        data.stopCoderWorkspaceOnArchive = false;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -935,11 +963,93 @@ export class Config {
 // }
 ${jsonString}`;
 
-      fs.writeFileSync(this.providersFile, contentWithComments);
+      writeFileAtomic.sync(this.providersFile, contentWithComments, {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
     } catch (error) {
       log.error("Error saving providers config:", error);
       throw error; // Re-throw to let caller handle
     }
+  }
+
+  private static readonly GLOBAL_SECRETS_KEY = "__global__";
+
+  private static normalizeSecretsProjectPath(projectPath: string): string {
+    return stripTrailingSlashes(projectPath);
+  }
+
+  private static isSecretValue(value: unknown): value is Secret["value"] {
+    if (typeof value === "string") {
+      return true;
+    }
+
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "secret" in value &&
+      typeof (value as { secret?: unknown }).secret === "string"
+    );
+  }
+
+  private static isSecret(value: unknown): value is Secret {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "key" in value &&
+      "value" in value &&
+      typeof (value as { key?: unknown }).key === "string" &&
+      Config.isSecretValue((value as { value?: unknown }).value)
+    );
+  }
+
+  private static parseSecretsArray(value: unknown): Secret[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    // Filter invalid entries to avoid crashes when iterating secrets.
+    return value.filter((entry): entry is Secret => Config.isSecret(entry));
+  }
+
+  private static mergeSecretsByKey(primary: Secret[], secondary: Secret[]): Secret[] {
+    // Merge-by-key (last writer wins).
+    const mergedByKey = new Map<string, Secret>();
+    for (const secret of primary) {
+      mergedByKey.set(secret.key, secret);
+    }
+    for (const secret of secondary) {
+      mergedByKey.set(secret.key, secret);
+    }
+    return Array.from(mergedByKey.values());
+  }
+
+  private static normalizeSecretsConfig(raw: unknown): SecretsConfig {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      return {};
+    }
+
+    const record = raw as Record<string, unknown>;
+    const normalized: SecretsConfig = {};
+
+    for (const [rawKey, rawValue] of Object.entries(record)) {
+      let key = rawKey;
+      if (rawKey !== Config.GLOBAL_SECRETS_KEY) {
+        const normalizedKey = Config.normalizeSecretsProjectPath(rawKey);
+        key = normalizedKey || rawKey;
+      }
+
+      const secrets = Config.parseSecretsArray(rawValue);
+
+      if (!Object.prototype.hasOwnProperty.call(normalized, key)) {
+        normalized[key] = secrets;
+        continue;
+      }
+
+      normalized[key] = Config.mergeSecretsByKey(normalized[key], secrets);
+    }
+
+    return normalized;
   }
 
   /**
@@ -950,7 +1060,8 @@ ${jsonString}`;
     try {
       if (fs.existsSync(this.secretsFile)) {
         const data = fs.readFileSync(this.secretsFile, "utf-8");
-        return JSON.parse(data) as SecretsConfig;
+        const parsed = JSON.parse(data) as unknown;
+        return Config.normalizeSecretsConfig(parsed);
       }
     } catch (error) {
       log.error("Error loading secrets config:", error);
@@ -969,7 +1080,10 @@ ${jsonString}`;
         fs.mkdirSync(this.rootDir, { recursive: true });
       }
 
-      await writeFileAtomic(this.secretsFile, JSON.stringify(config, null, 2), "utf-8");
+      await writeFileAtomic(this.secretsFile, JSON.stringify(config, null, 2), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
     } catch (error) {
       log.error("Error saving secrets config:", error);
       throw error;
@@ -977,13 +1091,54 @@ ${jsonString}`;
   }
 
   /**
-   * Get secrets for a specific project
-   * @param projectPath The path to the project
-   * @returns Array of secrets for the project, or empty array if none
+   * Get global secrets (not project-scoped).
+   *
+   * Stored in <muxHome>/secrets.json under a sentinel key for backwards compatibility.
+   */
+  getGlobalSecrets(): Secret[] {
+    const config = this.loadSecretsConfig();
+    return config[Config.GLOBAL_SECRETS_KEY] ?? [];
+  }
+
+  /** Update global secrets (not project-scoped). */
+  async updateGlobalSecrets(secrets: Secret[]): Promise<void> {
+    const config = this.loadSecretsConfig();
+    config[Config.GLOBAL_SECRETS_KEY] = secrets;
+    await this.saveSecretsConfig(config);
+  }
+
+  /**
+   * Get effective secrets for a project.
+   *
+   * Merges global + project secrets with project keys overriding global keys.
+   */
+  getEffectiveSecrets(projectPath: string): Secret[] {
+    const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
+    const config = this.loadSecretsConfig();
+    const globalSecrets = config[Config.GLOBAL_SECRETS_KEY] ?? [];
+    const projectSecrets = config[normalizedProjectPath] ?? [];
+
+    // Merge-by-key (last writer wins).
+    const mergedByKey = new Map<string, Secret>();
+    for (const secret of globalSecrets) {
+      mergedByKey.set(secret.key, secret);
+    }
+    for (const secret of projectSecrets) {
+      mergedByKey.set(secret.key, secret);
+    }
+
+    return Array.from(mergedByKey.values());
+  }
+
+  /**
+   * Get secrets for a specific project.
+   *
+   * Note: this is project-only (does not include global secrets).
    */
   getProjectSecrets(projectPath: string): Secret[] {
+    const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
-    return config[projectPath] ?? [];
+    return config[normalizedProjectPath] ?? [];
   }
 
   /**
@@ -992,8 +1147,9 @@ ${jsonString}`;
    * @param secrets The secrets to save for the project
    */
   async updateProjectSecrets(projectPath: string, secrets: Secret[]): Promise<void> {
+    const normalizedProjectPath = Config.normalizeSecretsProjectPath(projectPath) || projectPath;
     const config = this.loadSecretsConfig();
-    config[projectPath] = secrets;
+    config[normalizedProjectPath] = secrets;
     await this.saveSecretsConfig(config);
   }
 }

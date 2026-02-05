@@ -206,6 +206,32 @@ describe("StreamingMessageAggregator", () => {
       expect(contents).toEqual(["hello"]);
     });
 
+    test("should show uiVisible synthetic messages by default", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const syntheticVisible = createMuxMessage("s1", "user", "synthetic visible", {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+        uiVisible: true,
+      });
+      const user = createMuxMessage("u1", "user", "hello", {
+        timestamp: 2,
+        historySequence: 2,
+      });
+
+      aggregator.loadHistoricalMessages([syntheticVisible, user], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const userMessages = displayed.filter((m) => m.type === "user");
+
+      expect(userMessages).toHaveLength(2);
+      expect(userMessages[0]?.content).toBe("synthetic visible");
+      expect(userMessages[0]?.isSynthetic).toBe(true);
+      expect(userMessages[1]?.content).toBe("hello");
+      expect(userMessages[1]?.isSynthetic).toBeUndefined();
+    });
+
     test("should show synthetic messages when debugLlmRequest is enabled", () => {
       withDebugLlmRequestEnabled(() => {
         const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
@@ -333,6 +359,76 @@ describe("StreamingMessageAggregator", () => {
       // All 200 user messages are kept (user type is always preserved)
       expect(displayed).toHaveLength(200);
       expect(displayed.some((m) => m.type === "history-hidden")).toBe(false);
+    });
+  });
+
+  describe("agent skill snapshot cache", () => {
+    test("should invalidate cached hover snapshot when frontmatter changes", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const snapshotText = "<agent-skill>\nBODY\n</agent-skill>";
+
+      const snapshot1 = createMuxMessage("s1", "assistant", snapshotText, {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: "test-skill",
+          scope: "project",
+          sha256: "sha-1",
+          frontmatterYaml: "description: v1",
+        },
+      });
+
+      const invocation = createMuxMessage("u1", "user", "/test-skill", {
+        timestamp: 2,
+        historySequence: 2,
+        muxMetadata: {
+          type: "agent-skill",
+          rawCommand: "/test-skill",
+          skillName: "test-skill",
+          scope: "project",
+        },
+      });
+
+      aggregator.addMessage(snapshot1);
+      aggregator.addMessage(invocation);
+
+      const displayed1 = aggregator.getDisplayedMessages();
+      const user1 = displayed1.find((m) => m.type === "user" && m.id === "u1");
+      expect(user1).toBeDefined();
+
+      if (user1?.type === "user") {
+        expect(user1.agentSkill?.snapshot?.frontmatterYaml).toBe("description: v1");
+        expect(user1.agentSkill?.snapshot?.body).toBe("BODY");
+      }
+
+      // Update the snapshot frontmatter without changing body or sha256.
+      const snapshot2 = createMuxMessage("s1", "assistant", snapshotText, {
+        timestamp: 1,
+        historySequence: 1,
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: "test-skill",
+          scope: "project",
+          sha256: "sha-1",
+          frontmatterYaml: "description: v2",
+        },
+      });
+
+      aggregator.addMessage(snapshot2);
+
+      const displayed2 = aggregator.getDisplayedMessages();
+      const user2 = displayed2.find((m) => m.type === "user" && m.id === "u1");
+      expect(user2).toBeDefined();
+
+      if (user2?.type === "user") {
+        expect(user2.agentSkill?.snapshot?.frontmatterYaml).toBe("description: v2");
+        expect(user2.agentSkill?.snapshot?.body).toBe("BODY");
+      }
+
+      // Cache should not reuse the prior DisplayedMessage when snapshot metadata changes.
+      expect(user2).not.toBe(user1);
     });
   });
 
@@ -701,6 +797,59 @@ describe("StreamingMessageAggregator", () => {
       });
 
       expect(aggregator.isCompacting()).toBe(true);
+    });
+  });
+
+  describe("pending stream model", () => {
+    test("tracks requestedModel for pending user messages", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleMessage({
+        type: "message",
+        id: "msg1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "normal",
+            requestedModel: "anthropic:claude-sonnet-4-5",
+          },
+        },
+      });
+
+      expect(aggregator.getPendingStreamModel()).toBe("anthropic:claude-sonnet-4-5");
+    });
+
+    test("clears pending stream model on stream-start", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleMessage({
+        type: "message",
+        id: "msg1",
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "normal",
+            requestedModel: "anthropic:claude-sonnet-4-5",
+          },
+        },
+      });
+
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId: "test-workspace",
+        messageId: "msg2",
+        historySequence: 2,
+        model: "anthropic:claude-sonnet-4-5",
+        startTime: Date.now(),
+      });
+
+      expect(aggregator.getPendingStreamModel()).toBeNull();
     });
   });
 

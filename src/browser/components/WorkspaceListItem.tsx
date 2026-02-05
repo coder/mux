@@ -17,7 +17,13 @@ import { GitStatusIndicator } from "./GitStatusIndicator";
 import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
-import { Trash2, X } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
+import { Pencil, Trash2, Ellipsis, X } from "lucide-react";
+import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
+import { Shimmer } from "./ai-elements/shimmer";
+import { ArchiveIcon } from "./icons/ArchiveIcon";
+import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
+import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -31,11 +37,6 @@ function preventHoverCardDismissForRadixPortals(e: {
     e.preventDefault();
   }
 }
-import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
-import { Shimmer } from "./ai-elements/shimmer";
-import { ArchiveIcon } from "./icons/ArchiveIcon";
-import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -256,6 +257,19 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const displayTitle = metadata.title ?? metadata.name;
   const isEditing = editingWorkspaceId === workspaceId;
 
+  // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
+  const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
+    null
+  );
+
+  useEffect(() => {
+    if (isEditing) {
+      setIsTitleMenuOpen(false);
+      setContextMenuPosition(null);
+    }
+  }, [isEditing]);
+
   const startEditing = () => {
     if (requestRename(workspaceId, displayTitle)) {
       setEditingTitle(displayTitle);
@@ -371,6 +385,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             });
           }
         }}
+        onContextMenu={(e) => {
+          if (isDisabled || isEditing) return;
+
+          e.preventDefault();
+          e.stopPropagation();
+          setContextMenuPosition({ x: e.clientX, y: e.clientY });
+          setIsTitleMenuOpen(true);
+        }}
         role="button"
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
@@ -422,14 +444,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       e.stopPropagation();
                       void onArchiveWorkspace(workspaceId, e.currentTarget);
                     }}
-                    aria-label={`Archive workspace ${displayTitle}`}
+                    aria-label={`Archive chat ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
                     <ArchiveIcon className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent align="start">
-                  Archive workspace ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+                  Archive chat ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
                 </TooltipContent>
               </Tooltip>
             )}
@@ -480,6 +502,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 </HoverCardTrigger>
                 <HoverCardContent
                   align="start"
+                  side="top"
                   sideOffset={8}
                   className="border-separator-light bg-modal-bg w-auto max-w-[420px] px-[10px] py-[6px] text-[11px] shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
                   onPointerDownOutside={preventHoverCardDismissForRadixPortals}
@@ -494,22 +517,97 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       runtimeConfig={metadata.runtimeConfig}
                       isWorking={isWorking}
                     />
-                    {!isDisabled && (
-                      <div className="text-muted text-xs">Double-click to edit title</div>
-                    )}
                   </div>
                 </HoverCardContent>
               </HoverCard>
             )}
 
             {!isCreating && !isEditing && (
-              <GitStatusIndicator
-                gitStatus={gitStatus}
-                workspaceId={workspaceId}
-                projectPath={projectPath}
-                tooltipPosition="right"
-                isWorking={isWorking}
-              />
+              <div className="flex items-center gap-1">
+                <GitStatusIndicator
+                  gitStatus={gitStatus}
+                  workspaceId={workspaceId}
+                  projectPath={projectPath}
+                  tooltipPosition="right"
+                  isWorking={isWorking}
+                />
+
+                {!isDisabled && (
+                  <Popover
+                    open={isTitleMenuOpen}
+                    onOpenChange={(open) => {
+                      setIsTitleMenuOpen(open);
+                      if (!open) setContextMenuPosition(null);
+                    }}
+                  >
+                    {/* When opened via right-click, anchor at click position */}
+                    {contextMenuPosition && (
+                      <PopoverAnchor asChild>
+                        <span
+                          style={{
+                            position: "fixed",
+                            left: contextMenuPosition.x,
+                            top: contextMenuPosition.y,
+                            width: 0,
+                            height: 0,
+                          }}
+                        />
+                      </PopoverAnchor>
+                    )}
+                    <PopoverTrigger asChild>
+                      <button
+                        className={cn(
+                          "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                          // Hidden until row hover, but remain visible while open.
+                          isTitleMenuOpen ? "opacity-100" : "opacity-0"
+                        )}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Workspace actions for ${displayTitle}`}
+                        data-workspace-id={workspaceId}
+                      >
+                        <Ellipsis className="h-3 w-3" />
+                      </button>
+                    </PopoverTrigger>
+
+                    <PopoverContent
+                      align={contextMenuPosition ? "start" : "end"}
+                      side={contextMenuPosition ? "right" : "bottom"}
+                      sideOffset={contextMenuPosition ? 0 : 6}
+                      className="w-[150px] !min-w-0 p-1"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsTitleMenuOpen(false);
+                          startEditing();
+                        }}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Pencil className="h-3 w-3" />
+                          Edit chat title
+                        </span>
+                      </button>
+                      {!isMuxHelpChat && (
+                        <button
+                          className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsTitleMenuOpen(false);
+                            void onArchiveWorkspace(workspaceId, e.currentTarget);
+                          }}
+                        >
+                          <span className="flex items-center gap-2">
+                            <ArchiveIcon className="h-3 w-3" />
+                            Archive chat
+                          </span>
+                        </button>
+                      )}
+                    </PopoverContent>
+                  </Popover>
+                )}
+              </div>
             )}
           </div>
           {hasSecondaryRow && (

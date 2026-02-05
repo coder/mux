@@ -33,8 +33,20 @@ interface McpOauthStoreFileV1 {
   entries: Record<string, Record<string, MCPOAuthStoredCredentials>>;
 }
 
-function createEmptyStore(): McpOauthStoreFileV1 {
-  return { version: 1, entries: {} };
+interface McpOauthStoreFileV2 {
+  version: 2;
+  /**
+   * Global credentials store.
+   *
+   * Keyed by normalizeServerUrlForComparison(creds.serverUrl).
+   */
+  entries: Record<string, MCPOAuthStoredCredentials>;
+}
+
+type McpOauthStoreFile = McpOauthStoreFileV2;
+
+function createEmptyStore(): McpOauthStoreFileV2 {
+  return { version: 2, entries: {} };
 }
 
 // Exported for focused unit tests (WWW-Authenticate parsing) without requiring
@@ -240,7 +252,76 @@ async function probeServerForBearerChallenge(serverUrl: string): Promise<BearerC
   }
 }
 
-function parseStoreFile(raw: string): McpOauthStoreFileV1 | null {
+function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | null {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const serverUrlRaw = typeof value.serverUrl === "string" ? value.serverUrl : null;
+  const updatedAtMs = typeof value.updatedAtMs === "number" ? value.updatedAtMs : null;
+
+  if (!serverUrlRaw || updatedAtMs === null || !Number.isFinite(updatedAtMs)) {
+    return null;
+  }
+
+  const serverUrl = normalizeServerUrlForComparison(serverUrlRaw);
+  if (!serverUrl) {
+    return null;
+  }
+
+  const clientInformationRaw = value.clientInformation;
+  const clientInformation: MCPOAuthClientInformation | undefined = isPlainObject(
+    clientInformationRaw
+  )
+    ? {
+        client_id:
+          typeof clientInformationRaw.client_id === "string" ? clientInformationRaw.client_id : "",
+        client_secret:
+          typeof clientInformationRaw.client_secret === "string"
+            ? clientInformationRaw.client_secret
+            : undefined,
+        client_id_issued_at:
+          typeof clientInformationRaw.client_id_issued_at === "number"
+            ? clientInformationRaw.client_id_issued_at
+            : undefined,
+        client_secret_expires_at:
+          typeof clientInformationRaw.client_secret_expires_at === "number"
+            ? clientInformationRaw.client_secret_expires_at
+            : undefined,
+      }
+    : undefined;
+
+  if (clientInformation && !clientInformation.client_id) {
+    // client_id is required if the object is present.
+    return null;
+  }
+
+  const tokensRaw = value.tokens;
+  const tokens: MCPOAuthTokens | undefined = isPlainObject(tokensRaw)
+    ? {
+        access_token: typeof tokensRaw.access_token === "string" ? tokensRaw.access_token : "",
+        id_token: typeof tokensRaw.id_token === "string" ? tokensRaw.id_token : undefined,
+        token_type: typeof tokensRaw.token_type === "string" ? tokensRaw.token_type : "",
+        expires_in: typeof tokensRaw.expires_in === "number" ? tokensRaw.expires_in : undefined,
+        scope: typeof tokensRaw.scope === "string" ? tokensRaw.scope : undefined,
+        refresh_token:
+          typeof tokensRaw.refresh_token === "string" ? tokensRaw.refresh_token : undefined,
+      }
+    : undefined;
+
+  if (tokens && (!tokens.access_token || !tokens.token_type)) {
+    return null;
+  }
+
+  return {
+    serverUrl,
+    clientInformation,
+    tokens,
+    updatedAtMs,
+  };
+}
+
+function parseStoreFile(raw: string): McpOauthStoreFileV1 | McpOauthStoreFileV2 | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!isPlainObject(parsed)) {
@@ -248,7 +329,7 @@ function parseStoreFile(raw: string): McpOauthStoreFileV1 | null {
     }
 
     const version = parsed.version;
-    if (version !== 1) {
+    if (version !== 1 && version !== 2) {
       return null;
     }
 
@@ -257,98 +338,83 @@ function parseStoreFile(raw: string): McpOauthStoreFileV1 | null {
       return null;
     }
 
-    const entries: Record<string, Record<string, MCPOAuthStoredCredentials>> = {};
+    if (version === 1) {
+      const entries: Record<string, Record<string, MCPOAuthStoredCredentials>> = {};
 
-    for (const [projectPath, byServerRaw] of Object.entries(entriesRaw)) {
-      if (!isPlainObject(byServerRaw)) {
+      for (const [projectPath, byServerRaw] of Object.entries(entriesRaw)) {
+        if (!isPlainObject(byServerRaw)) {
+          continue;
+        }
+
+        const byServer: Record<string, MCPOAuthStoredCredentials> = {};
+
+        for (const [serverName, credRaw] of Object.entries(byServerRaw)) {
+          const creds = parseStoredCredentials(credRaw);
+          if (!creds) {
+            continue;
+          }
+
+          byServer[serverName] = creds;
+        }
+
+        if (Object.keys(byServer).length > 0) {
+          entries[projectPath] = byServer;
+        }
+      }
+
+      return { version: 1, entries };
+    }
+
+    // v2
+    const entries: Record<string, MCPOAuthStoredCredentials> = {};
+
+    for (const credRaw of Object.values(entriesRaw)) {
+      const creds = parseStoredCredentials(credRaw);
+      if (!creds) {
         continue;
       }
 
-      const byServer: Record<string, MCPOAuthStoredCredentials> = {};
+      const serverUrlKey = creds.serverUrl;
+      const existing = entries[serverUrlKey];
 
-      for (const [serverName, credRaw] of Object.entries(byServerRaw)) {
-        if (!isPlainObject(credRaw)) {
-          continue;
-        }
-
-        const serverUrl = typeof credRaw.serverUrl === "string" ? credRaw.serverUrl : null;
-        const updatedAtMs = typeof credRaw.updatedAtMs === "number" ? credRaw.updatedAtMs : null;
-
-        if (!serverUrl || !updatedAtMs || !Number.isFinite(updatedAtMs)) {
-          continue;
-        }
-
-        const clientInformationRaw = credRaw.clientInformation;
-        const clientInformation: MCPOAuthClientInformation | undefined = isPlainObject(
-          clientInformationRaw
-        )
-          ? {
-              client_id:
-                typeof clientInformationRaw.client_id === "string"
-                  ? clientInformationRaw.client_id
-                  : "",
-              client_secret:
-                typeof clientInformationRaw.client_secret === "string"
-                  ? clientInformationRaw.client_secret
-                  : undefined,
-              client_id_issued_at:
-                typeof clientInformationRaw.client_id_issued_at === "number"
-                  ? clientInformationRaw.client_id_issued_at
-                  : undefined,
-              client_secret_expires_at:
-                typeof clientInformationRaw.client_secret_expires_at === "number"
-                  ? clientInformationRaw.client_secret_expires_at
-                  : undefined,
-            }
-          : undefined;
-
-        if (clientInformation && !clientInformation.client_id) {
-          // client_id is required if the object is present.
-          continue;
-        }
-
-        const tokensRaw = credRaw.tokens;
-        const tokens: MCPOAuthTokens | undefined = isPlainObject(tokensRaw)
-          ? {
-              access_token:
-                typeof tokensRaw.access_token === "string" ? tokensRaw.access_token : "",
-              id_token: typeof tokensRaw.id_token === "string" ? tokensRaw.id_token : undefined,
-              token_type: typeof tokensRaw.token_type === "string" ? tokensRaw.token_type : "",
-              expires_in:
-                typeof tokensRaw.expires_in === "number" ? tokensRaw.expires_in : undefined,
-              scope: typeof tokensRaw.scope === "string" ? tokensRaw.scope : undefined,
-              refresh_token:
-                typeof tokensRaw.refresh_token === "string" ? tokensRaw.refresh_token : undefined,
-            }
-          : undefined;
-
-        if (tokens && (!tokens.access_token || !tokens.token_type)) {
-          continue;
-        }
-
-        byServer[serverName] = {
-          serverUrl,
-          clientInformation,
-          tokens,
-          updatedAtMs,
-        };
-      }
-
-      if (Object.keys(byServer).length > 0) {
-        entries[projectPath] = byServer;
+      if (!existing || creds.updatedAtMs > existing.updatedAtMs) {
+        entries[serverUrlKey] = creds;
       }
     }
 
-    return { version: 1, entries };
+    return { version: 2, entries };
   } catch {
     return null;
   }
 }
 
+function migrateStoreV1ToV2(store: McpOauthStoreFileV1): McpOauthStoreFileV2 {
+  const entries: Record<string, MCPOAuthStoredCredentials> = {};
+
+  for (const byServer of Object.values(store.entries)) {
+    for (const creds of Object.values(byServer)) {
+      const serverUrlKey = normalizeServerUrlForComparison(creds.serverUrl);
+      if (!serverUrlKey) {
+        continue;
+      }
+
+      const existing = entries[serverUrlKey];
+      if (!existing || creds.updatedAtMs > existing.updatedAtMs) {
+        entries[serverUrlKey] = {
+          ...creds,
+          serverUrl: serverUrlKey,
+        };
+      }
+    }
+  }
+
+  return { version: 2, entries };
+}
+
 export class McpOauthService {
   private readonly storeFilePath: string;
   private readonly storeLock = new MutexMap<string>();
-  private store: McpOauthStoreFileV1 | null = null;
+  private store: McpOauthStoreFile | null = null;
 
   private readonly desktopFlows = new Map<string, DesktopFlow>();
   private readonly serverFlows = new Map<string, ServerFlow>();
@@ -394,26 +460,13 @@ export class McpOauthService {
     this.serverFlows.clear();
   }
 
-  async getAuthStatus(projectPath: string, serverName: string): Promise<MCPOAuthAuthStatus> {
-    const projectKey = normalizeProjectPathKey(projectPath);
-
-    const servers = await this.mcpConfigService.listServers(projectPath);
-    const server = servers[serverName];
-
-    if (!server || server.transport === "stdio") {
-      return { isLoggedIn: false, hasRefreshToken: false };
-    }
-
-    const normalizedServerUrl = normalizeServerUrlForComparison(server.url);
+  async getAuthStatus(input: { serverUrl: string }): Promise<MCPOAuthAuthStatus> {
+    const normalizedServerUrl = normalizeServerUrlForComparison(input.serverUrl);
     if (!normalizedServerUrl) {
       return { isLoggedIn: false, hasRefreshToken: false };
     }
 
-    const creds = await this.getValidStoredCredentials({
-      projectKey,
-      serverName,
-      serverUrl: normalizedServerUrl,
-    });
+    const creds = await this.getValidStoredCredentials({ serverUrl: normalizedServerUrl });
 
     const tokens = creds?.tokens;
     return {
@@ -425,22 +478,20 @@ export class McpOauthService {
     };
   }
 
-  async logout(projectPath: string, serverName: string): Promise<Result<void, string>> {
-    const projectKey = normalizeProjectPathKey(projectPath);
+  async logout(input: { serverUrl: string }): Promise<Result<void, string>> {
+    const normalizedServerUrl = normalizeServerUrlForComparison(input.serverUrl);
+    if (!normalizedServerUrl) {
+      return Ok(undefined);
+    }
 
     try {
       await this.storeLock.withLock(this.storeFilePath, async () => {
         const store = await this.ensureStoreLoadedLocked();
-        const byServer = store.entries[projectKey];
-        if (!byServer?.[serverName]) {
+        if (!store.entries[normalizedServerUrl]) {
           return;
         }
 
-        delete byServer[serverName];
-        if (Object.keys(byServer).length === 0) {
-          delete store.entries[projectKey];
-        }
-
+        delete store.entries[normalizedServerUrl];
         await this.persistStoreLocked(store);
       });
 
@@ -459,53 +510,36 @@ export class McpOauthService {
    * redirectToAuthorization never opens a browser.
    */
   async getAuthProviderForServer(input: {
-    projectPath: string;
-    serverName: string;
     serverUrl: string;
+    serverName?: string;
   }): Promise<OAuthClientProvider | undefined> {
-    const projectKey = normalizeProjectPathKey(input.projectPath);
     const normalizedServerUrl = normalizeServerUrlForComparison(input.serverUrl);
     if (!normalizedServerUrl) {
       return undefined;
     }
 
-    const creds = await this.getValidStoredCredentials({
-      projectKey,
-      serverName: input.serverName,
-      serverUrl: normalizedServerUrl,
-    });
+    const creds = await this.getValidStoredCredentials({ serverUrl: normalizedServerUrl });
 
     if (!creds?.tokens || !creds.clientInformation) {
       return undefined;
     }
 
     return this.createBackgroundProvider({
-      projectKey,
-      serverName: input.serverName,
       serverUrl: normalizedServerUrl,
+      serverName: input.serverName,
     });
   }
 
   /**
    * Used by MCPServerManager caching to restart servers when auth state changes.
    */
-  async hasAuthTokens(input: {
-    projectPath: string;
-    serverName: string;
-    serverUrl: string;
-  }): Promise<boolean> {
-    const projectKey = normalizeProjectPathKey(input.projectPath);
+  async hasAuthTokens(input: { serverUrl: string }): Promise<boolean> {
     const normalizedServerUrl = normalizeServerUrlForComparison(input.serverUrl);
     if (!normalizedServerUrl) {
       return false;
     }
 
-    const creds = await this.getValidStoredCredentials({
-      projectKey,
-      serverName: input.serverName,
-      serverUrl: normalizedServerUrl,
-    });
-
+    const creds = await this.getValidStoredCredentials({ serverUrl: normalizedServerUrl });
     return Boolean(creds?.tokens && creds.clientInformation);
   }
 
@@ -963,8 +997,6 @@ export class McpOauthService {
       tokens: () => Promise.resolve(undefined),
       saveTokens: async (tokens) => {
         await this.saveTokens({
-          projectKey: flow.projectPath,
-          serverName: flow.serverName,
           serverUrl: flow.serverUrlForStoreKey,
           tokens: tokens as unknown as MCPOAuthTokens,
         });
@@ -985,8 +1017,7 @@ export class McpOauthService {
       },
       invalidateCredentials: async (scope) => {
         await this.invalidateStoredCredentials({
-          projectKey: flow.projectPath,
-          serverName: flow.serverName,
+          serverUrl: flow.serverUrlForStoreKey,
           scope,
         });
       },
@@ -1014,8 +1045,6 @@ export class McpOauthService {
         flow.clientInformation = next;
 
         await this.saveClientInformation({
-          projectKey: flow.projectPath,
-          serverName: flow.serverName,
           serverUrl: flow.serverUrlForStoreKey,
           clientInformation: next,
         });
@@ -1025,23 +1054,16 @@ export class McpOauthService {
   }
 
   private createBackgroundProvider(input: {
-    projectKey: string;
-    serverName: string;
     serverUrl: string;
+    serverName?: string;
   }): OAuthClientProvider {
     return {
       tokens: async () => {
-        const creds = await this.getValidStoredCredentials({
-          projectKey: input.projectKey,
-          serverName: input.serverName,
-          serverUrl: input.serverUrl,
-        });
+        const creds = await this.getValidStoredCredentials({ serverUrl: input.serverUrl });
         return creds?.tokens as unknown as MCPOAuthTokens | undefined;
       },
       saveTokens: async (tokens) => {
         await this.saveTokens({
-          projectKey: input.projectKey,
-          serverName: input.serverName,
           serverUrl: input.serverUrl,
           tokens: tokens as unknown as MCPOAuthTokens,
         });
@@ -1050,8 +1072,7 @@ export class McpOauthService {
         // Avoid any user-visible side effects during background tool calls.
         // If we end up here, the server requires interactive auth.
         await this.invalidateStoredCredentials({
-          projectKey: input.projectKey,
-          serverName: input.serverName,
+          serverUrl: input.serverUrl,
           scope: "tokens",
         });
         throw new Error("MCP OAuth login required");
@@ -1063,8 +1084,7 @@ export class McpOauthService {
       codeVerifier: () => Promise.reject(new Error("PKCE verifier is not available")),
       invalidateCredentials: async (scope) => {
         await this.invalidateStoredCredentials({
-          projectKey: input.projectKey,
-          serverName: input.serverName,
+          serverUrl: input.serverUrl,
           scope,
         });
       },
@@ -1079,17 +1099,11 @@ export class McpOauthService {
         };
       },
       clientInformation: async () => {
-        const creds = await this.getValidStoredCredentials({
-          projectKey: input.projectKey,
-          serverName: input.serverName,
-          serverUrl: input.serverUrl,
-        });
+        const creds = await this.getValidStoredCredentials({ serverUrl: input.serverUrl });
         return creds?.clientInformation as unknown as MCPOAuthClientInformation | undefined;
       },
       saveClientInformation: async (clientInformation) => {
         await this.saveClientInformation({
-          projectKey: input.projectKey,
-          serverName: input.serverName,
           serverUrl: input.serverUrl,
           clientInformation: clientInformation as unknown as MCPOAuthClientInformation,
         });
@@ -1290,8 +1304,6 @@ export class McpOauthService {
   }
 
   private async getValidStoredCredentials(input: {
-    projectKey: string;
-    serverName: string;
     serverUrl: string;
   }): Promise<MCPOAuthStoredCredentials | null> {
     await this.ensureStoreLoaded();
@@ -1300,16 +1312,18 @@ export class McpOauthService {
       return null;
     }
 
-    const byServer = store.entries[input.projectKey];
-    const creds = byServer?.[input.serverName];
+    const creds = store.entries[input.serverUrl];
     if (!creds) {
       return null;
     }
 
-    // Defensive: If the configured server URL changes, invalidate stored creds.
-    const storedUrl = normalizeServerUrlForComparison(creds.serverUrl);
-    if (!storedUrl || storedUrl !== input.serverUrl) {
-      await this.logout(input.projectKey, input.serverName);
+    // Defensive: Never use credentials bound to a different (normalized) URL.
+    //
+    // This shouldn't happen in a well-formed v2 store, but it can happen if the
+    // store file is manually edited or corrupted.
+    const storedUrlKey = normalizeServerUrlForComparison(creds.serverUrl);
+    if (!storedUrlKey || storedUrlKey !== input.serverUrl) {
+      await this.logout({ serverUrl: input.serverUrl });
       return null;
     }
 
@@ -1317,14 +1331,12 @@ export class McpOauthService {
   }
 
   private async invalidateStoredCredentials(input: {
-    projectKey: string;
-    serverName: string;
+    serverUrl: string;
     scope: "all" | "client" | "tokens" | "verifier";
   }): Promise<void> {
     await this.storeLock.withLock(this.storeFilePath, async () => {
       const store = await this.ensureStoreLoadedLocked();
-      const byServer = store.entries[input.projectKey];
-      const creds = byServer?.[input.serverName];
+      const creds = store.entries[input.serverUrl];
       if (!creds) {
         return;
       }
@@ -1343,26 +1355,17 @@ export class McpOauthService {
 
       // If everything is gone, prune the entry.
       if (!creds.tokens && !creds.clientInformation) {
-        delete byServer[input.serverName];
-        if (Object.keys(byServer).length === 0) {
-          delete store.entries[input.projectKey];
-        }
+        delete store.entries[input.serverUrl];
       }
 
       await this.persistStoreLocked(store);
     });
   }
 
-  private async saveTokens(input: {
-    projectKey: string;
-    serverName: string;
-    serverUrl: string;
-    tokens: MCPOAuthTokens;
-  }): Promise<void> {
+  private async saveTokens(input: { serverUrl: string; tokens: MCPOAuthTokens }): Promise<void> {
     await this.storeLock.withLock(this.storeFilePath, async () => {
       const store = await this.ensureStoreLoadedLocked();
-      const byServer = (store.entries[input.projectKey] ??= {});
-      const creds = (byServer[input.serverName] ??= {
+      const creds = (store.entries[input.serverUrl] ??= {
         serverUrl: input.serverUrl,
         updatedAtMs: Date.now(),
       });
@@ -1381,15 +1384,12 @@ export class McpOauthService {
   }
 
   private async saveClientInformation(input: {
-    projectKey: string;
-    serverName: string;
     serverUrl: string;
     clientInformation: MCPOAuthClientInformation;
   }): Promise<void> {
     await this.storeLock.withLock(this.storeFilePath, async () => {
       const store = await this.ensureStoreLoadedLocked();
-      const byServer = (store.entries[input.projectKey] ??= {});
-      const creds = (byServer[input.serverName] ??= {
+      const creds = (store.entries[input.serverUrl] ??= {
         serverUrl: input.serverUrl,
         updatedAtMs: Date.now(),
       });
@@ -1425,7 +1425,7 @@ export class McpOauthService {
     });
   }
 
-  private async ensureStoreLoadedLocked(): Promise<McpOauthStoreFileV1> {
+  private async ensureStoreLoadedLocked(): Promise<McpOauthStoreFile> {
     if (this.store) {
       return this.store;
     }
@@ -1438,6 +1438,13 @@ export class McpOauthService {
         this.store = createEmptyStore();
         await this.persistStoreBestEffortLocked(this.store);
         return this.store;
+      }
+
+      if (parsed.version === 1) {
+        const migrated = migrateStoreV1ToV2(parsed);
+        this.store = migrated;
+        await this.persistStoreBestEffortLocked(migrated);
+        return migrated;
       }
 
       this.store = parsed;
@@ -1455,7 +1462,7 @@ export class McpOauthService {
     }
   }
 
-  private async persistStoreBestEffortLocked(store: McpOauthStoreFileV1): Promise<void> {
+  private async persistStoreBestEffortLocked(store: McpOauthStoreFile): Promise<void> {
     try {
       await this.persistStoreLocked(store);
     } catch (error) {
@@ -1466,7 +1473,7 @@ export class McpOauthService {
     }
   }
 
-  private async persistStoreLocked(store: McpOauthStoreFileV1): Promise<void> {
+  private async persistStoreLocked(store: McpOauthStoreFile): Promise<void> {
     // Ensure ~/.mux exists.
     await fsPromises.mkdir(this.config.rootDir, { recursive: true });
 

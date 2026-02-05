@@ -1,4 +1,8 @@
 import assert from "@/common/utils/assert";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
+import { GATEWAY_CONFIGURED_KEY } from "@/common/constants/storage";
+import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import type { DeleteMessage, StreamErrorMessage, WorkspaceChatMessage } from "@/common/orpc/types";
 import {
   isBashOutputEvent,
@@ -38,6 +42,15 @@ import type {
 } from "@/common/types/stream";
 
 export type WorkspaceChatEventUpdateHint = "immediate" | "throttled" | "ignored";
+
+export interface ApplyWorkspaceChatEventToAggregatorOptions {
+  /**
+   * When false, suppress side effects (e.g. toasts / localStorage writes) when replaying history.
+   *
+   * Defaults to true.
+   */
+  allowSideEffects?: boolean;
+}
 
 /**
  * Minimal interface required by applyWorkspaceChatEventToAggregator.
@@ -80,13 +93,16 @@ export interface WorkspaceChatEventAggregator {
  */
 export function applyWorkspaceChatEventToAggregator(
   aggregator: WorkspaceChatEventAggregator,
-  event: WorkspaceChatMessage
+  event: WorkspaceChatMessage,
+  options?: ApplyWorkspaceChatEventToAggregatorOptions
 ): WorkspaceChatEventUpdateHint {
   assert(aggregator, "applyWorkspaceChatEventToAggregator requires aggregator");
   assert(
     event && typeof event === "object",
     "applyWorkspaceChatEventToAggregator requires event object"
   );
+
+  const allowSideEffects = options?.allowSideEffects !== false;
 
   if (isStreamStart(event)) {
     aggregator.handleStreamStart(event);
@@ -112,6 +128,13 @@ export function applyWorkspaceChatEventToAggregator(
   }
 
   if (isStreamError(event)) {
+    if (allowSideEffects && event.error === MUX_GATEWAY_SESSION_EXPIRED_MESSAGE) {
+      updatePersistedState(GATEWAY_CONFIGURED_KEY, false);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED));
+      }
+    }
+
     aggregator.handleStreamError(event);
     return "immediate";
   }

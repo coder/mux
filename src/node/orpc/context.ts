@@ -4,6 +4,7 @@ import type { AIService } from "@/node/services/aiService";
 import type { ProjectService } from "@/node/services/projectService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
+import type { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { EditorService } from "@/node/services/editorService";
@@ -35,6 +36,7 @@ export interface ORPCContext {
   taskService: TaskService;
   providerService: ProviderService;
   muxGatewayOauthService: MuxGatewayOauthService;
+  muxGovernorOauthService: MuxGovernorOauthService;
   terminalService: TerminalService;
   editorService: EditorService;
   windowService: WindowService;

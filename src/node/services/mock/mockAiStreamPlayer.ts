@@ -129,6 +129,7 @@ export class MockAiStreamPlayer {
   private readonly releasedStreamStartGates = new Set<string>();
   private readonly router = new MockAiRouter();
   private readonly lastPromptByWorkspace = new Map<string, MuxMessage[]>();
+  private readonly lastModelByWorkspace = new Map<string, string>();
   private readonly activeStreams = new Map<string, ActiveStream>();
   private nextMockMessageId = 0;
 
@@ -136,6 +137,10 @@ export class MockAiStreamPlayer {
 
   debugGetLastPrompt(workspaceId: string): MuxMessage[] | null {
     return this.lastPromptByWorkspace.get(workspaceId) ?? null;
+  }
+
+  debugGetLastModel(workspaceId: string): string | null {
+    return this.lastModelByWorkspace.get(workspaceId) ?? null;
   }
 
   private recordLastPrompt(workspaceId: string, messages: MuxMessage[]): void {
@@ -249,6 +254,12 @@ export class MockAiStreamPlayer {
     const latestText = this.extractText(latest);
 
     this.recordLastPrompt(workspaceId, messages);
+    // Always update last model to avoid stale state between requests
+    if (options?.model) {
+      this.lastModelByWorkspace.set(workspaceId, options.model);
+    } else {
+      this.lastModelByWorkspace.delete(workspaceId);
+    }
     const reply = this.router.route({
       messages,
       latestUserMessage: latest,
