@@ -9,8 +9,10 @@ export const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as cons
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**
- * User-facing display labels for thinking levels
- * Used in UI and CLI help text for cleaner presentation
+ * User-facing display labels for thinking levels.
+ * Used in CLI help text and contexts without model info.
+ * For UI with model context, prefer getThinkingDisplayLabel() which shows
+ * "MAX" instead of "XHIGH" for models that use the max effort level.
  */
 export const THINKING_DISPLAY_LABELS: Record<ThinkingLevel, string> = {
   off: "OFF",
@@ -19,6 +21,18 @@ export const THINKING_DISPLAY_LABELS: Record<ThinkingLevel, string> = {
   high: "HIGH",
   xhigh: "XHIGH",
 };
+
+/**
+ * Model-aware display label for thinking levels.
+ * Opus 4.6 maps xhigh to "max" effort, so show "MAX" instead of "XHIGH".
+ * Falls back to the static THINKING_DISPLAY_LABELS for all other cases.
+ */
+export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: string): string {
+  if (level === "xhigh" && modelString?.toLowerCase().includes("opus-4-6")) {
+    return "MAX";
+  }
+  return THINKING_DISPLAY_LABELS[level];
+}
 
 /**
  * Reverse mapping from display labels to internal values

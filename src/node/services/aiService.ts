@@ -1900,6 +1900,9 @@ export class AIService extends EventEmitter {
       const transformedMessages = transformModelMessages(modelMessages, providerForMessages, {
         anthropicThinkingEnabled:
           providerForMessages === "anthropic" && effectiveThinkingLevel !== "off",
+        // Opus 4.6 doesn't support assistant message prefill (returns 400 error).
+        // Append a [CONTINUE] user sentinel if conversation ends with assistant.
+        noPrefill: canonicalModelId?.includes("opus-4-6") ?? false,
       });
 
       // Apply cache control for Anthropic models AFTER transformation

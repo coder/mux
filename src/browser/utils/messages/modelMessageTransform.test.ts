@@ -945,6 +945,47 @@ describe("modelMessageTransform", () => {
   });
 });
 
+describe("transformModelMessages noPrefill", () => {
+  it("appends [CONTINUE] sentinel when last message is assistant and noPrefill is true", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "Hi there" }] },
+    ];
+
+    const result = transformModelMessages(messages, "anthropic", { noPrefill: true });
+
+    const last = result[result.length - 1];
+    expect(last.role).toBe("user");
+    expect((last as { content: Array<{ type: string; text: string }> }).content).toEqual([
+      { type: "text", text: "[CONTINUE]" },
+    ]);
+  });
+
+  it("does not append sentinel when last message is user", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "Hi" }] },
+      { role: "user", content: [{ type: "text", text: "Thanks" }] },
+    ];
+
+    const result = transformModelMessages(messages, "anthropic", { noPrefill: true });
+
+    expect(result[result.length - 1].role).toBe("user");
+    expect(result.length).toBe(3);
+  });
+
+  it("does not append sentinel when noPrefill is false", () => {
+    const messages: ModelMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Hello" }] },
+      { role: "assistant", content: [{ type: "text", text: "Hi there" }] },
+    ];
+
+    const result = transformModelMessages(messages, "anthropic", { noPrefill: false });
+
+    expect(result[result.length - 1].role).toBe("assistant");
+  });
+});
+
 describe("stripOrphanedToolCalls", () => {
   it("drops tool calls without results and orphaned tool results", () => {
     const messages: ModelMessage[] = [
