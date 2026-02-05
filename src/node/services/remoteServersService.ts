@@ -1,6 +1,6 @@
 import assert from "@/common/utils/assert";
 import type { RemoteMuxServerConfig } from "@/common/types/project";
-import type { Secret, SecretsConfig } from "@/common/types/secrets";
+import { secretsToRecord, type Secret, type SecretsConfig } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
@@ -95,17 +95,23 @@ function getRemoteMuxServerSecretsKey(serverId: string): string {
 }
 
 function getAuthTokenFromSecrets(secrets: Secret[] | undefined): string | null {
-  if (!secrets) {
+  if (!secrets || secrets.length === 0) {
     return null;
   }
 
-  const entry = secrets.find((secret) => secret.key === REMOTE_MUX_SERVER_AUTH_TOKEN_KEY);
-  if (!entry) {
+  const record = secretsToRecord(secrets);
+  const authToken = record[REMOTE_MUX_SERVER_AUTH_TOKEN_KEY];
+
+  if (typeof authToken !== "string") {
     return null;
   }
 
-  const trimmed = entry.value.trim();
-  return trimmed ? trimmed : null;
+  const trimmed = authToken.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed;
 }
 
 function hasAuthTokenInSecretsConfig(secretsConfig: SecretsConfig, serverId: string): boolean {
