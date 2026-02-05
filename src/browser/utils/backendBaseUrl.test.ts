@@ -16,6 +16,12 @@ describe("backendBaseUrl", () => {
     expect(getAppProxyBasePathFromPathname("/@u/ws/apps/mux/settings")).toBe("/@u/ws/apps/mux");
   });
 
+  test("getAppProxyBasePathFromPathname() matches the first /apps/<slug> when multiple exist", () => {
+    expect(getAppProxyBasePathFromPathname("/@u/ws/apps/mux/projects/apps/other")).toBe(
+      "/@u/ws/apps/mux"
+    );
+  });
+
   describe("getBrowserBackendBaseUrl()", () => {
     beforeEach(() => {
       globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
@@ -39,6 +45,11 @@ describe("backendBaseUrl", () => {
 
     test("ignores deeper routes under the app proxy prefix", () => {
       window.location.href = "https://coder.example.com/@u/ws/apps/mux/projects/123?x=1";
+      expect(getBrowserBackendBaseUrl()).toBe("https://coder.example.com/@u/ws/apps/mux");
+    });
+
+    test("does not get confused by nested /apps/ segments in routes", () => {
+      window.location.href = "https://coder.example.com/@u/ws/apps/mux/projects/apps/other";
       expect(getBrowserBackendBaseUrl()).toBe("https://coder.example.com/@u/ws/apps/mux");
     });
   });

@@ -10,7 +10,8 @@
  * prefix, so the frontend must include it when constructing URLs.
  */
 
-const APP_PROXY_BASE_PATH_RE = /(.*\/apps\/[^/]+)(?:\/|$)/;
+// Non-greedy so we match the *first* "/apps/<slug>" segment in nested routes.
+const APP_PROXY_BASE_PATH_RE = /(.*?\/apps\/[^/]+)(?:\/|$)/;
 
 /**
  * Returns the path prefix up to and including `/apps/<slug>`.
