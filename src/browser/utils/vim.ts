@@ -21,6 +21,25 @@ export interface LastFind {
   char: string;
 }
 
+export type VimHistorySnapshot = { text: string; cursor: number };
+
+export type LastEdit =
+  | { kind: "x"; count: number }
+  | { kind: "~"; count: number }
+  | {
+      kind: "opMotion";
+      op: "d" | "c";
+      motion: "w" | "W" | "b" | "B" | "e" | "E" | "$" | "0" | "_" | "line";
+      count: number;
+    }
+  | {
+      kind: "opTextObject";
+      op: "d" | "c";
+      textObject: "iw";
+      count: number;
+    }
+  | { kind: "paste"; variant: "p" | "P"; count: number };
+
 export type Pending =
   | {
       kind: "op";
@@ -67,9 +86,31 @@ export interface VimState {
    */
   count: number | null;
   pending: Pending | null;
+
+  /**
+   * Engine-driven undo/redo stacks.
+   *
+   * Notes:
+   * - Snapshots intentionally store ONLY text + cursor.
+   * - Registers (yankBuffer) are not undone/redone.
+   */
+  undoStack: VimHistorySnapshot[];
+  redoStack: VimHistorySnapshot[];
+
+  /**
+   * Snapshot captured when entering insert mode from a Vim command.
+   * Used to group all insert-mode typing into a single undo step.
+   */
+  insertStartSnapshot: VimHistorySnapshot | null;
+
+  /**
+   * Last structural edit to repeat with `.`.
+   * This does not attempt to replay arbitrary insert-mode typed text.
+   */
+  lastEdit: LastEdit | null;
 }
 
-export type VimAction = "undo" | "redo" | "escapeInNormalMode";
+export type VimAction = "escapeInNormalMode";
 
 export type VimKeyResult =
   | { handled: false } // Browser should handle this key
@@ -78,6 +119,21 @@ export type VimKeyResult =
 export interface LinesInfo {
   lines: string[];
   starts: number[]; // start index of each line
+}
+
+const VIM_HISTORY_STACK_LIMIT = 100;
+
+function assertHistorySnapshot(snapshot: VimHistorySnapshot, label: string): void {
+  assert(typeof snapshot.text === "string", `${label}.text must be a string`);
+  assert(Number.isFinite(snapshot.cursor), `${label}.cursor must be a finite number`);
+  assert(Number.isInteger(snapshot.cursor), `${label}.cursor must be an integer`);
+  assert(snapshot.cursor >= 0, `${label}.cursor must be >= 0`);
+
+  const maxCursor = Math.max(0, snapshot.text.length - 1);
+  assert(
+    snapshot.cursor <= maxCursor,
+    `${label}.cursor out of bounds. cursor=${snapshot.cursor} max=${maxCursor} text.length=${snapshot.text.length}`
+  );
 }
 
 function assertVimState(state: VimState): void {
@@ -187,6 +243,90 @@ function assertVimState(state: VimState): void {
           "Unexpected Vim pending find operator"
         );
       }
+    }
+  }
+
+  assert(Array.isArray(state.undoStack), "Vim undoStack must be an array");
+  assert(Array.isArray(state.redoStack), "Vim redoStack must be an array");
+  assert(
+    state.undoStack.length <= VIM_HISTORY_STACK_LIMIT,
+    `Vim undoStack too large: ${state.undoStack.length} > ${VIM_HISTORY_STACK_LIMIT}`
+  );
+  assert(
+    state.redoStack.length <= VIM_HISTORY_STACK_LIMIT,
+    `Vim redoStack too large: ${state.redoStack.length} > ${VIM_HISTORY_STACK_LIMIT}`
+  );
+
+  for (let i = 0; i < state.undoStack.length; i++) {
+    assertHistorySnapshot(state.undoStack[i], `Vim undoStack[${i}]`);
+  }
+  for (let i = 0; i < state.redoStack.length; i++) {
+    assertHistorySnapshot(state.redoStack[i], `Vim redoStack[${i}]`);
+  }
+
+  if (state.mode === "insert") {
+    if (state.insertStartSnapshot != null) {
+      assertHistorySnapshot(state.insertStartSnapshot, "Vim insertStartSnapshot");
+    }
+  } else {
+    assert(
+      state.insertStartSnapshot == null,
+      "Vim insertStartSnapshot must be null outside insert mode"
+    );
+  }
+
+  if (state.lastEdit != null) {
+    const { lastEdit } = state;
+
+    assert(typeof lastEdit.kind === "string", "Vim lastEdit.kind must be a string");
+
+    const assertCount = (count: number) => {
+      assert(Number.isFinite(count), "Vim lastEdit.count must be a finite number");
+      assert(Number.isInteger(count), "Vim lastEdit.count must be an integer");
+      assert(count >= 1, "Vim lastEdit.count must be >= 1");
+      assert(count <= 10000, "Vim lastEdit.count must be <= 10000");
+    };
+
+    switch (lastEdit.kind) {
+      case "x":
+      case "~":
+        assertCount(lastEdit.count);
+        break;
+
+      case "paste":
+        assert(
+          lastEdit.variant === "p" || lastEdit.variant === "P",
+          "Unexpected Vim lastEdit paste variant"
+        );
+        assertCount(lastEdit.count);
+        break;
+
+      case "opMotion":
+        assert(lastEdit.op === "d" || lastEdit.op === "c", "Unexpected Vim lastEdit operator");
+        assert(
+          lastEdit.motion === "w" ||
+            lastEdit.motion === "W" ||
+            lastEdit.motion === "b" ||
+            lastEdit.motion === "B" ||
+            lastEdit.motion === "e" ||
+            lastEdit.motion === "E" ||
+            lastEdit.motion === "$" ||
+            lastEdit.motion === "0" ||
+            lastEdit.motion === "_" ||
+            lastEdit.motion === "line",
+          "Unexpected Vim lastEdit motion"
+        );
+        assertCount(lastEdit.count);
+        break;
+
+      case "opTextObject":
+        assert(lastEdit.op === "d" || lastEdit.op === "c", "Unexpected Vim lastEdit operator");
+        assert(lastEdit.textObject === "iw", "Unexpected Vim lastEdit text object");
+        assertCount(lastEdit.count);
+        break;
+
+      default:
+        assert(false, `Unexpected Vim lastEdit kind: ${(lastEdit as { kind?: unknown }).kind}`);
     }
   }
 }
@@ -740,6 +880,126 @@ interface KeyModifiers {
   alt?: boolean;
 }
 
+function makeHistorySnapshot(text: string, cursor: number): VimHistorySnapshot {
+  return { text, cursor: clampCursorForMode(text, cursor, "normal") };
+}
+
+function pushHistoryStack(
+  stack: VimHistorySnapshot[],
+  snapshot: VimHistorySnapshot
+): VimHistorySnapshot[] {
+  const next = [...stack, snapshot];
+  if (next.length <= VIM_HISTORY_STACK_LIMIT) return next;
+  return next.slice(next.length - VIM_HISTORY_STACK_LIMIT);
+}
+
+function pushUndoSnapshot(state: VimState, snapshot: VimHistorySnapshot): VimState {
+  return {
+    ...state,
+    undoStack: pushHistoryStack(state.undoStack, snapshot),
+    redoStack: state.redoStack.length === 0 ? state.redoStack : [],
+  };
+}
+
+function normalizeHistoryNavigationState(state: VimState): VimState {
+  return {
+    ...state,
+    mode: "normal",
+    cursor: clampCursorForMode(state.text, state.cursor, "normal"),
+    visualAnchor: null,
+    pending: null,
+    desiredColumn: null,
+    count: null,
+    insertStartSnapshot: null,
+  };
+}
+
+function applyUndo(state: VimState): VimState {
+  if (state.undoStack.length === 0) {
+    return normalizeHistoryNavigationState(state);
+  }
+
+  const snapshot = state.undoStack[state.undoStack.length - 1];
+  const nextUndoStack = state.undoStack.slice(0, -1);
+
+  const redoSnapshot = makeHistorySnapshot(state.text, state.cursor);
+  const nextRedoStack = pushHistoryStack(state.redoStack, redoSnapshot);
+
+  return normalizeHistoryNavigationState({
+    ...state,
+    text: snapshot.text,
+    cursor: snapshot.cursor,
+    undoStack: nextUndoStack,
+    redoStack: nextRedoStack,
+  });
+}
+
+function applyRedo(state: VimState): VimState {
+  if (state.redoStack.length === 0) {
+    return normalizeHistoryNavigationState(state);
+  }
+
+  const snapshot = state.redoStack[state.redoStack.length - 1];
+  const nextRedoStack = state.redoStack.slice(0, -1);
+
+  const undoSnapshot = makeHistorySnapshot(state.text, state.cursor);
+  const nextUndoStack = pushHistoryStack(state.undoStack, undoSnapshot);
+
+  return normalizeHistoryNavigationState({
+    ...state,
+    text: snapshot.text,
+    cursor: snapshot.cursor,
+    undoStack: nextUndoStack,
+    redoStack: nextRedoStack,
+  });
+}
+
+function applyLastEditOnce(state: VimState, lastEdit: LastEdit): VimState {
+  switch (lastEdit.kind) {
+    case "x":
+    case "~":
+    case "paste": {
+      const res = tryHandleEdit(
+        state,
+        lastEdit.kind === "paste" ? lastEdit.variant : lastEdit.kind,
+        lastEdit.count
+      );
+      if (!res) return state;
+      assert(res.handled, "Expected lastEdit edit to be handled");
+      return res.newState;
+    }
+
+    case "opMotion": {
+      return applyOperatorMotion(state, lastEdit.op, lastEdit.motion, lastEdit.count);
+    }
+
+    case "opTextObject": {
+      return applyOperatorTextObject(state, lastEdit.op, lastEdit.textObject, lastEdit.count);
+    }
+
+    default:
+      assert(false, `Unexpected Vim lastEdit kind: ${(lastEdit as { kind?: unknown }).kind}`);
+      return state;
+  }
+}
+
+function applyDotRepeat(state: VimState, repeatCount: number): VimState {
+  if (state.lastEdit == null) {
+    return completeOperation(state, {});
+  }
+
+  const safeCount = Math.max(1, Math.min(10000, repeatCount));
+
+  const lastEdit = state.lastEdit;
+  let nextState = state;
+  for (let i = 0; i < safeCount; i++) {
+    nextState = applyLastEditOnce(nextState, lastEdit);
+  }
+
+  // Treat dot repeat as a single command; clear count/pending/desiredColumn.
+  return completeOperation(nextState, {});
+}
+
 /**
  * Main entry point for handling key presses in Vim mode.
  * Returns null if browser should handle the key (e.g., typing in insert mode).
@@ -766,11 +1026,47 @@ export function handleKeyPress(
       break;
   }
 
-  if (result.handled) {
-    assertVimState(result.newState);
+  if (!result.handled) {
+    return result;
   }
 
-  return result;
+  let nextState = result.newState;
+
+  // When entering insert mode from a Vim command, capture the pre-insert snapshot so
+  // all subsequent insert-mode typing can be undone as a single step on Escape.
+  if (state.mode !== "insert" && nextState.mode === "insert") {
+    nextState = {
+      ...nextState,
+      insertStartSnapshot: makeHistorySnapshot(state.text, state.cursor),
+    };
+  }
+
+  const isUndoKey = !modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "u";
+  const isRedoKey = modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "r";
+
+  const isHistoryNavigation = isUndoKey || isRedoKey;
+
+  const didTextChange = nextState.text !== state.text;
+
+  // For text-changing operations in normal/visual mode, push a pre-change snapshot.
+  // (Insert-mode edits are grouped and committed on Escape in handleInsertModeKey.)
+  if (
+    didTextChange &&
+    state.mode !== "insert" &&
+    nextState.mode !== "insert" &&
+    !isHistoryNavigation
+  ) {
+    nextState = pushUndoSnapshot(nextState, makeHistorySnapshot(state.text, state.cursor));
+  }
+
+  // Enforce the invariant: insertStartSnapshot is only used while in insert mode.
+  if (nextState.mode !== "insert" && nextState.insertStartSnapshot != null) {
+    nextState = { ...nextState, insertStartSnapshot: null };
+  }
+
+  const finalResult: VimKeyResult = { ...result, newState: nextState };
+  assertVimState(nextState);
+  return finalResult;
 }
 
 /**
@@ -780,16 +1076,30 @@ export function handleKeyPress(
 function handleInsertModeKey(state: VimState, key: string, modifiers: KeyModifiers): VimKeyResult {
   // ESC or Ctrl-[ -> enter normal mode
   if (key === "Escape" || (key === "[" && modifiers.ctrl)) {
-    // Clamp cursor to valid position (can't be past end in normal mode)
-    const normalCursor = Math.min(state.cursor, Math.max(0, state.text.length - 1));
-    return handleKey(state, {
+    const insertSnapshot = state.insertStartSnapshot;
+
+    // In insert mode the DOM cursor is "between" characters. Normal mode is "on" a character.
+    // Vim moves the cursor left when leaving insert mode.
+    const normalCursor = clampCursorForMode(state.text, Math.max(0, state.cursor - 1), "normal");
+
+    let nextState: VimState = {
+      ...state,
       mode: "normal",
       visualAnchor: null,
       cursor: normalCursor,
       desiredColumn: null,
       pending: null,
       count: null,
-    });
+      insertStartSnapshot: null,
+    };
+
+    // Insert-mode undo grouping:
+    // When insert mode started from a Vim command, we commit a single undo snapshot on Escape.
+    if (insertSnapshot != null && state.text !== insertSnapshot.text) {
+      nextState = pushUndoSnapshot(nextState, insertSnapshot);
+    }
+
+    return { handled: true, newState: nextState };
   }
 
   // Let browser handle all other keys in insert mode
@@ -855,11 +1165,17 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
   }
 
   // Handle undo/redo
-  if (key === "u") {
-    return { handled: true, newState: { ...nextState, count: null }, action: "undo" };
+  if (!modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "u") {
+    return { handled: true, newState: applyUndo(nextState) };
   }
-  if (key === "r" && modifiers.ctrl) {
-    return { handled: true, newState: { ...nextState, count: null }, action: "redo" };
+  if (!modifiers.meta && !modifiers.alt && key === "r" && modifiers.ctrl) {
+    return { handled: true, newState: applyRedo(nextState) };
+  }
+
+  // Dot repeat (repeat last structural edit)
+  if (!modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === ".") {
+    const repeatCount = nextState.count ?? 1;
+    return { handled: true, newState: applyDotRepeat(nextState, repeatCount) };
   }
 
   // Handle mode transitions (i/a/I/A/o/O)
@@ -996,11 +1312,11 @@ function handleVisualModeKey(state: VimState, key: string, modifiers: KeyModifie
   }
 
   // Handle undo/redo
-  if (key === "u") {
-    return { handled: true, newState: { ...nextState, count: null }, action: "undo" };
+  if (!modifiers.ctrl && !modifiers.meta && !modifiers.alt && key === "u") {
+    return { handled: true, newState: applyUndo(nextState) };
   }
-  if (key === "r" && modifiers.ctrl) {
-    return { handled: true, newState: { ...nextState, count: null }, action: "redo" };
+  if (!modifiers.meta && !modifiers.alt && key === "r" && modifiers.ctrl) {
+    return { handled: true, newState: applyRedo(nextState) };
   }
 
   // Handle multi-key prefix commands (e.g. `g` prefix, find/till).
@@ -1449,6 +1765,7 @@ function applyOperatorMotion(
         text: newText,
         cursor: range.from,
         yankBuffer: removed,
+        lastEdit: { kind: "opMotion", op: "d", motion, count: safeCount },
       });
     }
 
@@ -1465,6 +1782,7 @@ function applyOperatorMotion(
         text: newText,
         cursor: range.from,
         yankBuffer: removedLines.join("\n"),
+        lastEdit: { kind: "opMotion", op: "c", motion, count: safeCount },
       });
     }
 
@@ -1486,6 +1804,7 @@ function applyOperatorMotion(
       text: result.text,
       cursor: result.cursor,
       yankBuffer: result.yankBuffer,
+      lastEdit: { kind: "opMotion", op: "d", motion, count: safeCount },
     });
   }
 
@@ -1496,6 +1815,7 @@ function applyOperatorMotion(
       text: result.text,
       cursor: result.cursor,
       yankBuffer: result.yankBuffer,
+      lastEdit: { kind: "opMotion", op: "c", motion, count: safeCount },
     });
   }
 
@@ -1597,6 +1917,7 @@ function applyOperatorTextObject(
       text: result.text,
       cursor: result.cursor,
       yankBuffer: result.yankBuffer,
+      lastEdit: { kind: "opTextObject", op: "d", textObject: textObj, count: safeCount },
     });
   }
 
@@ -1607,6 +1928,7 @@ function applyOperatorTextObject(
       text: result.text,
       cursor: result.cursor,
       yankBuffer: result.yankBuffer,
+      lastEdit: { kind: "opTextObject", op: "c", textObject: textObj, count: safeCount },
     });
   }
 
@@ -1854,11 +2176,12 @@ function tryHandleNavigation(state: VimState, key: string, count: number): VimKe
  */
 function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResult | null {
   const { text, cursor, yankBuffer } = state;
+  const safeCount = Math.max(1, Math.min(10000, count));
 
   switch (key) {
     case "x": {
       if (cursor >= text.length) return null;
-      const to = Math.min(text.length, cursor + count);
+      const to = Math.min(text.length, cursor + safeCount);
       const result = deleteRange(text, cursor, to, true, yankBuffer);
       const newCursor = clampCursorForMode(result.text, result.cursor, "normal");
       return handleCommand(state, {
@@ -1866,6 +2189,7 @@ function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResul
         cursor: newCursor,
         yankBuffer: result.yankBuffer,
         desiredColumn: null,
+        lastEdit: { kind: "x", count: safeCount },
       });
     }
 
@@ -1876,6 +2200,7 @@ function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResul
         text: result.text,
         cursor: result.cursor - 1, // Adjust back to normal mode positioning
         desiredColumn: null,
+        lastEdit: { kind: "paste", variant: "p", count: 1 },
       });
     }
 
@@ -1885,6 +2210,7 @@ function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResul
         text: result.text,
         cursor: result.cursor,
         desiredColumn: null,
+        lastEdit: { kind: "paste", variant: "P", count: 1 },
       });
     }
 
@@ -1907,7 +2233,7 @@ function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResul
       let nextText = text;
       let nextCursor = cursor;
 
-      for (let i = 0; i < count; i++) {
+      for (let i = 0; i < safeCount; i++) {
         if (nextCursor >= nextText.length) break;
 
         const char = nextText[nextCursor];
@@ -1923,6 +2249,7 @@ function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResul
         cursor: nextCursor,
         desiredColumn: null,
         pending: null,
+        lastEdit: { kind: "~", count: safeCount },
       });
     }
   }
