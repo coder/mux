@@ -74,6 +74,13 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         setCount(null);
         setPending(null);
         cursorRef.current = 0;
+
+        yankBufferRef.current = "";
+        lastFindRef.current = null;
+        undoStackRef.current = [];
+        redoStackRef.current = [];
+        insertStartSnapshotRef.current = null;
+        lastEditRef.current = null;
       }
     }, [vimEnabled]);
 
@@ -83,6 +90,10 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     const [visualAnchor, setVisualAnchor] = useState<number | null>(null);
     const yankBufferRef = useRef<string>("");
     const lastFindRef = useRef<vim.LastFind | null>(null);
+    const undoStackRef = useRef<vim.VimHistorySnapshot[]>([]);
+    const redoStackRef = useRef<vim.VimHistorySnapshot[]>([]);
+    const insertStartSnapshotRef = useRef<vim.VimHistorySnapshot | null>(null);
+    const lastEditRef = useRef<vim.LastEdit | null>(null);
     const cursorRef = useRef<number>(0);
 
     useAutoResizeTextarea(textareaRef, value, 50);
@@ -164,6 +175,10 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         lastFind: lastFindRef.current,
         count,
         pending,
+        undoStack: undoStackRef.current,
+        redoStack: redoStackRef.current,
+        insertStartSnapshot: insertStartSnapshotRef.current,
+        lastEdit: lastEditRef.current,
       };
 
       // Handle key press through centralized state machine
@@ -177,15 +192,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
 
       e.preventDefault();
 
-      // Handle side effects (undo/redo/escapeInNormalMode)
-      if (result.action === "undo") {
-        document.execCommand("undo");
-        return;
-      }
-      if (result.action === "redo") {
-        document.execCommand("redo");
-        return;
-      }
+      // Handle side effects
       if (result.action === "escapeInNormalMode") {
         stopKeyboardPropagation(e);
         onEscapeInNormalMode?.();
@@ -212,6 +219,18 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       }
       if (newState.lastFind !== lastFindRef.current) {
         lastFindRef.current = newState.lastFind;
+      }
+      if (newState.undoStack !== undoStackRef.current) {
+        undoStackRef.current = newState.undoStack;
+      }
+      if (newState.redoStack !== redoStackRef.current) {
+        redoStackRef.current = newState.redoStack;
+      }
+      if (newState.insertStartSnapshot !== insertStartSnapshotRef.current) {
+        insertStartSnapshotRef.current = newState.insertStartSnapshot;
+      }
+      if (newState.lastEdit !== lastEditRef.current) {
+        lastEditRef.current = newState.lastEdit;
       }
       if (newState.desiredColumn !== desiredColumn) {
         setDesiredColumn(newState.desiredColumn);
