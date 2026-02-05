@@ -59,16 +59,23 @@ test("keyboard input reaches terminal (regression #1586)", async ({ ui, page, wo
   await ui.metaSidebar.addTerminal();
   await ui.metaSidebar.expectTerminalNoError();
 
-  // Wait for terminal to be ready (shell prompt)
-  await page.waitForTimeout(1000);
-
-  // Focus the terminal and type a command
-  // This tests the CRITICAL path that was broken in #1586:
-  // keydown event → ghostty key handler → returns false → ghostty processes input
+  // Focus the terminal — focusTerminal clicks the terminal view and waits for ghostty focus
   await ui.metaSidebar.focusTerminal();
 
-  // Type a command that creates a marker file with unique content
-  // If the key handler blocks input, this file won't be created
+  // Wait for the shell to be ready by sending a sentinel command and polling for its output.
+  // Fixed sleeps are unreliable on slow CI runners where shell init can take several seconds.
+  const readyFile = "terminal_ready_sentinel.txt";
+  const readyPath = path.join(workspace.demoProject.workspacePath, readyFile);
+  await page.keyboard.type(`touch ${readyFile}`, { delay: 30 });
+  await page.keyboard.press("Enter");
+  for (let i = 0; i < 30; i++) {
+    if (fs.existsSync(readyPath)) break;
+    await page.waitForTimeout(200);
+  }
+  // If sentinel never appeared the shell isn't responding — the real test below will fail.
+
+  // This tests the CRITICAL path that was broken in #1586:
+  // keydown event → ghostty key handler → returns false → ghostty processes input
   const marker = `TERMINAL_INPUT_TEST_${Date.now()}`;
   const testFile = "terminal_input_test.txt";
 
@@ -77,31 +84,15 @@ test("keyboard input reaches terminal (regression #1586)", async ({ ui, page, wo
   await page.keyboard.type(`echo "${marker}" > ${testFile}`, { delay: 50 });
   await page.keyboard.press("Enter");
 
-  // Wait for command to execute
-  await page.waitForTimeout(500);
-
-  // Verify the file was created by reading it back
-  // Type another command to cat the file
-  await page.keyboard.type(`cat ${testFile}`, { delay: 50 });
-  await page.keyboard.press("Enter");
-
-  // Wait and then check via a second verification: create a confirmation marker
-  await page.waitForTimeout(500);
-  await page.keyboard.type(`test -f ${testFile} && echo "FILE_EXISTS"`, { delay: 50 });
-  await page.keyboard.press("Enter");
-
-  // Give commands time to complete
-  await page.waitForTimeout(1000);
-
   // CRITICAL ASSERTION: Verify the file was actually created.
   // This proves keyboard input reached the terminal - if the bug from #1586
   // regressed (key handler returning true), the file would NOT exist because
   // ghostty wouldn't process any keystrokes.
   const filePath = path.join(workspace.demoProject.workspacePath, testFile);
 
-  // Poll for file creation (shell command may take a moment)
+  // Poll for file creation — generous budget for slow CI runners
   let fileExists = false;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 30; i++) {
     if (fs.existsSync(filePath)) {
       fileExists = true;
       break;
@@ -128,8 +119,17 @@ test("special keys work in terminal (regression #1586)", async ({ ui, page, work
   await ui.metaSidebar.addTerminal();
   await ui.metaSidebar.expectTerminalNoError();
 
-  await page.waitForTimeout(1000);
   await ui.metaSidebar.focusTerminal();
+
+  // Wait for the shell to be ready using a sentinel file instead of a fixed sleep.
+  const readyFile = "special_keys_ready_sentinel.txt";
+  const readyPath = path.join(workspace.demoProject.workspacePath, readyFile);
+  await page.keyboard.type(`touch ${readyFile}`, { delay: 30 });
+  await page.keyboard.press("Enter");
+  for (let i = 0; i < 30; i++) {
+    if (fs.existsSync(readyPath)) break;
+    await page.waitForTimeout(200);
+  }
 
   // Create a unique marker file to verify the test actually works
   const marker = `SPECIAL_KEYS_TEST_${Date.now()}`;
@@ -147,8 +147,6 @@ test("special keys work in terminal (regression #1586)", async ({ ui, page, work
   await page.keyboard.type(`${marker} > ${testFile}`, { delay: 30 });
   await page.keyboard.press("Enter"); // This was blocked in #1586
 
-  await page.waitForTimeout(1000);
-
   // CRITICAL ASSERTION: Verify the file was created with CORRECT content.
   // This proves both Enter AND Backspace work:
   // - Enter must work for the command to execute
@@ -156,7 +154,7 @@ test("special keys work in terminal (regression #1586)", async ({ ui, page, work
   const filePath = path.join(workspace.demoProject.workspacePath, testFile);
 
   let fileExists = false;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 30; i++) {
     if (fs.existsSync(filePath)) {
       fileExists = true;
       break;
