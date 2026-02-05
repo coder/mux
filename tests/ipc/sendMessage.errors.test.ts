@@ -48,7 +48,7 @@ describeIntegration("sendMessage error handling tests", () => {
             env,
             workspaceId,
             "", // Empty message
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
 
           // Should fail with validation error
@@ -66,7 +66,7 @@ describeIntegration("sendMessage error handling tests", () => {
             env,
             workspaceId,
             "   \n\t  ", // Whitespace only
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
 
           // Should fail with validation error
@@ -169,7 +169,7 @@ describeIntegration("sendMessage error handling tests", () => {
 
       try {
         const result = await sendMessage(env, workspaceId, "Hello", {
-          model: modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId),
+          model: modelString("openai", KNOWN_MODELS.GPT.providerModelId),
         });
 
         expect(result.success).toBe(false);
@@ -199,7 +199,7 @@ describeIntegration("sendMessage error handling tests", () => {
             env,
             workspaceId,
             "Write a 500 word essay about technology.",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
 
           // Wait for stream to start
@@ -219,7 +219,7 @@ describeIntegration("sendMessage error handling tests", () => {
             env,
             workspaceId,
             "Say 'recovered'",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
           expect(result.success).toBe(true);
 
@@ -240,7 +240,7 @@ describeIntegration("sendMessage error handling tests", () => {
             env,
             workspaceId,
             "Count from 1 to 10 slowly.",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
 
           // Wait for stream to start
@@ -251,7 +251,7 @@ describeIntegration("sendMessage error handling tests", () => {
             env,
             workspaceId,
             "Say 'queued'",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
 
           // Second message should succeed (be queued)

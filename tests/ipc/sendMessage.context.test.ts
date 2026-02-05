@@ -31,7 +31,7 @@ if (shouldRunIntegrationTests()) {
 
 // Test both providers
 const PROVIDER_CONFIGS: Array<[string, string]> = [
-  ["openai", KNOWN_MODELS.GPT_MINI.providerModelId],
+  ["openai", KNOWN_MODELS.GPT.providerModelId],
   ["anthropic", KNOWN_MODELS.HAIKU.providerModelId],
 ];
 
@@ -109,7 +109,7 @@ describeIntegration("sendMessage context handling tests", () => {
             env,
             workspaceId,
             "Say 'original'",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
           expect(result1.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);
@@ -142,7 +142,7 @@ describeIntegration("sendMessage context handling tests", () => {
             env,
             workspaceId,
             "What is the secret word?",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId),
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId),
             {
               additionalSystemInstructions:
                 "The secret word is 'BANANA'. Always mention the secret word in your response.",
@@ -260,7 +260,7 @@ describeIntegration("sendMessage context handling tests", () => {
               env,
               workspaceId,
               `Message ${i + 1}`,
-              modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+              modelString("openai", KNOWN_MODELS.GPT.providerModelId)
             );
             await collector.waitForEvent("stream-end", 15000);
             collector.clear();
@@ -295,7 +295,7 @@ describeIntegration("sendMessage context handling tests", () => {
             env,
             workspaceId,
             "After truncation",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
           expect(result.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);

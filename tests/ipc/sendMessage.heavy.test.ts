@@ -32,7 +32,7 @@ describeIntegration("sendMessage heavy/load tests", () => {
 
   describe("OpenAI context limit error (forced)", () => {
     const provider = "openai";
-    const model = KNOWN_MODELS.GPT_MINI.providerModelId;
+    const model = KNOWN_MODELS.GPT.providerModelId;
 
     test.concurrent(
       "should emit context_exceeded when forceContextLimitError is set",
@@ -79,7 +79,7 @@ describeIntegration("sendMessage heavy/load tests", () => {
             env,
             workspaceId,
             longContent,
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
 
           expect(result.success).toBe(true);

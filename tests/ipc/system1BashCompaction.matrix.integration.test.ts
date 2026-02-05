@@ -64,7 +64,7 @@ function resolveApiKeyForProvider(provider: string): string | null {
 const DEFAULT_MODELS = [
   "google:gemini-3-flash-preview",
   "anthropic:claude-haiku-4-5",
-  "openai:gpt-5.1-codex-mini",
+  "openai:gpt-5.2",
 ];
 
 const requestedModels = (
