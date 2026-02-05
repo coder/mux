@@ -36,6 +36,8 @@ Here's a minimal example that runs Mux in a GitHub Action:
 
 This is the exact workflow used live in the Mux repo (see [`.github/workflows/auto-cleanup.yml`](https://github.com/coder/mux/blob/main/.github/workflows/auto-cleanup.yml)). It runs periodically to identify low-risk cleanup opportunities and maintains a refactor PR with improvements.
 
+The prompt is stored in a separate file ([`.github/prompts/auto-cleanup.md`](https://github.com/coder/mux/blob/main/.github/prompts/auto-cleanup.md)) and piped via stdin, keeping the workflow file clean and the prompt easy to iterate on.
+
 {/* BEGIN AUTO_CLEANUP_WORKFLOW */}
 
 ```yaml
@@ -69,22 +71,10 @@ jobs:
         run: |
           [ -z "$OPENAI_API_KEY" ] && echo "Skipping (no API key)" && exit 0
 
-          bunx mux@next run --model openai:gpt-5.2 --thinking xhigh --service-tier priority "
-            You are invoked periodically to clean up the codebase and update a PR called
-            'refactor: auto-cleanup'. First, try to find that open PR. If it exists, consult
-            its commit messages to identify the last commits considered.
-
-            After that initial investigation, look at the recent commits on main that haven't
-            been considered. Identify extremely low-risk cleanup opportunities in the form of:
-
-            - deduplicating code
-            - increasing variable name clarity
-            - general maintainability improvements
-
-            and submit them to the refactor PR (creating a new one if there is no available
-            open one). The repository maintainers will occasionally merge that PR on their
-            own schedule.
-          "
+          cat .github/prompts/auto-cleanup.md | bunx mux@next run \
+            --model openai:gpt-5.2 \
+            --thinking xhigh \
+            --service-tier priority
 ```
 
 {/* END AUTO_CLEANUP_WORKFLOW */}

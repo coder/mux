@@ -28,19 +28,7 @@ jobs:
         run: |
           [ -z "$OPENAI_API_KEY" ] && echo "Skipping (no API key)" && exit 0
 
-          bunx mux@next run --model openai:gpt-5.2 --thinking xhigh --service-tier priority "
-            You are invoked periodically to clean up the codebase and update a PR called
-            'refactor: auto-cleanup'. First, try to find that open PR. If it exists, consult
-            its commit messages to identify the last commits considered.
-
-            After that initial investigation, look at the recent commits on main that haven't
-            been considered. Identify extremely low-risk cleanup opportunities in the form of:
-
-            - deduplicating code
-            - increasing variable name clarity
-            - general maintainability improvements
-
-            and submit them to the refactor PR (creating a new one if there is no available
-            open one). The repository maintainers will occasionally merge that PR on their
-            own schedule.
-          "
+          cat .github/prompts/auto-cleanup.md | bunx mux@next run \
+            --model openai:gpt-5.2 \
+            --thinking xhigh \
+            --service-tier priority
