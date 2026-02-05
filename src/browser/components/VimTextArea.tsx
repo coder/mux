@@ -76,6 +76,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     const [count, setCount] = useState<number | null>(null);
     const [pending, setPending] = useState<vim.Pending | null>(null);
     const yankBufferRef = useRef<string>("");
+    const lastFindRef = useRef<vim.LastFind | null>(null);
 
     useAutoResizeTextarea(textareaRef, value, 50);
 
@@ -118,6 +119,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         mode: vimMode,
         yankBuffer: yankBufferRef.current,
         desiredColumn,
+        lastFind: lastFindRef.current,
         count,
         pending,
       };
@@ -159,6 +161,9 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       }
       if (newState.yankBuffer !== yankBufferRef.current) {
         yankBufferRef.current = newState.yankBuffer;
+      }
+      if (newState.lastFind !== lastFindRef.current) {
+        lastFindRef.current = newState.lastFind;
       }
       if (newState.desiredColumn !== desiredColumn) {
         setDesiredColumn(newState.desiredColumn);

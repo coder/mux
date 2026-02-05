@@ -12,6 +12,13 @@ import assert from "@/common/utils/assert";
 
 export type VimMode = "insert" | "normal";
 
+export type FindVariant = "f" | "F" | "t" | "T";
+
+export interface LastFind {
+  variant: FindVariant;
+  char: string;
+}
+
 export type Pending =
   | {
       kind: "op";
@@ -24,6 +31,16 @@ export type Pending =
       kind: "g";
       at: number;
       count: number;
+    }
+  | {
+      kind: "find";
+      variant: FindVariant;
+      at: number;
+      count: number;
+      /**
+       * If present, the find motion is being used as an operator motion (e.g. `dfx`).
+       */
+      op?: "d" | "y" | "c";
     };
 
 export interface VimState {
@@ -32,6 +49,7 @@ export interface VimState {
   mode: VimMode;
   yankBuffer: string;
   desiredColumn: number | null;
+  lastFind: LastFind | null;
   /**
    * Numeric count prefix being built (e.g. typing `2` then `0` then `w` -> count=20).
    *
@@ -74,6 +92,18 @@ function assertVimState(state: VimState): void {
     assert(state.desiredColumn >= 0, "Vim desiredColumn must be >= 0");
   }
 
+  if (state.lastFind != null) {
+    assert(
+      state.lastFind.variant === "f" ||
+        state.lastFind.variant === "F" ||
+        state.lastFind.variant === "t" ||
+        state.lastFind.variant === "T",
+      "Unexpected Vim lastFind variant"
+    );
+    assert(typeof state.lastFind.char === "string", "Vim lastFind.char must be a string");
+    assert(state.lastFind.char.length === 1, "Vim lastFind.char must be a single character");
+  }
+
   if (state.count != null) {
     assert(Number.isFinite(state.count), "Vim count must be a finite number");
     assert(Number.isInteger(state.count), "Vim count must be an integer");
@@ -84,7 +114,7 @@ function assertVimState(state: VimState): void {
     const pending = state.pending;
 
     assert(
-      pending.kind === "op" || pending.kind === "g",
+      pending.kind === "op" || pending.kind === "g" || pending.kind === "find",
       `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`
     );
 
@@ -106,6 +136,22 @@ function assertVimState(state: VimState): void {
         for (const arg of pending.args) {
           assert(typeof arg === "string", "Vim pending args must be strings");
         }
+      }
+    }
+
+    if (pending.kind === "find") {
+      assert(
+        pending.variant === "f" ||
+          pending.variant === "F" ||
+          pending.variant === "t" ||
+          pending.variant === "T",
+        "Unexpected Vim pending find variant"
+      );
+      if (pending.op != null) {
+        assert(
+          pending.op === "d" || pending.op === "c" || pending.op === "y",
+          "Unexpected Vim pending find operator"
+        );
       }
     }
   }
@@ -171,6 +217,73 @@ export function moveToFirstNonWhitespace(text: string, cursor: number): number {
   }
   // If entire line is whitespace, go to line start
   return i >= lineEnd ? lineStart : i;
+}
+
+type FindDirection = "forward" | "backward";
+
+function isFindForward(variant: FindVariant): boolean {
+  return variant === "f" || variant === "t";
+}
+
+function findCharIndexInLine(
+  text: string,
+  cursor: number,
+  targetChar: string,
+  direction: FindDirection,
+  count: number
+): number | null {
+  assert(targetChar.length === 1, "Find target must be a single character");
+
+  const safeCount = Math.max(1, Math.min(10000, count));
+  const { lineStart, lineEnd } = getLineBounds(text, cursor);
+
+  if (direction === "forward") {
+    let searchFrom = cursor + 1;
+    if (searchFrom >= lineEnd) return null;
+
+    let match = -1;
+    for (let i = 0; i < safeCount; i++) {
+      match = text.indexOf(targetChar, searchFrom);
+      if (match === -1 || match >= lineEnd) return null;
+      searchFrom = match + 1;
+    }
+    return match;
+  }
+
+  let searchFrom = cursor - 1;
+  if (searchFrom < lineStart) return null;
+
+  let match = -1;
+  for (let i = 0; i < safeCount; i++) {
+    match = text.lastIndexOf(targetChar, searchFrom);
+    if (match === -1 || match < lineStart) return null;
+    searchFrom = match - 1;
+  }
+  return match;
+}
+
+function getFindMotionDestination(
+  text: string,
+  cursor: number,
+  variant: FindVariant,
+  targetChar: string,
+  count: number
+): number | null {
+  const { lineStart, lineEnd } = getLineBounds(text, cursor);
+
+  const direction: FindDirection = isFindForward(variant) ? "forward" : "backward";
+  const match = findCharIndexInLine(text, cursor, targetChar, direction, count);
+  if (match == null) return null;
+
+  switch (variant) {
+    case "f":
+    case "F":
+      return match;
+    case "t":
+      return Math.max(lineStart, match - 1);
+    case "T":
+      return Math.min(lineEnd, match + 1);
+  }
 }
 
 /**
@@ -607,6 +720,7 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
   // - 1–9 starts a count.
   // - 0 only appends if a count is already in progress; otherwise it stays the `0` motion.
   if (
+    nextState.pending?.kind !== "find" &&
     !modifiers.ctrl &&
     !modifiers.meta &&
     !modifiers.alt &&
@@ -691,6 +805,8 @@ function handlePending(
       return handlePendingOperator(state, pending, key, modifiers, now);
     case "g":
       return handlePendingG(state, pending, key);
+    case "find":
+      return handlePendingFind(state, pending, key, modifiers);
     default:
       assert(false, `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`);
       return null;
@@ -793,6 +909,20 @@ function handlePendingOperator(
         newState: applyOperatorMotion(state, pending.op, "_", combinedCount),
       };
     }
+
+    // Find/till motions (f/F/t/T)
+    if (isFindVariant(key)) {
+      return handleKey(state, {
+        pending: {
+          kind: "find",
+          variant: key,
+          at: now,
+          count: combinedCount,
+          op: pending.op,
+        },
+        count: null,
+      });
+    }
     // Text object prefix
     if (key === "i") {
       return handleKey(state, {
@@ -835,6 +965,56 @@ function handlePendingG(
 
   // Unknown g-prefixed command - cancel.
   return handleKey(state, { pending: null, count: null });
+}
+
+function handlePendingFind(
+  state: VimState,
+  pending: Extract<Pending, { kind: "find" }>,
+  key: string,
+  modifiers: KeyModifiers
+): VimKeyResult | null {
+  // ESC / Ctrl-[ cancels pending find.
+  if (key === "Escape" || (key === "[" && modifiers.ctrl)) {
+    return handleKey(state, { pending: null, count: null });
+  }
+
+  // Capture the *literal* next key as the target char (including digits).
+  if (modifiers.ctrl || modifiers.meta || modifiers.alt || key.length !== 1) {
+    return handleKey(state, { pending: null, count: null });
+  }
+
+  const targetChar = key;
+  const safeCount = Math.max(1, Math.min(10000, pending.count));
+
+  const dest = getFindMotionDestination(
+    state.text,
+    state.cursor,
+    pending.variant,
+    targetChar,
+    safeCount
+  );
+
+  // Not found - cancel the find/op.
+  if (dest == null) {
+    return handleCommand(state, { pending: null, desiredColumn: null });
+  }
+
+  const nextCursor = clampCursorForMode(state.text, dest, "normal");
+
+  // Find motion as an operator range (dfx, ctx, etc.).
+  if (pending.op != null) {
+    return {
+      handled: true,
+      newState: applyOperatorFind(state, pending.op, nextCursor, pending.variant, targetChar),
+    };
+  }
+
+  return handleCommand(state, {
+    cursor: nextCursor,
+    desiredColumn: null,
+    pending: null,
+    lastFind: { variant: pending.variant, char: targetChar },
+  });
 }
 
 function clampCursorForMode(text: string, cursor: number, mode: VimMode): number {
@@ -1044,6 +1224,66 @@ function applyOperatorMotion(
   return state;
 }
 
+function applyOperatorFind(
+  state: VimState,
+  op: "d" | "c" | "y",
+  dest: number,
+  variant: FindVariant,
+  targetChar: string
+): VimState {
+  const { text, cursor, yankBuffer } = state;
+
+  assert(targetChar.length === 1, "Find target must be a single character");
+
+  const lastFind: LastFind = { variant, char: targetChar };
+
+  const range = isFindForward(variant)
+    ? {
+        from: cursor,
+        to: Math.min(text.length, dest + 1),
+      }
+    : {
+        from: dest,
+        to: cursor,
+      };
+
+  if (isFindForward(variant)) {
+    assert(dest >= cursor, "Expected forward find destination to be >= cursor");
+  } else {
+    assert(dest <= cursor, "Expected backward find destination to be <= cursor");
+  }
+
+  if (op === "d") {
+    const result = deleteRange(text, range.from, range.to, true, yankBuffer);
+    return completeOperation(state, {
+      text: result.text,
+      cursor: result.cursor,
+      yankBuffer: result.yankBuffer,
+      lastFind,
+    });
+  }
+
+  if (op === "c") {
+    const result = changeRange(text, range.from, range.to, yankBuffer);
+    return completeOperation(state, {
+      mode: "insert",
+      text: result.text,
+      cursor: result.cursor,
+      yankBuffer: result.yankBuffer,
+      lastFind,
+    });
+  }
+
+  if (op === "y") {
+    return completeOperation(state, {
+      yankBuffer: text.slice(range.from, range.to),
+      lastFind,
+    });
+  }
+
+  return state;
+}
+
 /**
  * Apply operator + text object combination.
  * Currently only supports "iw" (inner word).
@@ -1095,6 +1335,23 @@ function applyOperatorTextObject(
   return state;
 }
 
+function isFindVariant(key: string): key is FindVariant {
+  return key === "f" || key === "F" || key === "t" || key === "T";
+}
+
+function invertFindVariant(variant: FindVariant): FindVariant {
+  switch (variant) {
+    case "f":
+      return "F";
+    case "F":
+      return "f";
+    case "t":
+      return "T";
+    case "T":
+      return "t";
+  }
+}
+
 type InsertKey = "i" | "a" | "I" | "A" | "o" | "O";
 
 /**
@@ -1134,6 +1391,15 @@ function tryHandlePrefix(state: VimState, key: string, now: number): VimKeyResul
     });
   }
 
+  // `f`/`F`/`t`/`T` introduce a pending find/till sequence.
+  if (isFindVariant(key)) {
+    // Consume the current count into the pending state so it doesn't get cleared.
+    const findCount = state.count ?? 1;
+    return handleKey(state, {
+      pending: { kind: "find", variant: key, at: now, count: findCount },
+      count: null,
+    });
+  }
   return null;
 }
 
@@ -1253,6 +1519,45 @@ function tryHandleNavigation(state: VimState, key: string, count: number): VimKe
       return handleCommand(state, {
         cursor: clampCursorForMode(text, result.cursor, "normal"),
         desiredColumn: result.desiredColumn,
+      });
+    }
+
+    case ";": {
+      if (!state.lastFind) {
+        return handleCommand(state, { desiredColumn: null });
+      }
+
+      const dest = getFindMotionDestination(
+        text,
+        cursor,
+        state.lastFind.variant,
+        state.lastFind.char,
+        count
+      );
+      if (dest == null) {
+        return handleCommand(state, { desiredColumn: null });
+      }
+
+      return handleCommand(state, {
+        cursor: clampCursorForMode(text, dest, "normal"),
+        desiredColumn: null,
+      });
+    }
+
+    case ",": {
+      if (!state.lastFind) {
+        return handleCommand(state, { desiredColumn: null });
+      }
+
+      const variant = invertFindVariant(state.lastFind.variant);
+      const dest = getFindMotionDestination(text, cursor, variant, state.lastFind.char, count);
+      if (dest == null) {
+        return handleCommand(state, { desiredColumn: null });
+      }
+
+      return handleCommand(state, {
+        cursor: clampCursorForMode(text, dest, "normal"),
+        desiredColumn: null,
       });
     }
   }
@@ -1404,6 +1709,11 @@ export function formatPendingCommand(
       return `${prefixCountText}g${countText}`;
     }
 
+    case "find": {
+      const findCountText = pending.count === 1 ? "" : String(pending.count);
+      const opText = pending.op ?? "";
+      return `${opText}${findCountText}${pending.variant}${countText}`;
+    }
     default:
       assert(false, `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`);
       return countText;

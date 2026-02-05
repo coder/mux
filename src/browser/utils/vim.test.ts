@@ -57,6 +57,7 @@ describe("Vim Command Integration Tests", () => {
     mode: "insert",
     yankBuffer: "",
     desiredColumn: null,
+    lastFind: null,
     count: null,
     pending: null,
   };
@@ -197,6 +198,71 @@ describe("Vim Command Integration Tests", () => {
     });
   });
 
+  describe("Find/till (f/F/t/T)", () => {
+    test("fx moves to next match on the line", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdefx", cursor: 0, mode: "normal" },
+        ["f", "x"]
+      );
+      expect(state.cursor).toBe(3);
+      expect(state.lastFind).toEqual({ variant: "f", char: "x" });
+    });
+
+    test("tx moves to just before next match", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdefx", cursor: 0, mode: "normal" },
+        ["t", "x"]
+      );
+      expect(state.cursor).toBe(2);
+      expect(state.lastFind).toEqual({ variant: "t", char: "x" });
+    });
+
+    test("Tx moves to just after previous match", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdefx", cursor: 7, mode: "normal" },
+        ["T", "x"]
+      );
+      expect(state.cursor).toBe(4);
+      expect(state.lastFind).toEqual({ variant: "T", char: "x" });
+    });
+
+    test("F, finds punctuation backwards", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "a,b,c", cursor: 4, mode: "normal" },
+        ["F", ","]
+      );
+      expect(state.cursor).toBe(3);
+      expect(state.lastFind).toEqual({ variant: "F", char: "," });
+    });
+
+    test("3fx uses count to find the third match", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "axxx", cursor: 0, mode: "normal" },
+        ["3", "f", "x"]
+      );
+      expect(state.cursor).toBe(3);
+    });
+  });
+
+  describe("Find repeat (; and ,)", () => {
+    test("; repeats last find in the same direction", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "axxx", cursor: 0, mode: "normal" },
+        ["f", "x", ";"]
+      );
+      expect(state.cursor).toBe(2);
+      expect(state.lastFind).toEqual({ variant: "f", char: "x" });
+    });
+
+    test(", repeats last find in the opposite direction", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "axxx", cursor: 0, mode: "normal" },
+        ["f", "x", ";", ","]
+      );
+      expect(state.cursor).toBe(1);
+      expect(state.lastFind).toEqual({ variant: "f", char: "x" });
+    });
+  });
   describe("Line Navigation (gg/G)", () => {
     const text = "aaa\nbbb\nccc\nddd\neee";
 
@@ -265,6 +331,24 @@ describe("Vim Command Integration Tests", () => {
       // If the old pending hadn't timed out, we'd treat this as `dw` and delete text.
       expect(state.text).toBe("hello world");
       expect(state.cursor).toBe(6);
+      expect(state.pending).toBeNull();
+    });
+
+    test("stale find pending is cleared before handling next key", () => {
+      const state = executeVimCommands(
+        {
+          ...initialState,
+          text: "hello",
+          cursor: 1,
+          mode: "normal",
+          pending: { kind: "find", variant: "f", at: 0, count: 1 },
+        },
+        ["x"]
+      );
+
+      // If the old pending hadn't timed out, we'd treat this as `fx` (find) and not delete.
+      expect(state.text).toBe("hllo");
+      expect(state.yankBuffer).toBe("e");
       expect(state.pending).toBeNull();
     });
   });
@@ -460,6 +544,17 @@ describe("Vim Command Integration Tests", () => {
       expect(state.yankBuffer).toBe("hello ");
     });
 
+    test("dfx deletes through next matching character", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdef", cursor: 0, mode: "normal" },
+        ["d", "f", "x"]
+      );
+      expect(state.text).toBe("def");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("abcx");
+      expect(state.lastFind).toEqual({ variant: "f", char: "x" });
+    });
+
     test("dW deletes to next WORD (whitespace-separated)", () => {
       const state = executeVimCommands(
         { ...initialState, text: "foo-bar baz", cursor: 0, mode: "normal" },
@@ -504,6 +599,18 @@ describe("Vim Command Integration Tests", () => {
       );
       expect(state.text).toBe("world");
       expect(state.mode).toBe("insert");
+    });
+
+    test("ctx changes until next matching character", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdef", cursor: 0, mode: "normal" },
+        ["c", "t", "x"]
+      );
+      expect(state.text).toBe("xdef");
+      expect(state.cursor).toBe(0);
+      expect(state.mode).toBe("insert");
+      expect(state.yankBuffer).toBe("abc");
+      expect(state.lastFind).toEqual({ variant: "t", char: "x" });
     });
 
     test("cw changes to end of word (like ce)", () => {
