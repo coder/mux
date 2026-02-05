@@ -4,11 +4,13 @@ import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import {
   buildCodexAuthorizeUrl,
-  buildCodexDeviceCodeBody,
-  buildCodexDeviceTokenBody,
   buildCodexRefreshBody,
   buildCodexTokenExchangeBody,
-  CODEX_OAUTH_DEVICE_CODE_URL,
+  CODEX_OAUTH_BROWSER_REDIRECT_URI,
+  CODEX_OAUTH_CLIENT_ID,
+  CODEX_OAUTH_DEVICE_TOKEN_POLL_URL,
+  CODEX_OAUTH_DEVICE_USERCODE_URL,
+  CODEX_OAUTH_DEVICE_VERIFY_URL,
   CODEX_OAUTH_TOKEN_URL,
 } from "@/common/constants/codexOAuth";
 import type { Config } from "@/node/config";
@@ -44,7 +46,7 @@ interface DesktopFlow {
 
 interface DeviceFlow {
   flowId: string;
-  deviceCode: string;
+  deviceAuthId: string;
   userCode: string;
   verifyUrl: string;
   intervalSeconds: number;
@@ -126,11 +128,13 @@ export class CodexOauthService {
     const { promise: resultPromise, resolve: resolveResult } =
       createDeferred<Result<void, string>>();
 
+    const redirectUri = CODEX_OAUTH_BROWSER_REDIRECT_URI;
+
     const server = http.createServer((req, res) => {
       const reqUrl = req.url ?? "/";
       const url = new URL(reqUrl, "http://localhost");
 
-      if (req.method !== "GET" || url.pathname !== "/callback") {
+      if (req.method !== "GET" || url.pathname !== "/auth/callback") {
         res.statusCode = 404;
         res.end("Not found");
         return;
@@ -160,19 +164,13 @@ export class CodexOauthService {
     try {
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => resolve());
+        server.listen(1455, "127.0.0.1", () => resolve());
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
 
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      return Err("Failed to determine OAuth callback listener port");
-    }
-
-    const redirectUri = `http://127.0.0.1:${address.port}/callback`;
     const authorizeUrl = buildCodexAuthorizeUrl({
       redirectUri,
       state: flowId,
@@ -254,12 +252,13 @@ export class CodexOauthService {
   > {
     const flowId = randomBase64Url();
 
-    const deviceCodeResult = await this.requestDeviceCode();
-    if (!deviceCodeResult.success) {
-      return Err(deviceCodeResult.error);
+    const deviceAuthResult = await this.requestDeviceUserCode();
+    if (!deviceAuthResult.success) {
+      return Err(deviceAuthResult.error);
     }
 
-    const { deviceCode, userCode, verifyUrl, intervalSeconds, expiresAtMs } = deviceCodeResult.data;
+    const { deviceAuthId, userCode, intervalSeconds, expiresAtMs } = deviceAuthResult.data;
+    const verifyUrl = CODEX_OAUTH_DEVICE_VERIFY_URL;
 
     const { promise: resultPromise, resolve: resolveResult } =
       createDeferred<Result<void, string>>();
@@ -273,7 +272,7 @@ export class CodexOauthService {
 
     this.deviceFlows.set(flowId, {
       flowId,
-      deviceCode,
+      deviceAuthId,
       userCode,
       verifyUrl,
       intervalSeconds,
@@ -553,12 +552,10 @@ export class CodexOauthService {
         return Err("Codex OAuth exchange response missing expires_in");
       }
 
-      const accountId = extractChatGptAccountIdFromTokens({ accessToken, idToken });
-      if (!accountId) {
-        return Err("Codex OAuth exchange response missing ChatGPT account id claim");
-      }
+      const accountId = extractChatGptAccountIdFromTokens({ accessToken, idToken }) ?? undefined;
 
       return Ok({
+        type: "oauth",
         access: accessToken,
         refresh: refreshToken,
         expires: Date.now() + Math.max(0, Math.floor(expiresIn * 1000)),
@@ -606,6 +603,7 @@ export class CodexOauthService {
         extractChatGptAccountIdFromTokens({ accessToken, idToken }) ?? current.accountId;
 
       const next: CodexOauthAuth = {
+        type: "oauth",
         access: accessToken,
         refresh: refreshToken ?? current.refresh,
         expires: Date.now() + Math.max(0, Math.floor(expiresIn * 1000)),
@@ -624,12 +622,11 @@ export class CodexOauthService {
     }
   }
 
-  private async requestDeviceCode(): Promise<
+  private async requestDeviceUserCode(): Promise<
     Result<
       {
-        deviceCode: string;
+        deviceAuthId: string;
         userCode: string;
-        verifyUrl: string;
         intervalSeconds: number;
         expiresAtMs: number;
       },
@@ -637,52 +634,42 @@ export class CodexOauthService {
     >
   > {
     try {
-      const response = await fetch(CODEX_OAUTH_DEVICE_CODE_URL, {
+      const response = await fetch(CODEX_OAUTH_DEVICE_USERCODE_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: buildCodexDeviceCodeBody(),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: CODEX_OAUTH_CLIENT_ID }),
       });
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
-        const prefix = `Codex OAuth device code request failed (${response.status})`;
+        const prefix = `Codex OAuth device auth request failed (${response.status})`;
         return Err(errorText ? `${prefix}: ${errorText}` : prefix);
       }
 
       const json = (await response.json()) as unknown;
       if (!isPlainObject(json)) {
-        return Err("Codex OAuth device code response returned an invalid JSON payload");
+        return Err("Codex OAuth device auth response returned an invalid JSON payload");
       }
 
-      const deviceCode = typeof json.device_code === "string" ? json.device_code : null;
+      const deviceAuthId = typeof json.device_auth_id === "string" ? json.device_auth_id : null;
       const userCode = typeof json.user_code === "string" ? json.user_code : null;
-      const verificationUri =
-        typeof json.verification_uri === "string" ? json.verification_uri : null;
-      const verificationUriComplete =
-        typeof json.verification_uri_complete === "string" ? json.verification_uri_complete : null;
       const interval = parseOptionalNumber(json.interval);
       const expiresIn = parseOptionalNumber(json.expires_in);
 
-      if (!deviceCode || !userCode || !verificationUri) {
-        return Err("Codex OAuth device code response missing required fields");
-      }
-
-      if (expiresIn === null) {
-        return Err("Codex OAuth device code response missing expires_in");
+      if (!deviceAuthId || !userCode) {
+        return Err("Codex OAuth device auth response missing required fields");
       }
 
       const intervalSeconds = interval !== null ? Math.max(1, Math.floor(interval)) : 5;
+      const expiresAtMs =
+        expiresIn !== null
+          ? Date.now() + Math.max(0, Math.floor(expiresIn * 1000))
+          : Date.now() + DEFAULT_DEVICE_TIMEOUT_MS;
 
-      return Ok({
-        deviceCode,
-        userCode,
-        verifyUrl: verificationUriComplete ?? verificationUri,
-        intervalSeconds,
-        expiresAtMs: Date.now() + Math.max(0, Math.floor(expiresIn * 1000)),
-      });
+      return Ok({ deviceAuthId, userCode, intervalSeconds, expiresAtMs });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return Err(`Codex OAuth device code request failed: ${message}`);
+      return Err(`Codex OAuth device auth request failed: ${message}`);
     }
   }
 
@@ -692,7 +679,7 @@ export class CodexOauthService {
       return;
     }
 
-    let intervalSeconds = flow.intervalSeconds;
+    const intervalSeconds = flow.intervalSeconds;
 
     while (Date.now() < flow.expiresAtMs) {
       if (flow.abortController.signal.aborted) {
@@ -700,7 +687,7 @@ export class CodexOauthService {
         return;
       }
 
-      const attempt = await this.pollDeviceTokenOnce(flow, intervalSeconds);
+      const attempt = await this.pollDeviceTokenOnce(flow);
       if (attempt.kind === "success") {
         const persistResult = this.persistAuth(attempt.auth);
         if (!persistResult.success) {
@@ -719,12 +706,9 @@ export class CodexOauthService {
         return;
       }
 
-      if (attempt.kind === "slow_down") {
-        intervalSeconds = attempt.intervalSeconds;
-      }
-
       try {
-        await sleepWithAbort(intervalSeconds * 1000, flow.abortController.signal);
+        // OpenCode guide: intervalSeconds * 1000 + 3000
+        await sleepWithAbort(intervalSeconds * 1000 + 3000, flow.abortController.signal);
       } catch {
         // Abort is handled via cancelDeviceFlow()/finishDeviceFlow().
         return;
@@ -735,86 +719,57 @@ export class CodexOauthService {
   }
 
   private async pollDeviceTokenOnce(
-    flow: DeviceFlow,
-    intervalSeconds: number
+    flow: DeviceFlow
   ): Promise<
     | { kind: "success"; auth: CodexOauthAuth }
     | { kind: "pending" }
-    | { kind: "slow_down"; intervalSeconds: number }
     | { kind: "fatal"; message: string }
   > {
     try {
-      const response = await fetch(CODEX_OAUTH_TOKEN_URL, {
+      const response = await fetch(CODEX_OAUTH_DEVICE_TOKEN_POLL_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: buildCodexDeviceTokenBody({ deviceCode: flow.deviceCode }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_auth_id: flow.deviceAuthId, user_code: flow.userCode }),
         signal: flow.abortController.signal,
       });
 
-      const json = (await response.json().catch(() => null)) as unknown;
-
-      if (response.ok) {
-        if (!isPlainObject(json)) {
-          return { kind: "fatal", message: "Codex OAuth device token returned invalid JSON" };
-        }
-
-        const accessToken = typeof json.access_token === "string" ? json.access_token : null;
-        const refreshToken = typeof json.refresh_token === "string" ? json.refresh_token : null;
-        const expiresIn = parseOptionalNumber(json.expires_in);
-        const idToken = typeof json.id_token === "string" ? json.id_token : undefined;
-
-        if (!accessToken || !refreshToken || expiresIn === null) {
-          return {
-            kind: "fatal",
-            message: "Codex OAuth device token response missing required fields",
-          };
-        }
-
-        const accountId = extractChatGptAccountIdFromTokens({ accessToken, idToken });
-        if (!accountId) {
-          return { kind: "fatal", message: "Codex OAuth token missing ChatGPT account id claim" };
-        }
-
-        return {
-          kind: "success",
-          auth: {
-            access: accessToken,
-            refresh: refreshToken,
-            expires: Date.now() + Math.max(0, Math.floor(expiresIn * 1000)),
-            accountId,
-          },
-        };
-      }
-
-      if (!isPlainObject(json)) {
-        return {
-          kind: "fatal",
-          message: `Codex OAuth device token request failed (${response.status})`,
-        };
-      }
-
-      const error = typeof json.error === "string" ? json.error : null;
-      const errorDescription =
-        typeof json.error_description === "string" ? json.error_description : null;
-
-      if (error === "authorization_pending") {
+      if (response.status === 403 || response.status === 404) {
         return { kind: "pending" };
       }
 
-      if (error === "slow_down") {
-        return { kind: "slow_down", intervalSeconds: intervalSeconds + 5 };
+      if (response.status !== 200) {
+        const errorText = await response.text().catch(() => "");
+        const prefix = `Codex OAuth device token poll failed (${response.status})`;
+        return { kind: "fatal", message: errorText ? `${prefix}: ${errorText}` : prefix };
       }
 
-      if (error === "expired_token") {
-        return { kind: "fatal", message: "Device code expired" };
+      const json = (await response.json().catch(() => null)) as unknown;
+      if (!isPlainObject(json)) {
+        return { kind: "fatal", message: "Codex OAuth device token poll returned invalid JSON" };
       }
 
-      if (error === "access_denied") {
-        return { kind: "fatal", message: "Device authorization denied" };
+      const authorizationCode =
+        typeof json.authorization_code === "string" ? json.authorization_code : null;
+      const codeVerifier = typeof json.code_verifier === "string" ? json.code_verifier : null;
+
+      if (!authorizationCode || !codeVerifier) {
+        return {
+          kind: "fatal",
+          message: "Codex OAuth device token poll response missing required fields",
+        };
       }
 
-      const message = errorDescription ? `${error ?? "error"}: ${errorDescription}` : error;
-      return { kind: "fatal", message: message ?? "Device authorization failed" };
+      const tokenResult = await this.exchangeCodeForTokens({
+        code: authorizationCode,
+        redirectUri: "https://auth.openai.com/deviceauth/callback",
+        codeVerifier,
+      });
+
+      if (!tokenResult.success) {
+        return { kind: "fatal", message: tokenResult.error };
+      }
+
+      return { kind: "success", auth: tokenResult.data };
     } catch (error) {
       // Abort is treated as cancellation.
       if (flow.abortController.signal.aborted) {
