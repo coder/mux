@@ -109,6 +109,20 @@ When moving up/down with **j**/**k**, the cursor attempts to stay in the same co
 - **u** - Undo last change
 - **Ctrl-r** - Redo
 
+Notes:
+
+- Insert-mode typing is grouped: `i ... Esc` becomes a single undo step.
+- Undo/redo does not affect the yank register.
+
+### Dot Repeat
+
+- **.** - Repeat the last _structural_ edit at the current cursor position.
+
+Limitations:
+
+- Dot repeat does not replay arbitrary insert-mode typed text.
+- Not every command is repeatable yet (for example, find/till-based edits like `dfx`).
+
 ### Line Operations
 
 - **dd** - Delete line (yank to clipboard)
