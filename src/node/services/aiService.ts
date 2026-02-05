@@ -905,14 +905,38 @@ export class AIService extends EventEmitter {
           (providerConfig as { codexOauth?: unknown }).codexOauth
         );
 
-        const shouldRouteThroughCodexOauth = codexOauthAllowed && Boolean(storedCodexOauth);
-
-        if (codexOauthRequired && !shouldRouteThroughCodexOauth) {
+        if (codexOauthRequired && !storedCodexOauth) {
           return Err({ type: "oauth_not_connected", provider: providerName });
         }
 
         // Resolve credentials from config + env (single source of truth)
         const creds = resolveProviderCredentials("openai", providerConfig);
+
+        const codexOauthDefaultAuthRaw = (providerConfig as { codexOauthDefaultAuth?: unknown })
+          .codexOauthDefaultAuth;
+        const codexOauthDefaultAuth = codexOauthDefaultAuthRaw === "apiKey" ? "apiKey" : "oauth";
+
+        // Codex OAuth routing:
+        // - Required models always route through ChatGPT OAuth.
+        // - Allowed models route through OAuth only when:
+        //   - no API key is configured, OR
+        //   - the user prefers OAuth when both are set.
+        const shouldRouteThroughCodexOauth = (() => {
+          if (!codexOauthAllowed || !storedCodexOauth) {
+            return false;
+          }
+
+          if (codexOauthRequired) {
+            return true;
+          }
+
+          if (!creds.isConfigured) {
+            return true;
+          }
+
+          return codexOauthDefaultAuth === "oauth";
+        })();
+
         if (!shouldRouteThroughCodexOauth && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
