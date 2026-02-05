@@ -1041,19 +1041,32 @@ export class AIService extends EventEmitter {
                   // `instructions`, so we lift all system prompts into `instructions` when
                   // routing through Codex OAuth.
 
-                  // Codex endpoint requires store=false and rejects several standard OpenAI
-                  // parameters that it does not support.
+                  // Codex endpoint requires store=false and only accepts a subset of the
+                  // standard OpenAI Responses API parameters. Use an allowlist to strip
+                  // everything the endpoint doesn't understand (it rejects unknown params
+                  // with 400).
                   json.store = false;
 
-                  // Strip parameters unsupported by the ChatGPT Codex compat endpoint.
-                  // These are accepted by the standard OpenAI API but cause 400 errors on
-                  // chatgpt.com/backend-api/codex/responses.
-                  delete json.max_output_tokens;
-                  delete json.service_tier;
-                  delete json.prompt_cache_key;
-                  delete json.prompt_cache_retention;
-                  delete json.safety_identifier;
-                  delete json.top_logprobs;
+                  const CODEX_ALLOWED_PARAMS = new Set([
+                    "model",
+                    "input",
+                    "instructions",
+                    "tools",
+                    "tool_choice",
+                    "parallel_tool_calls",
+                    "stream",
+                    "store",
+                    "reasoning",
+                    "temperature",
+                    "top_p",
+                    "include",
+                  ]);
+
+                  for (const key of Object.keys(json)) {
+                    if (!CODEX_ALLOWED_PARAMS.has(key)) {
+                      delete json[key];
+                    }
+                  }
 
                   const existingInstructions =
                     typeof json.instructions === "string" ? json.instructions.trim() : "";
