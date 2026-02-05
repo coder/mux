@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   getModelKey,
   PREFERRED_SYSTEM_1_MODEL_KEY,
@@ -40,7 +39,7 @@ describe("getSendOptionsFromStorage", () => {
     const workspaceId = "ws-1";
     const rawModel = "mux-gateway:anthropic/claude-haiku-4-5";
 
-    updatePersistedState(getModelKey(workspaceId), rawModel);
+    window.localStorage.setItem(getModelKey(workspaceId), JSON.stringify(rawModel));
 
     const options = getSendOptionsFromStorage(workspaceId);
     const expectedModel = normalizeModelPreference(rawModel, "openai:default");
@@ -52,13 +51,13 @@ describe("getSendOptionsFromStorage", () => {
   test("omits system1 thinking when set to off", () => {
     const workspaceId = "ws-2";
 
-    updatePersistedState(PREFERRED_SYSTEM_1_MODEL_KEY, "openai:gpt-5.2");
-    updatePersistedState(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, "off");
+    window.localStorage.setItem(PREFERRED_SYSTEM_1_MODEL_KEY, JSON.stringify("openai:gpt-5.2"));
+    window.localStorage.setItem(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, JSON.stringify("off"));
 
     const options = getSendOptionsFromStorage(workspaceId);
     expect(options.system1ThinkingLevel).toBeUndefined();
 
-    updatePersistedState(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, "high");
+    window.localStorage.setItem(PREFERRED_SYSTEM_1_THINKING_LEVEL_KEY, JSON.stringify("high"));
     const withThinking = getSendOptionsFromStorage(workspaceId);
     expect(withThinking.system1ThinkingLevel).toBe("high");
   });
