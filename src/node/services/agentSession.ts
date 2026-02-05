@@ -2189,11 +2189,7 @@ export class AgentSession {
         .find((msg) => msg.metadata?.synthetic && msg.metadata?.agentSkillSnapshot);
       const recentMeta = recentSnapshot?.metadata?.agentSkillSnapshot;
 
-      if (
-        recentMeta &&
-        recentMeta.skillName === skill.frontmatter.name &&
-        recentMeta.sha256 === sha256
-      ) {
+      if (recentMeta?.skillName === skill.frontmatter.name && recentMeta.sha256 === sha256) {
         return null;
       }
     }
