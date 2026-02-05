@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Switch } from "@/browser/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 import {
   HelpIndicator,
   Tooltip,
@@ -235,6 +236,11 @@ export function ProvidersSection() {
   );
 
   const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
+  const openaiApiKeySet = config?.openai?.apiKeySet === true;
+  const codexOauthDefaultAuth =
+    config?.openai?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
+  const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
+
   const codexOauthLoginInProgress =
     codexOauthStatus === "starting" || codexOauthStatus === "waiting";
 
@@ -1239,6 +1245,57 @@ export function ProvidersSection() {
                     {codexOauthStatus === "error" && codexOauthError && (
                       <p className="text-destructive text-xs">{codexOauthError}</p>
                     )}
+
+                    <div className="border-border-light space-y-2 border-t pt-3">
+                      <div>
+                        <label className="text-muted block text-xs">
+                          Default auth (when both are set)
+                        </label>
+                        <p className="text-muted text-xs">
+                          Applies to models that support both ChatGPT OAuth and API keys (e.g.{" "}
+                          <code className="text-accent">gpt-5.2</code>).
+                        </p>
+                      </div>
+
+                      <ToggleGroup
+                        type="single"
+                        value={codexOauthDefaultAuth}
+                        onValueChange={(next) => {
+                          if (!api) return;
+                          if (next !== "oauth" && next !== "apiKey") {
+                            return;
+                          }
+
+                          updateOptimistically("openai", { codexOauthDefaultAuth: next });
+                          void api.providers.setProviderConfig({
+                            provider: "openai",
+                            keyPath: ["codexOauthDefaultAuth"],
+                            value: next,
+                          });
+                        }}
+                        size="sm"
+                        className="h-9"
+                        disabled={!api || !codexOauthDefaultAuthIsEditable}
+                      >
+                        <ToggleGroupItem value="oauth" size="sm" className="h-7 px-3 text-[13px]">
+                          Use ChatGPT OAuth by default
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="apiKey" size="sm" className="h-7 px-3 text-[13px]">
+                          Use OpenAI API key by default
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+
+                      <p className="text-muted text-xs">
+                        ChatGPT OAuth uses subscription billing (costs included). API key uses
+                        OpenAI platform billing.
+                      </p>
+
+                      {!codexOauthDefaultAuthIsEditable && (
+                        <p className="text-muted text-xs">
+                          Connect ChatGPT OAuth and set an OpenAI API key to change this setting.
+                        </p>
+                      )}
+                    </div>
 
                     <div className="border-border-light border-t pt-3">
                       <div className="mb-1 flex items-center gap-1">

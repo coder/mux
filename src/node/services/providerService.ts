@@ -69,6 +69,8 @@ export class ProviderService {
         baseUrl?: string;
         models?: string[];
         serviceTier?: unknown;
+        /** OpenAI-only: default auth precedence for Codex-OAuth-allowed models. */
+        codexOauthDefaultAuth?: unknown;
         region?: string;
         /** Optional AWS shared config profile name (equivalent to AWS_PROFILE). */
         profile?: string;
@@ -117,6 +119,11 @@ export class ProviderService {
 
       if (provider === "openai") {
         providerInfo.codexOauthSet = codexOauthSet;
+
+        const codexOauthDefaultAuth = config.codexOauthDefaultAuth;
+        if (codexOauthDefaultAuth === "oauth" || codexOauthDefaultAuth === "apiKey") {
+          providerInfo.codexOauthDefaultAuth = codexOauthDefaultAuth;
+        }
       }
       // AWS/Bedrock-specific fields
       if (provider === "bedrock") {

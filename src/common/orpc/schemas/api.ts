@@ -131,6 +131,11 @@ export const ProviderConfigInfoSchema = z.object({
   serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
   /** OpenAI-only: whether Codex OAuth tokens are present in providers.jsonc */
   codexOauthSet: z.boolean().optional(),
+  /**
+   * OpenAI-only: default auth precedence to use for Codex-OAuth-allowed models when BOTH
+   * ChatGPT OAuth and an OpenAI API key are configured.
+   */
+  codexOauthDefaultAuth: z.enum(["oauth", "apiKey"]).optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */
