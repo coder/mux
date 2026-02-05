@@ -795,6 +795,74 @@ describe("Vim Command Integration Tests", () => {
     });
   });
 
+  describe("Operator + Text Objects", () => {
+    test("daw deletes a word including trailing whitespace", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "hello world foo", cursor: 0, mode: "normal" },
+        ["d", "a", "w"]
+      );
+
+      expect(state.text).toBe("world foo");
+      expect(state.cursor).toBe(0);
+      expect(state.mode).toBe("normal");
+      expect(state.yankBuffer).toBe("hello ");
+    });
+
+    test("caw changes a word including trailing whitespace", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one two three", cursor: 4, mode: "normal" },
+        ["c", "a", "w"]
+      );
+
+      expect(state.text).toBe("one three");
+      expect(state.cursor).toBe(4);
+      expect(state.mode).toBe("insert");
+      expect(state.yankBuffer).toBe("two ");
+    });
+
+    test('di" deletes inside quotes on the current line', () => {
+      const text = 'const s = "hello world";';
+      const cursor = text.indexOf("world");
+
+      const state = executeVimCommands({ ...initialState, text, cursor, mode: "normal" }, [
+        "d",
+        "i",
+        '"',
+      ]);
+
+      expect(state.text).toBe('const s = "";');
+      expect(state.mode).toBe("normal");
+      expect(state.yankBuffer).toBe("hello world");
+    });
+
+    test("ci( changes inside parentheses on the current line", () => {
+      const text = "foo(bar) baz";
+      const cursor = text.indexOf("bar") + 1; // inside the parens
+
+      const state = executeVimCommands({ ...initialState, text, cursor, mode: "normal" }, [
+        "c",
+        "i",
+        "(",
+      ]);
+
+      expect(state.text).toBe("foo() baz");
+      expect(state.mode).toBe("insert");
+      expect(state.cursor).toBe(4);
+      expect(state.yankBuffer).toBe("bar");
+    });
+
+    test('di" is a no-op when no quotes are found on the line', () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "hello world", cursor: 0, mode: "normal", yankBuffer: "prev" },
+        ["d", "i", '"']
+      );
+
+      expect(state.text).toBe("hello world");
+      expect(state.mode).toBe("normal");
+      expect(state.yankBuffer).toBe("prev");
+      expect(state.pending).toBeNull();
+    });
+  });
   describe("Complex Workflows", () => {
     test("ESC then d$ deletes from insert cursor to end", () => {
       const state = executeVimCommands(

@@ -16,6 +16,20 @@ export type VimRange = { start: number; end: number; kind: "char" | "line" };
 
 export type FindVariant = "f" | "F" | "t" | "T";
 
+export type VimTextObject =
+  | "iw"
+  | "aw"
+  | 'i"'
+  | 'a"'
+  | "i'"
+  | "a'"
+  | "i("
+  | "a("
+  | "i["
+  | "a["
+  | "i{"
+  | "a{";
+
 export interface LastFind {
   variant: FindVariant;
   char: string;
@@ -35,7 +49,7 @@ export type LastEdit =
   | {
       kind: "opTextObject";
       op: "d" | "c";
-      textObject: "iw";
+      textObject: VimTextObject;
       count: number;
     }
   | { kind: "paste"; variant: "p" | "P"; count: number };
@@ -321,7 +335,7 @@ function assertVimState(state: VimState): void {
 
       case "opTextObject":
         assert(lastEdit.op === "d" || lastEdit.op === "c", "Unexpected Vim lastEdit operator");
-        assert(lastEdit.textObject === "iw", "Unexpected Vim lastEdit text object");
+        assert(isVimTextObject(lastEdit.textObject), "Unexpected Vim lastEdit text object");
         assertCount(lastEdit.count);
         break;
 
@@ -1383,12 +1397,93 @@ function handlePendingOperator(
     };
   }
 
-  // Handle text objects (currently just "iw")
-  if (args.length === 1 && args[0] === "i" && key === "w") {
-    return {
-      handled: true,
-      newState: applyOperatorTextObject(state, pending.op, "iw", combinedCount),
-    };
+  // Handle text objects (iw/aw + simple delimiter objects).
+  if (args.length === 1 && args[0] === "i") {
+    if (key === "w") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "iw", combinedCount),
+      };
+    }
+
+    if (key === '"') {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, 'i"', combinedCount),
+      };
+    }
+
+    if (key === "'") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "i'", combinedCount),
+      };
+    }
+
+    if (key === "(") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "i(", combinedCount),
+      };
+    }
+
+    if (key === "[") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "i[", combinedCount),
+      };
+    }
+
+    if (key === "{") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "i{", combinedCount),
+      };
+    }
+  }
+
+  if (args.length === 1 && args[0] === "a") {
+    if (key === "w") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "aw", combinedCount),
+      };
+    }
+
+    if (key === '"') {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, 'a"', combinedCount),
+      };
+    }
+
+    if (key === "'") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "a'", combinedCount),
+      };
+    }
+
+    if (key === "(") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "a(", combinedCount),
+      };
+    }
+
+    if (key === "[") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "a[", combinedCount),
+      };
+    }
+
+    if (key === "{") {
+      return {
+        handled: true,
+        newState: applyOperatorTextObject(state, pending.op, "a{", combinedCount),
+      };
+    }
   }
 
   // Handle motions when no text object is pending
@@ -1471,9 +1566,9 @@ function handlePendingOperator(
       });
     }
     // Text object prefix
-    if (key === "i") {
+    if (key === "i" || key === "a") {
       return handleKey(state, {
-        pending: { kind: "op", op: pending.op, at: now, count: pending.count, args: ["i"] },
+        pending: { kind: "op", op: pending.op, at: now, count: pending.count, args: [key] },
       });
     }
   }
@@ -1888,27 +1983,278 @@ function applyOperatorFind(
   return state;
 }
 
+type QuoteChar = '"' | "'";
+
+type BracketOpenChar = "(" | "[" | "{";
+
+type BracketCloseChar = ")" | "]" | "}";
+
+type LineLocalPair = { open: number; close: number };
+
+function isVimTextObject(textObj: unknown): textObj is VimTextObject {
+  if (typeof textObj !== "string") return false;
+
+  switch (textObj) {
+    case "iw":
+    case "aw":
+    case 'i"':
+    case 'a"':
+    case "i'":
+    case "a'":
+    case "i(":
+    case "a(":
+    case "i[":
+    case "a[":
+    case "i{":
+    case "a{":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function getLineLocalInnerWordBoundsAt(
+  text: string,
+  idx: number
+): { start: number; end: number } | null {
+  const n = text.length;
+  if (n === 0) return null;
+
+  if (idx < 0) idx = 0;
+  if (idx >= n) return null;
+
+  const { lineStart, lineEnd } = getLineBounds(text, idx);
+  const bounds = wordBoundsAt(text, idx);
+
+  // Keep word objects line-local for predictability.
+  if (bounds.start < lineStart || bounds.start >= lineEnd) return null;
+
+  const end = Math.min(bounds.end, lineEnd);
+  if (end <= bounds.start) return null;
+
+  return { start: bounds.start, end };
+}
+
+function getLineLocalAWordBoundsAt(
+  text: string,
+  idx: number
+): { start: number; end: number } | null {
+  const inner = getLineLocalInnerWordBoundsAt(text, idx);
+  if (!inner) return null;
+
+  const { lineStart, lineEnd } = getLineBounds(text, inner.start);
+
+  // Prefer trailing whitespace.
+  let end = inner.end;
+  while (end < lineEnd && /\s/.test(text[end])) end++;
+  if (end > inner.end) {
+    return { start: inner.start, end };
+  }
+
+  // Otherwise include leading whitespace.
+  let start = inner.start;
+  while (start > lineStart && /\s/.test(text[start - 1])) start--;
+  return { start, end: inner.end };
+}
+
+function findQuotePairInLine(
+  line: string,
+  cursorCol: number,
+  quoteChar: QuoteChar
+): LineLocalPair | null {
+  let open: number | null = null;
+  let best: LineLocalPair | null = null;
+
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] !== quoteChar) continue;
+
+    if (open == null) {
+      open = i;
+      continue;
+    }
+
+    const close = i;
+    if (open <= cursorCol && cursorCol <= close) {
+      best = { open, close };
+    }
+
+    open = null;
+  }
+
+  return best;
+}
+
+function findBracketPairInLine(
+  line: string,
+  cursorCol: number,
+  openChar: BracketOpenChar,
+  closeChar: BracketCloseChar
+): LineLocalPair | null {
+  const stack: number[] = [];
+  let best: LineLocalPair | null = null;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === openChar) {
+      stack.push(i);
+      continue;
+    }
+
+    if (ch === closeChar) {
+      const open = stack.pop();
+      if (open == null) continue;
+
+      if (open <= cursorCol && cursorCol <= i) {
+        if (best == null || open > best.open) {
+          best = { open, close: i };
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
+function getLineLocalQuoteTextObjectRange(
+  text: string,
+  cursor: number,
+  quoteChar: QuoteChar,
+  includeDelimiters: boolean
+): { start: number; end: number } | null {
+  if (text.length === 0) return null;
+  if (cursor < 0 || cursor >= text.length) return null;
+
+  const { lineStart, lineEnd } = getLineBounds(text, cursor);
+  const line = text.slice(lineStart, lineEnd);
+  const cursorCol = Math.max(0, Math.min(cursor - lineStart, line.length));
+
+  const pair = findQuotePairInLine(line, cursorCol, quoteChar);
+  if (!pair) return null;
+
+  const start = lineStart + (includeDelimiters ? pair.open : pair.open + 1);
+  const end = lineStart + (includeDelimiters ? pair.close + 1 : pair.close);
+
+  if (start < lineStart || start > lineEnd) return null;
+  if (end < lineStart || end > lineEnd) return null;
+  if (start > end) return null;
+
+  return { start, end };
+}
+
+function getLineLocalBracketTextObjectRange(
+  text: string,
+  cursor: number,
+  openChar: BracketOpenChar,
+  closeChar: BracketCloseChar,
+  includeDelimiters: boolean
+): { start: number; end: number } | null {
+  if (text.length === 0) return null;
+  if (cursor < 0 || cursor >= text.length) return null;
+
+  const { lineStart, lineEnd } = getLineBounds(text, cursor);
+  const line = text.slice(lineStart, lineEnd);
+  const cursorCol = Math.max(0, Math.min(cursor - lineStart, line.length));
+
+  const pair = findBracketPairInLine(line, cursorCol, openChar, closeChar);
+  if (!pair) return null;
+
+  const start = lineStart + (includeDelimiters ? pair.open : pair.open + 1);
+  const end = lineStart + (includeDelimiters ? pair.close + 1 : pair.close);
+
+  if (start < lineStart || start > lineEnd) return null;
+  if (end < lineStart || end > lineEnd) return null;
+  if (start > end) return null;
+
+  return { start, end };
+}
+
+function getTextObjectRange(
+  text: string,
+  cursor: number,
+  textObj: VimTextObject,
+  count: number
+): { start: number; end: number } | null {
+  switch (textObj) {
+    case "iw": {
+      const first = getLineLocalInnerWordBoundsAt(text, cursor);
+      if (!first) return null;
+
+      let start = first.start;
+      let end = first.end;
+
+      for (let i = 1; i < count; i++) {
+        const next = getLineLocalInnerWordBoundsAt(text, end);
+        if (!next) break;
+        if (next.end <= end) break;
+        end = next.end;
+      }
+
+      return { start, end };
+    }
+
+    case "aw": {
+      const first = getLineLocalAWordBoundsAt(text, cursor);
+      if (!first) return null;
+
+      let start = first.start;
+      let end = first.end;
+
+      for (let i = 1; i < count; i++) {
+        const next = getLineLocalAWordBoundsAt(text, end);
+        if (!next) break;
+        if (next.end <= end) break;
+        end = next.end;
+      }
+
+      return { start, end };
+    }
+
+    case 'i"':
+      return getLineLocalQuoteTextObjectRange(text, cursor, '"', false);
+    case 'a"':
+      return getLineLocalQuoteTextObjectRange(text, cursor, '"', true);
+
+    case "i'":
+      return getLineLocalQuoteTextObjectRange(text, cursor, "'", false);
+    case "a'":
+      return getLineLocalQuoteTextObjectRange(text, cursor, "'", true);
+
+    case "i(":
+      return getLineLocalBracketTextObjectRange(text, cursor, "(", ")", false);
+    case "a(":
+      return getLineLocalBracketTextObjectRange(text, cursor, "(", ")", true);
+
+    case "i[":
+      return getLineLocalBracketTextObjectRange(text, cursor, "[", "]", false);
+    case "a[":
+      return getLineLocalBracketTextObjectRange(text, cursor, "[", "]", true);
+
+    case "i{":
+      return getLineLocalBracketTextObjectRange(text, cursor, "{", "}", false);
+    case "a{":
+      return getLineLocalBracketTextObjectRange(text, cursor, "{", "}", true);
+  }
+}
+
 /**
  * Apply operator + text object combination.
- * Currently only supports "iw" (inner word).
  */
 function applyOperatorTextObject(
   state: VimState,
   op: "d" | "c" | "y",
-  textObj: "iw",
+  textObj: VimTextObject,
   count: number
 ): VimState {
-  if (textObj !== "iw") return state;
-
   const { text, cursor, yankBuffer } = state;
   const safeCount = Math.max(1, Math.min(10000, count));
 
-  let { start, end } = wordBoundsAt(text, cursor);
-  for (let i = 1; i < safeCount; i++) {
-    const next = wordBoundsAt(text, end);
-    if (next.start >= text.length) break;
-    end = next.end;
+  const range = getTextObjectRange(text, cursor, textObj, safeCount);
+  if (!range) {
+    // No matching text object on this line -> no-op, but clear pending/count.
+    return completeOperation(state, {});
   }
+
+  const { start, end } = range;
 
   // Apply operator to range [start, end)
   if (op === "d") {
@@ -1938,7 +2284,7 @@ function applyOperatorTextObject(
     });
   }
 
-  return state;
+  return completeOperation(state, {});
 }
 
 function isFindVariant(key: string): key is FindVariant {
