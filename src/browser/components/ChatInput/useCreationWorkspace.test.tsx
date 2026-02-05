@@ -33,12 +33,31 @@ const readPersistedStateMock = mock((key: string, defaultValue: unknown) => {
   if (Object.prototype.hasOwnProperty.call(persistedPreferences, key)) {
     return persistedPreferences[key];
   }
-  return defaultValue;
+  if (typeof window === "undefined" || !window.localStorage) {
+    return defaultValue;
+  }
+  try {
+    const storedValue = window.localStorage.getItem(key);
+    if (storedValue === null || storedValue === "undefined") {
+      return defaultValue;
+    }
+    return JSON.parse(storedValue) as unknown;
+  } catch {
+    return defaultValue;
+  }
 });
 
 const updatePersistedStateCalls: Array<[string, unknown]> = [];
 const updatePersistedStateMock = mock((key: string, value: unknown) => {
   updatePersistedStateCalls.push([key, value]);
+  if (typeof window === "undefined" || !window.localStorage) {
+    return;
+  }
+  if (value === undefined || value === null) {
+    window.localStorage.removeItem(key);
+    return;
+  }
+  window.localStorage.setItem(key, JSON.stringify(value));
 });
 
 const readPersistedStringMock = mock((key: string) => {
@@ -46,7 +65,22 @@ const readPersistedStringMock = mock((key: string) => {
     const value = persistedPreferences[key];
     return typeof value === "string" ? value : undefined;
   }
-  return undefined;
+  if (typeof window === "undefined" || !window.localStorage) {
+    return undefined;
+  }
+  const storedValue = window.localStorage.getItem(key);
+  if (storedValue === null || storedValue === "undefined") {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(storedValue);
+    if (typeof parsed === "string") {
+      return parsed;
+    }
+  } catch {
+    // Fall through to raw string.
+  }
+  return storedValue;
 });
 
 void mock.module("@/browser/hooks/usePersistedState", () => ({
