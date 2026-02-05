@@ -11,7 +11,12 @@ import {
   WEB_FETCH_MAX_HTML_BYTES,
 } from "@/common/constants/toolLimits";
 import { execBuffered } from "@/node/utils/runtime/helpers";
-import { parseMuxMdUrl, downloadFromMuxMd, MUX_MD_BASE_URL, MUX_MD_HOST } from "@/common/lib/muxMd";
+import {
+  downloadFromMuxMd,
+  getMuxMdAllowedHosts,
+  isMuxMdUrl,
+  parseMuxMdUrl,
+} from "@/common/lib/muxMd";
 
 const USER_AGENT = "Mux/1.0 (https://github.com/coder/mux; web-fetch tool)";
 
@@ -73,9 +78,9 @@ function tryExtractContent(
   }
 }
 
-function isMuxMdHost(url: string): boolean {
+function isAllowedMuxMdHost(url: string): boolean {
   try {
-    return new URL(url).host === MUX_MD_HOST;
+    return getMuxMdAllowedHosts().includes(new URL(url).host);
   } catch {
     return false;
   }
@@ -93,11 +98,21 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
     inputSchema: TOOL_DEFINITIONS.web_fetch.schema,
     execute: async ({ url }, { abortSignal }): Promise<WebFetchToolResult> => {
       try {
-        // Handle mux.md share links with client-side decryption
-        const muxMdParsed = parseMuxMdUrl(url);
-        if (muxMdParsed) {
+        // Handle mux.md share links with client-side decryption.
+        // Important: `parseMuxMdUrl` does not validate the host, so we must guard with `isMuxMdUrl`
+        // to avoid treating arbitrary URLs (including those with `#fragment`) as share links.
+        if (isMuxMdUrl(url)) {
+          const muxMdParsed = parseMuxMdUrl(url);
+          if (!muxMdParsed) {
+            return { success: false, error: "Invalid mux.md URL format" };
+          }
+
+          const baseUrl = new URL(url).origin;
+
           try {
-            const result = await downloadFromMuxMd(muxMdParsed.id, muxMdParsed.key, abortSignal);
+            const result = await downloadFromMuxMd(muxMdParsed.id, muxMdParsed.key, abortSignal, {
+              baseUrl,
+            });
             let content = result.content;
             if (content.length > WEB_FETCH_MAX_OUTPUT_BYTES) {
               content = content.slice(0, WEB_FETCH_MAX_OUTPUT_BYTES) + "\n\n[Content truncated]";
@@ -106,7 +121,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
               success: true,
               title: result.fileInfo?.name ?? "Shared Message",
               content,
-              url: `${MUX_MD_BASE_URL}/${muxMdParsed.id}#${muxMdParsed.key}`,
+              url,
               length: content.length,
             };
           } catch (err) {
@@ -117,7 +132,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
           }
         }
 
-        if (isMuxMdHost(url)) {
+        if (isAllowedMuxMdHost(url)) {
           return { success: false, error: "Invalid mux.md URL format" };
         }
 

@@ -16,6 +16,8 @@ declare global {
       chrome?: string;
       electron?: string;
     };
+    // Optional mux.md base URL override (passed through Electron preload).
+    muxMdUrlOverride?: string;
     // Debug flags (dev-only, passed through preload)
     debugLlmRequest?: boolean;
     // Allow maintainers to opt into telemetry while running the dev server.
