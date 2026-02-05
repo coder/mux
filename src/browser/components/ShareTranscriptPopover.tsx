@@ -187,17 +187,26 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
 
   const handleUpdateExpiration = async (value: ExpirationValue) => {
     if (!shareId || !shareMutateKey) return;
+
+    // Capture the current upload sequence so we can discard the result if a new
+    // link is generated (workspace switch or re-upload) before this resolves.
+    const seq = uploadSeqRef.current;
+
     setIsUpdatingExpiration(true);
     try {
       const ms = expirationToMs(value);
       const expiresAtArg = ms ? new Date(Date.now() + ms) : "never";
       const newExpiration = await updateMuxMdExpiration(shareId, shareMutateKey, expiresAtArg);
-      setShareExpiresAt(newExpiration);
-      updatePersistedState(SHARE_EXPIRATION_KEY, value);
+      if (uploadSeqRef.current === seq) {
+        setShareExpiresAt(newExpiration);
+        updatePersistedState(SHARE_EXPIRATION_KEY, value);
+      }
     } catch (err) {
       console.error("Update expiration failed:", err);
     } finally {
-      setIsUpdatingExpiration(false);
+      if (uploadSeqRef.current === seq) {
+        setIsUpdatingExpiration(false);
+      }
     }
   };
 
