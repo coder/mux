@@ -1541,8 +1541,7 @@ export class StreamingMessageAggregator {
   private trackLoadedSkill(skill: LoadedSkill): void {
     const existing = this.loadedSkills.get(skill.name);
     if (
-      existing &&
-      existing.name === skill.name &&
+      existing?.name === skill.name &&
       existing.description === skill.description &&
       existing.scope === skill.scope
     ) {

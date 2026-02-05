@@ -12,7 +12,7 @@
         "@ai-sdk/openai": "^3.0.25",
         "@ai-sdk/xai": "^3.0.47",
         "@aws-sdk/credential-providers": "^3.940.0",
-        "@coder/mux-md-client": "^0.1.0-main.27",
+        "@coder/mux-md-client": "^0.1.0-main.28",
         "@dnd-kit/core": "^6.3.1",
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
@@ -536,7 +536,7 @@
 
     "@chevrotain/utils": ["@chevrotain/utils@11.0.3", "", {}, "sha512-YslZMgtJUyuMbZ+aKvfF3x1f5liK4mWNxghFRv7jqRR9C3R3fAOGTTKvxXDa2Y1s9zSbcpuO0cAxDYsc9SrXoQ=="],
 
-    "@coder/mux-md-client": ["@coder/mux-md-client@0.1.0-main.27", "", { "dependencies": { "@noble/curves": "^2.0.1", "@noble/ed25519": "^3.0.0", "@noble/hashes": "^2.0.1" } }, "sha512-nGSy4YK9qTawBkDqVdHQ7bN+QMEmmbQ+YMCYoK70xPziMCRf5rewakcFJb6hzE9U36gdhfJ7Xp9TK6zUnv3taQ=="],
+    "@coder/mux-md-client": ["@coder/mux-md-client@0.1.0-main.28", "", { "dependencies": { "@noble/curves": "^2.0.1", "@noble/ed25519": "^3.0.0", "@noble/hashes": "^2.0.1" } }, "sha512-JwSqrIlxYJq8c4LIPA2BYMYMHTgpf6yvdWv2RuJaMyJtCXwViAat7PhjstLUaFh1pmiDsrPjW2pMG/xcV1yBDQ=="],
 
     "@csstools/color-helpers": ["@csstools/color-helpers@5.1.0", "", {}, "sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA=="],
 

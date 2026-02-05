@@ -44,9 +44,9 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
   //   mux-gateway:openai/gpt-5.2-pro -> openai/gpt-5.2-pro -> gpt-5.2-pro
   const withoutProviderNamespace = withoutPrefix.replace(/^[a-z0-9_-]+\//, "");
 
-  // Claude Opus 4.6 supports 5 levels including xhigh (mapped to "max" effort)
+  // Claude Opus 4.6 supports 5 levels including max (mapped to "max" effort)
   if (withoutProviderNamespace.includes("opus-4-6")) {
-    return ["off", "low", "medium", "high", "xhigh"];
+    return ["off", "low", "medium", "high", "max"];
   }
 
   // GPT-5.1-Codex-Max supports 5 reasoning levels including xhigh (Extra High)
@@ -87,7 +87,7 @@ export function getThinkingPolicyForModel(modelString: string): ThinkingPolicy {
     return ["low", "high"];
   }
 
-  // Default policy: standard 4 levels (off/low/medium/high). Models with xhigh must opt in above.
+  // Default policy: standard 4 levels (off/low/medium/high). Models with xhigh/max must opt in above.
   return ["off", "low", "medium", "high"];
 }
 

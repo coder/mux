@@ -38,7 +38,7 @@ export const ModelSettings: React.FC<ModelSettingsProps> = (props) => {
     </div>
   );
 
-  // 1M context is only available for specific Anthropic models (Sonnet 4/4.5)
+  // 1M context is only available for specific Anthropic models (Sonnet 4/4.5, Opus 4.6)
   if (supports1MContext(props.model)) {
     return renderOption(
       "anthropic-1m",

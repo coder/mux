@@ -3,6 +3,7 @@ import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
+import { getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 import assert from "@/common/utils/assert";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getRightSidebarLayoutKey, RIGHT_SIDEBAR_TAB_KEY } from "@/common/constants/storage";
@@ -696,6 +697,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         medium: "Medium — balanced reasoning",
         high: "High — maximum reasoning depth",
         xhigh: "Max — highest reasoning depth",
+        max: "Max — deepest possible reasoning",
       };
       const currentLevel = p.getThinkingLevel(workspaceId);
 
@@ -713,8 +715,14 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               name: "thinkingLevel",
               label: "Thinking effort",
               placeholder: "Choose effort level…",
-              getOptions: () =>
-                THINKING_LEVELS.map((level) => ({
+              getOptions: () => {
+                // Filter thinking levels by the active model's policy
+                // so users only see levels valid for the current model
+                const modelString = p.selectedWorkspaceState?.currentModel;
+                const allowedLevels = modelString
+                  ? getThinkingPolicyForModel(modelString)
+                  : THINKING_LEVELS;
+                return allowedLevels.map((level) => ({
                   id: level,
                   label: levelDescriptions[level],
                   keywords: [
@@ -723,7 +731,8 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                     "thinking",
                     "reasoning",
                   ],
-                })),
+                }));
+              },
             },
           ],
           onSubmit: (vals) => {

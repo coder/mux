@@ -853,7 +853,7 @@ export const workspace = {
       /** Task-level model string used when running the sub-agent (optional for legacy entries). */
       model: z.string().optional(),
       /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
-      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
     }),
   },
   executeBash: {
@@ -1282,7 +1282,7 @@ export const server = {
 const SubagentAiDefaultsEntrySchema = z
   .object({
     modelString: z.string().min(1).optional(),
-    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
     enabled: z.boolean().optional(),
   })
   .strict();
