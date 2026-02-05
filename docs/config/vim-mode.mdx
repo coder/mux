@@ -54,6 +54,17 @@ Vim mode is always enabled. Press **ESC** to enter normal mode from insert mode.
 - **G** - Go to last line
 - **{count}G** - Go to line {count} (1-indexed)
 
+### Find/Till (Current Line)
+
+- **f{char}** - Find next {char} on the current line
+- **F{char}** - Find previous {char} on the current line
+- **t{char}** - Move till before next {char} on the current line
+- **T{char}** - Move till after previous {char} on the current line
+- **;** - Repeat last **f**/**F**/**t**/**T** in the same direction
+- **,** - Repeat last **f**/**F**/**t**/**T** in the opposite direction
+
+Counts apply (e.g. **3fx** finds the third `x` on the line).
+
 ### Column Preservation
 
 When moving up/down with **j**/**k**, the cursor attempts to stay in the same column position. If a line is shorter, the cursor moves to the end of that line, but will return to the original column on longer lines.
@@ -107,6 +118,12 @@ Vim's power comes from combining operators with motions. All operators work with
 - **$** - To end of line
 - **0** - To beginning of line
 - **\_** - To first non-whitespace character
+- **f{char}** - Find next {char} on the current line
+- **F{char}** - Find previous {char} on the current line
+- **t{char}** - Move till before next {char} on the current line
+- **T{char}** - Move till after previous {char} on the current line
+- **;** - Repeat last **f**/**F**/**t**/**T** in the same direction
+- **,** - Repeat last **f**/**F**/**t**/**T** in the opposite direction
 
 ### Examples
 
@@ -114,6 +131,8 @@ Vim's power comes from combining operators with motions. All operators work with
 - **dW** - Delete to next WORD
 - **de** - Delete to end of word
 - **d$** - Delete to end of line
+- **dfx** - Delete through next `x` on the line
+- **ctx** - Change till before next `x` on the line
 - **cw** - Change to end of word (like **ce**)
 - **ce** - Change to end of word
 - **cW** - Change to end of WORD (like **cE**)
@@ -147,7 +166,7 @@ Many motions and commands support numeric count prefixes:
 
 Counts currently apply to:
 
-- Motions: **h/j/k/l**, **w/W**, **b/B**, **e/E**, **0**, **$**, **\_**, **gg**, **G**
+- Motions: **h/j/k/l**, **w/W**, **b/B**, **e/E**, **0**, **$**, **\_**, **gg**, **G**, **f/F**, **t/T**, **;**, **,**
 - Edits: **x**, **~**
 - Operator + motion combos, including **dd/yy/cc**
 
@@ -204,7 +223,6 @@ In Vim mode, **Ctrl+C always interrupts streams** (similar to terminal interrupt
 Features that may be added in the future:
 
 - **ge** - Backward end of word motion
-- **f\{char\}**, **t\{char\}** - Find character motions
 - **i"**, **i'**, **i(**, **i[**, **i\{** - More text objects
 - **Visual mode** - Character, line, and block selection
 - **Macros** - Recording and replaying command sequences
