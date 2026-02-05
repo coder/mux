@@ -73,9 +73,11 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     }, [vimEnabled]);
 
     const [desiredColumn, setDesiredColumn] = useState<number | null>(null);
+    const [count, setCount] = useState<number | null>(null);
     const [pendingOp, setPendingOp] = useState<null | {
       op: "d" | "y" | "c";
       at: number;
+      count: number;
       args?: string[];
     }>(null);
     const yankBufferRef = useRef<string>("");
@@ -121,6 +123,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         mode: vimMode,
         yankBuffer: yankBufferRef.current,
         desiredColumn,
+        count,
         pendingOp,
       };
 
@@ -165,6 +168,9 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       if (newState.desiredColumn !== desiredColumn) {
         setDesiredColumn(newState.desiredColumn);
       }
+      if (newState.count !== count) {
+        setCount(newState.count);
+      }
       if (newState.pendingOp !== pendingOp) {
         setPendingOp(newState.pendingOp);
       }
@@ -176,7 +182,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
 
     // Build mode indicator content
     const showVimMode = vimEnabled && vimMode === "normal";
-    const pendingCommand = showVimMode ? vim.formatPendingCommand(pendingOp) : "";
+    const pendingCommand = showVimMode ? vim.formatPendingCommand(pendingOp, count) : "";
 
     return (
       <div style={{ width: "100%" }} data-component="VimTextAreaContainer">

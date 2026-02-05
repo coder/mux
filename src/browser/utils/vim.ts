@@ -18,7 +18,13 @@ export interface VimState {
   mode: VimMode;
   yankBuffer: string;
   desiredColumn: number | null;
-  pendingOp: null | { op: "d" | "y" | "c"; at: number; args?: string[] };
+  /**
+   * Numeric count prefix being built (e.g. typing `2` then `0` then `w` -> count=20).
+   *
+   * Note: `0` is only treated as a count digit if a count is already in progress.
+   */
+  count: number | null;
+  pendingOp: null | { op: "d" | "y" | "c"; at: number; count: number; args?: string[] };
 }
 
 export type VimAction = "undo" | "redo" | "escapeInNormalMode";
@@ -54,6 +60,12 @@ function assertVimState(state: VimState): void {
     assert(state.desiredColumn >= 0, "Vim desiredColumn must be >= 0");
   }
 
+  if (state.count != null) {
+    assert(Number.isFinite(state.count), "Vim count must be a finite number");
+    assert(Number.isInteger(state.count), "Vim count must be an integer");
+    assert(state.count >= 1, "Vim count must be >= 1");
+    assert(state.count <= 10000, "Vim count must be <= 10000");
+  }
   if (state.pendingOp) {
     assert(
       state.pendingOp.op === "d" || state.pendingOp.op === "c" || state.pendingOp.op === "y",
@@ -61,6 +73,11 @@ function assertVimState(state: VimState): void {
     );
 
     assert(Number.isFinite(state.pendingOp.at), "Vim pendingOp.at must be a finite timestamp");
+
+    assert(Number.isFinite(state.pendingOp.count), "Vim pendingOp.count must be a finite number");
+    assert(Number.isInteger(state.pendingOp.count), "Vim pendingOp.count must be an integer");
+    assert(state.pendingOp.count >= 1, "Vim pendingOp.count must be >= 1");
+    assert(state.pendingOp.count <= 10000, "Vim pendingOp.count must be <= 10000");
 
     if (state.pendingOp.args != null) {
       assert(Array.isArray(state.pendingOp.args), "Vim pendingOp.args must be an array");
@@ -542,6 +559,8 @@ function handleInsertModeKey(state: VimState, key: string, modifiers: KeyModifie
       mode: "normal",
       cursor: normalCursor,
       desiredColumn: null,
+      pendingOp: null,
+      count: null,
     });
   }
 
@@ -554,51 +573,76 @@ function handleInsertModeKey(state: VimState, key: string, modifiers: KeyModifie
  */
 function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifiers): VimKeyResult {
   const now = Date.now();
+  let nextState = state;
 
   // Check for timeout on pending operator (800ms like Vim)
-  let pending = state.pendingOp;
-  if (pending && now - pending.at > 800) {
-    pending = null;
+  if (nextState.pendingOp && now - nextState.pendingOp.at > 800) {
+    nextState = { ...nextState, pendingOp: null, count: null };
+  }
+
+  // Count parsing (like `2w`, `20l`).
+  // - 1–9 starts a count.
+  // - 0 only appends if a count is already in progress; otherwise it stays the `0` motion.
+  if (
+    !modifiers.ctrl &&
+    !modifiers.meta &&
+    !modifiers.alt &&
+    key.length === 1 &&
+    /^[0-9]$/.test(key)
+  ) {
+    const digit = Number(key);
+    if (digit !== 0 || nextState.count != null) {
+      const prev = nextState.count ?? 0;
+      const nextCount = Math.min(10000, prev * 10 + digit);
+      return handleKey(nextState, { count: nextCount });
+    }
   }
 
   // Handle pending operator + motion/text-object
-  if (pending) {
-    const result = handlePendingOperator(state, pending, key, modifiers, now);
+  if (nextState.pendingOp) {
+    const result = handlePendingOperator(nextState, nextState.pendingOp, key, modifiers, now);
     if (result) return result;
   }
 
   // Handle undo/redo
   if (key === "u") {
-    return { handled: true, newState: state, action: "undo" };
+    return { handled: true, newState: { ...nextState, count: null }, action: "undo" };
   }
   if (key === "r" && modifiers.ctrl) {
-    return { handled: true, newState: state, action: "redo" };
+    return { handled: true, newState: { ...nextState, count: null }, action: "redo" };
   }
 
   // Handle mode transitions (i/a/I/A/o/O)
-  const insertResult = tryEnterInsertMode(state, key);
+  const insertResult = tryEnterInsertMode(nextState, key);
   if (insertResult) return insertResult;
 
+  const count = nextState.count ?? 1;
+
   // Handle navigation
-  const navResult = tryHandleNavigation(state, key);
+  const navResult = tryHandleNavigation(nextState, key, count);
   if (navResult) return navResult;
 
   // Handle edit commands
-  const editResult = tryHandleEdit(state, key);
+  const editResult = tryHandleEdit(nextState, key, count);
   if (editResult) return editResult;
 
   // Handle operators (d/c/y/D/C)
-  const opResult = tryHandleOperator(state, key, now);
+  const opResult = tryHandleOperator(nextState, key, now);
   if (opResult) return opResult;
 
-  // Escape in normal mode - signal to parent (e.g., to cancel edit mode)
+  // Escape in normal mode:
+  // - If we're mid-count, treat as cancel (like Vim) instead of propagating.
+  // - Otherwise signal to the parent (e.g. cancel edit mode).
   if (key === "Escape" || (key === "[" && modifiers.ctrl)) {
-    return { handled: true, newState: state, action: "escapeInNormalMode" };
+    if (nextState.count != null) {
+      return handleKey(nextState, { count: null });
+    }
+    return { handled: true, newState: { ...nextState, count: null }, action: "escapeInNormalMode" };
   }
 
   // Swallow all other single-character keys in normal mode (don't type letters)
   if (key.length === 1 && !modifiers.ctrl && !modifiers.meta && !modifiers.alt) {
-    return { handled: true, newState: state };
+    return { handled: true, newState: { ...nextState, count: null } };
   }
 
   // Unknown key - let browser handle
@@ -617,14 +661,23 @@ function handlePendingOperator(
 ): VimKeyResult | null {
   const args = pending.args ?? [];
 
+  const motionCount = state.count ?? 1;
+  const combinedCount = Math.min(10000, pending.count * motionCount);
+
   // Handle doubled operator (dd, yy, cc) -> line operation
   if (args.length === 0 && key === pending.op) {
-    return { handled: true, newState: applyOperatorMotion(state, pending.op, "line") };
+    return {
+      handled: true,
+      newState: applyOperatorMotion(state, pending.op, "line", combinedCount),
+    };
   }
 
   // Handle text objects (currently just "iw")
   if (args.length === 1 && args[0] === "i" && key === "w") {
-    return { handled: true, newState: applyOperatorTextObject(state, pending.op, "iw") };
+    return {
+      handled: true,
+      newState: applyOperatorTextObject(state, pending.op, "iw", combinedCount),
+    };
   }
 
   // Handle motions when no text object is pending
@@ -635,55 +688,95 @@ function handlePendingOperator(
       const isWordChar =
         state.cursor < state.text.length && /[A-Za-z0-9_]/.test(state.text[state.cursor]);
       const motion: "w" | "e" = pending.op === "c" && isWordChar ? "e" : "w";
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, motion) };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, motion, combinedCount),
+      };
     }
     if (key === "W") {
       // Vim special-case: `cW` behaves like `cE` when on a WORD char.
       const isWORDChar = state.cursor < state.text.length && !/\s/.test(state.text[state.cursor]);
       const motion: "W" | "E" = pending.op === "c" && isWORDChar ? "E" : "W";
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, motion) };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, motion, combinedCount),
+      };
     }
     if (key === "b") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "b") };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, "b", combinedCount),
+      };
     }
     if (key === "B") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "B") };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, "B", combinedCount),
+      };
     }
     if (key === "e") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "e") };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, "e", combinedCount),
+      };
     }
     if (key === "E") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "E") };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, "E", combinedCount),
+      };
     }
     // Line motions
     if (key === "$" || key === "End") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "$") };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, "$", combinedCount),
+      };
     }
     if (key === "0" || key === "Home") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "0") };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, "0", combinedCount),
+      };
     }
     if (key === "_") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "_") };
+      return {
+        handled: true,
+        newState: applyOperatorMotion(state, pending.op, "_", combinedCount),
+      };
     }
     // Text object prefix
     if (key === "i") {
-      return handleKey(state, { pendingOp: { op: pending.op, at: now, args: ["i"] } });
+      return handleKey(state, {
+        pendingOp: { op: pending.op, at: now, count: pending.count, args: ["i"] },
+      });
     }
   }
 
   // Unknown motion - cancel pending operation
-  return handleKey(state, { pendingOp: null });
+  return handleKey(state, { pendingOp: null, count: null });
+}
+
+function clampCursorForMode(text: string, cursor: number, mode: VimMode): number {
+  const maxCursor = mode === "insert" ? text.length : Math.max(0, text.length - 1);
+  return Math.max(0, Math.min(cursor, maxCursor));
 }
 
 /**
  * Helper to complete an operation and clear pending state.
  */
 function completeOperation(state: VimState, updates: Partial<VimState>): VimState {
+  const nextText = updates.text ?? state.text;
+  const nextMode = updates.mode ?? state.mode;
+  const nextCursor = clampCursorForMode(nextText, updates.cursor ?? state.cursor, nextMode);
+
   return {
     ...state,
     ...updates,
+    cursor: nextCursor,
     pendingOp: null,
     desiredColumn: null,
+    count: null,
   };
 }
 
@@ -697,6 +790,10 @@ function handleKey(state: VimState, updates: Partial<VimState>): VimKeyResult {
   };
 }
 
+function handleCommand(state: VimState, updates: Partial<VimState>): VimKeyResult {
+  return handleKey(state, { ...updates, count: null });
+}
+
 /**
  * Calculate the range (from, to) for a motion.
  * Returns null for "line" motion (requires special handling).
@@ -704,23 +801,58 @@ function handleKey(state: VimState, updates: Partial<VimState>): VimKeyResult {
 function getMotionRange(
   text: string,
   cursor: number,
-  motion: "w" | "W" | "b" | "B" | "e" | "E" | "$" | "0" | "_" | "line"
+  motion: "w" | "W" | "b" | "B" | "e" | "E" | "$" | "0" | "_" | "line",
+  count: number
 ): { from: number; to: number } | null {
   switch (motion) {
-    case "w":
-      return { from: cursor, to: moveWordForward(text, cursor) };
-    case "W":
-      return { from: cursor, to: moveWORDForward(text, cursor) };
-    case "b":
-      return { from: moveWordBackward(text, cursor), to: cursor };
-    case "B":
-      return { from: moveWORDBackward(text, cursor), to: cursor };
-    case "e":
-      return { from: cursor, to: moveWordEnd(text, cursor) + 1 };
-    case "E":
-      return { from: cursor, to: moveWORDEnd(text, cursor) + 1 };
+    case "w": {
+      let to = cursor;
+      for (let i = 0; i < count; i++) {
+        to = moveWordForward(text, to);
+      }
+      return { from: cursor, to };
+    }
+    case "W": {
+      let to = cursor;
+      for (let i = 0; i < count; i++) {
+        to = moveWORDForward(text, to);
+      }
+      return { from: cursor, to };
+    }
+    case "b": {
+      let from = cursor;
+      for (let i = 0; i < count; i++) {
+        from = moveWordBackward(text, from);
+      }
+      return { from, to: cursor };
+    }
+    case "B": {
+      let from = cursor;
+      for (let i = 0; i < count; i++) {
+        from = moveWORDBackward(text, from);
+      }
+      return { from, to: cursor };
+    }
+    case "e": {
+      let end = cursor;
+      for (let i = 0; i < count; i++) {
+        end = moveWordEnd(text, end);
+      }
+      return { from: cursor, to: end + 1 };
+    }
+    case "E": {
+      let end = cursor;
+      for (let i = 0; i < count; i++) {
+        end = moveWORDEnd(text, end);
+      }
+      return { from: cursor, to: end + 1 };
+    }
     case "$": {
-      const { lineEnd } = getLineBounds(text, cursor);
+      const { row } = getRowCol(text, cursor);
+      const { lines, starts } = getLinesInfo(text);
+      const targetRow = Math.max(0, Math.min(lines.length - 1, row + count - 1));
+      const lineStart = starts[targetRow];
+      const lineEnd = lineStart + lines[targetRow].length;
       return { from: cursor, to: lineEnd };
     }
     case "0": {
@@ -735,44 +867,72 @@ function getMotionRange(
   }
 }
 
+function getLinewiseRange(
+  text: string,
+  cursor: number,
+  count: number
+): { from: number; to: number; row: number } {
+  const { row } = getRowCol(text, cursor);
+  const { lines, starts } = getLinesInfo(text);
+  const targetRow = Math.max(0, Math.min(lines.length - 1, row + count - 1));
+  const from = starts[row];
+  let to = starts[targetRow] + lines[targetRow].length;
+  if (targetRow < lines.length - 1) {
+    to += 1; // include trailing newline
+  }
+  return { from, to, row };
+}
 /**
  * Apply operator + motion combination.
  */
 function applyOperatorMotion(
   state: VimState,
   op: "d" | "c" | "y",
-  motion: "w" | "W" | "b" | "B" | "e" | "E" | "$" | "0" | "_" | "line"
+  motion: "w" | "W" | "b" | "B" | "e" | "E" | "$" | "0" | "_" | "line",
+  count: number
 ): VimState {
   const { text, cursor, yankBuffer } = state;
+  const safeCount = Math.max(1, Math.min(10000, count));
 
-  // Line operations use special functions (dd, cc, yy, d_, c_, y_)
+  // Line operations (dd, cc, yy, d_, c_, y_)
   if (motion === "line" || motion === "_") {
+    const range = getLinewiseRange(text, cursor, safeCount);
+    const removed = text.slice(range.from, range.to);
+
     if (op === "d") {
-      const result = deleteLine(text, cursor, yankBuffer);
+      const newText = text.slice(0, range.from) + text.slice(range.to);
       return completeOperation(state, {
-        text: result.text,
-        cursor: result.cursor,
-        yankBuffer: result.yankBuffer,
+        text: newText,
+        cursor: range.from,
+        yankBuffer: removed,
       });
     }
+
     if (op === "c") {
-      const result = changeLine(text, cursor, yankBuffer);
+      const lines = text.split("\n");
+      const removedLines: string[] = [];
+      for (let i = 0; i < safeCount && range.row + i < lines.length; i++) {
+        removedLines.push(lines[range.row + i]);
+        lines[range.row + i] = "";
+      }
+      const newText = lines.join("\n");
       return completeOperation(state, {
         mode: "insert",
-        text: result.text,
-        cursor: result.cursor,
-        yankBuffer: result.yankBuffer,
+        text: newText,
+        cursor: range.from,
+        yankBuffer: removedLines.join("\n"),
       });
     }
+
     if (op === "y") {
       return completeOperation(state, {
-        yankBuffer: yankLine(text, cursor),
+        yankBuffer: removed,
       });
     }
   }
 
   // Calculate range for all other motions
-  const range = getMotionRange(text, cursor, motion);
+  const range = getMotionRange(text, cursor, motion, safeCount);
   if (!range) return state; // Shouldn't happen, but type safety
 
   // Apply operator to range
@@ -808,11 +968,23 @@ function applyOperatorMotion(
  * Apply operator + text object combination.
  * Currently only supports "iw" (inner word).
  */
-function applyOperatorTextObject(state: VimState, op: "d" | "c" | "y", textObj: "iw"): VimState {
+function applyOperatorTextObject(
+  state: VimState,
+  op: "d" | "c" | "y",
+  textObj: "iw",
+  count: number
+): VimState {
   if (textObj !== "iw") return state;
 
   const { text, cursor, yankBuffer } = state;
-  const { start, end } = wordBoundsAt(text, cursor);
+  const safeCount = Math.max(1, Math.min(10000, count));
+
+  let { start, end } = wordBoundsAt(text, cursor);
+  for (let i = 1; i < safeCount; i++) {
+    const next = wordBoundsAt(text, end);
+    if (next.start >= text.length) break;
+    end = next.end;
+  }
 
   // Apply operator to range [start, end)
   if (op === "d") {
@@ -859,77 +1031,117 @@ function tryEnterInsertMode(state: VimState, key: string): VimKeyResult | null {
   if (!isInsertKey(key)) return null;
 
   const result = getInsertCursorPos(state.text, state.cursor, key);
-  return handleKey(state, {
+  return handleCommand(state, {
     mode: "insert",
     text: result.text,
     cursor: result.cursor,
     desiredColumn: null,
+    pendingOp: null,
   });
 }
 
 /**
  * Try to handle navigation commands (h/j/k/l/w/b/0/$).
  */
-function tryHandleNavigation(state: VimState, key: string): VimKeyResult | null {
+function tryHandleNavigation(state: VimState, key: string, count: number): VimKeyResult | null {
   const { text, cursor, desiredColumn } = state;
 
   switch (key) {
     case "h":
-      return handleKey(state, { cursor: Math.max(0, cursor - 1), desiredColumn: null });
+      return handleCommand(state, {
+        cursor: Math.max(0, cursor - count),
+        desiredColumn: null,
+      });
 
     case "l":
-      return handleKey(state, {
-        cursor: Math.min(cursor + 1, Math.max(0, text.length - 1)),
+      return handleCommand(state, {
+        cursor: Math.min(cursor + count, Math.max(0, text.length - 1)),
         desiredColumn: null,
       });
 
     case "j": {
-      const result = moveVertical(text, cursor, 1, desiredColumn);
-      return handleKey(state, { cursor: result.cursor, desiredColumn: result.desiredColumn });
+      const result = moveVertical(text, cursor, count, desiredColumn);
+      return handleCommand(state, { cursor: result.cursor, desiredColumn: result.desiredColumn });
     }
 
     case "k": {
-      const result = moveVertical(text, cursor, -1, desiredColumn);
-      return handleKey(state, { cursor: result.cursor, desiredColumn: result.desiredColumn });
+      const result = moveVertical(text, cursor, -count, desiredColumn);
+      return handleCommand(state, { cursor: result.cursor, desiredColumn: result.desiredColumn });
     }
 
-    case "w":
-      return handleKey(state, { cursor: moveWordForward(text, cursor), desiredColumn: null });
+    case "w": {
+      let next = cursor;
+      for (let i = 0; i < count; i++) {
+        next = moveWordForward(text, next);
+      }
+      return handleCommand(state, { cursor: next, desiredColumn: null });
+    }
 
-    case "W":
-      return handleKey(state, { cursor: moveWORDForward(text, cursor), desiredColumn: null });
+    case "W": {
+      let next = cursor;
+      for (let i = 0; i < count; i++) {
+        next = moveWORDForward(text, next);
+      }
+      return handleCommand(state, { cursor: next, desiredColumn: null });
+    }
 
-    case "b":
-      return handleKey(state, { cursor: moveWordBackward(text, cursor), desiredColumn: null });
+    case "b": {
+      let next = cursor;
+      for (let i = 0; i < count; i++) {
+        next = moveWordBackward(text, next);
+      }
+      return handleCommand(state, { cursor: next, desiredColumn: null });
+    }
 
-    case "B":
-      return handleKey(state, { cursor: moveWORDBackward(text, cursor), desiredColumn: null });
+    case "B": {
+      let next = cursor;
+      for (let i = 0; i < count; i++) {
+        next = moveWORDBackward(text, next);
+      }
+      return handleCommand(state, { cursor: next, desiredColumn: null });
+    }
 
-    case "e":
-      return handleKey(state, { cursor: moveWordEnd(text, cursor), desiredColumn: null });
+    case "e": {
+      let next = cursor;
+      for (let i = 0; i < count; i++) {
+        next = moveWordEnd(text, next);
+      }
+      return handleCommand(state, { cursor: next, desiredColumn: null });
+    }
 
-    case "E":
-      return handleKey(state, { cursor: moveWORDEnd(text, cursor), desiredColumn: null });
+    case "E": {
+      let next = cursor;
+      for (let i = 0; i < count; i++) {
+        next = moveWORDEnd(text, next);
+      }
+      return handleCommand(state, { cursor: next, desiredColumn: null });
+    }
 
     case "0":
     case "Home": {
       const { lineStart } = getLineBounds(text, cursor);
-      return handleKey(state, { cursor: lineStart, desiredColumn: null });
+      return handleCommand(state, { cursor: lineStart, desiredColumn: null });
     }
 
-    case "_":
-      return handleKey(state, {
-        cursor: moveToFirstNonWhitespace(text, cursor),
-        desiredColumn: null,
-      });
+    case "_": {
+      const { row } = getRowCol(text, cursor);
+      const { lines, starts } = getLinesInfo(text);
+      const targetRow = Math.max(0, Math.min(lines.length - 1, row + count - 1));
+      const targetCursor = moveToFirstNonWhitespace(text, starts[targetRow]);
+      return handleCommand(state, { cursor: targetCursor, desiredColumn: null });
+    }
 
     case "$":
     case "End": {
-      const { lineStart, lineEnd } = getLineBounds(text, cursor);
+      const { row } = getRowCol(text, cursor);
+      const { lines, starts } = getLinesInfo(text);
+      const targetRow = Math.max(0, Math.min(lines.length - 1, row + count - 1));
+      const lineStart = starts[targetRow];
+      const lineEnd = lineStart + lines[targetRow].length;
       // In normal mode, $ goes to last character, not after it
       // Special case: empty line stays at lineStart
       const newCursor = lineEnd > lineStart ? lineEnd - 1 : lineStart;
-      return handleKey(state, { cursor: newCursor, desiredColumn: null });
+      return handleCommand(state, { cursor: newCursor, desiredColumn: null });
     }
   }
 
@@ -939,16 +1151,18 @@ function tryHandleNavigation(state: VimState, key: string): VimKeyResult | null 
 /**
  * Try to handle edit commands (x/p/P).
  */
-function tryHandleEdit(state: VimState, key: string): VimKeyResult | null {
+function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResult | null {
   const { text, cursor, yankBuffer } = state;
 
   switch (key) {
     case "x": {
       if (cursor >= text.length) return null;
-      const result = deleteCharUnderCursor(text, cursor, yankBuffer);
-      return handleKey(state, {
+      const to = Math.min(text.length, cursor + count);
+      const result = deleteRange(text, cursor, to, true, yankBuffer);
+      const newCursor = clampCursorForMode(result.text, result.cursor, "normal");
+      return handleCommand(state, {
         text: result.text,
-        cursor: result.cursor,
+        cursor: newCursor,
         yankBuffer: result.yankBuffer,
         desiredColumn: null,
       });
@@ -957,7 +1171,7 @@ function tryHandleEdit(state: VimState, key: string): VimKeyResult | null {
     case "p": {
       // In normal mode, cursor is ON a character. Paste AFTER means after that character.
       const result = pasteAfter(text, cursor + 1, yankBuffer);
-      return handleKey(state, {
+      return handleCommand(state, {
         text: result.text,
         cursor: result.cursor - 1, // Adjust back to normal mode positioning
         desiredColumn: null,
@@ -966,7 +1180,7 @@ function tryHandleEdit(state: VimState, key: string): VimKeyResult | null {
 
     case "P": {
       const result = pasteBefore(text, cursor, yankBuffer);
-      return handleKey(state, {
+      return handleCommand(state, {
         text: result.text,
         cursor: result.cursor,
         desiredColumn: null,
@@ -976,7 +1190,7 @@ function tryHandleEdit(state: VimState, key: string): VimKeyResult | null {
     case "s": {
       if (cursor >= text.length) return null;
       const result = deleteCharUnderCursor(text, cursor, yankBuffer);
-      return handleKey(state, {
+      return handleCommand(state, {
         text: result.text,
         cursor: result.cursor,
         yankBuffer: result.yankBuffer,
@@ -988,13 +1202,24 @@ function tryHandleEdit(state: VimState, key: string): VimKeyResult | null {
 
     case "~": {
       if (cursor >= text.length) return null;
-      const char = text[cursor];
-      const toggled = char === char.toUpperCase() ? char.toLowerCase() : char.toUpperCase();
-      const newText = text.slice(0, cursor) + toggled + text.slice(cursor + 1);
-      const newCursor = Math.min(cursor + 1, Math.max(0, newText.length - 1));
-      return handleKey(state, {
-        text: newText,
-        cursor: newCursor,
+
+      let nextText = text;
+      let nextCursor = cursor;
+
+      for (let i = 0; i < count; i++) {
+        if (nextCursor >= nextText.length) break;
+
+        const char = nextText[nextCursor];
+        const toggled = char === char.toUpperCase() ? char.toLowerCase() : char.toUpperCase();
+        nextText = nextText.slice(0, nextCursor) + toggled + nextText.slice(nextCursor + 1);
+
+        if (nextCursor >= nextText.length - 1) break;
+        nextCursor++;
+      }
+
+      return handleCommand(state, {
+        text: nextText,
+        cursor: nextCursor,
         desiredColumn: null,
         pendingOp: null,
       });
@@ -1008,21 +1233,32 @@ function tryHandleEdit(state: VimState, key: string): VimKeyResult | null {
  * Try to handle operator commands (d/c/y/D/C).
  */
 function tryHandleOperator(state: VimState, key: string, now: number): VimKeyResult | null {
+  const opCount = state.count ?? 1;
+
   switch (key) {
     case "d":
-      return handleKey(state, { pendingOp: { op: "d", at: now, args: [] } });
+      return handleKey(state, {
+        pendingOp: { op: "d", at: now, count: opCount, args: [] },
+        count: null,
+      });
 
     case "c":
-      return handleKey(state, { pendingOp: { op: "c", at: now, args: [] } });
+      return handleKey(state, {
+        pendingOp: { op: "c", at: now, count: opCount, args: [] },
+        count: null,
+      });
 
     case "y":
-      return handleKey(state, { pendingOp: { op: "y", at: now, args: [] } });
+      return handleKey(state, {
+        pendingOp: { op: "y", at: now, count: opCount, args: [] },
+        count: null,
+      });
 
     case "D":
-      return { handled: true, newState: applyOperatorMotion(state, "d", "$") };
+      return { handled: true, newState: applyOperatorMotion(state, "d", "$", opCount) };
 
     case "C":
-      return { handled: true, newState: applyOperatorMotion(state, "c", "$") };
+      return { handled: true, newState: applyOperatorMotion(state, "c", "$", opCount) };
   }
 
   return null;
@@ -1033,8 +1269,15 @@ function tryHandleOperator(state: VimState, key: string, now: number): VimKeyRes
  * Returns empty string if no pending command.
  * Examples: "d", "c", "ci", "di"
  */
-export function formatPendingCommand(pendingOp: VimState["pendingOp"]): string {
-  if (!pendingOp) return "";
+export function formatPendingCommand(
+  pendingOp: VimState["pendingOp"],
+  count: VimState["count"]
+): string {
+  const countText = count == null ? "" : String(count);
+
+  if (!pendingOp) return countText;
+
+  const opCountText = pendingOp.count === 1 ? "" : String(pendingOp.count);
   const args = pendingOp.args?.join("") ?? "";
-  return `${pendingOp.op}${args}`;
+  return `${opCountText}${pendingOp.op}${args}${countText}`;
 }
