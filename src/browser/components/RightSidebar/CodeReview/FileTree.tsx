@@ -414,7 +414,7 @@ export const FileTree: React.FC<FileTreeExternalProps> = ({
         </div>
       </div>
       <div
-        className="font-monospace min-h-0 flex-1 overflow-y-auto px-1 py-1 text-[11px]"
+        className="font-monospace min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-1 py-1 text-[11px]"
         data-testid="review-file-tree"
       >
         {isLoading && !root ? (
