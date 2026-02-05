@@ -89,8 +89,11 @@ describe("getSlashCommandSuggestions", () => {
 
   it("filters model suggestions by partial input", () => {
     const suggestions = getSlashCommandSuggestions("/model op");
-    expect(suggestions).toHaveLength(1);
-    expect(suggestions[0].display).toBe("opus");
+    // Both "opus" (opus-4-6) and "opus-4.5" match the "op" prefix
+    expect(suggestions).toHaveLength(2);
+    const displays = suggestions.map((s) => s.display);
+    expect(displays).toContain("opus");
+    expect(displays).toContain("opus-4.5");
   });
 
   it("suggests model aliases as one-shot commands", () => {
