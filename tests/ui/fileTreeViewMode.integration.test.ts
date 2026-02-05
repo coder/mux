@@ -29,7 +29,7 @@ describeIntegration("ReviewPanel FileTree view mode (UI + ORPC)", () => {
     await cleanupSharedRepo();
   });
 
-  test("Flat mode shows a full-path file list (no directories)", async () => {
+  test("Flat mode shows file names with a truncated parent path (no directories)", async () => {
     await withSharedWorkspaceNoProvider(async ({ env, workspaceId, metadata }) => {
       const cleanupDom = installDom();
 
@@ -59,15 +59,16 @@ describeIntegration("ReviewPanel FileTree view mode (UI + ORPC)", () => {
         // Structured mode shows directories.
         await within(fileTree).findByText("a", {}, { timeout: 60_000 });
         await within(fileTree).findByText("c.ts", {}, { timeout: 60_000 });
+        expect(fileTree.querySelector("[data-toggle]")).not.toBeNull();
 
         const viewModeToggle = view.getByTestId("review-file-tree-view-mode");
         fireEvent.click(within(viewModeToggle).getByRole("button", { name: "Flat" }));
 
-        // Flat mode shows full paths and hides directory-only rows.
-        await within(fileTree).findByText("a/b/c.ts", {}, { timeout: 10_000 });
+        // Flat mode shows file names + parent paths and hides directory-only rows.
+        await within(fileTree).findByText("a/b", {}, { timeout: 10_000 });
         await waitFor(
           () => {
-            expect(within(fileTree).queryByText("a")).toBeNull();
+            expect(fileTree.querySelector("[data-toggle]")).toBeNull();
           },
           { timeout: 5_000 }
         );

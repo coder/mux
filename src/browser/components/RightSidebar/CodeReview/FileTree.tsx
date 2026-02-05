@@ -170,6 +170,7 @@ const TreeNodeContent: React.FC<{
 
   const canonicalFilePath = node.isDirectory ? node.path : extractNewPath(node.path);
   const fallbackFileName = canonicalFilePath.split("/").pop() ?? "";
+  const fileDirPath = canonicalFilePath.split("/").slice(0, -1).join("/");
   const fileNameForIcon = fallbackFileName;
   const isSelected = selectedPath === node.path;
 
@@ -283,16 +284,21 @@ const TreeNodeContent: React.FC<{
               title={fileLabelTitle}
             >
               {fileLabelMode === "path" ? (
-                <span className="block truncate">
-                  {isRenamedFile ? (
-                    <>
-                      <span className="text-muted">{node.stats?.oldPath}</span>
-                      <span className="text-muted">{" -> "}</span>
-                      <span>{canonicalFilePath}</span>
-                    </>
-                  ) : (
-                    canonicalFilePath
-                  )}
+                <span className="flex min-w-0 items-baseline gap-2">
+                  <span className="shrink-0">
+                    {isRenamedFile ? (
+                      <>
+                        <span className="text-muted">{oldFileName}</span>
+                        <span className="text-muted">{" -> "}</span>
+                        <span>{fallbackFileName}</span>
+                      </>
+                    ) : (
+                      fallbackFileName
+                    )}
+                  </span>
+                  {fileDirPath ? (
+                    <span className="text-muted min-w-0 flex-1 truncate">{fileDirPath}</span>
+                  ) : null}
                 </span>
               ) : isRenamedFile ? (
                 <>
