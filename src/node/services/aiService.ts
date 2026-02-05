@@ -1017,7 +1017,16 @@ export class AIService extends EventEmitter {
               let nextInit: Parameters<typeof fetch>[1] | undefined = init;
 
               const body = init?.body;
-              if (isOpenAIResponses && method === "POST" && typeof body === "string") {
+              // Only parse the JSON body when routing through Codex OAuth — it needs
+              // instruction lifting, store=false, and truncation enforcement.  For
+              // non-Codex requests the SDK already sends the correct truncation value
+              // via providerOptions, so we skip the expensive parse + re-stringify.
+              if (
+                shouldRouteThroughCodexOauth &&
+                isOpenAIResponses &&
+                method === "POST" &&
+                typeof body === "string"
+              ) {
                 try {
                   const json = JSON.parse(body) as Record<string, unknown>;
                   const truncation = json.truncation;
@@ -1031,48 +1040,46 @@ export class AIService extends EventEmitter {
                   // (role: system|developer) but does *not* automatically populate
                   // `instructions`, so we lift all system prompts into `instructions` when
                   // routing through Codex OAuth.
-                  if (shouldRouteThroughCodexOauth) {
-                    // Codex endpoint requires store=false (it does not support server-side storage).
-                    json.store = false;
 
-                    const existingInstructions =
-                      typeof json.instructions === "string" ? json.instructions.trim() : "";
+                  // Codex endpoint requires store=false (it does not support server-side storage).
+                  json.store = false;
 
-                    if (existingInstructions.length === 0) {
-                      const derivedParts: string[] = [];
-                      const keptInput: unknown[] = [];
+                  const existingInstructions =
+                    typeof json.instructions === "string" ? json.instructions.trim() : "";
 
-                      const responseInput = json.input;
-                      if (Array.isArray(responseInput)) {
-                        for (const item of responseInput as unknown[]) {
-                          if (!item || typeof item !== "object") {
-                            keptInput.push(item);
-                            continue;
-                          }
+                  if (existingInstructions.length === 0) {
+                    const derivedParts: string[] = [];
+                    const keptInput: unknown[] = [];
 
-                          const role = (item as { role?: unknown }).role;
-                          if (role !== "system" && role !== "developer") {
-                            keptInput.push(item);
-                            continue;
-                          }
-
-                          // Extract text from string content or structured content arrays
-                          // (AI SDK may produce [{type:"text", text:"..."}])
-                          const content = (item as { content?: unknown }).content;
-                          const text = extractTextContent(content);
-                          if (text.length > 0) {
-                            derivedParts.push(text);
-                          }
-                          // Drop this system/developer item from input (don't push to keptInput)
+                    const responseInput = json.input;
+                    if (Array.isArray(responseInput)) {
+                      for (const item of responseInput as unknown[]) {
+                        if (!item || typeof item !== "object") {
+                          keptInput.push(item);
+                          continue;
                         }
 
-                        json.input = keptInput;
+                        const role = (item as { role?: unknown }).role;
+                        if (role !== "system" && role !== "developer") {
+                          keptInput.push(item);
+                          continue;
+                        }
+
+                        // Extract text from string content or structured content arrays
+                        // (AI SDK may produce [{type:"text", text:"..."}])
+                        const content = (item as { content?: unknown }).content;
+                        const text = extractTextContent(content);
+                        if (text.length > 0) {
+                          derivedParts.push(text);
+                        }
+                        // Drop this system/developer item from input (don't push to keptInput)
                       }
 
-                      const joined = derivedParts.join("\n\n").trim();
-                      json.instructions =
-                        joined.length > 0 ? joined : "You are a helpful assistant.";
+                      json.input = keptInput;
                     }
+
+                    const joined = derivedParts.join("\n\n").trim();
+                    json.instructions = joined.length > 0 ? joined : "You are a helpful assistant.";
                   }
 
                   // Clone headers to avoid mutating caller-provided objects

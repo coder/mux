@@ -138,6 +138,10 @@ export class CodexOauthService {
 
   private readonly refreshMutex = new AsyncMutex();
 
+  // In-memory cache so getValidAuth() skips disk reads when tokens are valid.
+  // Invalidated on every write (exchange, refresh, disconnect).
+  private cachedAuth: CodexOauthAuth | null = null;
+
   constructor(
     private readonly config: Config,
     private readonly providerService: ProviderService,
@@ -146,6 +150,7 @@ export class CodexOauthService {
 
   disconnect(): Result<void, string> {
     // Clear stored ChatGPT OAuth tokens so Codex-only models are hidden again.
+    this.cachedAuth = null;
     return this.providerService.setConfigValue("openai", ["codexOauth"], undefined);
   }
 
@@ -434,13 +439,23 @@ export class CodexOauthService {
   }
 
   private readStoredAuth(): CodexOauthAuth | null {
+    if (this.cachedAuth) {
+      return this.cachedAuth;
+    }
     const providersConfig = this.config.loadProvidersConfig() ?? {};
     const openaiConfig = providersConfig.openai as Record<string, unknown> | undefined;
-    return parseCodexOauthAuth(openaiConfig?.codexOauth);
+    const auth = parseCodexOauthAuth(openaiConfig?.codexOauth);
+    this.cachedAuth = auth;
+    return auth;
   }
 
   private persistAuth(auth: CodexOauthAuth): Result<void, string> {
-    return this.providerService.setConfigValue("openai", ["codexOauth"], auth);
+    const result = this.providerService.setConfigValue("openai", ["codexOauth"], auth);
+    // Invalidate cache so the next readStoredAuth() picks up the persisted value from disk.
+    // We clear rather than set because setConfigValue may have side-effects (e.g. file-write
+    // failures) and we want the next read to be authoritative.
+    this.cachedAuth = null;
+    return result;
   }
 
   private async handleDesktopCallback(input: {
