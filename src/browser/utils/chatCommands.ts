@@ -165,14 +165,7 @@ export async function processSlashCommand(
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
   if (!parsed) return { clearInput: false, toastShown: false };
-  const {
-    api: client,
-    setInput,
-    setToast,
-    variant,
-    setVimEnabled,
-    setPreferredModel,
-  } = context;
+  const { api: client, setInput, setToast, variant, setVimEnabled, setPreferredModel } = context;
 
   const requireClient = (): RouterClient<AppRouter> | null => {
     if (client) return client;
