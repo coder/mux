@@ -16,10 +16,15 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
-import type { WorkspaceChatMessage, SendMessageOptions, FilePart } from "@/common/orpc/types";
+import type {
+  WorkspaceChatMessage,
+  SendMessageOptions,
+  FilePart,
+  DeleteMessage,
+} from "@/common/orpc/types";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { SendMessageError } from "@/common/types/errors";
-import { SkillNameSchema } from "@/common/orpc/schemas";
+import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import {
   buildStreamErrorEventData,
   createStreamErrorMessage,
@@ -51,6 +56,9 @@ import {
 } from "@/common/types/message";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
+import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
 import type { StreamEndEvent } from "@/common/types/stream";
 import { CompactionHandler } from "./compactionHandler";
@@ -203,6 +211,9 @@ export class AgentSession {
 
   /** Track user message ids that already retried without post-compaction injection. */
   private readonly postCompactionRetryAttempts = new Set<string>();
+
+  /** Track user message ids that already hard-restarted for exec-like subagents. */
+  private readonly execSubagentHardRestartAttempts = new Set<string>();
 
   /** True once we see any model/tool output for the current stream (retry guard). */
   private activeStreamHadAnyDelta = false;
@@ -1217,6 +1228,294 @@ export class AgentSession {
     return true;
   }
 
+  private async maybeHardRestartExecSubagentOnContextExceeded(data: {
+    messageId: string;
+    errorType?: string;
+  }): Promise<boolean> {
+    if (data.errorType !== "context_exceeded") {
+      return false;
+    }
+
+    // Only enabled via experiment (and only when we still have a valid retry context).
+    const context = this.activeStreamContext;
+    const requestId = this.activeStreamUserMessageId;
+    const experimentEnabled = context?.options?.experiments?.execSubagentHardRestart === true;
+    if (!experimentEnabled || !context || !requestId) {
+      return false;
+    }
+
+    // Guardrail: don't hard-restart after any meaningful output.
+    // This is intended to recover from "prompt too long" cases before the model starts streaming.
+    if (this.activeStreamHadAnyDelta) {
+      return false;
+    }
+
+    if (this.execSubagentHardRestartAttempts.has(requestId)) {
+      return false;
+    }
+
+    // Guard for test mocks that may not implement getWorkspaceMetadata.
+    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+      return false;
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+    if (!metadataResult.success) {
+      return false;
+    }
+
+    const metadata = metadataResult.data;
+    if (!metadata.parentWorkspaceId) {
+      return false;
+    }
+
+    const agentIdRaw = (metadata.agentId ?? metadata.agentType ?? WORKSPACE_DEFAULTS.agentId)
+      .trim()
+      .toLowerCase();
+    const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw);
+    const agentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
+
+    // Prefer resolving agent inheritance from the parent workspace: project agents may be untracked
+    // (and therefore absent from child worktrees), but they are always present in the parent that
+    // spawned the task.
+    const metadataCandidates: Array<typeof metadata> = [metadata];
+
+    try {
+      const parentMetadataResult = await this.aiService.getWorkspaceMetadata(
+        metadata.parentWorkspaceId
+      );
+      if (parentMetadataResult.success) {
+        metadataCandidates.unshift(parentMetadataResult.data);
+      }
+    } catch {
+      // ignore - fall back to child metadata
+    }
+
+    let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+    for (const agentMetadata of metadataCandidates) {
+      try {
+        const runtime = createRuntimeForWorkspace(agentMetadata);
+
+        // In-place workspaces (CLI/benchmarks) have projectPath === name.
+        // Use path directly instead of reconstructing via getWorkspacePath.
+        const isInPlace = agentMetadata.projectPath === agentMetadata.name;
+        const workspacePath = isInPlace
+          ? agentMetadata.projectPath
+          : runtime.getWorkspacePath(agentMetadata.projectPath, agentMetadata.name);
+
+        const agentDiscoveryPath =
+          context.options?.disableWorkspaceAgents === true
+            ? agentMetadata.projectPath
+            : workspacePath;
+
+        const agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, agentId);
+        chain = await resolveAgentInheritanceChain({
+          runtime,
+          workspacePath: agentDiscoveryPath,
+          agentId,
+          agentDefinition,
+          workspaceId: this.workspaceId,
+        });
+        break;
+      } catch {
+        // ignore - try next candidate
+      }
+    }
+
+    if (!chain) {
+      // If we fail to resolve tool policy/inheritance, treat as non-exec-like.
+      return false;
+    }
+
+    if (!isExecLikeEditingCapableInResolvedChain(chain)) {
+      return false;
+    }
+
+    this.execSubagentHardRestartAttempts.add(requestId);
+
+    const continuationNotice =
+      "Context limit reached. Mux restarted this agent's chat history and will replay your original prompt below. " +
+      "Continue using only the current workspace state (files, git history, command output); " +
+      "re-inspect the repo as needed.";
+
+    log.info("Exec-like subagent hit context limit; hard-restarting history and retrying", {
+      workspaceId: this.workspaceId,
+      requestId,
+      model: context.modelString,
+      agentId,
+    });
+
+    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    if (!historyResult.success) {
+      return false;
+    }
+
+    const messages = historyResult.data;
+
+    const firstPromptIndex = messages.findIndex(
+      (msg) => msg.role === "user" && msg.metadata?.synthetic !== true
+    );
+    if (firstPromptIndex === -1) {
+      return false;
+    }
+
+    // Include any synthetic snapshots that were persisted immediately before the task prompt.
+    let seedStartIndex = firstPromptIndex;
+    for (let i = firstPromptIndex - 1; i >= 0; i -= 1) {
+      const msg = messages[i];
+      const isSnapshot =
+        msg.role === "user" &&
+        msg.metadata?.synthetic === true &&
+        (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
+      if (!isSnapshot) {
+        break;
+      }
+      seedStartIndex = i;
+    }
+
+    const seedMessages = messages.slice(seedStartIndex, firstPromptIndex + 1);
+    if (seedMessages.length === 0) {
+      return false;
+    }
+
+    // Best-effort: discard pending post-compaction state so we don't immediately re-inject it.
+    try {
+      await this.compactionHandler.discardPendingDiffs("execSubagentHardRestart");
+      this.onPostCompactionStateChange?.();
+    } catch (error) {
+      log.warn("Failed to discard pending post-compaction state before hard restart", {
+        workspaceId: this.workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Abort the failed assistant placeholder and clean up partial/history state.
+    this.activeCompactionRequest = undefined;
+    this.resetActiveStreamState();
+    if (!this.disposed) {
+      this.clearQueue();
+    }
+
+    this.emitChatEvent({
+      type: "stream-abort",
+      workspaceId: this.workspaceId,
+      messageId: data.messageId,
+    });
+
+    const partialDeleteResult = await this.partialService.deletePartial(this.workspaceId);
+    if (!partialDeleteResult.success) {
+      log.warn("Failed to delete partial before exec subagent hard restart", {
+        workspaceId: this.workspaceId,
+        error: partialDeleteResult.error,
+      });
+    }
+
+    const clearResult = await this.historyService.clearHistory(this.workspaceId);
+    if (!clearResult.success) {
+      log.warn("Failed to clear history for exec subagent hard restart", {
+        workspaceId: this.workspaceId,
+        error: clearResult.error,
+      });
+      return false;
+    }
+
+    const deletedSequences = clearResult.data;
+    if (deletedSequences.length > 0) {
+      const deleteMessage: DeleteMessage = {
+        type: "delete",
+        historySequences: deletedSequences,
+      };
+      this.emitChatEvent(deleteMessage);
+    }
+
+    const cloneForAppend = (msg: MuxMessage): MuxMessage => {
+      const metadataCopy = msg.metadata ? { ...msg.metadata } : undefined;
+      if (metadataCopy) {
+        metadataCopy.historySequence = undefined;
+        metadataCopy.partial = undefined;
+        metadataCopy.error = undefined;
+        metadataCopy.errorType = undefined;
+      }
+
+      return {
+        ...msg,
+        metadata: metadataCopy,
+        parts: [...msg.parts],
+      };
+    };
+
+    const continuationMessage = createMuxMessage(
+      createUserMessageId(),
+      "user",
+      continuationNotice,
+      {
+        timestamp: Date.now(),
+        synthetic: true,
+        uiVisible: true,
+      }
+    );
+
+    const messagesToAppend = [continuationMessage, ...seedMessages.map(cloneForAppend)];
+    for (const message of messagesToAppend) {
+      const appendResult = await this.historyService.appendToHistory(this.workspaceId, message);
+      if (!appendResult.success) {
+        log.error("Failed to append message during exec subagent hard restart", {
+          workspaceId: this.workspaceId,
+          messageId: message.id,
+          error: appendResult.error,
+        });
+        return false;
+      }
+
+      // Add type: "message" for discriminated union (MuxMessage doesn't have it)
+      this.emitChatEvent({
+        ...message,
+        type: "message" as const,
+      });
+    }
+
+    const existingInstructions = context.options?.additionalSystemInstructions;
+    const mergedAdditionalSystemInstructions = existingInstructions
+      ? `${continuationNotice}\n\n${existingInstructions}`
+      : continuationNotice;
+
+    const retryOptions: SendMessageOptions | undefined = context.options
+      ? {
+          ...context.options,
+          additionalSystemInstructions: mergedAdditionalSystemInstructions,
+        }
+      : {
+          model: context.modelString,
+          agentId: WORKSPACE_DEFAULTS.agentId,
+          additionalSystemInstructions: mergedAdditionalSystemInstructions,
+          experiments: {
+            execSubagentHardRestart: true,
+          },
+        };
+
+    this.streamStarting = true;
+    let retryResult: Result<void, SendMessageError>;
+    try {
+      retryResult = await this.streamWithHistory(
+        context.modelString,
+        retryOptions,
+        context.openaiTruncationModeOverride
+      );
+    } finally {
+      this.streamStarting = false;
+    }
+
+    if (!retryResult.success) {
+      log.error("Exec subagent hard restart retry failed to start", {
+        workspaceId: this.workspaceId,
+        error: retryResult.error,
+      });
+      return false;
+    }
+
+    return true;
+  }
+
   private resetActiveStreamState(): void {
     this.activeStreamContext = undefined;
     this.activeStreamUserMessageId = undefined;
@@ -1238,6 +1537,15 @@ export class AgentSession {
 
     if (
       await this.maybeRetryWithoutPostCompactionOnContextExceeded({
+        messageId: data.messageId,
+        errorType: data.errorType,
+      })
+    ) {
+      return;
+    }
+
+    if (
+      await this.maybeHardRestartExecSubagentOnContextExceeded({
         messageId: data.messageId,
         errorType: data.errorType,
       })

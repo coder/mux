@@ -110,6 +110,7 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
         EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
       ),
       system1: isExperimentEnabled(EXPERIMENT_IDS.SYSTEM_1),
+      execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
     },
   };
 }
