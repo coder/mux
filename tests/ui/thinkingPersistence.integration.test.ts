@@ -16,7 +16,7 @@ import { createAppHarness } from "./harness";
 
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
 
-const CODEX_MODEL = "openai:gpt-5.2-codex";
+const OPENAI_MODEL = "openai:gpt-5.2";
 // Use Sonnet 4.5 as the model that caps at HIGH (4 levels, no xhigh).
 // Opus 4.6 supports xhigh so it can't be used to test clamping behavior.
 const CAPPED_MODEL = "anthropic:claude-sonnet-4-5";
@@ -100,7 +100,7 @@ async function selectModel(
 async function setThinkingToXHigh(container: HTMLElement): Promise<void> {
   // Wait for the thinking slider to render and for it to show XHIGH.
   // We click the right paddle (second button) repeatedly to increase levels.
-  // For CODEX model the levels are: OFF → LOW → MED → HIGH → XHIGH
+  // For this OpenAI model the levels are: OFF → LOW → MED → HIGH → XHIGH
   await waitFor(
     async () => {
       const group = container.querySelector('[data-component="ThinkingSliderGroup"]');
@@ -149,14 +149,14 @@ describeIntegration("Thinking level persistence", () => {
     const harness = await createAppHarness({ branchPrefix: "thinking" });
 
     try {
-      await selectModel(harness.view.container, harness.workspaceId, CODEX_MODEL);
+      await selectModel(harness.view.container, harness.workspaceId, OPENAI_MODEL);
       await setThinkingToXHigh(harness.view.container);
       await expectThinkingLabel(harness.view.container, "XHIGH");
 
       await selectModel(harness.view.container, harness.workspaceId, CAPPED_MODEL);
       await expectThinkingLabel(harness.view.container, "HIGH");
 
-      await selectModel(harness.view.container, harness.workspaceId, CODEX_MODEL);
+      await selectModel(harness.view.container, harness.workspaceId, OPENAI_MODEL);
       await expectThinkingLabel(harness.view.container, "XHIGH");
     } finally {
       await harness.dispose();
