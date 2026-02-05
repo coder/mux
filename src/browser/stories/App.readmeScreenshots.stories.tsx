@@ -568,25 +568,28 @@ export const AgentStatusSidebar: AppStory = {
     // Intentionally zoom/crop so the Storybook canvas focuses on the left sidebar's
     // per-workspace agent status indicators (matching the README screenshot intent).
     const viewportWidthPx = 1600;
-    const cropWidthPx = 360;
+
+    // LeftSidebar uses `w-72` (288px) when expanded.
+    // We crop by scaling the *full-size* app and clipping the viewport, rather than
+    // shrinking the app down to the crop size (which can create blank margins when we
+    // offset the crop).
+    const cropWidthPx = 288;
     const zoomScale = viewportWidthPx / cropWidthPx;
 
     // The first workspace row starts ~170px down in the full app layout. Offset the
-    // crop so the zoomed view is primarily the workspace list (not the mostly-empty
-    // workspace content area).
+    // crop so the zoomed view is primarily the workspace list (not the titlebar).
     const cropOffsetYPx = 150;
 
     return (
-      <div
-        style={{
-          width: cropWidthPx,
-          height: `calc(100dvh / ${zoomScale})`,
-          overflow: "hidden",
-          transform: `scale(${zoomScale})`,
-          transformOrigin: "top left",
-        }}
-      >
-        <div style={{ position: "relative", top: -cropOffsetYPx }}>
+      <div style={{ width: viewportWidthPx, height: "100dvh", overflow: "hidden" }}>
+        <div
+          style={{
+            width: viewportWidthPx,
+            height: "100dvh",
+            transformOrigin: "top left",
+            transform: `translate(0px, -${cropOffsetYPx}px) scale(${zoomScale})`,
+          }}
+        >
           <AppWithMocks
             setup={() => {
               const workspaces = [
