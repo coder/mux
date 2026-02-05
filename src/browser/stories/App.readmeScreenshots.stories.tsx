@@ -564,154 +564,179 @@ export const CodeReview: AppStory = {
 
 // README: docs/img/agent-status.webp
 export const AgentStatusSidebar: AppStory = {
-  render: () => (
-    <AppWithMocks
-      setup={() => {
-        const workspaces = [
-          createWorkspace({
-            id: "ws-status-1",
-            name: "feature/docs",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
-            id: "ws-status-2",
-            name: "feature/sidebar",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
-            id: "ws-status-3",
-            name: "bugfix/stream",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
-            id: "ws-status-4",
-            name: "refactor/store",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
-            id: "ws-status-5",
-            name: "feature/right-sidebar",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createSSHWorkspace({
-            id: "ws-status-ssh",
-            name: "deploy/prod",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-            host: "prod.example.com",
-          }),
-          createWorkspace({
-            id: "ws-status-6",
-            name: "release/v1.0.0",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-          createWorkspace({
-            id: "ws-status-7",
-            name: "main",
-            projectName: README_PROJECT_NAME,
-            projectPath: README_PROJECT_PATH,
-          }),
-        ];
+  render: () => {
+    // Intentionally zoom/crop so the Storybook canvas focuses on the left sidebar's
+    // per-workspace agent status indicators (matching the README screenshot intent).
+    const viewportWidthPx = 1600;
+    const cropWidthPx = 360;
+    const zoomScale = viewportWidthPx / cropWidthPx;
 
-        const chatHandlers = new Map([
-          [
-            "ws-status-1",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Working on README screenshot stories.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 100_000,
-                toolCalls: [createStatusTool("call-1", "📝", "Building Storybook states")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-2",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Tuning sidebar virtualization.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 95_000,
-                toolCalls: [createStatusTool("call-1", "🔍", "Reviewing perf regressions")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-3",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Investigating stream stalls.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 90_000,
-                toolCalls: [createStatusTool("call-1", "🧪", "Reproducing with Playwright")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-4",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Refactoring WorkspaceStore subscriptions.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 85_000,
-                toolCalls: [createStatusTool("call-1", "🔄", "Cleaning up state")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-5",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Adding split pane layout fixtures.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 80_000,
-                toolCalls: [
-                  createStatusTool(
-                    "call-1",
-                    "🚀",
-                    "PR ready for review",
-                    "https://github.com/mux/cmux/pull/1234"
-                  ),
+    // The first workspace row starts ~170px down in the full app layout. Offset the
+    // crop so the zoomed view is primarily the workspace list (not the mostly-empty
+    // workspace content area).
+    const cropOffsetYPx = 150;
+
+    return (
+      <div
+        style={{
+          width: cropWidthPx,
+          height: `calc(100dvh / ${zoomScale})`,
+          overflow: "hidden",
+          transform: `scale(${zoomScale})`,
+          transformOrigin: "top left",
+        }}
+      >
+        <div style={{ position: "relative", top: -cropOffsetYPx }}>
+          <AppWithMocks
+            setup={() => {
+              const workspaces = [
+                createWorkspace({
+                  id: "ws-status-1",
+                  name: "feature/docs",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                }),
+                createWorkspace({
+                  id: "ws-status-2",
+                  name: "feature/sidebar",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                }),
+                createWorkspace({
+                  id: "ws-status-3",
+                  name: "bugfix/stream",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                }),
+                createWorkspace({
+                  id: "ws-status-4",
+                  name: "refactor/store",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                }),
+                createWorkspace({
+                  id: "ws-status-5",
+                  name: "feature/right-sidebar",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                }),
+                createSSHWorkspace({
+                  id: "ws-status-ssh",
+                  name: "deploy/prod",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                  host: "prod.example.com",
+                }),
+                createWorkspace({
+                  id: "ws-status-6",
+                  name: "release/v1.0.0",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                }),
+                createWorkspace({
+                  id: "ws-status-7",
+                  name: "main",
+                  projectName: README_PROJECT_NAME,
+                  projectPath: README_PROJECT_PATH,
+                }),
+              ];
+
+              const chatHandlers = new Map([
+                [
+                  "ws-status-1",
+                  createStaticChatHandler([
+                    createAssistantMessage("msg-1", "Working on README screenshot stories.", {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 100_000,
+                      toolCalls: [createStatusTool("call-1", "📝", "Building Storybook states")],
+                    }),
+                  ]),
                 ],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-ssh",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Deploying staging.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 70_000,
-                toolCalls: [createStatusTool("call-1", "⏳", "Waiting for CI")],
-              }),
-            ]),
-          ],
-          [
-            "ws-status-6",
-            createStaticChatHandler([
-              createAssistantMessage("msg-1", "Preparing release notes.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 65_000,
-                toolCalls: [createStatusTool("call-1", "📝", "Drafting changelog")],
-              }),
-            ]),
-          ],
-          ["ws-status-7", createStaticChatHandler([])],
-        ]);
+                [
+                  "ws-status-2",
+                  createStaticChatHandler([
+                    createAssistantMessage("msg-1", "Tuning sidebar virtualization.", {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 95_000,
+                      toolCalls: [createStatusTool("call-1", "🔍", "Reviewing perf regressions")],
+                    }),
+                  ]),
+                ],
+                [
+                  "ws-status-3",
+                  createStaticChatHandler([
+                    createAssistantMessage("msg-1", "Investigating stream stalls.", {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 90_000,
+                      toolCalls: [createStatusTool("call-1", "🧪", "Reproducing with Playwright")],
+                    }),
+                  ]),
+                ],
+                [
+                  "ws-status-4",
+                  createStaticChatHandler([
+                    createAssistantMessage("msg-1", "Refactoring WorkspaceStore subscriptions.", {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 85_000,
+                      toolCalls: [createStatusTool("call-1", "🔄", "Cleaning up state")],
+                    }),
+                  ]),
+                ],
+                [
+                  "ws-status-5",
+                  createStaticChatHandler([
+                    createAssistantMessage("msg-1", "Adding split pane layout fixtures.", {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 80_000,
+                      toolCalls: [
+                        createStatusTool(
+                          "call-1",
+                          "🚀",
+                          "PR ready for review",
+                          "https://github.com/mux/cmux/pull/1234"
+                        ),
+                      ],
+                    }),
+                  ]),
+                ],
+                [
+                  "ws-status-ssh",
+                  createStaticChatHandler([
+                    createAssistantMessage("msg-1", "Deploying staging.", {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 70_000,
+                      toolCalls: [createStatusTool("call-1", "⏳", "Waiting for CI")],
+                    }),
+                  ]),
+                ],
+                [
+                  "ws-status-6",
+                  createStaticChatHandler([
+                    createAssistantMessage("msg-1", "Preparing release notes.", {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 65_000,
+                      toolCalls: [createStatusTool("call-1", "📝", "Drafting changelog")],
+                    }),
+                  ]),
+                ],
+                ["ws-status-7", createStaticChatHandler([])],
+              ]);
 
-        expandProjects([README_PROJECT_PATH]);
-        selectWorkspace(workspaces[0]);
-        collapseRightSidebar();
+              expandProjects([README_PROJECT_PATH]);
+              selectWorkspace(workspaces[0]);
+              collapseRightSidebar();
 
-        return createMockORPCClient({
-          projects: groupWorkspacesByProject(workspaces),
-          workspaces,
-          onChat: createOnChatAdapter(chatHandlers),
-        });
-      }}
-    />
-  ),
+              return createMockORPCClient({
+                projects: groupWorkspacesByProject(workspaces),
+                workspaces,
+                onChat: createOnChatAdapter(chatHandlers),
+              });
+            }}
+          />
+        </div>
+      </div>
+    );
+  },
 };
 
 // README: docs/img/git-status.webp
