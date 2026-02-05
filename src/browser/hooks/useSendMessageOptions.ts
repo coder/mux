@@ -28,17 +28,8 @@ export interface SendMessageOptionsWithBase extends SendMessageOptions {
 }
 
 /**
- * Build SendMessageOptions from current user preferences
- * This ensures all message sends (new, retry, resume) use consistent options
- *
- * Single source of truth for message options - guarantees parity between
- * ChatInput, RetryBarrier, and any other components that send messages.
- *
- * Uses usePersistedState which has listener mode, so changes to preferences
- * propagate automatically to all components using this hook.
- *
- * Returns both `model` (canonical for backend routing) and `baseModel`
- * (canonical format for UI display and policy checks).
+ * Single source of truth for message send options (ChatInput, RetryBarrier, etc.).
+ * Subscribes to persisted preferences so model/thinking/agent changes propagate automatically.
  */
 export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWithBase {
   const [thinkingLevel] = useThinkingLevel();

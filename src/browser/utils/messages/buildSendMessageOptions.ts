@@ -22,12 +22,7 @@ export interface SendMessageOptionsInput {
   disableWorkspaceAgents?: boolean;
 }
 
-/**
- * Normalize a preferred model string for routing.
- *
- * Shared by hook and non-hook send option builders to keep gateway migration
- * and trimming consistent across send paths.
- */
+/** Normalize a preferred model string for routing (gateway migration + trimming). */
 export function normalizeModelPreference(rawModel: unknown, fallbackModel: string): string {
   const trimmed =
     typeof rawModel === "string" && rawModel.trim().length > 0 ? rawModel.trim() : null;
@@ -46,36 +41,23 @@ export function normalizeSystem1ThinkingLevel(rawLevel: unknown): ThinkingLevel 
 
 /**
  * Construct SendMessageOptions from normalized inputs.
- * Keeps the core send option shape in one place to reduce drift.
+ * Single source of truth for the send-option shape — backend enforces per-model policy.
  */
 export function buildSendMessageOptions(input: SendMessageOptionsInput): SendMessageOptions {
-  // Preserve the user's preferred thinking level; backend enforces per-model policy.
-  const uiThinking = input.thinkingLevel;
-
-  const system1ModelForBackend =
-    input.system1Model !== undefined ? migrateGatewayModel(input.system1Model) : undefined;
-
-  const system1ThinkingLevelForBackend =
-    input.system1ThinkingLevel !== undefined && input.system1ThinkingLevel !== "off"
+  const system1Model = input.system1Model ? migrateGatewayModel(input.system1Model) : undefined;
+  const system1ThinkingLevel =
+    input.system1ThinkingLevel && input.system1ThinkingLevel !== "off"
       ? input.system1ThinkingLevel
       : undefined;
 
   return {
-    thinkingLevel: uiThinking,
+    thinkingLevel: input.thinkingLevel,
     model: input.model,
-    ...(system1ModelForBackend ? { system1Model: system1ModelForBackend } : {}),
-    ...(system1ThinkingLevelForBackend
-      ? { system1ThinkingLevel: system1ThinkingLevelForBackend }
-      : {}),
+    ...(system1Model && { system1Model }),
+    ...(system1ThinkingLevel && { system1ThinkingLevel }),
     agentId: input.agentId,
-    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions: input.providerOptions,
-    experiments: {
-      programmaticToolCalling: input.experiments.programmaticToolCalling,
-      programmaticToolCallingExclusive: input.experiments.programmaticToolCallingExclusive,
-      system1: input.experiments.system1,
-      execSubagentHardRestart: input.experiments.execSubagentHardRestart,
-    },
+    experiments: { ...input.experiments },
     disableWorkspaceAgents: input.disableWorkspaceAgents ? true : undefined,
   };
 }

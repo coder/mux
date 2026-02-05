@@ -43,17 +43,12 @@ function getProviderOptions(): MuxProviderOptions {
 }
 
 /**
- * Get send options from localStorage
- * Mirrors logic from useSendMessageOptions but works outside React context
- *
- * Used by useResumeManager for auto-retry without hook dependencies.
- * This ensures DRY - single source of truth for option extraction.
+ * Non-hook equivalent of useSendMessageOptions — reads current preferences from localStorage.
+ * Used by compaction, resume, idle-compaction, and plan execution outside React context.
  */
 export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptions {
-  // Read model preference (workspace-specific), fallback to the Settings default
   const defaultModel = getDefaultModel();
   const rawModel = readPersistedState<string>(getModelKey(workspaceId), defaultModel);
-  // Migrate any legacy mux-gateway:provider/model format to canonical form
   const baseModel = normalizeModelPreference(rawModel, defaultModel);
 
   // Read thinking level (workspace-scoped).
@@ -72,18 +67,12 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     updatePersistedState<ThinkingLevel>(scopedKey, thinkingLevel);
   }
 
-  // Read selected agent id (workspace-specific)
   const agentId = readPersistedState<string>(
     getAgentIdKey(workspaceId),
     WORKSPACE_DEFAULTS.agentId
   );
 
-  // Get provider options
   const providerOptions = getProviderOptions();
-
-  // Plan mode instructions are now handled by the backend (has access to plan file path)
-
-  // Read disableWorkspaceAgents toggle (workspace-scoped)
 
   const system1Model = normalizeSystem1Model(readPersistedString(PREFERRED_SYSTEM_1_MODEL_KEY));
   const system1ThinkingLevel = normalizeSystem1ThinkingLevel(
@@ -101,7 +90,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
     system1ThinkingLevel,
     agentId,
     thinkingLevel,
-    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     providerOptions,
     disableWorkspaceAgents,
     experiments: {

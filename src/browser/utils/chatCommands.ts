@@ -1033,10 +1033,11 @@ export async function handleCompactCommand(
     onCancelEdit,
   } = context;
 
-  const normalizedModel = parsed.model ? normalizeModelInput(parsed.model) : null;
+  // normalizeModelInput handles null/empty — returns { model: null } for empty input
+  const normalizedModel = normalizeModelInput(parsed.model);
 
   // Validate model format early - fail fast before sending to backend
-  if (parsed.model && !normalizedModel?.model) {
+  if (parsed.model && !normalizedModel.model) {
     setToast(createInvalidCompactModelToast(parsed.model));
     return { clearInput: false, toastShown: true };
   }
@@ -1057,7 +1058,7 @@ export async function handleCompactCommand(
         }
       : undefined;
 
-    const resolvedModel = normalizedModel?.model ?? undefined;
+    const resolvedModel = normalizedModel.model ?? undefined;
 
     const result = await executeCompaction({
       api,

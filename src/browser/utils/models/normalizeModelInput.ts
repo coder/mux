@@ -7,12 +7,7 @@ export interface ModelInputResult {
   error?: "invalid-format";
 }
 
-/**
- * Normalize user-provided model input for slash commands and overrides.
- *
- * This keeps alias resolution, gateway migration, and format validation
- * consistent across /model, /compact -m, and one-shot sends.
- */
+/** Normalize user-provided model input (alias resolution + gateway migration + format validation). */
 export function normalizeModelInput(raw: string | null | undefined): ModelInputResult {
   const trimmed = typeof raw === "string" ? raw.trim() : "";
   if (!trimmed) {
