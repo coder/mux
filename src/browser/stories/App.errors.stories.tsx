@@ -377,7 +377,7 @@ export const AnthropicOverloaded: AppStory = {
               callback({
                 type: "stream-error",
                 messageId: "assistant-1",
-                error: "Anthropic is temporarily overloaded (HTTP 529). Please retry in a moment.",
+                error: "Anthropic is temporarily overloaded (HTTP 529). Please try again later.",
                 errorType: "server_error",
               });
             }, 50);

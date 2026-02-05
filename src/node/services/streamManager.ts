@@ -1799,7 +1799,7 @@ export class StreamManager extends EventEmitter {
           isOverloadedApiCallError(actualError.lastError)));
 
     if (isAnthropicOverloaded) {
-      errorMessage = "Anthropic is temporarily overloaded (HTTP 529). Please retry in a moment.";
+      errorMessage = "Anthropic is temporarily overloaded (HTTP 529). Please try again later.";
       errorType = "server_error";
     }
 

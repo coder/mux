@@ -17,7 +17,6 @@ import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
-import { getModelProvider } from "@/common/utils/ai/models";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 
 interface RetryBarrierProps {
@@ -144,20 +143,8 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
 
   const lastMessage = workspaceState?.messages.at(-1);
   const lastStreamError = lastMessage?.type === "stream-error" ? lastMessage : null;
-  const streamErrorProvider = lastStreamError?.model ? getModelProvider(lastStreamError.model) : "";
 
-  const isAnthropicOverloaded =
-    streamErrorProvider === "anthropic" &&
-    lastStreamError?.errorType === "server_error" &&
-    /\bHTTP\s*529\b|overloaded/i.test(lastStreamError?.error ?? "");
-
-  const isRateLimited = lastStreamError?.errorType === "rate_limit";
-
-  const interruptionReason = isAnthropicOverloaded
-    ? "AI Provider is overloaded"
-    : isRateLimited
-      ? "Rate limited"
-      : null;
+  const interruptionReason = lastStreamError?.errorType === "rate_limit" ? "Rate limited" : null;
 
   let statusIcon: React.ReactNode = (
     <AlertTriangle aria-hidden="true" className="text-warning h-4 w-4 shrink-0" />
