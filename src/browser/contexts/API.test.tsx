@@ -103,8 +103,11 @@ const createMockWebSocket = (url: string) => new MockWebSocket(url) as unknown a
 
 describe("API reconnection", () => {
   beforeEach(() => {
-    // Minimal DOM setup required by @testing-library/react
-    const happyWindow = new GlobalWindow();
+    // Minimal DOM setup required by @testing-library/react.
+    //
+    // Happy DOM can default to an opaque origin ("null") in some modes (e.g. coverage).
+    // That breaks URL construction in createBrowserClient(). Give it a stable http(s) origin.
+    const happyWindow = new GlobalWindow({ url: "https://mux.example.com/" });
     globalThis.window = happyWindow as unknown as Window & typeof globalThis;
     globalThis.document = happyWindow.document as unknown as Document;
     MockWebSocket.reset();
