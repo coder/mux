@@ -12,7 +12,11 @@ import assert from "@/common/utils/assert";
 
 export type VimMode = "insert" | "normal" | "visual" | "visualLine";
 
-export type VimRange = { start: number; end: number; kind: "char" | "line" };
+export interface VimRange {
+  start: number;
+  end: number;
+  kind: "char" | "line";
+}
 
 export type FindVariant = "f" | "F" | "t" | "T";
 
@@ -35,7 +39,10 @@ export interface LastFind {
   char: string;
 }
 
-export type VimHistorySnapshot = { text: string; cursor: number };
+export interface VimHistorySnapshot {
+  text: string;
+  cursor: number;
+}
 
 export type LastEdit =
   | { kind: "x"; count: number }
@@ -219,7 +226,7 @@ function assertVimState(state: VimState): void {
 
     assert(
       pending.kind === "op" || pending.kind === "g" || pending.kind === "find",
-      `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`
+      `Unexpected Vim pending kind: ${String((pending as { kind?: unknown }).kind)}`
     );
 
     assert(Number.isFinite(pending.at), "Vim pending.at must be a finite timestamp");
@@ -340,7 +347,10 @@ function assertVimState(state: VimState): void {
         break;
 
       default:
-        assert(false, `Unexpected Vim lastEdit kind: ${(lastEdit as { kind?: unknown }).kind}`);
+        assert(
+          false,
+          `Unexpected Vim lastEdit kind: ${String((lastEdit as { kind?: unknown }).kind)}`
+        );
     }
   }
 }
@@ -992,7 +1002,10 @@ function applyLastEditOnce(state: VimState, lastEdit: LastEdit): VimState {
     }
 
     default:
-      assert(false, `Unexpected Vim lastEdit kind: ${(lastEdit as { kind?: unknown }).kind}`);
+      assert(
+        false,
+        `Unexpected Vim lastEdit kind: ${String((lastEdit as { kind?: unknown }).kind)}`
+      );
       return state;
   }
 }
@@ -1369,7 +1382,7 @@ function handlePending(
     case "find":
       return handlePendingFind(state, pending, key, modifiers);
     default:
-      assert(false, `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`);
+      assert(false, `Unexpected Vim pending kind: ${String((pending as { kind?: unknown }).kind)}`);
       return null;
   }
 }
@@ -1989,7 +2002,10 @@ type BracketOpenChar = "(" | "[" | "{";
 
 type BracketCloseChar = ")" | "]" | "}";
 
-type LineLocalPair = { open: number; close: number };
+interface LineLocalPair {
+  open: number;
+  close: number;
+}
 
 function isVimTextObject(textObj: unknown): textObj is VimTextObject {
   if (typeof textObj !== "string") return false;
@@ -2179,7 +2195,7 @@ function getTextObjectRange(
       const first = getLineLocalInnerWordBoundsAt(text, cursor);
       if (!first) return null;
 
-      let start = first.start;
+      const start = first.start;
       let end = first.end;
 
       for (let i = 1; i < count; i++) {
@@ -2196,7 +2212,7 @@ function getTextObjectRange(
       const first = getLineLocalAWordBoundsAt(text, cursor);
       if (!first) return null;
 
-      let start = first.start;
+      const start = first.start;
       let end = first.end;
 
       for (let i = 1; i < count; i++) {
@@ -2672,7 +2688,7 @@ export function formatPendingCommand(
       return `${opText}${findCountText}${pending.variant}${countText}`;
     }
     default:
-      assert(false, `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`);
+      assert(false, `Unexpected Vim pending kind: ${String((pending as { kind?: unknown }).kind)}`);
       return countText;
   }
 }
