@@ -30,6 +30,41 @@ import * as vim from "./vim";
 function executeVimCommands(initial: vim.VimState, keys: string[]): vim.VimState {
   let state = { ...initial };
 
+  const applyBrowserKey = (current: vim.VimState, key: string, ctrl: boolean): vim.VimState => {
+    if (ctrl) return current;
+    if (current.mode !== "insert") return current;
+
+    const cursor = Math.max(0, Math.min(current.cursor, current.text.length));
+
+    if (key === "Backspace") {
+      if (cursor === 0) return current;
+      return {
+        ...current,
+        text: current.text.slice(0, cursor - 1) + current.text.slice(cursor),
+        cursor: cursor - 1,
+      };
+    }
+
+    if (key === "Enter") {
+      return {
+        ...current,
+        text: current.text.slice(0, cursor) + "\n" + current.text.slice(cursor),
+        cursor: cursor + 1,
+      };
+    }
+
+    // Most single-character keys insert themselves.
+    if (key.length === 1) {
+      return {
+        ...current,
+        text: current.text.slice(0, cursor) + key + current.text.slice(cursor),
+        cursor: cursor + 1,
+      };
+    }
+
+    return current;
+  };
+
   for (const key of keys) {
     // Parse key string to extract modifiers
     const ctrl = key.startsWith("Ctrl-");
@@ -38,13 +73,12 @@ function executeVimCommands(initial: vim.VimState, keys: string[]): vim.VimState
     const result = vim.handleKeyPress(state, actualKey, { ctrl });
 
     if (result.handled) {
-      // Ignore undo/redo actions in tests (they require browser execCommand)
-      if (result.action === "undo" || result.action === "redo") {
-        continue;
-      }
       state = result.newState;
+      continue;
     }
-    // If not handled, browser would handle it (e.g., typing in insert mode)
+
+    // If not handled, simulate the browser behavior (e.g. typing in insert mode).
+    state = applyBrowserKey(state, actualKey, ctrl);
   }
 
   return state;
@@ -61,6 +95,10 @@ describe("Vim Command Integration Tests", () => {
     lastFind: null,
     count: null,
     pending: null,
+    undoStack: [],
+    redoStack: [],
+    insertStartSnapshot: null,
+    lastEdit: null,
   };
 
   describe("Mode Transitions", () => {
@@ -955,6 +993,73 @@ describe("Vim Command Integration Tests", () => {
       expect(state.text).toBe("four");
       expect(state.cursor).toBe(0);
       expect(state.yankBuffer).toBe("one two three ");
+    });
+  });
+
+  describe("Undo / Redo / Dot repeat", () => {
+    test("u and Ctrl-r undo/redo normal-mode edits (x)", () => {
+      const initial = { ...initialState, text: "abc", cursor: 1, mode: "normal" as const };
+
+      const afterX = executeVimCommands(initial, ["x"]);
+      expect(afterX.text).toBe("ac");
+
+      const afterUndo = executeVimCommands(afterX, ["u"]);
+      expect(afterUndo.text).toBe("abc");
+      expect(afterUndo.cursor).toBe(1);
+
+      const afterRedo = executeVimCommands(afterUndo, ["Ctrl-r"]);
+      expect(afterRedo.text).toBe("ac");
+      expect(afterRedo.cursor).toBe(1);
+    });
+
+    test("u and Ctrl-r undo/redo operator edits (dw)", () => {
+      const initial = {
+        ...initialState,
+        text: "one two three",
+        cursor: 0,
+        mode: "normal" as const,
+      };
+
+      const afterDw = executeVimCommands(initial, ["d", "w"]);
+      expect(afterDw.text).toBe("two three");
+
+      const afterUndo = executeVimCommands(afterDw, ["u"]);
+      expect(afterUndo.text).toBe("one two three");
+
+      const afterRedo = executeVimCommands(afterUndo, ["Ctrl-r"]);
+      expect(afterRedo.text).toBe("two three");
+    });
+
+    test("insert-mode typing is grouped into a single undo step", () => {
+      const initial = { ...initialState, text: "hello", cursor: 0, mode: "normal" as const };
+
+      const afterInsert = executeVimCommands(initial, ["i", "a", "b", "c", "Escape"]);
+      expect(afterInsert.text).toBe("abchello");
+
+      const afterUndo = executeVimCommands(afterInsert, ["u"]);
+      expect(afterUndo.text).toBe("hello");
+      expect(afterUndo.cursor).toBe(0);
+    });
+
+    test("dot repeats last operator edit (dw)", () => {
+      const initial = {
+        ...initialState,
+        text: "one two three",
+        cursor: 0,
+        mode: "normal" as const,
+      };
+
+      const state = executeVimCommands(initial, ["d", "w", "."]);
+      expect(state.text).toBe("three");
+      expect(state.cursor).toBe(0);
+    });
+
+    test("dot repeats last single-key edit (x)", () => {
+      const initial = { ...initialState, text: "abcd", cursor: 0, mode: "normal" as const };
+
+      const state = executeVimCommands(initial, ["x", "."]);
+      expect(state.text).toBe("cd");
+      expect(state.cursor).toBe(0);
     });
   });
 
