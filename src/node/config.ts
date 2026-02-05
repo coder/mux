@@ -88,6 +88,11 @@ function normalizeOptionalModelString(value: unknown): string | undefined {
     return undefined;
   }
 
+  // Reject malformed mux-gateway strings ("mux-gateway:provider" without "/model").
+  if (trimmed.startsWith("mux-gateway:") && !trimmed.includes("/")) {
+    return undefined;
+  }
+
   const normalized = normalizeGatewayModel(trimmed);
   if (!isValidModelFormat(normalized)) {
     return undefined;

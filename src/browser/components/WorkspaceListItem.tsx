@@ -5,8 +5,9 @@ import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { getModelKey } from "@/common/constants/storage";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect } from "react";
@@ -303,9 +304,26 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
 
-  const [fallbackModel] = usePersistedState<string>(getModelKey(workspaceId), getDefaultModel(), {
+  // Subscribe to the global default model preference so backend-seeded values apply immediately
+  // on fresh origins (e.g., when switching ports).
+  const [defaultModelPref] = usePersistedState<string>(
+    DEFAULT_MODEL_KEY,
+    WORKSPACE_DEFAULTS.model,
+    { listener: true }
+  );
+  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
+
+  // Workspace-scoped model preference. If unset, fall back to the global default model.
+  // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
+  // initialValue is sticky and would lock in the fallback before startup seeding.
+  const [preferredModel] = usePersistedState<string | null>(getModelKey(workspaceId), null, {
     listener: true,
   });
+
+  const fallbackModel =
+    typeof preferredModel === "string" && preferredModel.trim().length > 0
+      ? migrateGatewayModel(preferredModel.trim())
+      : defaultModel;
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
   // Note: we intentionally render the secondary row even while the workspace is still

@@ -53,6 +53,8 @@ import { resolveProjectPathFromProjectQuery } from "@/common/utils/deepLink";
 import { shouldApplyWorkspaceAiSettingsFromBackend } from "@/browser/utils/workspaceAiSettingsSync";
 import { isAbortError } from "@/browser/utils/isAbortError";
 import { useRouter } from "@/browser/contexts/RouterContext";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
@@ -437,7 +439,11 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         // One-time best-effort migration: if the backend doesn't have model prefs yet,
         // persist non-default localStorage values so future port changes keep them.
         if (api.config.updateModelPreferences) {
-          const localDefaultModel = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
+          const localDefaultModelRaw = readPersistedString(DEFAULT_MODEL_KEY);
+          const localDefaultModel =
+            typeof localDefaultModelRaw === "string"
+              ? migrateGatewayModel(localDefaultModelRaw).trim()
+              : undefined;
           const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
           const localPreferredCompactionModel = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
 
@@ -449,8 +455,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
           if (
             cfg.defaultModel === undefined &&
-            typeof localDefaultModel === "string" &&
-            localDefaultModel.trim()
+            localDefaultModel &&
+            localDefaultModel !== WORKSPACE_DEFAULTS.model
           ) {
             patch.defaultModel = localDefaultModel;
           }

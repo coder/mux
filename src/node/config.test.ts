@@ -94,6 +94,42 @@ describe("Config", () => {
       expect(loaded.preferredCompactionModel).toBe("openai:gpt-4o");
     });
 
+    it("normalizes gateway-prefixed model strings on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          defaultModel: "mux-gateway:openai/gpt-4o",
+          hiddenModels: ["mux-gateway:openai/gpt-4o-mini"],
+          preferredCompactionModel: "mux-gateway:openai/gpt-4o",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+      expect(loaded.preferredCompactionModel).toBe("openai:gpt-4o");
+    });
+
+    it("rejects malformed mux-gateway model strings on load", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          defaultModel: "mux-gateway:openai", // missing "/model"
+          hiddenModels: ["mux-gateway:openai", "openai:gpt-4o-mini"],
+          preferredCompactionModel: "mux-gateway:", // missing provider + "/model"
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.defaultModel).toBeUndefined();
+      expect(loaded.hiddenModels).toEqual(["openai:gpt-4o-mini"]);
+      expect(loaded.preferredCompactionModel).toBeUndefined();
+    });
+
     it("treats empty preferredCompactionModel as unset on load", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(

@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { readPersistedState, usePersistedState } from "./usePersistedState";
+import { readPersistedString, usePersistedState } from "./usePersistedState";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useProvidersConfig } from "./useProvidersConfig";
@@ -54,10 +54,12 @@ export function getSuggestedModels(config: ProvidersConfigMap | null): string[] 
 
 export function getDefaultModel(): string {
   const fallback = WORKSPACE_DEFAULTS.model;
-  const persisted = readPersistedState<string | null>(DEFAULT_MODEL_KEY, null);
+  const persisted = readPersistedString(DEFAULT_MODEL_KEY);
   if (!persisted) return fallback;
-  // Migrate legacy mux-gateway format to canonical form
-  return migrateGatewayModel(persisted);
+
+  // Migrate legacy mux-gateway format to canonical form.
+  const canonical = migrateGatewayModel(persisted).trim();
+  return canonical || fallback;
 }
 
 /**
@@ -98,7 +100,12 @@ export function useModelsFromSettings() {
       setDefaultModel((prev) => {
         const resolved = typeof next === "function" ? next(prev) : next;
         const canonical = migrateGatewayModel(resolved).trim();
-        persistModelPrefs({ defaultModel: canonical });
+        const canonicalPrev = migrateGatewayModel(prev).trim();
+
+        if (canonical !== canonicalPrev) {
+          persistModelPrefs({ defaultModel: canonical });
+        }
+
         return canonical;
       });
     },
