@@ -97,6 +97,9 @@ Vim's power comes from combining operators with motions. All operators work with
 - **w** - To next word
 - **b** - To previous word
 - **e** - To end of word
+- **W** - To next WORD (whitespace-separated)
+- **B** - To previous WORD
+- **E** - To end of WORD
 - **$** - To end of line
 - **0** - To beginning of line
 - **\_** - To first non-whitespace character
@@ -104,10 +107,13 @@ Vim's power comes from combining operators with motions. All operators work with
 ### Examples
 
 - **dw** - Delete to next word
+- **dW** - Delete to next WORD
 - **de** - Delete to end of word
 - **d$** - Delete to end of line
-- **cw** - Change to next word
+- **cw** - Change to end of word (like **ce**)
 - **ce** - Change to end of word
+- **cW** - Change to end of WORD (like **cE**)
+- **cE** - Change to end of WORD
 - **c0** - Change to beginning of line
 - **y$** - Yank to end of line
 - **ye** - Yank to end of word

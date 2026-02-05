@@ -15,9 +15,9 @@
  * - State management between key presses
  *
  * Keep in sync with:
- * - docs/vim-mode.md (user documentation)
- * - src/components/VimTextArea.tsx (React component integration)
- * - src/utils/vim.ts (core Vim logic)
+ * - docs/config/vim-mode.mdx (user documentation)
+ * - src/browser/components/VimTextArea.tsx (React component integration)
+ * - src/browser/utils/vim.ts (core Vim logic)
  */
 
 import { describe, expect, test } from "@jest/globals";
@@ -196,6 +196,44 @@ describe("Vim Command Integration Tests", () => {
     });
   });
 
+  describe("WORD Motions (W/B/E)", () => {
+    test("W moves to next WORD (whitespace-separated)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "asd-f asdf asdf", cursor: 0, mode: "normal" },
+        ["W"]
+      );
+
+      expect(state.cursor).toBe(6);
+    });
+
+    test("B moves to previous WORD", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "asd-f asdf asdf", cursor: 11, mode: "normal" },
+        ["B"]
+      );
+
+      expect(state.cursor).toBe(6);
+    });
+
+    test("E moves to end of current WORD", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "asd-f asdf asdf", cursor: 0, mode: "normal" },
+        ["E"]
+      );
+
+      expect(state.cursor).toBe(4);
+    });
+
+    test("E at end of WORD moves to end of next WORD", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "asd-f asdf asdf", cursor: 4, mode: "normal" },
+        ["E"]
+      );
+
+      expect(state.cursor).toBe(9);
+    });
+  });
+
   describe("Simple Edits", () => {
     test("x deletes character under cursor", () => {
       const state = executeVimCommands(
@@ -350,6 +388,14 @@ describe("Vim Command Integration Tests", () => {
       expect(state.yankBuffer).toBe("hello ");
     });
 
+    test("dW deletes to next WORD (whitespace-separated)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "foo-bar baz", cursor: 0, mode: "normal" },
+        ["d", "W"]
+      );
+      expect(state.text).toBe("baz");
+      expect(state.yankBuffer).toBe("foo-bar ");
+    });
     test("db deletes to previous word", () => {
       const state = executeVimCommands(
         { ...initialState, text: "hello world foo", cursor: 12, mode: "normal" },
@@ -388,12 +434,45 @@ describe("Vim Command Integration Tests", () => {
       expect(state.mode).toBe("insert");
     });
 
-    test("cw changes to next word", () => {
+    test("cw changes to end of word (like ce)", () => {
       const state = executeVimCommands(
         { ...initialState, text: "hello world", cursor: 0, mode: "normal" },
         ["c", "w"]
       );
-      expect(state.text).toBe("world");
+      expect(state.text).toBe(" world");
+      expect(state.mode).toBe("insert");
+    });
+
+    test("cw differs from dw (cw like ce)", () => {
+      const dwState = executeVimCommands(
+        { ...initialState, text: "hello world", cursor: 0, mode: "normal" },
+        ["d", "w"]
+      );
+      expect(dwState.text).toBe("world");
+
+      const cwState = executeVimCommands(
+        { ...initialState, text: "hello world", cursor: 0, mode: "normal" },
+        ["c", "w"]
+      );
+      expect(cwState.text).toBe(" world");
+    });
+
+    test("cW changes to end of WORD when on WORD char (like cE)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "foo-bar baz", cursor: 0, mode: "normal" },
+        ["c", "W"]
+      );
+      expect(state.text).toBe(" baz");
+      expect(state.yankBuffer).toBe("foo-bar");
+      expect(state.mode).toBe("insert");
+    });
+
+    test("cE changes to end of WORD", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "foo-bar baz", cursor: 0, mode: "normal" },
+        ["c", "E"]
+      );
+      expect(state.text).toBe(" baz");
       expect(state.mode).toBe("insert");
     });
   });

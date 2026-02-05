@@ -3,10 +3,12 @@
  * All functions are pure and accept text + cursor position, returning new state.
  *
  * Keep in sync with:
- * - docs/vim-mode.md (user documentation)
- * - src/components/VimTextArea.tsx (React component integration)
- * - src/utils/vim.test.ts (integration tests)
+ * - docs/config/vim-mode.mdx (user documentation)
+ * - src/browser/components/VimTextArea.tsx (React component integration)
+ * - src/browser/utils/vim.test.ts (integration tests)
  */
+
+import assert from "@/common/utils/assert";
 
 export type VimMode = "insert" | "normal";
 
@@ -28,6 +30,45 @@ export type VimKeyResult =
 export interface LinesInfo {
   lines: string[];
   starts: number[]; // start index of each line
+}
+
+function assertVimState(state: VimState): void {
+  assert(state.mode === "insert" || state.mode === "normal", "Unexpected Vim mode");
+  assert(typeof state.text === "string", "Vim text must be a string");
+  assert(typeof state.yankBuffer === "string", "Vim yankBuffer must be a string");
+
+  assert(Number.isFinite(state.cursor), "Vim cursor must be a finite number");
+  assert(Number.isInteger(state.cursor), "Vim cursor must be an integer");
+  assert(state.cursor >= 0, "Vim cursor must be >= 0");
+
+  const maxCursor =
+    state.mode === "insert" ? state.text.length : Math.max(0, state.text.length - 1);
+  assert(
+    state.cursor <= maxCursor,
+    `Vim cursor out of bounds for mode=${state.mode}. cursor=${state.cursor} max=${maxCursor} text.length=${state.text.length}`
+  );
+
+  if (state.desiredColumn != null) {
+    assert(Number.isFinite(state.desiredColumn), "Vim desiredColumn must be a finite number");
+    assert(Number.isInteger(state.desiredColumn), "Vim desiredColumn must be an integer");
+    assert(state.desiredColumn >= 0, "Vim desiredColumn must be >= 0");
+  }
+
+  if (state.pendingOp) {
+    assert(
+      state.pendingOp.op === "d" || state.pendingOp.op === "c" || state.pendingOp.op === "y",
+      "Unexpected Vim pending operator"
+    );
+
+    assert(Number.isFinite(state.pendingOp.at), "Vim pendingOp.at must be a finite timestamp");
+
+    if (state.pendingOp.args != null) {
+      assert(Array.isArray(state.pendingOp.args), "Vim pendingOp.args must be an array");
+      for (const arg of state.pendingOp.args) {
+        assert(typeof arg === "string", "Vim pendingOp args must be strings");
+      }
+    }
+  }
 }
 
 /**
@@ -149,6 +190,44 @@ export function moveWordForward(text: string, cursor: number): number {
 }
 
 /**
+ * Move cursor to next WORD boundary (like 'W').
+ * WORD chars are anything that's not whitespace (Vim's "WORD" definition).
+ *
+ * In normal mode, cursor should never go past the last character.
+ */
+export function moveWORDForward(text: string, cursor: number): number {
+  const n = text.length;
+  if (n === 0) return 0;
+
+  let i = Math.max(0, Math.min(cursor, n - 1));
+  const isWORD = (ch: string) => !/\s/.test(ch);
+
+  const advancePastWORD = (idx: number): number => {
+    let j = idx;
+    while (j < n && isWORD(text[j])) j++;
+    return j;
+  };
+
+  const advanceToWORD = (idx: number): number => {
+    let j = idx;
+    while (j < n && !isWORD(text[j])) j++;
+    return j;
+  };
+
+  if (isWORD(text[i])) {
+    i = advancePastWORD(i);
+  }
+
+  i = advanceToWORD(i);
+
+  if (i >= n) {
+    return Math.max(0, n - 1);
+  }
+
+  return i;
+}
+
+/**
  * Move cursor to end of current/next word (like 'e').
  * If on a word character, goes to end of current word.
  * If already at end of word, goes to end of next word.
@@ -187,6 +266,42 @@ export function moveWordEnd(text: string, cursor: number): number {
 }
 
 /**
+ * Move cursor to end of current/next WORD (like 'E').
+ * WORD chars are anything that's not whitespace (Vim's "WORD" definition).
+ */
+export function moveWORDEnd(text: string, cursor: number): number {
+  const n = text.length;
+  if (n === 0) return 0;
+  if (cursor >= n - 1) return Math.max(0, n - 1);
+
+  const clamp = Math.max(0, Math.min(cursor, n - 1));
+  const isWORD = (ch: string) => !/\s/.test(ch);
+
+  if (!isWORD(text[clamp])) {
+    let i = clamp;
+    while (i < n && !isWORD(text[i])) i++;
+    if (i >= n) return Math.max(0, n - 1);
+    while (i < n - 1 && isWORD(text[i + 1])) i++;
+    return i;
+  }
+
+  let endOfCurrent = clamp;
+  while (endOfCurrent < n - 1 && isWORD(text[endOfCurrent + 1])) endOfCurrent++;
+
+  if (clamp < endOfCurrent) {
+    return endOfCurrent;
+  }
+
+  let j = endOfCurrent + 1;
+  while (j < n && !isWORD(text[j])) j++;
+  if (j >= n) return Math.max(0, n - 1);
+
+  let endOfNext = j;
+  while (endOfNext < n - 1 && isWORD(text[endOfNext + 1])) endOfNext++;
+  return endOfNext;
+}
+
+/**
  * Move cursor to previous word boundary (like 'b').
  * In normal mode, cursor should never go past the last character.
  */
@@ -194,6 +309,18 @@ export function moveWordBackward(text: string, cursor: number): number {
   let i = cursor - 1;
   while (i > 0 && /\s/.test(text[i])) i--;
   while (i > 0 && /[A-Za-z0-9_]/.test(text[i - 1])) i--;
+  // Clamp to last character position in normal mode (never past the end)
+  return Math.min(Math.max(0, i), Math.max(0, text.length - 1));
+}
+
+/**
+ * Move cursor to previous WORD boundary (like 'B').
+ * WORD chars are anything that's not whitespace (Vim's "WORD" definition).
+ */
+export function moveWORDBackward(text: string, cursor: number): number {
+  let i = cursor - 1;
+  while (i > 0 && /\s/.test(text[i])) i--;
+  while (i > 0 && !/\s/.test(text[i - 1])) i--;
   // Clamp to last character position in normal mode (never past the end)
   return Math.min(Math.max(0, i), Math.max(0, text.length - 1));
 }
@@ -388,11 +515,18 @@ export function handleKeyPress(
   key: string,
   modifiers: KeyModifiers
 ): VimKeyResult {
-  if (state.mode === "insert") {
-    return handleInsertModeKey(state, key, modifiers);
-  } else {
-    return handleNormalModeKey(state, key, modifiers);
+  assertVimState(state);
+
+  const result =
+    state.mode === "insert"
+      ? handleInsertModeKey(state, key, modifiers)
+      : handleNormalModeKey(state, key, modifiers);
+
+  if (result.handled) {
+    assertVimState(result.newState);
   }
+
+  return result;
 }
 
 /**
@@ -496,14 +630,30 @@ function handlePendingOperator(
   // Handle motions when no text object is pending
   if (args.length === 0) {
     // Word motions
-    if (key === "w" || key === "W") {
-      return { handled: true, newState: applyOperatorMotion(state, pending.op, "w") };
+    if (key === "w") {
+      // Vim special-case: `cw` behaves like `ce` when on a word char.
+      const isWordChar =
+        state.cursor < state.text.length && /[A-Za-z0-9_]/.test(state.text[state.cursor]);
+      const motion: "w" | "e" = pending.op === "c" && isWordChar ? "e" : "w";
+      return { handled: true, newState: applyOperatorMotion(state, pending.op, motion) };
     }
-    if (key === "b" || key === "B") {
+    if (key === "W") {
+      // Vim special-case: `cW` behaves like `cE` when on a WORD char.
+      const isWORDChar = state.cursor < state.text.length && !/\s/.test(state.text[state.cursor]);
+      const motion: "W" | "E" = pending.op === "c" && isWORDChar ? "E" : "W";
+      return { handled: true, newState: applyOperatorMotion(state, pending.op, motion) };
+    }
+    if (key === "b") {
       return { handled: true, newState: applyOperatorMotion(state, pending.op, "b") };
     }
-    if (key === "e" || key === "E") {
+    if (key === "B") {
+      return { handled: true, newState: applyOperatorMotion(state, pending.op, "B") };
+    }
+    if (key === "e") {
       return { handled: true, newState: applyOperatorMotion(state, pending.op, "e") };
+    }
+    if (key === "E") {
+      return { handled: true, newState: applyOperatorMotion(state, pending.op, "E") };
     }
     // Line motions
     if (key === "$" || key === "End") {
@@ -554,15 +704,21 @@ function handleKey(state: VimState, updates: Partial<VimState>): VimKeyResult {
 function getMotionRange(
   text: string,
   cursor: number,
-  motion: "w" | "b" | "e" | "$" | "0" | "_" | "line"
+  motion: "w" | "W" | "b" | "B" | "e" | "E" | "$" | "0" | "_" | "line"
 ): { from: number; to: number } | null {
   switch (motion) {
     case "w":
       return { from: cursor, to: moveWordForward(text, cursor) };
+    case "W":
+      return { from: cursor, to: moveWORDForward(text, cursor) };
     case "b":
       return { from: moveWordBackward(text, cursor), to: cursor };
+    case "B":
+      return { from: moveWORDBackward(text, cursor), to: cursor };
     case "e":
       return { from: cursor, to: moveWordEnd(text, cursor) + 1 };
+    case "E":
+      return { from: cursor, to: moveWORDEnd(text, cursor) + 1 };
     case "$": {
       const { lineEnd } = getLineBounds(text, cursor);
       return { from: cursor, to: lineEnd };
@@ -585,7 +741,7 @@ function getMotionRange(
 function applyOperatorMotion(
   state: VimState,
   op: "d" | "c" | "y",
-  motion: "w" | "b" | "e" | "$" | "0" | "_" | "line"
+  motion: "w" | "W" | "b" | "B" | "e" | "E" | "$" | "0" | "_" | "line"
 ): VimState {
   const { text, cursor, yankBuffer } = state;
 
@@ -738,16 +894,22 @@ function tryHandleNavigation(state: VimState, key: string): VimKeyResult | null 
     }
 
     case "w":
-    case "W":
       return handleKey(state, { cursor: moveWordForward(text, cursor), desiredColumn: null });
 
+    case "W":
+      return handleKey(state, { cursor: moveWORDForward(text, cursor), desiredColumn: null });
+
     case "b":
-    case "B":
       return handleKey(state, { cursor: moveWordBackward(text, cursor), desiredColumn: null });
 
+    case "B":
+      return handleKey(state, { cursor: moveWORDBackward(text, cursor), desiredColumn: null });
+
     case "e":
-    case "E":
       return handleKey(state, { cursor: moveWordEnd(text, cursor), desiredColumn: null });
+
+    case "E":
+      return handleKey(state, { cursor: moveWORDEnd(text, cursor), desiredColumn: null });
 
     case "0":
     case "Home": {

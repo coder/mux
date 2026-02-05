@@ -19,9 +19,9 @@ import { VIM_ENABLED_KEY } from "@/common/constants/storage";
  * - Respects a suppressKeys list (e.g. when command suggestions popover is open)
  *
  * Keep in sync with:
- * - docs/vim-mode.md (user documentation)
- * - src/utils/vim.ts (core Vim logic)
- * - src/utils/vim.test.ts (integration tests)
+ * - docs/config/vim-mode.mdx (user documentation)
+ * - src/browser/utils/vim.ts (core Vim logic)
+ * - src/browser/utils/vim.test.ts (integration tests)
  */
 
 export interface VimTextAreaProps extends Omit<
@@ -204,7 +204,11 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
                       href="#"
                       onClick={(e) => {
                         e.preventDefault();
-                        window.open("/docs/vim-mode.md");
+                        try {
+                          window.open("https://mux.coder.com/config/vim-mode", "_blank");
+                        } catch {
+                          /* ignore */
+                        }
                       }}
                     >
                       Vim Mode docs
