@@ -230,7 +230,7 @@
     "playwright-core": "1.57.0"
   },
   "optionalDependencies": {
-    "electron": "^38.2.1",
+    "electron": "38.7.2",
     "node-pty": "1.1.0-beta39"
   },
   "files": [
