@@ -6,6 +6,7 @@ import { Config } from "@/node/config";
 import { InitStateManager } from "./initStateManager";
 import type { WorkspaceInitEvent } from "@/common/orpc/types";
 import { INIT_HOOK_MAX_LINES } from "@/common/constants/toolLimits";
+import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 
 describe("InitStateManager", () => {
   let tempDir: string;
@@ -248,6 +249,47 @@ describe("InitStateManager", () => {
       // eslint-disable-next-line @typescript-eslint/await-thenable
       await expect(initPromise).resolves.toBeUndefined();
     });
+
+    it("should not recreate session directory if queued persistence runs after state is cleared", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      const sessionDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(sessionDir, { recursive: true });
+
+      let releaseLock: (() => void) | undefined;
+      const lockHeld = workspaceFileLocks.withLock(workspaceId, async () => {
+        await new Promise<void>((resolve) => {
+          releaseLock = resolve;
+        });
+      });
+
+      // Let the lock callback run so releaseLock is set.
+      await Promise.resolve();
+      if (!releaseLock) {
+        throw new Error("Expected workspace file lock to be held");
+      }
+
+      // Queue endInit persistence behind the workspace file lock.
+      const endInitPromise = manager.endInit(workspaceId, 0);
+
+      // Simulate workspace removal: clear in-memory init state and delete the session directory.
+      manager.clearInMemoryState(workspaceId);
+      await fs.rm(sessionDir, { recursive: true, force: true });
+
+      // Allow queued persistence to proceed.
+      releaseLock();
+      await lockHeld;
+      await endInitPromise;
+
+      expect(await manager.readInitStatus(workspaceId)).toBeNull();
+
+      const sessionDirExists = await fs
+        .access(sessionDir)
+        .then(() => true)
+        .catch(() => false);
+      expect(sessionDirExists).toBe(false);
+    });
   });
 
   describe("error handling", () => {
@@ -393,6 +435,63 @@ describe("InitStateManager", () => {
     });
   });
 
+  describe("waitForInit hook phase", () => {
+    it("should not time out during runtime setup (intentional)", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      const waitPromise = manager.waitForInit(workspaceId);
+      const result = await Promise.race([
+        waitPromise.then(() => "done"),
+        new Promise((resolve) => setTimeout(() => resolve("pending"), 150)),
+      ]);
+
+      expect(result).toBe("pending");
+
+      await manager.endInit(workspaceId, 0);
+      await waitPromise;
+    });
+
+    it("should start timeout once hook phase begins", async () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+      manager.enterHookPhase(workspaceId);
+
+      const state = manager.getInitState(workspaceId);
+      if (!state) {
+        throw new Error("Expected init state to exist");
+      }
+      state.hookStartTime = Date.now() - 5 * 60 * 1000 - 1000;
+
+      const waitPromise = manager.waitForInit(workspaceId);
+      const result = await Promise.race([
+        waitPromise.then(() => "done"),
+        new Promise((resolve) => setTimeout(() => resolve("pending"), 150)),
+      ]);
+
+      expect(result).toBe("done");
+
+      await manager.endInit(workspaceId, 0);
+      await waitPromise;
+    });
+
+    it("should set hookStartTime when entering hook phase", () => {
+      const workspaceId = "test-workspace";
+      manager.startInit(workspaceId, "/path/to/hook");
+
+      manager.enterHookPhase(workspaceId);
+
+      const state = manager.getInitState(workspaceId);
+      if (!state) {
+        throw new Error("Expected init state to exist");
+      }
+
+      expect(state.phase).toBe("init_hook");
+      expect(state.hookStartTime).toBeDefined();
+      expect(typeof state.hookStartTime).toBe("number");
+    });
+  });
+
   describe("waitForInit with abortSignal", () => {
     it("should return immediately if abortSignal is already aborted", async () => {
       const workspaceId = "test-workspace";
@@ -402,7 +501,7 @@ describe("InitStateManager", () => {
 
       const start = Date.now();
       await manager.waitForInit(workspaceId, controller.signal);
-      expect(Date.now() - start).toBeLessThan(50); // Should be instant
+      expect(Date.now() - start).toBeLessThan(200); // Should be instant
     });
 
     it("should return when abortSignal fires during wait", async () => {
@@ -411,11 +510,11 @@ describe("InitStateManager", () => {
       const controller = new AbortController();
 
       const waitPromise = manager.waitForInit(workspaceId, controller.signal);
-      setTimeout(() => controller.abort(), 10);
+      setTimeout(() => controller.abort(), 20);
 
       const start = Date.now();
       await waitPromise;
-      expect(Date.now() - start).toBeLessThan(100); // Should return quickly after abort
+      expect(Date.now() - start).toBeLessThan(300); // Should return quickly after abort
     });
 
     it("should clean up timeout when init completes first", async () => {

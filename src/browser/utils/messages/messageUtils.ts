@@ -1,4 +1,5 @@
 import type { DisplayedMessage } from "@/common/types/message";
+import { formatReviewForModel } from "@/common/types/review";
 import type { BashOutputToolArgs } from "@/common/types/tools";
 
 /**
@@ -7,7 +8,25 @@ import type { BashOutputToolArgs } from "@/common/types/tools";
 export function getEditableUserMessageText(
   message: Extract<DisplayedMessage, { type: "user" }>
 ): string {
-  return message.content;
+  const reviews = message.reviews;
+  if (!reviews || reviews.length === 0) {
+    return message.content;
+  }
+
+  // Reviews are already stored in metadata; strip their rendered tags to avoid duplication on edit.
+  const reviewText = reviews.map(formatReviewForModel).join("\n\n");
+  if (!message.content.startsWith(reviewText)) {
+    return message.content;
+  }
+
+  const remainder = message.content.slice(reviewText.length);
+  if (remainder.startsWith("\n\n")) {
+    return remainder.slice(2);
+  }
+  if (remainder.startsWith("\n")) {
+    return remainder.slice(1);
+  }
+  return remainder;
 }
 
 /**

@@ -20,6 +20,7 @@ import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import { ProjectService } from "@/node/services/projectService";
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
+import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import { ProviderService } from "@/node/services/providerService";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { TerminalService } from "@/node/services/terminalService";
@@ -89,6 +90,7 @@ export class ServiceContainer {
   public readonly taskService: TaskService;
   public readonly providerService: ProviderService;
   public readonly muxGatewayOauthService: MuxGatewayOauthService;
+  public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -131,11 +133,13 @@ export class ServiceContainer {
     );
     this.mcpServerManager = new MCPServerManager(this.mcpConfigService);
     this.sessionUsageService = new SessionUsageService(config, this.historyService);
+    this.providerService = new ProviderService(config);
     this.aiService = new AIService(
       config,
       this.historyService,
       this.partialService,
       this.initStateManager,
+      this.providerService,
       this.backgroundProcessManager,
       this.sessionUsageService,
       this.workspaceMcpOverridesService
@@ -171,10 +175,16 @@ export class ServiceContainer {
     this.windowService = new WindowService();
     this.mcpOauthService = new McpOauthService(config, this.mcpConfigService, this.windowService);
     this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
-    this.providerService = new ProviderService(config);
+
+    this.policyService = new PolicyService(config);
     this.muxGatewayOauthService = new MuxGatewayOauthService(
       this.providerService,
       this.windowService
+    );
+    this.muxGovernorOauthService = new MuxGovernorOauthService(
+      config,
+      this.windowService,
+      this.policyService
     );
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
@@ -201,8 +211,6 @@ export class ServiceContainer {
     this.workspaceService.setSessionTimingService(this.sessionTimingService);
     this.signingService = getSigningService();
     this.coderService = coderService;
-
-    this.policyService = new PolicyService();
 
     // PolicyService is a cross-cutting dependency; use setter injection to avoid
     // constructor cycles between services.
@@ -376,6 +384,7 @@ export class ServiceContainer {
     this.mcpServerManager.dispose();
     await this.mcpOauthService.dispose();
     await this.muxGatewayOauthService.dispose();
+    await this.muxGovernorOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

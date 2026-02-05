@@ -46,3 +46,16 @@ export const AgentSkillPackageSchema = z
     message: "SKILL.md frontmatter.name must match the parent directory name",
     path: ["frontmatter", "name"],
   });
+
+// Diagnostics (invalid skill discovery)
+export const AgentSkillIssueSchema = z.object({
+  /** Directory name under the skills root (may be invalid / non-kebab-case). */
+  directoryName: z.string().min(1),
+  scope: AgentSkillScopeSchema,
+  /** User-facing path to the problematic skill (typically .../<dir>/SKILL.md). */
+  displayPath: z.string().min(1),
+  /** What went wrong while trying to load the skill. */
+  message: z.string().min(1),
+  /** Optional fix suggestion. */
+  hint: z.string().min(1).optional(),
+});

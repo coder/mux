@@ -22,7 +22,6 @@ import {
   shouldShowInterruptedBarrier,
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfo,
-  getEditableUserMessageText,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
@@ -39,8 +38,7 @@ import {
   type WorkspaceState,
 } from "@/browser/stores/WorkspaceStore";
 import { WorkspaceHeader } from "./WorkspaceHeader";
-import type { FilePart } from "@/common/orpc/types";
-import type { DisplayedMessage } from "@/common/types/message";
+import type { DisplayedMessage, QueuedMessage as QueuedMessageData } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { getRuntimeTypeForTelemetry } from "@/common/telemetry";
 import { useAIViewKeybinds } from "@/browser/hooks/useAIViewKeybinds";
@@ -67,6 +65,11 @@ import {
   useBackgroundBashActions,
   useBackgroundBashError,
 } from "@/browser/contexts/BackgroundBashContext";
+import {
+  buildEditingStateFromDisplayed,
+  normalizeQueuedMessage,
+  type EditingMessageState,
+} from "@/browser/utils/chatEditing";
 
 interface ChatPaneProps {
   workspaceId: string;
@@ -83,8 +86,6 @@ interface ChatPaneProps {
 }
 
 type ReviewsState = ReturnType<typeof useReviews>;
-
-type EditingMessageState = { id: string; content: string; fileParts?: FilePart[] } | undefined;
 
 export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const {
@@ -132,12 +133,12 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   const [editingState, setEditingState] = useState(() => ({
     workspaceId,
-    message: undefined as EditingMessageState,
+    message: undefined as EditingMessageState | undefined,
   }));
   const editingMessage =
     editingState.workspaceId === workspaceId ? editingState.message : undefined;
   const setEditingMessage = useCallback(
-    (message: EditingMessageState) => {
+    (message: EditingMessageState | undefined) => {
       setEditingState({ workspaceId, message });
     },
     [workspaceId]
@@ -334,27 +335,29 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
   // Handlers for editing messages
   const handleEditUserMessage = useCallback(
-    (messageId: string, content: string, fileParts?: FilePart[]) => {
-      setEditingMessage({ id: messageId, content, fileParts });
+    (message: EditingMessageState) => {
+      setEditingMessage(message);
     },
     [setEditingMessage]
+  );
+
+  const restoreQueuedDraft = useCallback(
+    async (queuedMessage: QueuedMessageData) => {
+      const inputApi = chatInputAPI.current;
+      if (!inputApi) return;
+
+      await api?.workspace.clearQueue({ workspaceId });
+      inputApi.restoreDraft(normalizeQueuedMessage(queuedMessage));
+    },
+    [api, workspaceId]
   );
 
   const handleEditQueuedMessage = useCallback(async () => {
     const queuedMessage = workspaceState?.queuedMessage;
     if (!queuedMessage) return;
 
-    const inputApi = chatInputAPI.current;
-    if (!inputApi) return;
-
-    await api?.workspace.clearQueue({ workspaceId });
-    inputApi.restoreText(queuedMessage.content);
-
-    // Restore images if present
-    if (queuedMessage.fileParts && queuedMessage.fileParts.length > 0) {
-      inputApi.restoreAttachments(queuedMessage.fileParts);
-    }
-  }, [api, workspaceId, workspaceState?.queuedMessage]);
+    await restoreQueuedDraft(queuedMessage);
+  }, [restoreQueuedDraft, workspaceState?.queuedMessage]);
 
   // Handler for sending queued message immediately (interrupt + send)
   const handleSendQueuedImmediately = useCallback(async () => {
@@ -372,15 +375,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     if (!current) return;
 
     if (current.queuedMessage) {
-      const queuedMessage = current.queuedMessage;
-
-      await api?.workspace.clearQueue({ workspaceId });
-      chatInputAPI.current?.restoreText(queuedMessage.content);
-
-      // Restore images if present
-      if (queuedMessage.fileParts && queuedMessage.fileParts.length > 0) {
-        chatInputAPI.current?.restoreAttachments(queuedMessage.fileParts);
-      }
+      await restoreQueuedDraft(current.queuedMessage);
       return;
     }
 
@@ -394,11 +389,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       return;
     }
 
-    setEditingMessage({
-      id: lastUserMessage.historyId,
-      content: getEditableUserMessageText(lastUserMessage),
-      fileParts: lastUserMessage.fileParts,
-    });
+    setEditingMessage(buildEditingStateFromDisplayed(lastUserMessage));
     setAutoScroll(false); // Show jump-to-bottom indicator
 
     // Scroll to the message being edited
@@ -408,7 +399,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       );
       element?.scrollIntoView({ behavior: "smooth", block: "center" });
     });
-  }, [api, workspaceId, chatInputAPI, contentRef, setAutoScroll, setEditingMessage]);
+  }, [restoreQueuedDraft, contentRef, setAutoScroll, setEditingMessage]);
 
   const handleEditLastUserMessageClick = useCallback(() => {
     void handleEditLastUserMessage();
@@ -773,7 +764,7 @@ interface ChatInputPaneProps {
   onCompactClick: () => void;
   onMessageSent: () => void;
   onTruncateHistory: (percentage?: number) => Promise<void>;
-  editingMessage: EditingMessageState;
+  editingMessage: EditingMessageState | undefined;
   onCancelEdit: () => void;
   onEditLastUserMessage: () => void;
   onChatInputReady: (api: ChatInputAPI) => void;

@@ -141,7 +141,7 @@ describeIntegration("Workspace Archive (UI)", () => {
         const archiveButton = await waitFor(
           () => {
             const btn = view.container.querySelector(
-              `[aria-label="Archive workspace ${displayTitle}"]`
+              `[aria-label="Archive chat ${displayTitle}"]`
             ) as HTMLElement;
             if (!btn) throw new Error("Archive button not found");
             return btn;
@@ -251,7 +251,7 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
       const archiveButton = await waitFor(
         () => {
           const btn = view.container.querySelector(
-            `[aria-label="Archive workspace ${secondDisplayTitle}"]`
+            `[aria-label="Archive chat ${secondDisplayTitle}"]`
           ) as HTMLElement;
           if (!btn) throw new Error("Archive button not found for second workspace");
           return btn;

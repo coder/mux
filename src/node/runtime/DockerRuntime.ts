@@ -531,6 +531,7 @@ export class DockerRuntime extends RemoteRuntime {
       // Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
+        initLogger.enterHookPhase?.();
         const muxEnv = { ...env, ...getMuxEnv(projectPath, "docker", branchName) };
         const hookPath = `${workspacePath}/.mux/init`;
         await runInitHookOnRuntime(this, hookPath, workspacePath, muxEnv, initLogger, abortSignal);

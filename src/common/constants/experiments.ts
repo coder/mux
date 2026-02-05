@@ -10,6 +10,7 @@ export const EXPERIMENT_IDS = {
   PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE: "programmatic-tool-calling-exclusive",
   CONFIGURABLE_BIND_URL: "configurable-bind-url",
   SYSTEM_1: "system-1",
+  MUX_GOVERNOR: "mux-governor",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -66,6 +67,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.SYSTEM_1,
     name: "System 1",
     description: "Context optimization helpers inspired by Thinking, Fast and Slow (Kahneman)",
+    enabledByDefault: false,
+    userOverridable: true,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.MUX_GOVERNOR]: {
+    id: EXPERIMENT_IDS.MUX_GOVERNOR,
+    name: "Mux Governor",
+    description: "Remote policy delivery for enterprise Mux Governor service",
     enabledByDefault: false,
     userOverridable: true,
     showInSettings: true,

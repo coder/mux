@@ -5,7 +5,7 @@
  * making each story file more focused on the specific visual state being tested.
  */
 
-import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type {
   WorkspaceChatMessage,
@@ -378,6 +378,8 @@ export interface SimpleChatSetupOptions {
   ) => Promise<{ success: true; output: string; exitCode: number; wall_duration_ms: number }>;
   /** Available agent skills for the project */
   agentSkills?: AgentSkillDescriptor[];
+  /** Agent skills that were discovered but couldn't be loaded (SKILL.md parse errors, etc.) */
+  invalidAgentSkills?: AgentSkillIssue[];
 }
 
 /**
@@ -463,6 +465,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
     idleCompactionHours,
     signingCapabilities: opts.signingCapabilities,
     agentSkills: opts.agentSkills,
+    invalidAgentSkills: opts.invalidAgentSkills,
   });
 }
 

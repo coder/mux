@@ -42,12 +42,14 @@ function createNullInitLogger() {
     logStdout: (_line: string) => undefined,
     logStderr: (_line: string) => undefined,
     logComplete: (_exitCode: number) => undefined,
+    enterHookPhase: () => undefined,
   };
 }
 
 function createMockInitStateManager(): InitStateManager {
   return {
     startInit: mock(() => undefined),
+    enterHookPhase: mock(() => undefined),
     appendOutput: mock(() => undefined),
     endInit: mock(() => Promise.resolve()),
     getInitState: mock(() => undefined),

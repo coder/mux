@@ -453,7 +453,9 @@ describe("WorkspaceService remove timing rollup", () => {
 
       const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
-      const mockInitStateManager: Partial<InitStateManager> = {};
+      const mockInitStateManager: Partial<InitStateManager> = {
+        clearInMemoryState: mock(() => undefined),
+      };
       const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
         setStreaming: mock((_workspaceId: string, streaming: boolean) =>
           Promise.resolve({
@@ -505,6 +507,7 @@ describe("WorkspaceService remove timing rollup", () => {
 
       const removeResult = await workspaceService.remove(workspaceId, true);
       expect(removeResult.success).toBe(true);
+      expect(mockInitStateManager.clearInMemoryState).toHaveBeenCalledWith(workspaceId);
       expect(rollUpSawAbort).toBe(true);
     } finally {
       await fsPromises.rm(tempRoot, { recursive: true, force: true });

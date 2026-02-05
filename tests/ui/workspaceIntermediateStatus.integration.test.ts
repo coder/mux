@@ -1,8 +1,8 @@
 /**
  * UI integration test for the “working but no status_set yet” intermediate status.
  *
- * Expectation: While a stream is starting/streaming and no status_set tool has been received,
- * the workspace sidebar row should show provider icon + model name + streaming label.
+ * Expectation: While a stream is starting and no status_set tool has been received,
+ * the workspace sidebar row should show provider icon + model name + starting label.
  */
 
 import "./dom";
@@ -27,7 +27,7 @@ describe("Workspace intermediate status (mock AI router)", () => {
     await preloadTestModules();
   });
 
-  test("shows model + streaming while stream is starting and before status_set", async () => {
+  test("shows model + starting while stream is starting and before status_set", async () => {
     const app = await createAppHarness({ branchPrefix: "status-intermediate" });
 
     const collector = createStreamCollector(app.env.orpc, app.workspaceId);
@@ -60,7 +60,7 @@ describe("Workspace intermediate status (mock AI router)", () => {
           }
 
           const text = wsEl.textContent ?? "";
-          expect(text.toLowerCase()).toContain("streaming");
+          expect(text.toLowerCase()).toContain("starting");
         },
         { timeout: 10_000 }
       );

@@ -13,6 +13,7 @@ import {
 } from "@/common/orpc/schemas";
 import type {
   AgentSkillDescriptor,
+  AgentSkillIssue,
   AgentSkillPackage,
   AgentSkillScope,
   SkillName,
@@ -87,7 +88,8 @@ async function readSkillDescriptorFromDir(
   runtime: Runtime,
   skillDir: string,
   directoryName: SkillName,
-  scope: AgentSkillScope
+  scope: AgentSkillScope,
+  options?: { invalidSkills?: AgentSkillIssue[] }
 ): Promise<AgentSkillDescriptor | null> {
   const skillFilePath = runtime.normalizePath("SKILL.md", skillDir);
 
@@ -95,10 +97,24 @@ async function readSkillDescriptorFromDir(
   try {
     stat = await runtime.stat(skillFilePath);
   } catch {
+    options?.invalidSkills?.push({
+      directoryName,
+      scope,
+      displayPath: skillFilePath,
+      message: "SKILL.md is missing or unreadable.",
+      hint: "Create a SKILL.md file with YAML frontmatter (--- ... ---).",
+    });
     return null;
   }
 
   if (stat.isDirectory) {
+    options?.invalidSkills?.push({
+      directoryName,
+      scope,
+      displayPath: skillFilePath,
+      message: "SKILL.md is a directory (expected a file).",
+      hint: "Replace SKILL.md with a regular file.",
+    });
     return null;
   }
 
@@ -106,6 +122,13 @@ async function readSkillDescriptorFromDir(
   const sizeValidation = validateFileSize(stat);
   if (sizeValidation) {
     log.warn(`Skipping skill '${directoryName}' (${scope}): ${sizeValidation.error}`);
+    options?.invalidSkills?.push({
+      directoryName,
+      scope,
+      displayPath: skillFilePath,
+      message: sizeValidation.error,
+      hint: "Reduce SKILL.md size below 1MB.",
+    });
     return null;
   }
 
@@ -113,7 +136,15 @@ async function readSkillDescriptorFromDir(
   try {
     content = await readFileString(runtime, skillFilePath);
   } catch (err) {
-    log.warn(`Failed to read SKILL.md for ${directoryName}: ${formatError(err)}`);
+    const message = formatError(err);
+    log.warn(`Failed to read SKILL.md for ${directoryName}: ${message}`);
+    options?.invalidSkills?.push({
+      directoryName,
+      scope,
+      displayPath: skillFilePath,
+      message: `Failed to read SKILL.md: ${message}`,
+      hint: "Check file permissions and ensure the file is UTF-8 text.",
+    });
     return null;
   }
 
@@ -134,6 +165,13 @@ async function readSkillDescriptorFromDir(
     const validated = AgentSkillDescriptorSchema.safeParse(descriptor);
     if (!validated.success) {
       log.warn(`Invalid agent skill descriptor for ${directoryName}: ${validated.error.message}`);
+      options?.invalidSkills?.push({
+        directoryName,
+        scope,
+        displayPath: skillFilePath,
+        message: `Invalid agent skill descriptor: ${validated.error.message}`,
+        hint: "Fix SKILL.md frontmatter fields to satisfy the skill schema.",
+      });
       return null;
     }
 
@@ -141,6 +179,13 @@ async function readSkillDescriptorFromDir(
   } catch (err) {
     const message = err instanceof AgentSkillParseError ? err.message : formatError(err);
     log.warn(`Skipping invalid skill '${directoryName}' (${scope}): ${message}`);
+    options?.invalidSkills?.push({
+      directoryName,
+      scope,
+      displayPath: skillFilePath,
+      message,
+      hint: "Fix SKILL.md frontmatter (name + description) and ensure it matches the directory name.",
+    });
     return null;
   }
 }
@@ -213,6 +258,109 @@ export async function discoverAgentSkills(
   }
 
   return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export interface DiscoverAgentSkillsDiagnosticsResult {
+  skills: AgentSkillDescriptor[];
+  invalidSkills: AgentSkillIssue[];
+}
+
+export async function discoverAgentSkillsDiagnostics(
+  runtime: Runtime,
+  workspacePath: string,
+  options?: { roots?: AgentSkillsRoots }
+): Promise<DiscoverAgentSkillsDiagnosticsResult> {
+  if (!workspacePath) {
+    throw new Error("discoverAgentSkillsDiagnostics: workspacePath is required");
+  }
+
+  const roots = options?.roots ?? getDefaultAgentSkillsRoots(runtime, workspacePath);
+
+  const byName = new Map<SkillName, AgentSkillDescriptor>();
+  const invalidSkills: AgentSkillIssue[] = [];
+
+  // Project skills take precedence over global.
+  const scans: Array<{ scope: AgentSkillScope; root: string }> = [
+    { scope: "project", root: roots.projectRoot },
+    { scope: "global", root: roots.globalRoot },
+  ];
+
+  for (const scan of scans) {
+    let resolvedRoot: string;
+    try {
+      resolvedRoot = await runtime.resolvePath(scan.root);
+    } catch (err) {
+      log.warn(`Failed to resolve skills root ${scan.root}: ${formatError(err)}`);
+      continue;
+    }
+
+    const directoryNames =
+      runtime instanceof SSHRuntime
+        ? await listSkillDirectoriesFromRuntime(runtime, resolvedRoot, { cwd: workspacePath })
+        : await listSkillDirectoriesFromLocalFs(resolvedRoot);
+
+    for (const directoryNameRaw of directoryNames) {
+      const nameParsed = SkillNameSchema.safeParse(directoryNameRaw);
+      if (!nameParsed.success) {
+        log.warn(`Skipping invalid skill directory name '${directoryNameRaw}' in ${resolvedRoot}`);
+        invalidSkills.push({
+          directoryName: directoryNameRaw,
+          scope: scan.scope,
+          displayPath: runtime.normalizePath(directoryNameRaw, resolvedRoot),
+          message: `Invalid skill directory name '${directoryNameRaw}'.`,
+          hint: "Rename the directory to kebab-case (lowercase letters/numbers/hyphens).",
+        });
+        continue;
+      }
+
+      const directoryName = nameParsed.data;
+
+      if (scan.scope === "global" && byName.has(directoryName)) {
+        continue;
+      }
+
+      const skillDir = runtime.normalizePath(directoryName, resolvedRoot);
+      const descriptor = await readSkillDescriptorFromDir(
+        runtime,
+        skillDir,
+        directoryName,
+        scan.scope,
+        {
+          invalidSkills,
+        }
+      );
+      if (!descriptor) continue;
+
+      // Precedence: project overwrites global.
+      byName.set(descriptor.name, descriptor);
+    }
+  }
+
+  // Add built-in skills (lowest precedence - only if not overridden by project/global)
+  for (const builtIn of getBuiltInSkillDescriptors()) {
+    if (!byName.has(builtIn.name)) {
+      byName.set(builtIn.name, builtIn);
+    }
+  }
+
+  const skills = Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+  const scopeOrder: Readonly<Record<AgentSkillScope, number>> = {
+    project: 0,
+    global: 1,
+    "built-in": 2,
+  };
+
+  invalidSkills.sort((a, b) => {
+    const scopeDiff = (scopeOrder[a.scope] ?? 0) - (scopeOrder[b.scope] ?? 0);
+    if (scopeDiff !== 0) return scopeDiff;
+    return a.directoryName.localeCompare(b.directoryName);
+  });
+
+  return {
+    skills,
+    invalidSkills,
+  };
 }
 
 export interface ResolvedAgentSkill {

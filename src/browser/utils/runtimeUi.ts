@@ -157,7 +157,7 @@ export const RUNTIME_UI = {
 const CODER_RUNTIME_UI: RuntimeUiSpec = {
   ...RUNTIME_UI.ssh,
   label: "Coder",
-  description: "Coder-managed workspace via the Coder CLI",
+  description: "Coder workspace via the Coder CLI",
   docsPath: "/runtime/coder",
   Icon: CoderIcon,
 };

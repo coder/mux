@@ -10,6 +10,7 @@ import {
   Keyboard,
   Layout,
   BrainCircuit,
+  ShieldCheck,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
@@ -20,6 +21,7 @@ import { TasksSection } from "./sections/TasksSection";
 import { ProvidersSection } from "./sections/ProvidersSection";
 import { ModelsSection } from "./sections/ModelsSection";
 import { System1Section } from "./sections/System1Section";
+import { GovernorSection } from "./sections/GovernorSection";
 import { Button } from "@/browser/components/ui/button";
 import { ProjectSettingsSection } from "./sections/ProjectSettingsSection";
 import { LayoutsSection } from "./sections/LayoutsSection";
@@ -81,24 +83,42 @@ const BASE_SECTIONS: SettingsSection[] = [
 export function SettingsModal() {
   const { isOpen, close, activeSection, setActiveSection } = useSettings();
   const system1Enabled = useExperimentValue(EXPERIMENT_IDS.SYSTEM_1);
+  const governorEnabled = useExperimentValue(EXPERIMENT_IDS.MUX_GOVERNOR);
 
+  // Reset activeSection if the experiment is disabled
   React.useEffect(() => {
     if (!system1Enabled && activeSection === "system1") {
       setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
     }
-  }, [activeSection, setActiveSection, system1Enabled]);
+    if (!governorEnabled && activeSection === "governor") {
+      setActiveSection(BASE_SECTIONS[0]?.id ?? "general");
+    }
+  }, [activeSection, setActiveSection, system1Enabled, governorEnabled]);
 
-  const sections = system1Enabled
-    ? [
-        ...BASE_SECTIONS,
-        {
-          id: "system1",
-          label: "System 1",
-          icon: <BrainCircuit className="h-4 w-4" />,
-          component: System1Section,
-        },
-      ]
-    : BASE_SECTIONS;
+  // Build sections list based on enabled experiments
+  let sections: SettingsSection[] = BASE_SECTIONS;
+  if (system1Enabled) {
+    sections = [
+      ...sections,
+      {
+        id: "system1",
+        label: "System 1",
+        icon: <BrainCircuit className="h-4 w-4" />,
+        component: System1Section,
+      },
+    ];
+  }
+  if (governorEnabled) {
+    sections = [
+      ...sections,
+      {
+        id: "governor",
+        label: "Governor",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        component: GovernorSection,
+      },
+    ];
+  }
 
   const currentSection = sections.find((s) => s.id === activeSection) ?? sections[0];
   const SectionComponent = currentSection.component;

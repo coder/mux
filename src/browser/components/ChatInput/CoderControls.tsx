@@ -60,17 +60,24 @@ function hasTemplateDuplicateName(template: CoderTemplate, allTemplates: CoderTe
 export type CoderAvailabilityState =
   | { state: "loading"; reason: string; shouldShowRuntimeButton: false }
   | { state: "outdated"; reason: string; shouldShowRuntimeButton: true }
-  | { state: "unavailable"; reason: string; shouldShowRuntimeButton: false }
+  | { state: "unavailable"; reason: string; shouldShowRuntimeButton: boolean }
   | { state: "available"; shouldShowRuntimeButton: true };
 
 function getCoderOutdatedReason(coderInfo: Extract<CoderInfo, { state: "outdated" }>) {
-  return `Coder CLI v${coderInfo.version} is below the minimum required v${coderInfo.minVersion}. Update the CLI to enable.`;
+  const cliLabel = coderInfo.binaryPath ?? "Coder CLI";
+  return `${cliLabel} ${coderInfo.version} is below minimum v${coderInfo.minVersion}.`;
 }
 
 function getCoderUnavailableReason(coderInfo: Extract<CoderInfo, { state: "unavailable" }>) {
-  return coderInfo.reason === "missing"
-    ? "Coder CLI not found. Install to enable."
-    : `Coder CLI error: ${coderInfo.reason.message}`;
+  if (coderInfo.reason === "missing") {
+    return "Coder CLI not found. Install to enable.";
+  }
+
+  if (coderInfo.reason.kind === "not-logged-in") {
+    return coderInfo.reason.message || "CLI not logged in. Run `coder login <url>` first.";
+  }
+
+  return `Coder CLI error: ${coderInfo.reason.message}`;
 }
 
 export function resolveCoderAvailability(coderInfo: CoderInfo | null): CoderAvailabilityState {
@@ -87,10 +94,13 @@ export function resolveCoderAvailability(coderInfo: CoderInfo | null): CoderAvai
   }
 
   if (coderInfo.state === "unavailable") {
+    const shouldShowRuntimeButton =
+      coderInfo.reason !== "missing" && coderInfo.reason.kind === "not-logged-in";
+
     return {
       state: "unavailable",
       reason: getCoderUnavailableReason(coderInfo),
-      shouldShowRuntimeButton: false,
+      shouldShowRuntimeButton,
     };
   }
 
@@ -112,6 +122,10 @@ export function CoderAvailabilityMessage(props: { coderInfo: CoderInfo | null })
   }
 
   if (availability.state === "outdated") {
+    return <p className="text-xs text-yellow-500">{availability.reason}</p>;
+  }
+
+  if (availability.state === "unavailable" && availability.shouldShowRuntimeButton) {
     return <p className="text-xs text-yellow-500">{availability.reason}</p>;
   }
 

@@ -21,6 +21,7 @@ import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { AIService } from "@/node/services/aiService";
+import { ProviderService } from "@/node/services/providerService";
 import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
@@ -77,7 +78,7 @@ import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
-// Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
+// Display labels for CLI help (OFF, LOW, MED, HIGH, XHIGH)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
 
 type CLIMode = "plan" | "exec";
@@ -117,7 +118,7 @@ function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefine
     return level;
   }
   throw new Error(
-    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, xhigh)`
+    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, max)`
   );
 }
 
@@ -402,6 +403,7 @@ async function main(): Promise<number> {
   const historyService = new HistoryService(config);
   const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
+  const providerService = new ProviderService(config);
   const backgroundProcessManager = new BackgroundProcessManager(
     path.join(os.tmpdir(), "mux-bashes")
   );
@@ -410,6 +412,7 @@ async function main(): Promise<number> {
     historyService,
     partialService,
     initStateManager,
+    providerService,
     backgroundProcessManager
   );
 

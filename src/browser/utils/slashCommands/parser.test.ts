@@ -69,6 +69,59 @@ describe("commandParser", () => {
       });
     });
 
+    it("should parse /<model-alias> as model-oneshot with message", () => {
+      expectParse("/haiku check the pr", {
+        type: "model-oneshot",
+        modelString: KNOWN_MODELS.HAIKU.id,
+        message: "check the pr",
+      });
+    });
+
+    it("should parse /<model-alias> with multiline message", () => {
+      expectParse("/sonnet first line\nsecond line", {
+        type: "model-oneshot",
+        modelString: KNOWN_MODELS.SONNET.id,
+        message: "first line\nsecond line",
+      });
+    });
+
+    it("should return model-help for /<model-alias> without message", () => {
+      expectParse("/haiku", { type: "model-help" });
+      expectParse("/sonnet  ", { type: "model-help" }); // whitespace only
+    });
+
+    it("should return unknown-command for unknown aliases", () => {
+      expectParse("/xyz do something", {
+        type: "unknown-command",
+        command: "xyz",
+        subcommand: "do",
+      });
+    });
+
+    it("should not treat inherited properties as model aliases", () => {
+      // Ensures we use Object.hasOwn to avoid prototype chain lookups
+      expectParse("/toString hello", {
+        type: "unknown-command",
+        command: "toString",
+        subcommand: "hello",
+      });
+      expectParse("/constructor test", {
+        type: "unknown-command",
+        command: "constructor",
+        subcommand: "test",
+      });
+    });
+
+    it("treats inherited properties as literal model inputs", () => {
+      expectParse("/model toString", { type: "model-set", modelString: "toString" });
+      expectParse("/compact -m toString", {
+        type: "compact",
+        maxOutputTokens: undefined,
+        continueMessage: undefined,
+        model: "toString",
+      });
+    });
+
     it("should parse /vim command", () => {
       expectParse("/vim", { type: "vim-toggle" });
     });

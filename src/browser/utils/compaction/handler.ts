@@ -8,6 +8,10 @@
 import type { StreamingMessageAggregator } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { getCompactionFollowUpContent } from "@/common/types/message";
 import type { APIClient } from "@/browser/contexts/API";
+import {
+  buildEditingStateFromCompaction,
+  type EditingMessageState,
+} from "@/browser/utils/chatEditing";
 import { getFollowUpContentText } from "./format";
 
 /**
@@ -67,7 +71,7 @@ export async function cancelCompaction(
   client: APIClient,
   workspaceId: string,
   aggregator: StreamingMessageAggregator,
-  startEditingMessage: (messageId: string, initialText: string) => void
+  startEditingMessage: (editing: EditingMessageState) => void
 ): Promise<boolean> {
   // Find the compaction request message
   const compactionRequestMsg = findCompactionRequestMessage(aggregator);
@@ -81,9 +85,15 @@ export async function cancelCompaction(
     return false;
   }
 
+  // Extract follow-up content (attachments, reviews) that would be sent after compaction.
+  // Without this, canceling compaction would lose any attached files or code reviews.
+  const followUpContent = getCompactionFollowUpContent(compactionRequestMsg.metadata?.muxMetadata);
+
   // Enter edit mode first so any subsequent restore-to-input event from the interrupt can't
-  // clobber the edit buffer.
-  startEditingMessage(compactionRequestMsg.id, command);
+  // clobber the edit buffer. Use the compaction builder to preserve attachments/reviews.
+  startEditingMessage(
+    buildEditingStateFromCompaction(compactionRequestMsg.id, command, followUpContent)
+  );
 
   // Interrupt stream with abandonPartial flag
   // Backend detects this and skips compaction (Ctrl+C flow)

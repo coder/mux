@@ -20,8 +20,12 @@ export interface TimedLine {
  */
 export interface InitStatus {
   status: "running" | "success" | "error";
+  /** Phase of initialization (optional for backwards compat with persisted data). */
+  phase?: "runtime_setup" | "init_hook";
   hookPath: string;
   startTime: number;
+  /** Timestamp when init hook started (used for timeout calculations). */
+  hookStartTime?: number;
   lines: TimedLine[];
   exitCode: number | null;
   endTime: number | null; // When init-end event occurred
@@ -70,7 +74,13 @@ export class InitStateManager extends EventEmitter {
    */
   private readonly initPromises = new Map<
     string,
-    { promise: Promise<void>; resolve: () => void; reject: (error: Error) => void }
+    {
+      promise: Promise<void>;
+      resolve: () => void;
+      reject: (error: Error) => void;
+      hookPhasePromise: Promise<void>;
+      resolveHookPhase: () => void;
+    }
   >();
 
   constructor(config: Config) {
@@ -156,6 +166,7 @@ export class InitStateManager extends EventEmitter {
 
     const state: InitHookState = {
       status: "running",
+      phase: "runtime_setup",
       hookPath,
       startTime,
       lines: [],
@@ -169,15 +180,23 @@ export class InitStateManager extends EventEmitter {
     // This allows multiple tools to await the same init without event listeners
     let resolve: () => void;
     let reject: (error: Error) => void;
+    let resolveHookPhase: () => void;
     const promise = new Promise<void>((res, rej) => {
       resolve = res;
       reject = rej;
+    });
+    // Prevent unhandled rejections if a workspace is deleted before any waiters attach.
+    promise.catch(() => undefined);
+    const hookPhasePromise = new Promise<void>((res) => {
+      resolveHookPhase = res;
     });
 
     this.initPromises.set(workspaceId, {
       promise,
       resolve: resolve!,
       reject: reject!,
+      hookPhasePromise,
+      resolveHookPhase: resolveHookPhase!,
     });
 
     log.debug(`Init hook started for workspace ${workspaceId}: ${hookPath}`);
@@ -189,6 +208,28 @@ export class InitStateManager extends EventEmitter {
       hookPath,
       timestamp: startTime,
     } satisfies WorkspaceInitEvent & { workspaceId: string });
+  }
+
+  /**
+   * Signal that the .mux/init hook is starting.
+   * This marks the transition from runtime provisioning to hook execution so
+   * waitForInit() can start the 5-minute timeout at the right time.
+   */
+  enterHookPhase(workspaceId: string): void {
+    const state = this.store.getState(workspaceId);
+    if (state?.status !== "running") {
+      return;
+    }
+
+    if ((state.phase ?? "runtime_setup") === "init_hook") {
+      return;
+    }
+
+    state.phase = "init_hook";
+    state.hookStartTime = Date.now();
+
+    const promiseEntry = this.initPromises.get(workspaceId);
+    promiseEntry?.resolveHookPhase();
   }
 
   /**
@@ -254,7 +295,10 @@ export class InitStateManager extends EventEmitter {
     };
 
     // Persist FIRST - ensures file exists before in-memory state shows completion
-    await this.store.persist(workspaceId, stateToPerist);
+    await this.store.persist(workspaceId, stateToPerist, {
+      // If WorkspaceService.remove() cleared init state, do not recreate ~/.mux/sessions/<id>/
+      shouldWrite: () => this.store.hasState(workspaceId),
+    });
 
     // NOW update in-memory state (replay will now see file exists)
     state.status = finalStatus;
@@ -339,6 +383,7 @@ export class InitStateManager extends EventEmitter {
     const promiseEntry = this.initPromises.get(workspaceId);
     if (promiseEntry) {
       promiseEntry.reject(new Error(`Workspace ${workspaceId} was deleted`));
+      promiseEntry.resolveHookPhase();
       this.initPromises.delete(workspaceId);
     }
   }
@@ -350,7 +395,10 @@ export class InitStateManager extends EventEmitter {
    * Behavior:
    * - No init state: Returns immediately (init not needed or backwards compat)
    * - Init succeeded/failed: Returns immediately (tools proceed regardless of init outcome)
-   * - Init running: Waits for completion promise (up to 5 minutes, then proceeds anyway)
+   * - Init running: waits for runtime provisioning to reach the hook phase (no timeout),
+   *   then waits up to 5 minutes from hook start before proceeding anyway.
+   * - If abortSignal is provided, resolves early when aborted.
+   * - If the workspace is deleted during init, resolves early when state is cleared.
    *
    * This method NEVER throws - tools should always proceed. If init fails or times out,
    * the tool will either succeed (if init wasn't critical) or fail with its own error
@@ -362,6 +410,7 @@ export class InitStateManager extends EventEmitter {
    * - Timeout races handled by Promise.race()
    *
    * @param workspaceId Workspace ID to wait for
+   * @param abortSignal Optional signal to abort the wait early
    */
   async waitForInit(workspaceId: string, abortSignal?: AbortSignal): Promise<void> {
     const state = this.getInitState(workspaceId);
@@ -391,25 +440,13 @@ export class InitStateManager extends EventEmitter {
       return;
     }
 
-    const INIT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+    const INIT_HOOK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
     // Track cleanup handlers
     let timeoutId: NodeJS.Timeout | undefined;
     let abortHandler: (() => void) | undefined;
 
     try {
-      const timeoutPromise = new Promise<void>((resolve) => {
-        timeoutId = setTimeout(() => {
-          log.error(
-            `Init timeout for ${workspaceId} after 5 minutes - tools will proceed anyway. ` +
-              `Init will continue in background.`
-          );
-          resolve();
-        }, INIT_TIMEOUT_MS);
-        // Don't keep Node alive just for this timeout (allows tests to exit)
-        timeoutId.unref();
-      });
-
       const abortPromise = new Promise<void>((resolve) => {
         if (!abortSignal) return; // Never resolves if no signal
         if (abortSignal.aborted) {
@@ -418,6 +455,37 @@ export class InitStateManager extends EventEmitter {
         }
         abortHandler = () => resolve();
         abortSignal.addEventListener("abort", abortHandler, { once: true });
+      });
+
+      // Intentional: provisioning (Coder/devcontainer/etc.) can be long-running, so we
+      // avoid timeouts until .mux/init begins. The wait is still interruptible via
+      // abortSignal or workspace deletion (clearInMemoryState).
+      const phase = state.phase ?? "runtime_setup";
+      if (phase === "runtime_setup") {
+        const first = await Promise.race([
+          promiseEntry.promise.then(() => "complete"),
+          promiseEntry.hookPhasePromise.then(() => "hook"),
+          abortPromise.then(() => "abort"),
+        ]);
+        if (first !== "hook") {
+          return;
+        }
+      }
+
+      const hookStart = state.hookStartTime ?? state.startTime;
+      const elapsed = Date.now() - hookStart;
+      const remaining = Math.max(0, INIT_HOOK_TIMEOUT_MS - elapsed);
+
+      const timeoutPromise = new Promise<void>((resolve) => {
+        timeoutId = setTimeout(() => {
+          log.error(
+            `Init timeout for ${workspaceId} after 5 minutes - tools will proceed anyway. ` +
+              `Init will continue in background.`
+          );
+          resolve();
+        }, remaining);
+        // Don't keep Node alive just for this timeout (allows tests to exit)
+        timeoutId.unref();
       });
 
       // Race between completion, timeout, and abort

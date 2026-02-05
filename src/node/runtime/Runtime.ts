@@ -157,6 +157,8 @@ export interface InitLogger {
   logStderr(line: string): void;
   /** Report init hook completion */
   logComplete(exitCode: number): void;
+  /** Signal that the init hook is about to run (starts timeout window). */
+  enterHookPhase?(): void;
 }
 
 /**

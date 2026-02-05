@@ -474,6 +474,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       // Check if init hook exists (on host - worktree is bind-mounted)
       const hookExists = await checkInitHookExists(workspacePath);
       if (hookExists) {
+        initLogger.enterHookPhase?.();
         const muxEnv = { ...env, ...getMuxEnv(projectPath, "devcontainer", branchName) };
         const containerWorkspacePath = this.remoteWorkspaceFolder ?? workspacePath;
         const hookPath = `${containerWorkspacePath}/.mux/init`;

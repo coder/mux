@@ -45,6 +45,7 @@ export type ApiServerStatus = z.infer<typeof schemas.ApiServerStatusSchema>;
 // Policy types (single source of truth - derived from schemas)
 export type PolicyGetResponse = z.infer<typeof schemas.PolicyGetResponseSchema>;
 export type PolicyStatus = z.infer<typeof schemas.PolicyStatusSchema>;
+export type PolicySource = z.infer<typeof schemas.PolicySourceSchema>;
 export type EffectivePolicy = z.infer<typeof schemas.EffectivePolicySchema>;
 export type PolicyRuntimeId = z.infer<typeof schemas.PolicyRuntimeIdSchema>;
 export type ExperimentValue = z.infer<typeof schemas.ExperimentValueSchema>;

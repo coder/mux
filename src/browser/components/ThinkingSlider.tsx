@@ -84,7 +84,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
         <TooltipTrigger asChild>
           <div className="flex items-center">
             <span
-              className="w-[4ch] text-center text-[11px] select-none"
+              className="w-[5ch] text-center text-[11px] select-none"
               style={getTextStyle(value)}
               aria-label={`Thinking level fixed to ${fixedLevel}`}
             >
@@ -124,7 +124,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
               setThinkingLevel(allowed[nextIndex]);
             }}
             data-thinking-label
-            className="hover:bg-hover w-[4ch] min-w-[4ch] shrink-0 rounded-sm bg-transparent p-0 text-center text-[11px] transition-all duration-200 select-none"
+            className="hover:bg-hover w-[5ch] min-w-[5ch] shrink-0 rounded-sm bg-transparent p-0 text-center text-[11px] transition-all duration-200 select-none"
             style={textStyle}
             aria-live="polite"
             aria-label={`Thinking level: ${effectiveThinkingLevel}. Click to cycle.`}

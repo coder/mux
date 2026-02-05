@@ -147,4 +147,28 @@ export class ChatHarness {
       { timeout: timeoutMs }
     );
   }
+
+  /**
+   * Get the currently displayed model name from the ModelSelector.
+   * Returns the text shown in the model selector button (not the full model ID).
+   */
+  async getModelSelectorText(): Promise<string> {
+    return waitFor(
+      () => {
+        const modelSelectorGroup = this.container.querySelector(
+          '[data-component="ModelSelectorGroup"]'
+        );
+        if (!modelSelectorGroup) {
+          throw new Error("ModelSelectorGroup not found");
+        }
+        // The model name is displayed in a button with role="combobox"
+        const combobox = modelSelectorGroup.querySelector('[role="combobox"]');
+        if (!combobox) {
+          throw new Error("Model selector combobox not found");
+        }
+        return combobox.textContent?.trim() ?? "";
+      },
+      { timeout: 5_000 }
+    );
+  }
 }

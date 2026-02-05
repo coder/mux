@@ -41,6 +41,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
     currentModel,
     pendingStreamStartTime,
     pendingCompactionModel,
+    pendingStreamModel,
     runtimeStatus,
   } = workspaceState;
 
@@ -74,6 +75,7 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
   const model =
     phase === "starting"
       ? (pendingCompactionModel ??
+        pendingStreamModel ??
         readPersistedState<string | null>(getModelKey(workspaceId), null) ??
         getDefaultModel())
       : currentModel;

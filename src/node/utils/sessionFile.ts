@@ -7,6 +7,16 @@ import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { log } from "@/node/services/log";
 
+export interface SessionFileWriteOptions {
+  /**
+   * Optional guard that runs *after* the workspace file lock is acquired but *before*
+   * the session directory is created.
+   *
+   * If it returns false, the write is skipped.
+   */
+  shouldWrite?: () => boolean;
+}
+
 /**
  * Shared utility for managing JSON files in workspace session directories.
  * Provides consistent file locking, error handling, and path resolution.
@@ -50,10 +60,21 @@ export class SessionFileManager<T> {
   /**
    * Write JSON file to workspace session directory with file locking.
    * Creates session directory if it doesn't exist.
+   *
+   * If options.shouldWrite returns false, the write is skipped (and the session
+   * directory is not created).
    */
-  async write(workspaceId: string, data: T): Promise<Result<void>> {
+  async write(
+    workspaceId: string,
+    data: T,
+    options?: SessionFileWriteOptions
+  ): Promise<Result<void>> {
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
+        if (options?.shouldWrite && !options.shouldWrite()) {
+          return Ok(undefined);
+        }
+
         const sessionDir = this.config.getSessionDir(workspaceId);
         await fs.mkdir(sessionDir, { recursive: true });
         const filePath = this.getFilePath(workspaceId);

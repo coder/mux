@@ -73,4 +73,9 @@ export interface ProjectsConfig {
   subagentAiDefaults?: SubagentAiDefaults;
   /** Use built-in SSH2 library instead of system OpenSSH for remote connections (non-Windows only) */
   useSSH2Transport?: boolean;
+
+  /** Mux Governor server URL (normalized origin, no trailing slash) */
+  muxGovernorUrl?: string;
+  /** Mux Governor OAuth access token (secret - never return to UI) */
+  muxGovernorToken?: string;
 }

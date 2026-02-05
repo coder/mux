@@ -98,6 +98,7 @@ export class LocalRuntime extends LocalBaseRuntime {
       // Run .mux/init hook if it exists
       const hookExists = await checkInitHookExists(projectPath);
       if (hookExists) {
+        initLogger.enterHookPhase?.();
         const muxEnv = { ...env, ...getMuxEnv(projectPath, "local", branchName) };
         await this.runInitHook(workspacePath, muxEnv, initLogger);
       } else {

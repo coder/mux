@@ -299,15 +299,16 @@ const z = 3;`);
       expect(result.valid).toBe(true);
     });
 
-    test("require in string literal - still false positive for patterns", async () => {
+    test("require in string literal does NOT error (AST-based detection)", async () => {
       const result = await analyzeCode(`
         const msg = "Use require() to import modules";
         console.log(msg);
       `);
-      // Known limitation: pattern-based detection for require() can't distinguish strings
-      // This is acceptable since agents rarely put "require()" in string literals
-      expect(result.valid).toBe(false); // False positive for pattern detection
-      expect(result.errors.some((e) => e.message.includes("require()"))).toBe(true);
+
+      // We intentionally avoid pattern/substring scanning for require()/import() because those
+      // keywords can appear in user strings.
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
     });
 
     test("process in string literal does NOT error (AST-based detection)", async () => {

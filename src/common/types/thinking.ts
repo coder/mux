@@ -17,12 +17,12 @@ export const THINKING_DISPLAY_LABELS: Record<ThinkingLevel, string> = {
   low: "LOW",
   medium: "MED",
   high: "HIGH",
-  xhigh: "MAX",
+  xhigh: "XHIGH",
 };
 
 /**
  * Reverse mapping from display labels to internal values
- * Supports both display labels (OFF, LOW, MED, HIGH, MAX) and legacy values
+ * Supports both display labels (OFF, LOW, MED, HIGH, XHIGH) and legacy values (medium, max)
  */
 const DISPLAY_LABEL_TO_LEVEL: Record<string, ThinkingLevel> = {
   // Display labels (case-insensitive matching handled in parseThinkingDisplayLabel)
@@ -30,10 +30,10 @@ const DISPLAY_LABEL_TO_LEVEL: Record<string, ThinkingLevel> = {
   low: "low",
   med: "medium",
   high: "high",
-  max: "xhigh",
+  xhigh: "xhigh",
   // Legacy values for backward compatibility
   medium: "medium",
-  xhigh: "xhigh",
+  max: "xhigh",
 };
 
 /**

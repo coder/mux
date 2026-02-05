@@ -15,16 +15,13 @@ import React, {
 import { cn } from "@/common/lib/utils";
 import { Check, ChevronDown, Eye, Settings, ShieldCheck, Star } from "lucide-react";
 import { GatewayToggleButton } from "./GatewayToggleButton";
-import { GatewayIcon } from "./icons/GatewayIcon";
+
 import { ProviderIcon } from "./ProviderIcon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
-import { useGateway, isProviderSupported } from "@/browser/hooks/useGatewayModels";
-import {
-  formatMuxGatewayBalance,
-  useMuxGatewayAccountStatus,
-} from "@/browser/hooks/useMuxGatewayAccountStatus";
+import { useGateway } from "@/browser/hooks/useGatewayModels";
+
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { formatModelDisplayName } from "@/common/utils/ai/modelDisplay";
 import { getModelName, getModelProvider } from "@/common/utils/ai/models";
@@ -74,11 +71,6 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
     const policyState = usePolicy();
     const policyEnforced = policyState.status.state === "enforced";
     const gateway = useGateway();
-    const {
-      data: muxGatewayAccountStatus,
-      error: muxGatewayAccountError,
-      refresh: refreshMuxGatewayAccountStatus,
-    } = useMuxGatewayAccountStatus();
     const [isOpen, setIsOpen] = useState(false);
     const [inputValue, setInputValue] = useState("");
     const [error, setError] = useState<string | null>(null);
@@ -266,58 +258,8 @@ export const ModelSelector = forwardRef<ModelSelectorRef, ModelSelectorProps>(
       ? formatModelDisplayName(getModelName(value))
       : (emptyLabel ?? "");
 
-    const gatewayActive = hasValue && gateway.isModelRoutingThroughGateway(value);
-    const showGatewayIcon = hasValue && gateway.isActive && isProviderSupported(value);
-
     return (
       <div ref={containerRef} className={containerClassName}>
-        {showGatewayIcon && (
-          <Tooltip {...(isOpen ? { open: false } : {})}>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  gateway.toggleModelGateway(value);
-                }}
-                onMouseEnter={() => {
-                  void refreshMuxGatewayAccountStatus();
-                }}
-                className="cursor-pointer transition-opacity hover:opacity-70"
-                aria-label={gatewayActive ? "Using Mux Gateway" : "Enable Mux Gateway"}
-              >
-                <GatewayIcon
-                  className={cn("h-3 w-3 shrink-0", gatewayActive ? "text-accent" : "text-muted")}
-                  active={gatewayActive}
-                />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent align="start" className="w-56">
-              <div className="text-foreground text-[11px] font-medium">Mux Gateway</div>
-              <div className="mt-1.5 space-y-0.5 text-[11px]">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted">Balance</span>
-                  <span className="text-foreground font-mono">
-                    {formatMuxGatewayBalance(muxGatewayAccountStatus?.remaining_microdollars)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-muted">Concurrent requests</span>
-                  <span className="text-foreground font-mono">
-                    {muxGatewayAccountStatus?.ai_gateway_concurrent_requests_per_user ?? "—"}
-                  </span>
-                </div>
-              </div>
-              {muxGatewayAccountError && (
-                <div className="text-destructive mt-1.5 text-[10px]">{muxGatewayAccountError}</div>
-              )}
-              <div className="text-muted border-separator-light mt-2 border-t pt-1.5 text-[10px]">
-                Click to {gatewayActive ? "disable" : "enable"} gateway
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        )}
-
         {/* Trigger button */}
         <Tooltip {...(isOpen || !hasValue ? { open: false } : {})}>
           <TooltipTrigger asChild>

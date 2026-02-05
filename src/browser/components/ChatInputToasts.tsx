@@ -39,17 +39,19 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
         id: Date.now().toString(),
         type: "error",
         title: "Model Command",
-        message: "Select AI model for this session",
+        message: "Select AI model for this session or send a one-shot message",
         solution: (
           <>
-            <SolutionLabel>Usage:</SolutionLabel>
-            /model &lt;abbreviation&gt; or /model &lt;provider:model&gt;
-            <br />
-            <br />
-            <SolutionLabel>Examples:</SolutionLabel>
+            <SolutionLabel>Set model for session:</SolutionLabel>
             /model sonnet
             <br />
-            /model anthropic:opus-4-1
+            /model anthropic:claude-sonnet-4-5
+            <br />
+            <br />
+            <SolutionLabel>One-shot (single message):</SolutionLabel>
+            /haiku explain this code
+            <br />
+            /opus review my changes
           </>
         ),
       };

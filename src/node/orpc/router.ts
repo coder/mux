@@ -1,7 +1,10 @@
 import { os } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
-import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
+import {
+  MUX_GATEWAY_ORIGIN,
+  MUX_GATEWAY_SESSION_EXPIRED_MESSAGE,
+} from "@/common/constants/muxGatewayOAuth";
 import { Err, Ok } from "@/common/types/result";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import { generateWorkspaceIdentity } from "@/node/services/workspaceTitleGenerator";
@@ -35,6 +38,7 @@ import {
 } from "@/common/types/tasks";
 import {
   discoverAgentSkills,
+  discoverAgentSkillsDiagnostics,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
 import {
@@ -488,6 +492,9 @@ export const router = (authToken?: string) => {
         .output(schemas.config.getConfig.output)
         .handler(({ context }) => {
           const config = context.config.loadConfigOrDefault();
+          // Determine governor enrollment: requires both URL and token
+          const muxGovernorUrl = config.muxGovernorUrl ?? null;
+          const muxGovernorEnrolled = Boolean(config.muxGovernorUrl && config.muxGovernorToken);
           return {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
@@ -495,6 +502,9 @@ export const router = (authToken?: string) => {
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
+            // Mux Governor enrollment status (safe fields only - token never exposed)
+            muxGovernorUrl,
+            muxGovernorEnrolled,
           };
         }),
       updateAgentAiDefaults: t
@@ -610,6 +620,17 @@ export const router = (authToken?: string) => {
 
           // Re-evaluate task queue in case more slots opened up
           await context.taskService.maybeStartQueuedTasks();
+        }),
+      unenrollMuxGovernor: t
+        .input(schemas.config.unenrollMuxGovernor.input)
+        .output(schemas.config.unenrollMuxGovernor.output)
+        .handler(async ({ context }) => {
+          await context.config.editConfig((config) => {
+            const { muxGovernorUrl: _url, muxGovernorToken: _token, ...rest } = config;
+            return rest;
+          });
+
+          await context.policyService.refreshNow();
         }),
     },
     uiLayouts: {
@@ -747,6 +768,17 @@ export const router = (authToken?: string) => {
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
           return discoverAgentSkills(runtime, discoveryPath);
         }),
+      listDiagnostics: t
+        .input(schemas.agentSkills.listDiagnostics.input)
+        .output(schemas.agentSkills.listDiagnostics.output)
+        .handler(async ({ context, input }) => {
+          // Wait for workspace init before agent discovery (SSH may not be ready yet)
+          if (input.workspaceId) {
+            await context.aiService.waitForInit(input.workspaceId);
+          }
+          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
+          return discoverAgentSkillsDiagnostics(runtime, discoveryPath);
+        }),
       get: t
         .input(schemas.agentSkills.get.input)
         .output(schemas.agentSkills.get.output)
@@ -867,6 +899,16 @@ export const router = (authToken?: string) => {
             unsubscribe();
           }
         }),
+      refreshNow: t
+        .input(schemas.policy.refreshNow.input)
+        .output(schemas.policy.refreshNow.output)
+        .handler(async ({ context }) => {
+          const result = await context.policyService.refreshNow();
+          if (!result.success) {
+            return Err(result.error);
+          }
+          return Ok(context.policyService.getPolicyGetResponse());
+        }),
     },
     muxGateway: {
       getAccountStatus: t
@@ -895,6 +937,18 @@ export const router = (authToken?: string) => {
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return Err(`Mux Gateway balance request failed: ${message}`);
+          }
+
+          if (response.status === 401) {
+            try {
+              // Best-effort auto-logout: clear local mux-gateway creds on session expiry.
+              context.providerService.setConfig("mux-gateway", ["couponCode"], "");
+              context.providerService.setConfig("mux-gateway", ["voucher"], "");
+            } catch {
+              // Ignore failures clearing local credentials
+            }
+
+            return Err(MUX_GATEWAY_SESSION_EXPIRED_MESSAGE);
           }
 
           if (!response.ok) {
@@ -968,6 +1022,30 @@ export const router = (authToken?: string) => {
         .output(schemas.muxGatewayOauth.cancelDesktopFlow.output)
         .handler(async ({ context, input }) => {
           await context.muxGatewayOauthService.cancelDesktopFlow(input.flowId);
+        }),
+    },
+    muxGovernorOauth: {
+      startDesktopFlow: t
+        .input(schemas.muxGovernorOauth.startDesktopFlow.input)
+        .output(schemas.muxGovernorOauth.startDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.muxGovernorOauthService.startDesktopFlow({
+            governorOrigin: input.governorOrigin,
+          });
+        }),
+      waitForDesktopFlow: t
+        .input(schemas.muxGovernorOauth.waitForDesktopFlow.input)
+        .output(schemas.muxGovernorOauth.waitForDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.muxGovernorOauthService.waitForDesktopFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDesktopFlow: t
+        .input(schemas.muxGovernorOauth.cancelDesktopFlow.input)
+        .output(schemas.muxGovernorOauth.cancelDesktopFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.muxGovernorOauthService.cancelDesktopFlow(input.flowId);
         }),
     },
     general: {

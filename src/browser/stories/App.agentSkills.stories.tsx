@@ -3,7 +3,7 @@
  */
 
 import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
-import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 import { setupSimpleChatStory } from "./storyHelpers";
 import {
   STABLE_TIMESTAMP,
@@ -160,6 +160,23 @@ const SKILLS_WITH_UNADVERTISED: AgentSkillDescriptor[] = [
   },
 ];
 
+const INVALID_SKILLS: AgentSkillIssue[] = [
+  {
+    directoryName: "Bad_Skill",
+    scope: "project",
+    displayPath: "/home/user/projects/my-app/.mux/skills/Bad_Skill/SKILL.md",
+    message: "Invalid skill directory name (expected kebab-case).",
+    hint: "Rename the directory to something like bad-skill.",
+  },
+  {
+    directoryName: "missing-skill",
+    scope: "global",
+    displayPath: "/home/user/.mux/skills/missing-skill/SKILL.md",
+    message: "SKILL.md is missing.",
+    hint: "Add a SKILL.md with valid frontmatter (name + description).",
+  },
+];
+
 /** Shows the SkillIndicator popover with all skill scopes (project, global, built-in) */
 export const SkillIndicator_AllScopes: AppStory = {
   render: () => (
@@ -241,6 +258,55 @@ export const SkillIndicator_UnadvertisedSkills: AppStory = {
         // Verify EyeOff icon is present (aria-label for unadvertised skills)
         const eyeOffIcon = popover.querySelector('[aria-label="Not advertised in system prompt"]');
         if (!eyeOffIcon) throw new Error("EyeOff icon not found for unadvertised skill");
+      },
+      { timeout: 3000 }
+    );
+
+    await waitForChatInputAutofocusDone(canvasElement);
+    blurActiveElement();
+  },
+};
+
+/** Shows invalid skills in the SkillIndicator popover ("Invalid skills" section) */
+export const SkillIndicator_InvalidSkills: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          workspaceId: "ws-skill-indicator-invalid-skills",
+          messages: [],
+          agentSkills: ALL_SKILLS,
+          invalidAgentSkills: INVALID_SKILLS,
+        })
+      }
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitForChatMessagesLoaded(canvasElement);
+
+    const doc = canvasElement.ownerDocument;
+    const storyRoot = doc.getElementById("storybook-root") ?? canvasElement;
+    await waitFor(
+      () => {
+        const skillButton = storyRoot.querySelector('button[aria-label*="skill"]');
+        if (!skillButton) throw new Error("Skill indicator not found");
+      },
+      { timeout: 5000 }
+    );
+
+    const skillButton = storyRoot.querySelector('button[aria-label*="skill"]')!;
+    await userEvent.hover(skillButton);
+
+    await waitFor(
+      () => {
+        const popover = doc.querySelector("[data-radix-popper-content-wrapper]");
+        if (!popover) throw new Error("Popover not visible");
+        if (!popover.textContent?.includes("Invalid skills")) {
+          throw new Error("Invalid skills section not visible");
+        }
+        if (!popover.textContent?.includes("Bad_Skill")) {
+          throw new Error("Invalid skill name not visible");
+        }
       },
       { timeout: 3000 }
     );

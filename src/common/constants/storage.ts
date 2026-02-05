@@ -49,6 +49,11 @@ export const GLOBAL_SCOPE_ID = "__global__";
 export const UI_THEME_KEY = "uiTheme";
 
 /**
+ * LocalStorage key for the hidden Power Mode UI easter egg (global).
+ */
+export const POWER_MODE_ENABLED_KEY = "powerModeEnabled";
+
+/**
  * Get the localStorage key for the last selected provider when adding custom models (global)
  * Format: "lastCustomModelProvider"
  */

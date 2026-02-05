@@ -55,6 +55,45 @@ describe("createOrpcServer", () => {
     }
   });
 
+  test("OAuth callback routes accept POST redirects (query + form_post)", async () => {
+    const stubContext: Partial<ORPCContext> = {
+      muxGovernorOauthService: {
+        handleServerCallbackAndExchange: () => Promise.resolve({ success: true, data: undefined }),
+      } as unknown as ORPCContext["muxGovernorOauthService"],
+    };
+
+    let server: Awaited<ReturnType<typeof createOrpcServer>> | null = null;
+
+    try {
+      server = await createOrpcServer({
+        host: "127.0.0.1",
+        port: 0,
+        context: stubContext as ORPCContext,
+      });
+
+      // Some OAuth providers issue 307/308 redirects which preserve POST.
+      const queryRes = await fetch(
+        `${server.baseUrl}/auth/mux-governor/callback?state=test-state&code=test-code`,
+        { method: "POST" }
+      );
+      expect(queryRes.status).toBe(200);
+      const queryText = await queryRes.text();
+      expect(queryText).toContain("Enrollment complete");
+
+      // response_mode=form_post delivers params in the request body.
+      const formRes = await fetch(`${server.baseUrl}/auth/mux-governor/callback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "state=test-state&code=test-code",
+      });
+      expect(formRes.status).toBe(200);
+      const formText = await formRes.text();
+      expect(formText).toContain("Enrollment complete");
+    } finally {
+      await server?.close();
+    }
+  });
+
   test("brackets IPv6 hosts in returned URLs", async () => {
     // Minimal context stub - router won't be exercised by this test.
     const stubContext: Partial<ORPCContext> = {};

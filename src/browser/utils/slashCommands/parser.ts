@@ -4,6 +4,8 @@
 
 import type { ParsedCommand, SlashCommandDefinition } from "./types";
 import { SLASH_COMMAND_DEFINITION_MAP } from "./registry";
+import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
+import { resolveModelAlias } from "@/common/utils/ai/models";
 
 export { SLASH_COMMAND_DEFINITIONS } from "./registry";
 
@@ -29,6 +31,29 @@ export function parseCommand(input: string): ParsedCommand {
   const definition = SLASH_COMMAND_DEFINITION_MAP.get(commandKey);
 
   if (!definition) {
+    // Check if the command is a model alias (e.g., "/haiku check the pr")
+    // This enables one-time model override without changing preferences
+    if (commandKey && Object.hasOwn(MODEL_ABBREVIATIONS, commandKey)) {
+      // Extract the message: everything after the model alias
+      const commandKeyWithSlash = `/${commandKey}`;
+      let message = trimmed.substring(commandKeyWithSlash.length);
+      // Only trim spaces at the start, not newlines (preserves multiline messages)
+      while (message.startsWith(" ")) {
+        message = message.substring(1);
+      }
+
+      // If no message provided, show model help instead
+      if (!message.trim()) {
+        return { type: "model-help" };
+      }
+
+      return {
+        type: "model-oneshot",
+        modelString: resolveModelAlias(commandKey),
+        message,
+      };
+    }
+
     return {
       type: "unknown-command",
       command: commandKey ?? "",

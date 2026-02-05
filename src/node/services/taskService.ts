@@ -470,6 +470,7 @@ export class TaskService {
       logStdout: (line: string) => this.initStateManager.appendOutput(workspaceId, line, false),
       logStderr: (line: string) => this.initStateManager.appendOutput(workspaceId, line, true),
       logComplete: (exitCode: number) => void this.initStateManager.endInit(workspaceId, exitCode),
+      enterHookPhase: () => this.initStateManager.enterHookPhase(workspaceId),
     };
   }
 

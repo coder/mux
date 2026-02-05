@@ -24,9 +24,15 @@ export function wrapWithInitWait<TParameters, TResult>(
   return {
     ...tool,
     execute: async (args: TParameters, options) => {
+      const abortSignal =
+        options && typeof options === "object" && "abortSignal" in options
+          ? (options as { abortSignal?: AbortSignal }).abortSignal
+          : undefined;
+
       // Wait for workspace initialization to complete (no-op if not needed)
       // This never throws - tools proceed regardless of init outcome
-      await initStateManager.waitForInit(workspaceId);
+      // Forward abort signals so tool cancellation stays responsive during long provisioning waits.
+      await initStateManager.waitForInit(workspaceId, abortSignal);
 
       // Execute the actual tool with all arguments
       if (!tool.execute) {
