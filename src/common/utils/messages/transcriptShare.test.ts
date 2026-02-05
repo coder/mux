@@ -128,6 +128,104 @@ describe("buildChatJsonlForSharing", () => {
     expect(parsed).toEqual(messages[0]);
   });
 
+  it("inlines planContent into propose_plan tool output when planSnapshot matches", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "propose_plan",
+            state: "output-available",
+            input: { title: "My Plan" },
+            output: { success: true, planPath: "/tmp/plan.md", message: "Plan saved" },
+          },
+        ],
+      },
+    ];
+
+    const planSnapshot = { path: "/tmp/plan.md", content: "# My Plan\n\n- Step 1" };
+
+    const jsonl = buildChatJsonlForSharing(messages, {
+      includeToolOutput: true,
+      planSnapshot,
+    });
+
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool" || part.state !== "output-available") {
+      throw new Error("Expected completed tool part");
+    }
+
+    const output = part.output;
+    if (output === null || typeof output !== "object") {
+      throw new Error("Expected tool output object");
+    }
+
+    expect((output as Record<string, unknown>).planContent).toBe(planSnapshot.content);
+
+    // Original messages should be unchanged (no mutation during injection)
+    const originalPart = messages[0].parts[0];
+    if (originalPart.type !== "dynamic-tool" || originalPart.state !== "output-available") {
+      throw new Error("Expected completed tool part");
+    }
+
+    const originalOutput = originalPart.output;
+    if (originalOutput === null || typeof originalOutput !== "object") {
+      throw new Error("Expected tool output object");
+    }
+
+    expect((originalOutput as Record<string, unknown>).planContent).toBeUndefined();
+  });
+
+  it("does not overwrite propose_plan planContent when already present", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "propose_plan",
+            state: "output-available",
+            input: { title: "My Plan" },
+            output: {
+              success: true,
+              planPath: "/tmp/plan.md",
+              message: "Plan saved",
+              planContent: "# Existing Plan\n\nDo the thing.",
+            },
+          },
+        ],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, {
+      includeToolOutput: true,
+      planSnapshot: { path: "/tmp/plan.md", content: "# New Plan" },
+    });
+
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool" || part.state !== "output-available") {
+      throw new Error("Expected completed tool part");
+    }
+
+    const output = part.output;
+    if (output === null || typeof output !== "object") {
+      throw new Error("Expected tool output object");
+    }
+
+    expect((output as Record<string, unknown>).planContent).toBe(
+      "# Existing Plan\n\nDo the thing."
+    );
+  });
+
   it("injects workspaceId into each message when provided", () => {
     const messages: MuxMessage[] = [
       {

@@ -6,6 +6,8 @@ export interface BuildChatJsonlForSharingOptions {
   includeToolOutput?: boolean;
   /** Optional workspace context to match on-disk chat.jsonl entries */
   workspaceId?: string;
+  /** Optional plan file snapshot to inline into propose_plan tool output. */
+  planSnapshot?: { path: string; content: string };
 }
 
 interface ChatJsonlEntry extends MuxMessage {
@@ -145,6 +147,65 @@ function stripToolOutputsForSharing(messages: MuxMessage[]): MuxMessage[] {
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+function inlinePlanContentForSharing(
+  messages: MuxMessage[],
+  planSnapshot: { path: string; content: string }
+): MuxMessage[] {
+  return messages.map((msg) => {
+    if (msg.role !== "assistant") {
+      return msg;
+    }
+
+    let changed = false;
+
+    const parts = msg.parts.map((part) => {
+      if (part.type !== "dynamic-tool") {
+        return part;
+      }
+
+      if (part.toolName !== "propose_plan" || part.state !== "output-available") {
+        return part;
+      }
+
+      if (!isRecord(part.output)) {
+        return part;
+      }
+
+      const output = part.output;
+      if (output.success !== true) {
+        return part;
+      }
+
+      if (typeof output.planPath !== "string") {
+        return part;
+      }
+
+      if (output.planPath !== planSnapshot.path) {
+        return part;
+      }
+
+      if ("planContent" in output) {
+        return part;
+      }
+
+      changed = true;
+      return {
+        ...part,
+        output: {
+          ...output,
+          planContent: planSnapshot.content,
+        },
+      };
+    });
+
+    return changed ? { ...msg, parts } : msg;
+  });
+}
+
 /**
  * Build a JSONL transcript (one message per line, trailing newline) suitable for sharing.
  *
@@ -158,7 +219,13 @@ export function buildChatJsonlForSharing(
   if (messages.length === 0) return "";
 
   const includeToolOutput = options.includeToolOutput ?? true;
-  const sanitized = includeToolOutput ? messages : stripToolOutputsForSharing(messages);
+
+  const sanitized = includeToolOutput
+    ? options.planSnapshot
+      ? inlinePlanContentForSharing(messages, options.planSnapshot)
+      : messages
+    : stripToolOutputsForSharing(messages);
+
   const compacted = compactMessagePartsForSharing(sanitized);
 
   return (

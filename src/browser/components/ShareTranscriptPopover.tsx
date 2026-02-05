@@ -7,11 +7,13 @@ import { Checkbox } from "@/browser/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { useAPI } from "@/browser/contexts/API";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { uploadToMuxMd, type FileInfo } from "@/common/lib/muxMd";
 import { cn } from "@/common/lib/utils";
+import type { MuxMessage } from "@/common/types/message";
 import { buildChatJsonlForSharing } from "@/common/utils/messages/transcriptShare";
 
 interface ShareTranscriptPopoverProps {
@@ -41,8 +43,17 @@ function getTranscriptFileName(workspaceName: string): string {
   return `${safeName}-chat.jsonl`;
 }
 
+function transcriptContainsProposePlanToolCall(messages: MuxMessage[]): boolean {
+  return messages.some(
+    (msg) =>
+      msg.role === "assistant" &&
+      msg.parts.some((part) => part.type === "dynamic-tool" && part.toolName === "propose_plan")
+  );
+}
+
 export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
   const store = useWorkspaceStoreRaw();
+  const { api } = useAPI();
 
   const [includeToolOutput, setIncludeToolOutput] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -87,9 +98,27 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
     try {
       const workspaceId = props.workspaceId;
       const workspaceState = store.getWorkspaceState(workspaceId);
+
+      let planSnapshot: { path: string; content: string } | undefined;
+      if (
+        includeToolOutput &&
+        api &&
+        transcriptContainsProposePlanToolCall(workspaceState.muxMessages)
+      ) {
+        try {
+          const res = await api.workspace.getPlanContent({ workspaceId });
+          if (res.success) {
+            planSnapshot = { path: res.data.path, content: res.data.content };
+          }
+        } catch {
+          // Ignore failures - plan content is optional for sharing.
+        }
+      }
+
       const chatJsonl = buildChatJsonlForSharing(workspaceState.muxMessages, {
         includeToolOutput,
         workspaceId,
+        planSnapshot,
       });
 
       if (!chatJsonl) {
@@ -123,7 +152,7 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
         setIsUploading(false);
       }
     }
-  }, [includeToolOutput, isUploading, props.workspaceId, props.workspaceName, store]);
+  }, [api, includeToolOutput, isUploading, props.workspaceId, props.workspaceName, store]);
 
   const handleCopy = useCallback(() => {
     if (!shareUrl) {
