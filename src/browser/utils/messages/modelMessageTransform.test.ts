@@ -193,6 +193,190 @@ describe("modelMessageTransform", () => {
       const result = transformModelMessages(messages, "anthropic");
       expect(result).toEqual(messages);
     });
+
+    it("coalesces 3 consecutive identical no-progress task_await pairs into 1 (keep last pair)", () => {
+      const input = { task_ids: ["task1"], timeout_secs: 10 };
+
+      const assistantMsg1: AssistantModelMessage = {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call1", toolName: "task_await", input }],
+      };
+      const toolMsg1: ToolModelMessage = {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call1",
+            toolName: "task_await",
+            output: {
+              type: "json",
+              value: { results: [{ status: "running", taskId: "task1" }] },
+            },
+          },
+        ],
+      };
+
+      const assistantMsg2: AssistantModelMessage = {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call2", toolName: "task_await", input }],
+      };
+      const toolMsg2: ToolModelMessage = {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call2",
+            toolName: "task_await",
+            output: {
+              type: "json",
+              value: { results: [{ status: "running", taskId: "task1" }] },
+            },
+          },
+        ],
+      };
+
+      const assistantMsg3: AssistantModelMessage = {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call3", toolName: "task_await", input }],
+      };
+      const toolMsg3: ToolModelMessage = {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call3",
+            toolName: "task_await",
+            output: {
+              type: "json",
+              value: { results: [{ status: "running", taskId: "task1" }] },
+            },
+          },
+        ],
+      };
+
+      const result = transformModelMessages(
+        [assistantMsg1, toolMsg1, assistantMsg2, toolMsg2, assistantMsg3, toolMsg3],
+        "anthropic"
+      );
+
+      expect(result).toEqual([assistantMsg3, toolMsg3]);
+    });
+
+    it("does not coalesce task_await polls when a later poll returns progress", () => {
+      const input = { task_ids: ["task1"], timeout_secs: 10 };
+
+      const assistantMsg1: AssistantModelMessage = {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call1", toolName: "task_await", input }],
+      };
+      const toolMsg1: ToolModelMessage = {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call1",
+            toolName: "task_await",
+            output: {
+              type: "json",
+              value: { results: [{ status: "running", taskId: "task1" }] },
+            },
+          },
+        ],
+      };
+
+      const assistantMsg2: AssistantModelMessage = {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call2", toolName: "task_await", input }],
+      };
+      const toolMsg2: ToolModelMessage = {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call2",
+            toolName: "task_await",
+            output: {
+              type: "json",
+              value: { results: [{ status: "running", taskId: "task1" }] },
+            },
+          },
+        ],
+      };
+
+      // Progress: output is non-empty.
+      const assistantMsg3: AssistantModelMessage = {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "call3", toolName: "task_await", input }],
+      };
+      const toolMsg3: ToolModelMessage = {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call3",
+            toolName: "task_await",
+            output: {
+              type: "json",
+              value: { results: [{ status: "running", taskId: "task1", output: "new output" }] },
+            },
+          },
+        ],
+      };
+
+      const result = transformModelMessages(
+        [assistantMsg1, toolMsg1, assistantMsg2, toolMsg2, assistantMsg3, toolMsg3],
+        "anthropic"
+      );
+
+      // The no-progress polls are coalesced, but the progress poll must remain.
+      expect(result).toEqual([assistantMsg2, toolMsg2, assistantMsg3, toolMsg3]);
+    });
+
+    it("preserves Anthropic tool_use/tool_result adjacency after coalescing task_await polls", () => {
+      const input = { task_ids: ["task1"], timeout_secs: 10 };
+
+      const messages: ModelMessage[] = [
+        {
+          role: "assistant",
+          content: [{ type: "tool-call", toolCallId: "call1", toolName: "task_await", input }],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call1",
+              toolName: "task_await",
+              output: {
+                type: "json",
+                value: { results: [{ status: "running", taskId: "task1" }] },
+              },
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "tool-call", toolCallId: "call2", toolName: "task_await", input }],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call2",
+              toolName: "task_await",
+              output: {
+                type: "json",
+                value: { results: [{ status: "running", taskId: "task1" }] },
+              },
+            },
+          ],
+        },
+      ];
+
+      const result = transformModelMessages(messages, "anthropic");
+      expect(validateAnthropicCompliance(result).valid).toBe(true);
+    });
   });
 
   describe("getAnthropicThinkingDisableReason", () => {

@@ -25,7 +25,10 @@ export const ContextSwitchWarning: React.FC<Props> = (props) => {
     : null;
 
   return (
-    <div className="bg-plan-mode/10 border-plan-mode/30 mx-4 my-2 rounded-md border px-4 py-3">
+    <div
+      data-testid="context-switch-warning"
+      className="bg-plan-mode/10 border-plan-mode/30 mx-4 my-2 rounded-md border px-4 py-3"
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1">
           <div className="text-plan-mode mb-1 flex items-center gap-2 text-[13px] font-medium">
@@ -43,8 +46,9 @@ export const ContextSwitchWarning: React.FC<Props> = (props) => {
           onClick={props.onDismiss}
           className="text-muted hover:text-foreground -mt-1 -mr-1 cursor-pointer p-1"
           title="Dismiss"
+          aria-label="Dismiss context limit warning"
         >
-          <X size={14} />
+          <X size={14} aria-hidden="true" />
         </button>
       </div>
       <div className="mt-2.5 flex items-center gap-3">

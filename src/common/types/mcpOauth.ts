@@ -51,7 +51,7 @@ export interface MCPOAuthClientInformation {
 }
 
 /**
- * Credentials stored for a specific (projectPath, serverName).
+ * Credentials stored globally per MCP server URL.
  *
  * NOTE: This object contains secrets and must never be returned over IPC.
  */

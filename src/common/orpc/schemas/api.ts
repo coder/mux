@@ -37,11 +37,17 @@ import {
   AgentIdSchema,
 } from "./agentDefinition";
 import {
+  MCPAddGlobalParamsSchema,
   MCPAddParamsSchema,
+  MCPListParamsSchema,
+  MCPRemoveGlobalParamsSchema,
   MCPRemoveParamsSchema,
   MCPServerMapSchema,
+  MCPSetEnabledGlobalParamsSchema,
   MCPSetEnabledParamsSchema,
+  MCPSetToolAllowlistGlobalParamsSchema,
   MCPSetToolAllowlistParamsSchema,
+  MCPTestGlobalParamsSchema,
   MCPTestParamsSchema,
   MCPTestResultSchema,
   WorkspaceMCPOverridesSchema,
@@ -257,6 +263,84 @@ const MCPOAuthPendingServerSchema = z
     url: z.string(),
   })
   .strict();
+
+// MCP OAuth
+export const mcpOauth = {
+  startDesktopFlow: {
+    input: z
+      .object({
+        projectPath: z.string().optional(),
+        serverName: z.string(),
+        pendingServer: MCPOAuthPendingServerSchema.optional(),
+      })
+      .strict(),
+    output: ResultSchema(
+      z.object({
+        flowId: z.string(),
+        authorizeUrl: z.string(),
+        redirectUri: z.string(),
+      }),
+      z.string()
+    ),
+  },
+  waitForDesktopFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelDesktopFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+  startServerFlow: {
+    input: z
+      .object({
+        projectPath: z.string().optional(),
+        serverName: z.string(),
+        pendingServer: MCPOAuthPendingServerSchema.optional(),
+      })
+      .strict(),
+    output: ResultSchema(
+      z.object({
+        flowId: z.string(),
+        authorizeUrl: z.string(),
+        redirectUri: z.string(),
+      }),
+      z.string()
+    ),
+  },
+  waitForServerFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelServerFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+  getAuthStatus: {
+    input: z.object({ serverUrl: z.string() }).strict(),
+    output: z.object({
+      serverUrl: z.string().optional(),
+      isLoggedIn: z.boolean(),
+      hasRefreshToken: z.boolean(),
+      scope: z.string().optional(),
+      updatedAtMs: z.number().optional(),
+    }),
+  },
+  logout: {
+    input: z.object({ serverUrl: z.string() }).strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+};
 
 // Projects
 export const projects = {
@@ -487,6 +571,58 @@ export const projects = {
       }),
       output: ResultSchema(z.void(), z.string()),
     },
+  },
+};
+
+/**
+ * MCP server configuration.
+ *
+ * Global config lives in <muxHome>/mcp.jsonc, with optional repo overrides in <projectPath>/.mux/mcp.jsonc.
+ */
+export const mcp = {
+  list: {
+    input: MCPListParamsSchema,
+    output: MCPServerMapSchema,
+  },
+  add: {
+    input: MCPAddGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+  remove: {
+    input: MCPRemoveGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+  test: {
+    input: MCPTestGlobalParamsSchema,
+    output: MCPTestResultSchema,
+  },
+  setEnabled: {
+    input: MCPSetEnabledGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+  setToolAllowlist: {
+    input: MCPSetToolAllowlistGlobalParamsSchema,
+    output: ResultSchema(z.void(), z.string()),
+  },
+};
+
+/**
+ * Secrets store.
+ *
+ * - When no projectPath is provided: global secrets
+ * - When projectPath is provided: project-only secrets
+ */
+export const secrets = {
+  get: {
+    input: z.object({ projectPath: z.string().optional() }),
+    output: z.array(SecretSchema),
+  },
+  update: {
+    input: z.object({
+      projectPath: z.string().optional(),
+      secrets: z.array(SecretSchema),
+    }),
+    output: ResultSchema(z.void(), z.string()),
   },
 };
 
@@ -1154,6 +1290,7 @@ export const config = {
       }),
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
+      stopCoderWorkspaceOnArchive: z.boolean(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
       subagentAiDefaults: SubagentAiDefaultsSchema,
@@ -1191,6 +1328,14 @@ export const config = {
       muxGatewayEnabled: z.boolean(),
       muxGatewayModels: z.array(z.string()),
     }),
+    output: z.void(),
+  },
+  updateCoderPrefs: {
+    input: z
+      .object({
+        stopCoderWorkspaceOnArchive: z.boolean(),
+      })
+      .strict(),
     output: z.void(),
   },
   unenrollMuxGovernor: {

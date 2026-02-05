@@ -380,3 +380,62 @@ describe("Loaded skills tracking", () => {
     expect(agg.getLoadedSkills()).toEqual([]);
   });
 });
+
+describe("Agent skill snapshot association", () => {
+  const createAggregator = () => {
+    return new StreamingMessageAggregator(TEST_CREATED_AT);
+  };
+
+  it("attaches agentSkillSnapshot content to the subsequent invocation message", () => {
+    const agg = createAggregator();
+
+    const snapshot = createMuxMessage(
+      "snapshot-1",
+      "user",
+      '<agent-skill name="pull-requests" scope="project">\n# Content\n</agent-skill>',
+      {
+        historySequence: 1,
+        timestamp: Date.now(),
+        synthetic: true,
+        agentSkillSnapshot: {
+          skillName: "pull-requests",
+          scope: "project",
+          sha256: "deadbeef",
+          frontmatterYaml: "name: pull-requests\ndescription: PR guidelines",
+        },
+      }
+    );
+
+    const invocation = createMuxMessage("invoke-1", "user", "/pull-requests", {
+      historySequence: 2,
+      timestamp: Date.now(),
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/pull-requests",
+        commandPrefix: "/pull-requests",
+        skillName: "pull-requests",
+        scope: "project",
+      },
+    });
+
+    agg.loadHistoricalMessages([snapshot, invocation]);
+
+    const displayed = agg.getDisplayedMessages();
+    expect(displayed).toHaveLength(1);
+
+    const msg = displayed[0];
+    expect(msg.type).toBe("user");
+    if (msg.type !== "user") {
+      throw new Error("Expected displayed user message");
+    }
+
+    expect(msg.agentSkill).toEqual({
+      skillName: "pull-requests",
+      scope: "project",
+      snapshot: {
+        frontmatterYaml: "name: pull-requests\ndescription: PR guidelines",
+        body: "# Content",
+      },
+    });
+  });
+});

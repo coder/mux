@@ -22,7 +22,6 @@ import {
 import type { ApiServerStatus } from "@/common/orpc/types";
 import { Input } from "@/browser/components/ui/input";
 import { useAPI } from "@/browser/contexts/API";
-import { useFeatureFlags } from "@/browser/contexts/FeatureFlagsContext";
 import { useTelemetry } from "@/browser/hooks/useTelemetry";
 
 interface ExperimentRowProps {
@@ -455,33 +454,6 @@ function ConfigurableBindUrlControls() {
   );
 }
 
-function StatsTabRow() {
-  const { statsTabState, setStatsTabEnabled } = useFeatureFlags();
-
-  const handleToggle = useCallback(
-    (enabled: boolean) => {
-      setStatsTabEnabled(enabled).catch(() => {
-        // ignore
-      });
-    },
-    [setStatsTabEnabled]
-  );
-
-  return (
-    <div className="flex items-center justify-between py-3">
-      <div className="flex-1 pr-4">
-        <div className="text-foreground text-sm font-medium">Stats tab</div>
-        <div className="text-muted mt-0.5 text-xs">Show timing statistics in the right sidebar</div>
-      </div>
-      <Switch
-        checked={statsTabState?.enabled ?? false}
-        onCheckedChange={handleToggle}
-        aria-label="Toggle Stats tab"
-      />
-    </div>
-  );
-}
-
 export function ExperimentsSection() {
   const allExperiments = getExperimentList();
   const { api } = useAPI();
@@ -514,7 +486,6 @@ export function ExperimentsSection() {
         Experimental features that are still in development. Enable at your own risk.
       </p>
       <div className="divide-border-light divide-y">
-        <StatsTabRow />
         {experiments.map((exp) => (
           <React.Fragment key={exp.id}>
             <ExperimentRow

@@ -25,7 +25,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { Secret } from "@/common/types/secrets";
-import type { MCPServerInfo } from "@/common/types/mcp";
+import type { MCPHttpServerInfo, MCPServerInfo } from "@/common/types/mcp";
 import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
 import type { ChatStats } from "@/common/types/chatStats";
 import {
@@ -96,6 +96,8 @@ export interface MockORPCClientOptions {
   agentDefinitions?: AgentDefinitionDescriptor[];
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
   subagentAiDefaults?: SubagentAiDefaults;
+  /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
+  stopCoderWorkspaceOnArchive?: boolean;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => (() => void) | void;
   /** Mock for executeBash per workspace */
@@ -125,6 +127,8 @@ export interface MockORPCClientOptions {
   /** Session usage data per workspace (for Costs tab) */
   workspaceStatsSnapshots?: Map<string, WorkspaceStatsSnapshot>;
   statsTabVariant?: "control" | "stats";
+  /** Global secrets (Settings → Secrets → Global) */
+  globalSecrets?: Secret[];
   /** Project secrets per project */
   projectSecrets?: Map<string, Secret[]>;
   sessionUsage?: Map<string, MockSessionUsage>;
@@ -135,9 +139,11 @@ export interface MockORPCClientOptions {
     string,
     { messages: MuxMessage[]; model?: string; thinkingLevel?: ThinkingLevel }
   >;
+  /** Global MCP server configuration (Settings → MCP) */
+  globalMcpServers?: Record<string, MCPServerInfo>;
   /** MCP server configuration per project */
   mcpServers?: Map<string, Record<string, MCPServerInfo>>;
-  /** Optional OAuth auth status per MCP server name (serverName -> status) */
+  /** Optional OAuth auth status per MCP server URL (serverUrl -> status) */
   mcpOauthAuthStatus?: Map<string, MCPOAuthAuthStatus>;
   /** MCP workspace overrides per workspace */
   mcpOverrides?: Map<
@@ -264,7 +270,9 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     >(),
     workspaceStatsSnapshots = new Map<string, WorkspaceStatsSnapshot>(),
     statsTabVariant = "control",
+    globalSecrets = [],
     projectSecrets = new Map<string, Secret[]>(),
+    globalMcpServers = {},
     mcpServers = new Map<string, MockMcpServers>(),
     mcpOverrides = new Map<string, MockMcpOverrides>(),
     mcpTestResults = new Map<string, MockMcpTestResult>(),
@@ -272,6 +280,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     taskSettings: initialTaskSettings,
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
+    stopCoderWorkspaceOnArchive: initialStopCoderWorkspaceOnArchive = true,
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
@@ -300,12 +309,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let statsTabOverride: "default" | "on" | "off" = "default";
 
   const getStatsTabState = () => {
-    const enabled =
-      statsTabOverride === "on"
-        ? true
-        : statsTabOverride === "off"
-          ? false
-          : statsTabVariant === "stats";
+    // Stats tab is default-on; keep override as a local kill switch.
+    const enabled = statsTabOverride !== "off";
 
     return { enabled, variant: statsTabVariant, override: statsTabOverride } as const;
   };
@@ -388,6 +393,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
+  let stopCoderWorkspaceOnArchive = initialStopCoderWorkspaceOnArchive;
+
+  let globalSecretsState: Secret[] = [...globalSecrets];
+  const globalMcpServersState: MockMcpServers = { ...globalMcpServers };
 
   const deriveSubagentAiDefaults = () => {
     const raw: Record<string, unknown> = {};
@@ -413,10 +422,13 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   // MCP OAuth mock state (used by Settings → MCP OAuth UI)
   let mcpOauthFlowCounter = 0;
-  const mcpOauthFlows = new Map<string, { projectPath: string; serverName: string }>();
+  const mcpOauthFlows = new Map<
+    string,
+    { projectPath: string; serverName: string; pendingServerUrl?: string }
+  >();
 
   const getMcpServerUrl = (projectPath: string, serverName: string): string | undefined => {
-    const server = mcpServers.get(projectPath)?.[serverName];
+    const server = mcpServers.get(projectPath)?.[serverName] ?? globalMcpServersState[serverName];
     if (!server || server.transport === "stdio") {
       return undefined;
     }
@@ -425,7 +437,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   const getMcpOauthStatus = (projectPath: string, serverName: string): MCPOAuthAuthStatus => {
     const serverUrl = getMcpServerUrl(projectPath, serverName);
-    const status = mcpOauthAuthStatus.get(serverName);
+    const status = serverUrl ? mcpOauthAuthStatus.get(serverUrl) : undefined;
 
     if (status) {
       return {
@@ -503,6 +515,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           taskSettings,
           muxGatewayEnabled,
           muxGatewayModels,
+          stopCoderWorkspaceOnArchive,
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
@@ -544,6 +557,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       }) => {
         muxGatewayEnabled = input.muxGatewayEnabled ? undefined : false;
         muxGatewayModels = input.muxGatewayModels.length > 0 ? input.muxGatewayModels : undefined;
+        return Promise.resolve(undefined);
+      },
+      updateCoderPrefs: (input: { stopCoderWorkspaceOnArchive: boolean }) => {
+        stopCoderWorkspaceOnArchive = input.stopCoderWorkspaceOnArchive;
         return Promise.resolve(undefined);
       },
       unenrollMuxGovernor: () => Promise.resolve(undefined),
@@ -618,6 +635,216 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         // No ticks in the mock, but keep the subscription open.
         yield* [];
         await new Promise<void>(() => undefined);
+      },
+    },
+    secrets: {
+      get: (input?: { projectPath?: string }) => {
+        const projectPath = typeof input?.projectPath === "string" ? input.projectPath.trim() : "";
+        if (projectPath) {
+          return Promise.resolve(projectSecrets.get(projectPath) ?? []);
+        }
+
+        return Promise.resolve(globalSecretsState);
+      },
+      update: (input: { projectPath?: string; secrets: Secret[] }) => {
+        const projectPath = typeof input.projectPath === "string" ? input.projectPath.trim() : "";
+
+        if (projectPath) {
+          projectSecrets.set(projectPath, input.secrets);
+        } else {
+          globalSecretsState = input.secrets;
+        }
+
+        return Promise.resolve({ success: true, data: undefined });
+      },
+    },
+    mcp: {
+      list: (input?: { projectPath?: string }) => {
+        const projectPath = typeof input?.projectPath === "string" ? input.projectPath.trim() : "";
+        if (projectPath) {
+          return Promise.resolve(mcpServers.get(projectPath) ?? globalMcpServersState);
+        }
+
+        return Promise.resolve(globalMcpServersState);
+      },
+      add: (input: {
+        name: string;
+        transport?: "stdio" | "http" | "sse" | "auto";
+        command?: string;
+        url?: string;
+        headers?: MCPHttpServerInfo["headers"];
+      }) => {
+        const transport = input.transport ?? "stdio";
+
+        if (transport === "stdio") {
+          globalMcpServersState[input.name] = {
+            transport: "stdio",
+            command: input.command ?? "",
+            disabled: false,
+          };
+        } else {
+          globalMcpServersState[input.name] = {
+            transport,
+            url: input.url ?? "",
+            headers: input.headers,
+            disabled: false,
+          };
+        }
+
+        return Promise.resolve({ success: true, data: undefined });
+      },
+      remove: (input: { name: string }) => {
+        delete globalMcpServersState[input.name];
+        return Promise.resolve({ success: true, data: undefined });
+      },
+      test: (input: { projectPath?: string; name?: string }) => {
+        if (input.name && mcpTestResults.has(input.name)) {
+          return Promise.resolve(mcpTestResults.get(input.name)!);
+        }
+
+        // Default: return empty tools.
+        return Promise.resolve({ success: true, tools: [] });
+      },
+      setEnabled: (input: { name: string; enabled: boolean }) => {
+        const server = globalMcpServersState[input.name];
+        if (server) {
+          const disabled = !input.enabled;
+          if (server.transport === "stdio") {
+            globalMcpServersState[input.name] = { ...server, disabled };
+          } else {
+            globalMcpServersState[input.name] = { ...server, disabled };
+          }
+        }
+        return Promise.resolve({ success: true, data: undefined });
+      },
+      setToolAllowlist: (input: { name: string; toolAllowlist: string[] }) => {
+        const server = globalMcpServersState[input.name];
+        if (server) {
+          if (server.transport === "stdio") {
+            globalMcpServersState[input.name] = { ...server, toolAllowlist: input.toolAllowlist };
+          } else {
+            globalMcpServersState[input.name] = { ...server, toolAllowlist: input.toolAllowlist };
+          }
+        }
+        return Promise.resolve({ success: true, data: undefined });
+      },
+    },
+    mcpOauth: {
+      getAuthStatus: (input: { serverUrl: string }) => {
+        const status = mcpOauthAuthStatus.get(input.serverUrl);
+        return Promise.resolve(
+          status ?? {
+            serverUrl: input.serverUrl,
+            isLoggedIn: false,
+            hasRefreshToken: false,
+          }
+        );
+      },
+      startDesktopFlow: (input: {
+        projectPath?: string;
+        serverName: string;
+        pendingServer?: { transport: "http" | "sse" | "auto"; url: string };
+      }) => {
+        mcpOauthFlowCounter += 1;
+        const flowId = `mock-mcp-oauth-flow-${mcpOauthFlowCounter}`;
+
+        mcpOauthFlows.set(flowId, {
+          projectPath: input.projectPath ?? "",
+          serverName: input.serverName,
+          pendingServerUrl: input.pendingServer?.url,
+        });
+
+        return Promise.resolve({
+          success: true,
+          data: {
+            flowId,
+            authorizeUrl: `https://example.com/oauth/authorize?flowId=${encodeURIComponent(flowId)}`,
+            redirectUri: "mux://oauth/callback",
+          },
+        });
+      },
+      waitForDesktopFlow: (input: { flowId: string; timeoutMs?: number }) => {
+        const flow = mcpOauthFlows.get(input.flowId);
+        if (!flow) {
+          return Promise.resolve({ success: false as const, error: "OAuth flow not found." });
+        }
+
+        mcpOauthFlows.delete(input.flowId);
+
+        const serverUrl =
+          flow.pendingServerUrl ?? getMcpServerUrl(flow.projectPath, flow.serverName);
+        if (serverUrl) {
+          mcpOauthAuthStatus.set(serverUrl, {
+            serverUrl,
+            isLoggedIn: true,
+            hasRefreshToken: true,
+            updatedAtMs: Date.now(),
+          });
+        }
+
+        return Promise.resolve({ success: true as const, data: undefined });
+      },
+      cancelDesktopFlow: (input: { flowId: string }) => {
+        mcpOauthFlows.delete(input.flowId);
+        return Promise.resolve(undefined);
+      },
+      startServerFlow: (input: {
+        projectPath?: string;
+        serverName: string;
+        pendingServer?: { transport: "http" | "sse" | "auto"; url: string };
+      }) => {
+        mcpOauthFlowCounter += 1;
+        const flowId = `mock-mcp-oauth-flow-${mcpOauthFlowCounter}`;
+
+        mcpOauthFlows.set(flowId, {
+          projectPath: input.projectPath ?? "",
+          serverName: input.serverName,
+          pendingServerUrl: input.pendingServer?.url,
+        });
+
+        return Promise.resolve({
+          success: true,
+          data: {
+            flowId,
+            authorizeUrl: `https://example.com/oauth/authorize?flowId=${encodeURIComponent(flowId)}`,
+            redirectUri: "mux://oauth/callback",
+          },
+        });
+      },
+      waitForServerFlow: (input: { flowId: string; timeoutMs?: number }) => {
+        const flow = mcpOauthFlows.get(input.flowId);
+        if (!flow) {
+          return Promise.resolve({ success: false as const, error: "OAuth flow not found." });
+        }
+
+        mcpOauthFlows.delete(input.flowId);
+
+        const serverUrl =
+          flow.pendingServerUrl ?? getMcpServerUrl(flow.projectPath, flow.serverName);
+        if (serverUrl) {
+          mcpOauthAuthStatus.set(serverUrl, {
+            serverUrl,
+            isLoggedIn: true,
+            hasRefreshToken: true,
+            updatedAtMs: Date.now(),
+          });
+        }
+
+        return Promise.resolve({ success: true as const, data: undefined });
+      },
+      cancelServerFlow: (input: { flowId: string }) => {
+        mcpOauthFlows.delete(input.flowId);
+        return Promise.resolve(undefined);
+      },
+      logout: (input: { serverUrl: string }) => {
+        mcpOauthAuthStatus.set(input.serverUrl, {
+          serverUrl: input.serverUrl,
+          isLoggedIn: false,
+          hasRefreshToken: false,
+          updatedAtMs: Date.now(),
+        });
+
+        return Promise.resolve({ success: true as const, data: undefined });
       },
     },
     projects: {
@@ -711,12 +938,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
           mcpOauthFlows.delete(input.flowId);
 
-          mcpOauthAuthStatus.set(flow.serverName, {
-            serverUrl: getMcpServerUrl(flow.projectPath, flow.serverName),
-            isLoggedIn: true,
-            hasRefreshToken: true,
-            updatedAtMs: Date.now(),
-          });
+          const serverUrl = getMcpServerUrl(flow.projectPath, flow.serverName);
+          if (serverUrl) {
+            mcpOauthAuthStatus.set(serverUrl, {
+              serverUrl,
+              isLoggedIn: true,
+              hasRefreshToken: true,
+              updatedAtMs: Date.now(),
+            });
+          }
 
           return Promise.resolve({ success: true as const, data: undefined });
         },
@@ -725,12 +955,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           return Promise.resolve(undefined);
         },
         logout: (input: { projectPath: string; serverName: string }) => {
-          mcpOauthAuthStatus.set(input.serverName, {
-            serverUrl: getMcpServerUrl(input.projectPath, input.serverName),
-            isLoggedIn: false,
-            hasRefreshToken: false,
-            updatedAtMs: Date.now(),
-          });
+          const serverUrl = getMcpServerUrl(input.projectPath, input.serverName);
+          if (serverUrl) {
+            mcpOauthAuthStatus.set(serverUrl, {
+              serverUrl,
+              isLoggedIn: false,
+              hasRefreshToken: false,
+              updatedAtMs: Date.now(),
+            });
+          }
 
           return Promise.resolve({ success: true as const, data: undefined });
         },

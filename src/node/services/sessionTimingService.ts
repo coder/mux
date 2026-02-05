@@ -37,6 +37,11 @@ import { roundToBase2 } from "@/common/telemetry/utils";
 const SESSION_TIMING_FILE = "session-timing.json";
 const SESSION_TIMING_VERSION = 2 as const;
 
+// Token/tool deltas can arrive very quickly; waking subscribers on every delta can create
+// unnecessary pressure throughout the backend. We rate-limit delta-driven change events
+// per-workspace.
+const DELTA_EMIT_THROTTLE_MS = 100;
+
 export type StatsTabVariant = "control" | "stats";
 export type StatsTabOverride = "default" | "on" | "off";
 
@@ -179,6 +184,11 @@ export class SessionTimingService {
   private readonly writeEpoch = new Map<string, number>();
   private readonly tickIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
+  private readonly deltaEmitState = new Map<
+    string,
+    { lastEmitTimeMs: number; timer?: ReturnType<typeof setTimeout> }
+  >();
+
   private statsTabState: StatsTabState = {
     enabled: false,
     variant: "control",
@@ -209,11 +219,14 @@ export class SessionTimingService {
     const next = Math.max(0, current - 1);
     if (next === 0) {
       this.subscriberCounts.delete(workspaceId);
+
       const interval = this.tickIntervals.get(workspaceId);
       if (interval) {
         clearInterval(interval);
         this.tickIntervals.delete(workspaceId);
       }
+
+      this.clearDeltaEmitState(workspaceId);
       return;
     }
     this.subscriberCounts.set(workspaceId, next);
@@ -235,6 +248,91 @@ export class SessionTimingService {
     this.emitter.emit("change", workspaceId);
   }
 
+  private clearDeltaEmitState(workspaceId: string): void {
+    const state = this.deltaEmitState.get(workspaceId);
+    if (!state) {
+      return;
+    }
+
+    if (state.timer) {
+      clearTimeout(state.timer);
+    }
+
+    this.deltaEmitState.delete(workspaceId);
+  }
+
+  private emitDeltaChangeImmediate(workspaceId: string): void {
+    // Avoid allocating timers/state when nothing is subscribed.
+    if ((this.subscriberCounts.get(workspaceId) ?? 0) === 0) {
+      return;
+    }
+
+    const state = this.deltaEmitState.get(workspaceId);
+    if (state?.timer) {
+      clearTimeout(state.timer);
+    }
+
+    this.deltaEmitState.set(workspaceId, { lastEmitTimeMs: Date.now() });
+    this.emitChange(workspaceId);
+  }
+
+  private emitDeltaChangeThrottled(workspaceId: string): void {
+    // Avoid allocating timers/state when nothing is subscribed.
+    if ((this.subscriberCounts.get(workspaceId) ?? 0) === 0) {
+      return;
+    }
+
+    const now = Date.now();
+
+    const state = this.deltaEmitState.get(workspaceId) ?? { lastEmitTimeMs: 0 };
+    const timeSinceLastEmit = now - state.lastEmitTimeMs;
+
+    // If enough time has passed, emit immediately.
+    if (timeSinceLastEmit >= DELTA_EMIT_THROTTLE_MS) {
+      if (state.timer) {
+        clearTimeout(state.timer);
+        state.timer = undefined;
+      }
+
+      state.lastEmitTimeMs = now;
+      this.deltaEmitState.set(workspaceId, state);
+      this.emitChange(workspaceId);
+      return;
+    }
+
+    // Otherwise, schedule one trailing emit at the first allowed time.
+    if (state.timer) {
+      this.deltaEmitState.set(workspaceId, state);
+      return;
+    }
+
+    const remainingTime = Math.max(0, DELTA_EMIT_THROTTLE_MS - timeSinceLastEmit);
+    const timer = setTimeout(() => {
+      // Timer may have been cleared/replaced by an immediate emit.
+      const currentState = this.deltaEmitState.get(workspaceId);
+      if (currentState?.timer !== timer) {
+        return;
+      }
+
+      currentState.timer = undefined;
+
+      // If there are no subscribers anymore, clean up.
+      if ((this.subscriberCounts.get(workspaceId) ?? 0) === 0) {
+        this.deltaEmitState.delete(workspaceId);
+        return;
+      }
+
+      currentState.lastEmitTimeMs = Date.now();
+      this.emitChange(workspaceId);
+    }, remainingTime);
+
+    // Avoid keeping Node (or Jest workers) alive due to a leaked throttle timer.
+    timer.unref?.();
+
+    state.timer = timer;
+    this.deltaEmitState.set(workspaceId, state);
+  }
+
   private ensureTicking(workspaceId: string): void {
     if (this.tickIntervals.has(workspaceId)) {
       return;
@@ -247,6 +345,9 @@ export class SessionTimingService {
       }
       this.emitChange(workspaceId);
     }, 1000);
+
+    // Avoid keeping Node (or Jest workers) alive due to a leaked tick interval.
+    interval.unref?.();
 
     this.tickIntervals.set(workspaceId, interval);
   }
@@ -661,15 +762,20 @@ export class SessionTimingService {
 
     state.lastEventTimestampMs = Math.max(state.lastEventTimestampMs, data.timestamp);
 
-    if (data.delta.length > 0 && state.firstTokenTimeMs === null) {
+    const isFirstToken = data.delta.length > 0 && state.firstTokenTimeMs === null;
+    if (isFirstToken) {
       state.firstTokenTimeMs = data.timestamp;
-      this.emitChange(data.workspaceId);
     }
 
     state.outputTokensByDelta += data.tokens;
     state.deltaStorage.addDelta({ tokens: data.tokens, timestamp: data.timestamp, type: "text" });
 
-    this.emitChange(data.workspaceId);
+    if (isFirstToken) {
+      // TTFT is user-visible; emit immediately.
+      this.emitDeltaChangeImmediate(data.workspaceId);
+    } else {
+      this.emitDeltaChangeThrottled(data.workspaceId);
+    }
   }
 
   handleReasoningDelta(data: ReasoningDeltaEvent): void {
@@ -679,9 +785,9 @@ export class SessionTimingService {
 
     state.lastEventTimestampMs = Math.max(state.lastEventTimestampMs, data.timestamp);
 
-    if (data.delta.length > 0 && state.firstTokenTimeMs === null) {
+    const isFirstToken = data.delta.length > 0 && state.firstTokenTimeMs === null;
+    if (isFirstToken) {
       state.firstTokenTimeMs = data.timestamp;
-      this.emitChange(data.workspaceId);
     }
 
     state.reasoningTokensByDelta += data.tokens;
@@ -691,7 +797,12 @@ export class SessionTimingService {
       type: "reasoning",
     });
 
-    this.emitChange(data.workspaceId);
+    if (isFirstToken) {
+      // TTFT is user-visible; emit immediately.
+      this.emitDeltaChangeImmediate(data.workspaceId);
+    } else {
+      this.emitDeltaChangeThrottled(data.workspaceId);
+    }
   }
 
   handleToolCallStart(data: ToolCallStartEvent): void {
@@ -743,7 +854,7 @@ export class SessionTimingService {
       type: "tool-args",
     });
 
-    this.emitChange(data.workspaceId);
+    this.emitDeltaChangeThrottled(data.workspaceId);
   }
 
   handleToolCallEnd(data: ToolCallEndEvent): void {

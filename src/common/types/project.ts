@@ -78,4 +78,12 @@ export interface ProjectsConfig {
   muxGovernorUrl?: string;
   /** Mux Governor OAuth access token (secret - never return to UI) */
   muxGovernorToken?: string;
+
+  /**
+   * When true (default), archiving a Mux workspace will stop its dedicated mux-created Coder
+   * workspace first, and unarchiving will attempt to start it again.
+   *
+   * Stored as `false` only (undefined behaves as true) to keep config.json minimal.
+   */
+  stopCoderWorkspaceOnArchive?: boolean;
 }

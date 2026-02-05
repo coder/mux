@@ -31,14 +31,17 @@ async function waitForForegroundToolCallId(
   toolCallId: string
 ): Promise<void> {
   const controller = new AbortController();
+  let iterator: AsyncIterator<{ foregroundToolCallIds: string[] }> | null = null;
 
   try {
-    const iterator = await env.orpc.workspace.backgroundBashes.subscribe(
+    const subscribedIterator = await env.orpc.workspace.backgroundBashes.subscribe(
       { workspaceId },
       { signal: controller.signal }
     );
 
-    for await (const state of iterator) {
+    iterator = subscribedIterator;
+
+    for await (const state of subscribedIterator) {
       if (state.foregroundToolCallIds.includes(toolCallId)) {
         return;
       }
@@ -47,6 +50,7 @@ async function waitForForegroundToolCallId(
     throw new Error("backgroundBashes.subscribe ended before foreground bash was observed");
   } finally {
     controller.abort();
+    void iterator?.return?.();
   }
 }
 

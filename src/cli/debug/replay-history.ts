@@ -19,6 +19,7 @@ import type { MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { AIService } from "@/node/services/aiService";
+import { ProviderService } from "@/node/services/providerService";
 import { HistoryService } from "@/node/services/historyService";
 import { PartialService } from "@/node/services/partialService";
 
@@ -125,7 +126,14 @@ async function main() {
   const historyService = new HistoryService(config);
   const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
-  const aiService = new AIService(config, historyService, partialService, initStateManager);
+  const providerService = new ProviderService(config);
+  const aiService = new AIService(
+    config,
+    historyService,
+    partialService,
+    initStateManager,
+    providerService
+  );
 
   const modelString = values.model ?? "openai:gpt-5-codex";
   const thinkingLevel = (values.thinking ?? "high") as "low" | "medium" | "high";

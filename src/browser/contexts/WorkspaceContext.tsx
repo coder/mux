@@ -34,6 +34,7 @@ import {
   WORKSPACE_DRAFTS_BY_PROJECT_KEY,
 } from "@/common/constants/storage";
 import { useAPI } from "@/browser/contexts/API";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import {
   readPersistedState,
   updatePersistedState,
@@ -126,7 +127,7 @@ function seedWorkspaceLocalStorageFromBackend(metadata: FrontendWorkspaceMetadat
   const modelKey = getModelKey(workspaceId);
   const existingModel = readPersistedState<string | undefined>(modelKey, undefined);
   if (existingModel !== active.model) {
-    updatePersistedState(modelKey, active.model);
+    setWorkspaceModelWithOrigin(workspaceId, active.model, "sync");
   }
 
   const thinkingKey = getThinkingLevelKey(workspaceId);

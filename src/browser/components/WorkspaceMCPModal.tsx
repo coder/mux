@@ -49,7 +49,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
       setError(null);
       try {
         const [projectServers, workspaceOverrides] = await Promise.all([
-          api.projects.mcp.list({ projectPath }),
+          api.mcp.list({ projectPath }),
           api.workspace.mcp.get({ workspaceId }),
         ]);
         setServers(projectServers ?? {});
@@ -70,7 +70,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
       if (!api) return;
       setLoadingTools((prev) => ({ ...prev, [serverName]: true }));
       try {
-        const result = await api.projects.mcp.test({ projectPath, name: serverName });
+        const result = await api.mcp.test({ projectPath, name: serverName });
         setResult(serverName, result);
         if (!result.success) {
           setError(`Failed to fetch tools for ${serverName}: ${result.error}`);
@@ -243,7 +243,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
 
   const handleOpenProjectSettings = useCallback(() => {
     onOpenChange(false);
-    settings.open("projects");
+    settings.open("mcp");
   }, [onOpenChange, settings]);
   const hasServers = serverEntries.length > 0;
 
@@ -272,7 +272,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                 className="h-auto p-0 align-baseline"
                 onClick={handleOpenProjectSettings}
               >
-                Settings → Projects
+                Settings → MCP
               </Button>{" "}
               to use them here.
             </p>
@@ -313,6 +313,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                           onCheckedChange={(checked) =>
                             toggleServerEnabled(name, checked, projectDisabled)
                           }
+                          aria-label={`Toggle ${name} MCP server`}
                         />
                         <div>
                           <div className="font-medium">{name}</div>

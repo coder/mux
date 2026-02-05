@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +10,15 @@ import {
   DialogInfo,
 } from "@/browser/components/ui/dialog";
 import { Button } from "@/browser/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/browser/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
+import { useAPI } from "@/browser/contexts/API";
 import type { Secret } from "@/common/types/secrets";
 
 // Visibility toggle icon component
@@ -50,6 +60,27 @@ const ToggleVisibilityIcon: React.FC<{ visible: boolean }> = ({ visible }) => {
   );
 };
 
+function isSecretReferenceValue(value: Secret["value"]): value is { secret: string } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "secret" in value &&
+    typeof (value as { secret?: unknown }).secret === "string"
+  );
+}
+
+function secretValueIsNonEmpty(value: Secret["value"]): boolean {
+  if (typeof value === "string") {
+    return value.trim() !== "";
+  }
+
+  if (isSecretReferenceValue(value)) {
+    return value.secret.trim() !== "";
+  }
+
+  return false;
+}
+
 interface SecretsModalProps {
   isOpen: boolean;
   projectPath: string;
@@ -67,6 +98,13 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
   onClose,
   onSave,
 }) => {
+  const { api } = useAPI();
+
+  const [globalSecretKeys, setGlobalSecretKeys] = useState<string[]>([]);
+  const sortedGlobalSecretKeys = globalSecretKeys
+    .slice()
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
   const [secrets, setSecrets] = useState<Secret[]>(initialSecrets);
   const [visibleSecrets, setVisibleSecrets] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
@@ -79,6 +117,31 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
     }
   }, [isOpen, initialSecrets]);
 
+  // Load global secret keys (used for {secret:"KEY"} project secret values).
+  useEffect(() => {
+    if (!api || !isOpen) {
+      setGlobalSecretKeys([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const secrets = await api.secrets.get({});
+        if (cancelled) return;
+        setGlobalSecretKeys(secrets.map((s) => s.key));
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Failed to load global secrets:", err);
+        setGlobalSecretKeys([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, isOpen]);
+
   const handleCancel = useCallback(() => {
     setSecrets(initialSecrets);
     setVisibleSecrets(new Set());
@@ -89,7 +152,9 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
     setIsLoading(true);
     try {
       // Filter out empty secrets
-      const validSecrets = secrets.filter((s) => s.key.trim() !== "" && s.value.trim() !== "");
+      const validSecrets = secrets.filter(
+        (s) => s.key.trim() !== "" && secretValueIsNonEmpty(s.value)
+      );
       await onSave(validSecrets);
       onClose();
     } catch (err) {
@@ -100,33 +165,84 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
   };
 
   const addSecret = () => {
-    setSecrets([...secrets, { key: "", value: "" }]);
+    setSecrets((prev) => [...prev, { key: "", value: "" }]);
   };
 
   const removeSecret = (index: number) => {
-    setSecrets(secrets.filter((_, i) => i !== index));
-    // Clean up visibility state
-    const newVisible = new Set(visibleSecrets);
-    newVisible.delete(index);
-    setVisibleSecrets(newVisible);
+    setSecrets((prev) => prev.filter((_, i) => i !== index));
+
+    // Keep visibility state aligned with the remaining rows.
+    //
+    // Visibility is tracked by array index; deleting a row shifts later indices.
+    // If we don't shift the visibility set too, we can end up revealing a different secret.
+    setVisibleSecrets((prev) => {
+      const next = new Set<number>();
+      for (const visibleIndex of prev) {
+        if (visibleIndex === index) {
+          continue;
+        }
+        next.add(visibleIndex > index ? visibleIndex - 1 : visibleIndex);
+      }
+      return next;
+    });
   };
 
-  const updateSecret = (index: number, field: "key" | "value", value: string) => {
-    const newSecrets = [...secrets];
-    // Auto-capitalize key field for env variable convention
-    const processedValue = field === "key" ? value.toUpperCase() : value;
-    newSecrets[index] = { ...newSecrets[index], [field]: processedValue };
-    setSecrets(newSecrets);
+  const updateSecretKey = (index: number, value: string) => {
+    setSecrets((prev) => {
+      const next = [...prev];
+      const existing = next[index] ?? { key: "", value: "" };
+
+      // Auto-capitalize key field for env variable convention.
+      next[index] = { ...existing, key: value.toUpperCase() };
+      return next;
+    });
+  };
+
+  const updateSecretValue = (index: number, value: Secret["value"]) => {
+    setSecrets((prev) => {
+      const next = [...prev];
+      const existing = next[index] ?? { key: "", value: "" };
+      next[index] = { ...existing, value };
+      return next;
+    });
+  };
+
+  const updateSecretValueKind = (index: number, kind: "literal" | "global") => {
+    setSecrets((prev) => {
+      const next = [...prev];
+      const existing = next[index] ?? { key: "", value: "" };
+
+      if (kind === "literal") {
+        next[index] = {
+          ...existing,
+          value: typeof existing.value === "string" ? existing.value : "",
+        };
+        return next;
+      }
+
+      if (isSecretReferenceValue(existing.value)) {
+        return next;
+      }
+
+      const defaultKey = sortedGlobalSecretKeys[0] ?? "";
+      next[index] = {
+        ...existing,
+        value: { secret: defaultKey },
+      };
+      return next;
+    });
   };
 
   const toggleVisibility = (index: number) => {
-    const newVisible = new Set(visibleSecrets);
-    if (newVisible.has(index)) {
-      newVisible.delete(index);
-    } else {
-      newVisible.add(index);
-    }
-    setVisibleSecrets(newVisible);
+    setVisibleSecrets((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
   };
 
   const handleOpenChange = useCallback(
@@ -159,47 +275,132 @@ const SecretsModal: React.FC<SecretsModalProps> = ({
               No secrets configured
             </div>
           ) : (
-            <div className="[&>label]:text-muted grid grid-cols-[1fr_1fr_auto_auto] items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]">
+            <div className="[&>label]:text-muted grid grid-cols-[1fr_auto_1fr_auto_auto] items-end gap-1 [&>label]:mb-0.5 [&>label]:text-[11px]">
               <label>Key</label>
+              <label>Type</label>
               <label>Value</label>
-              <div /> {/* Empty cell for eye icon column */}
-              <div /> {/* Empty cell for delete button column */}
-              {secrets.map((secret, index) => (
-                <React.Fragment key={index}>
-                  <input
-                    type="text"
-                    value={secret.key}
-                    onChange={(e) => updateSecret(index, "key", e.target.value)}
-                    placeholder="SECRET_NAME"
-                    disabled={isLoading}
-                    className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none"
-                  />
-                  <input
-                    type={visibleSecrets.has(index) ? "text" : "password"}
-                    value={secret.value}
-                    onChange={(e) => updateSecret(index, "value", e.target.value)}
-                    placeholder="secret value"
-                    disabled={isLoading}
-                    className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim w-full rounded border px-2.5 py-1.5 font-mono text-[13px] text-white focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => toggleVisibility(index)}
-                    disabled={isLoading}
-                    className="text-muted hover:text-foreground flex cursor-pointer items-center justify-center self-center rounded-sm border-none bg-transparent px-1 py-0.5 text-base transition-all duration-200"
-                  >
-                    <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeSecret(index)}
-                    disabled={isLoading}
-                    className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200"
-                  >
-                    ×
-                  </button>
-                </React.Fragment>
-              ))}
+              <div />
+              <div />
+
+              {secrets.map((secret, index) => {
+                const isReference = isSecretReferenceValue(secret.value);
+                const kind = isReference ? "global" : "literal";
+                const referencedKey = isSecretReferenceValue(secret.value)
+                  ? secret.value.secret
+                  : "";
+                const availableKeys =
+                  referencedKey && !sortedGlobalSecretKeys.includes(referencedKey)
+                    ? [referencedKey, ...sortedGlobalSecretKeys]
+                    : sortedGlobalSecretKeys;
+
+                return (
+                  <React.Fragment key={index}>
+                    <input
+                      type="text"
+                      value={secret.key}
+                      onChange={(e) => updateSecretKey(index, e.target.value)}
+                      placeholder="SECRET_NAME"
+                      aria-label="Secret key"
+                      disabled={isLoading}
+                      spellCheck={false}
+                      className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
+                    />
+
+                    <ToggleGroup
+                      type="single"
+                      value={kind}
+                      onValueChange={(value) => {
+                        if (value !== "literal" && value !== "global") {
+                          return;
+                        }
+                        updateSecretValueKind(index, value);
+                      }}
+                      size="sm"
+                      className="h-[34px]"
+                      disabled={isLoading}
+                    >
+                      <ToggleGroupItem
+                        value="literal"
+                        size="sm"
+                        className="h-[26px] px-3 text-[13px]"
+                      >
+                        Value
+                      </ToggleGroupItem>
+                      <ToggleGroupItem
+                        value="global"
+                        size="sm"
+                        className="h-[26px] px-3 text-[13px]"
+                        disabled={availableKeys.length === 0}
+                      >
+                        Global
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+
+                    {isReference ? (
+                      <Select
+                        value={referencedKey || undefined}
+                        onValueChange={(value) => updateSecretValue(index, { secret: value })}
+                        disabled={isLoading}
+                      >
+                        <SelectTrigger
+                          className="border-border-medium bg-modal-bg hover:bg-hover h-[34px] w-full px-2.5 font-mono text-[13px]"
+                          aria-label="Global secret key"
+                        >
+                          <SelectValue placeholder="Select global secret" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableKeys.map((key) => (
+                            <SelectItem key={key} value={key}>
+                              {key}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <input
+                        type={visibleSecrets.has(index) ? "text" : "password"}
+                        value={
+                          typeof secret.value === "string"
+                            ? secret.value
+                            : isSecretReferenceValue(secret.value)
+                              ? secret.value.secret
+                              : ""
+                        }
+                        onChange={(e) => updateSecretValue(index, e.target.value)}
+                        placeholder="secret value"
+                        aria-label="Secret value"
+                        disabled={isLoading}
+                        spellCheck={false}
+                        className="bg-modal-bg border-border-medium focus:border-accent placeholder:text-dim text-foreground w-full rounded border px-2.5 py-1.5 font-mono text-[13px] focus:outline-none disabled:opacity-50"
+                      />
+                    )}
+
+                    {isReference ? (
+                      <div />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => toggleVisibility(index)}
+                        disabled={isLoading}
+                        className="text-muted hover:text-foreground flex cursor-pointer items-center justify-center self-center rounded-sm border-none bg-transparent px-1 py-0.5 text-base transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label={visibleSecrets.has(index) ? "Hide secret" : "Show secret"}
+                      >
+                        <ToggleVisibilityIcon visible={visibleSecrets.has(index)} />
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => removeSecret(index)}
+                      disabled={isLoading}
+                      className="text-danger-light border-danger-light hover:bg-danger-light/10 cursor-pointer rounded border bg-transparent px-2.5 py-1.5 text-[13px] transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Remove secret"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </React.Fragment>
+                );
+              })}
             </div>
           )}
         </div>

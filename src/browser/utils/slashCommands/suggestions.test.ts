@@ -92,4 +92,30 @@ describe("getSlashCommandSuggestions", () => {
     expect(suggestions).toHaveLength(1);
     expect(suggestions[0].display).toBe("opus");
   });
+
+  it("suggests model aliases as one-shot commands", () => {
+    const suggestions = getSlashCommandSuggestions("/");
+    const displays = suggestions.map((s) => s.display);
+
+    expect(displays).toContain("/haiku");
+    expect(displays).toContain("/sonnet");
+    expect(displays).toContain("/opus");
+  });
+
+  it("filters model alias suggestions by partial input", () => {
+    const suggestions = getSlashCommandSuggestions("/ha");
+    const displays = suggestions.map((s) => s.display);
+
+    expect(displays).toContain("/haiku");
+    expect(displays).not.toContain("/sonnet");
+  });
+
+  it("includes description for model alias suggestions", () => {
+    const suggestions = getSlashCommandSuggestions("/haiku");
+    const haiku = suggestions.find((s) => s.display === "/haiku");
+
+    expect(haiku).toBeTruthy();
+    expect(haiku?.description).toContain("(one message)");
+    expect(haiku?.replacement).toBe("/haiku ");
+  });
 });

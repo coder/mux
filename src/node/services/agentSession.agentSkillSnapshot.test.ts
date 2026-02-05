@@ -132,6 +132,11 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(snapshotMessage.metadata?.agentSkillSnapshot?.skillName).toBe("test-skill");
     expect(snapshotMessage.metadata?.agentSkillSnapshot?.sha256).toBeTruthy();
 
+    const frontmatterYaml = snapshotMessage.metadata?.agentSkillSnapshot?.frontmatterYaml;
+    expect(frontmatterYaml).toBeTruthy();
+    expect(frontmatterYaml ?? "").toContain("name:");
+    expect(frontmatterYaml ?? "").toContain("description:");
+
     const snapshotText = snapshotMessage.parts.find((p) => p.type === "text")?.text;
     expect(snapshotText).toContain("<agent-skill");
     expect(snapshotText).toContain("Follow this skill.");
@@ -356,6 +361,143 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     const secondSendAppendedIds = appendedIds.slice(2);
     expect(secondSendAppendedIds).toHaveLength(1);
     expect(secondSendAppendedIds[0]).toStartWith("user-");
+  });
+
+  it("persists a new skill snapshot when frontmatter changes (body unchanged)", async () => {
+    const workspaceId = "ws-test";
+
+    const skillName = "test-skill";
+    const skillBody = "Follow this skill.";
+
+    const { workspacePath } = await createTestWorkspaceWithSkill({
+      skillName,
+      skillBody,
+    });
+
+    const config = {
+      srcDir: "/tmp",
+      getSessionDir: (_workspaceId: string) => "/tmp",
+    } as unknown as Config;
+
+    const messages: MuxMessage[] = [];
+    let nextSeq = 0;
+
+    const appendToHistory = mock((_workspaceId: string, message: MuxMessage) => {
+      message.metadata = { ...(message.metadata ?? {}), historySequence: nextSeq++ };
+      messages.push(message);
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const historyService = {
+      appendToHistory,
+      truncateAfterMessage: mock((_workspaceId: string, _messageId: string) => {
+        void _messageId;
+        return Promise.resolve(Ok(undefined));
+      }),
+      getHistory: mock((_workspaceId: string): Promise<Result<MuxMessage[], string>> => {
+        return Promise.resolve(Ok([...messages]));
+      }),
+    } as unknown as HistoryService;
+
+    const partialService = {
+      commitToHistory: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+    } as unknown as PartialService;
+
+    const aiEmitter = new EventEmitter();
+
+    const workspaceMeta: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: "ws",
+      projectName: "proj",
+      projectPath: workspacePath,
+      namedWorkspacePath: workspacePath,
+      runtimeConfig: { type: "local" },
+    } as unknown as FrontendWorkspaceMetadata;
+
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      getWorkspaceMetadata: mock((_workspaceId: string) => Promise.resolve(Ok(workspaceMeta))),
+      streamMessage: mock((_messages: MuxMessage[]) => {
+        return Promise.resolve(Ok(undefined));
+      }) as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<Result<void, SendMessageError>>,
+    }) as unknown as AIService;
+
+    const initStateManager = new EventEmitter() as unknown as InitStateManager;
+
+    const backgroundProcessManager = {
+      cleanup: mock((_workspaceId: string) => Promise.resolve()),
+      setMessageQueued: mock((_workspaceId: string, _queued: boolean) => {
+        void _queued;
+      }),
+    } as unknown as BackgroundProcessManager;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      partialService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const baseOptions = {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/test-skill do X",
+        skillName,
+        scope: "project",
+      },
+    };
+
+    const first = await session.sendMessage("do X", baseOptions);
+    expect(first.success).toBe(true);
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+
+    const firstSnapshot = messages[0];
+    expect(firstSnapshot.id).toStartWith("agent-skill-snapshot-");
+
+    const firstSnapshotText = firstSnapshot.parts.find((p) => p.type === "text")?.text;
+    expect(firstSnapshotText).toBeTruthy();
+
+    const firstSha = firstSnapshot.metadata?.agentSkillSnapshot?.sha256;
+    expect(firstSha).toBeTruthy();
+
+    // Update frontmatter only.
+    const skillFilePath = path.join(workspacePath, ".mux", "skills", skillName, "SKILL.md");
+    const updatedSkillMarkdown = `---\nname: ${skillName}\ndescription: Updated description\n---\n\n${skillBody}\n`;
+    await fs.writeFile(skillFilePath, updatedSkillMarkdown, "utf-8");
+
+    const second = await session.sendMessage("do Y", {
+      ...baseOptions,
+      muxMetadata: {
+        ...baseOptions.muxMetadata,
+        rawCommand: "/test-skill do Y",
+      },
+    });
+
+    expect(second.success).toBe(true);
+
+    // Second send should persist a new snapshot (frontmatter differs) + user message.
+    expect(appendToHistory.mock.calls).toHaveLength(4);
+
+    const secondSnapshot = messages[2];
+    expect(secondSnapshot.id).toStartWith("agent-skill-snapshot-");
+
+    const secondSnapshotText = secondSnapshot.parts.find((p) => p.type === "text")?.text;
+    expect(secondSnapshotText).toBe(firstSnapshotText);
+
+    const secondSha = secondSnapshot.metadata?.agentSkillSnapshot?.sha256;
+    expect(secondSha).toBeTruthy();
+    expect(secondSha).not.toBe(firstSha);
+
+    const secondFrontmatter = secondSnapshot.metadata?.agentSkillSnapshot?.frontmatterYaml;
+    expect(secondFrontmatter ?? "").toContain("Updated description");
   });
 
   it("truncates edits starting from preceding skill/file snapshots", async () => {

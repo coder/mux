@@ -399,6 +399,24 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     expect(result.success).toBe(true);
   });
 
+  it("deletes stopped Coder workspace without SSH cleanup", async () => {
+    const getWorkspaceStatus = mock(() =>
+      Promise.resolve({ kind: "ok" as const, status: "stopped" as const })
+    );
+    const deleteWorkspace = mock(() => Promise.resolve());
+    const coderService = createMockCoderService({ getWorkspaceStatus, deleteWorkspace });
+
+    const runtime = createRuntime(
+      { existingWorkspace: false, workspaceName: "my-ws" },
+      coderService
+    );
+
+    const result = await runtime.deleteWorkspace("/project", "ws", false);
+
+    expect(result.success).toBe(true);
+    expect(sshDeleteSpy).not.toHaveBeenCalled();
+    expect(deleteWorkspace).toHaveBeenCalledWith("my-ws");
+  });
   it("succeeds immediately when Coder workspace status is 'deleting'", async () => {
     const getWorkspaceStatus = mock(() =>
       Promise.resolve({ kind: "ok" as const, status: "deleting" as const })

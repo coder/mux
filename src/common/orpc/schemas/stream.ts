@@ -63,6 +63,7 @@ export const StreamStartEventSchema = z.object({
     .optional()
     .meta({ description: "True when this event is emitted during stream replay" }),
   model: z.string(),
+  routedThroughGateway: z.boolean().optional(),
   historySequence: z.number().meta({
     description: "Backend assigns global message ordering",
   }),
@@ -131,6 +132,7 @@ export const StreamEndEventSchema = z.object({
   metadata: z
     .object({
       model: z.string(),
+      routedThroughGateway: z.boolean().optional(),
       // Total usage across all steps (for cost calculation)
       usage: LanguageModelV2UsageSchema.optional(),
       // Last step's usage only (for context window display - inputTokens = current context size)
@@ -385,6 +387,7 @@ export const RestoreToInputEventSchema = z.object({
   workspaceId: z.string(),
   text: z.string(),
   fileParts: z.array(FilePartSchema).optional(),
+  reviews: z.array(ReviewNoteDataSchema).optional(),
 });
 
 // All streaming events now have a `type` field for O(1) discriminated union lookup.
@@ -457,6 +460,7 @@ export const ExperimentsSchema = z.object({
   programmaticToolCalling: z.boolean().optional(),
   programmaticToolCallingExclusive: z.boolean().optional(),
   system1: z.boolean().optional(),
+  execSubagentHardRestart: z.boolean().optional(),
 });
 
 // SendMessage options
@@ -477,6 +481,10 @@ export const SendMessageOptionsSchema = z.object({
   }),
   providerOptions: MuxProviderOptionsSchema.optional(),
   muxMetadata: z.any().optional(), // Black box
+  /**
+   * When true, skip persisting AI settings (e.g., for one-shot or compaction sends).
+   */
+  skipAiSettingsPersistence: z.boolean().optional(),
   experiments: ExperimentsSchema.optional(),
   /**
    * When true, workspace-specific agent definitions are disabled.

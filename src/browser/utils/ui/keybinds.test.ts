@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { matchesKeybind, KEYBINDS } from "./keybinds";
+import { isMac, matchesKeybind, KEYBINDS } from "./keybinds";
 import type { Keybind } from "@/common/types/keybind";
 
 // Helper to create a minimal keyboard event
@@ -14,6 +14,29 @@ function createEvent(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent {
     ...overrides,
   } as KeyboardEvent;
 }
+
+describe("isMac", () => {
+  it("falls back to navigator.platform when Electron API is missing", () => {
+    const originalWindow = globalThis.window;
+    const originalNavigator = globalThis.navigator;
+
+    // Simulate browser mode on macOS (no Electron preload API)
+    globalThis.window = {} as unknown as Window & typeof globalThis;
+    globalThis.navigator = {
+      platform: "MacIntel",
+      userAgent: "Mozilla/5.0",
+    } as unknown as Navigator;
+
+    expect(isMac()).toBe(true);
+
+    // Ctrl-style keybinds should match Cmd (Meta) on macOS
+    const event = createEvent({ key: "P", metaKey: true, shiftKey: true });
+    expect(matchesKeybind(event, KEYBINDS.OPEN_COMMAND_PALETTE)).toBe(true);
+
+    globalThis.window = originalWindow;
+    globalThis.navigator = originalNavigator;
+  });
+});
 
 describe("CYCLE_MODEL keybind (Ctrl+/)", () => {
   it("matches Ctrl+/ on Linux/Windows", () => {

@@ -6,6 +6,7 @@
  */
 
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { ReviewNoteDataForDisplay } from "@/common/types/message";
 import type { FilePart } from "@/common/orpc/schemas";
 
 export const CUSTOM_EVENTS = {
@@ -17,7 +18,7 @@ export const CUSTOM_EVENTS = {
 
   /**
    * Event to insert text into the chat input
-   * Detail: { text: string, mode?: "replace" | "append", fileParts?: FilePart[] }
+   * Detail: { text: string, mode?: "replace" | "append", fileParts?: FilePart[], reviews?: ReviewNoteDataForDisplay[] }
    */
   UPDATE_CHAT_INPUT: "mux:updateChatInput",
 
@@ -57,6 +58,12 @@ export const CUSTOM_EVENTS = {
    * useResumeManager handles this idempotently - safe to emit multiple times
    */
   RESUME_CHECK_REQUESTED: "mux:resumeCheckRequested",
+
+  /**
+   * Event emitted when the mux gateway session expires.
+   * No detail
+   */
+  MUX_GATEWAY_SESSION_EXPIRED: "mux:muxGatewaySessionExpired",
 
   /**
    * Event to switch to a different workspace after fork
@@ -101,6 +108,7 @@ export interface CustomEventPayloads {
     text: string;
     mode?: "replace" | "append";
     fileParts?: FilePart[];
+    reviews?: ReviewNoteDataForDisplay[];
   };
   [CUSTOM_EVENTS.OPEN_AGENT_PICKER]: never; // No payload
   [CUSTOM_EVENTS.CLOSE_AGENT_PICKER]: never; // No payload
@@ -110,6 +118,7 @@ export interface CustomEventPayloads {
     workspaceId: string;
     isManual?: boolean; // true when user explicitly clicks retry (bypasses eligibility checks)
   };
+  [CUSTOM_EVENTS.MUX_GATEWAY_SESSION_EXPIRED]: never; // No payload
   [CUSTOM_EVENTS.WORKSPACE_FORK_SWITCH]: {
     workspaceId: string;
     projectPath: string;

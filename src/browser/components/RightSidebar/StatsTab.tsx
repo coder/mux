@@ -1,5 +1,7 @@
 import React from "react";
 
+import type { WorkspaceStatsSnapshot } from "@/common/orpc/types";
+
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceStatsSnapshot } from "@/browser/stores/WorkspaceStore";
 import { ToggleGroup, type ToggleOption } from "../ToggleGroup";
@@ -64,14 +66,26 @@ function computeAverageTtft(totalTtftMs: number, ttftCount: number): number | nu
   return totalTtftMs / ttftCount;
 }
 
-export function StatsTab(props: { workspaceId: string }) {
-  const snapshot = useWorkspaceStatsSnapshot(props.workspaceId);
+export interface StatsTabProps {
+  workspaceId: string;
+  /** Test-only override for supplying a snapshot without backend subscriptions. */
+  _snapshot?: WorkspaceStatsSnapshot | null;
+  /** Test-only override for the clear action. */
+  _clearStats?: () => Promise<void>;
+}
+
+export function StatsTab(props: StatsTabProps) {
+  const liveSnapshot = useWorkspaceStatsSnapshot(props.workspaceId);
+  const snapshot = props._snapshot ?? liveSnapshot;
   const telemetry = useTelemetry();
   const [viewMode, setViewMode] = usePersistedState<ViewMode>("statsTab:viewMode", "session");
   const [showModeBreakdown, setShowModeBreakdown] = usePersistedState<boolean>(
     "statsTab:showModeBreakdown",
     false
   );
+
+  const [isClearing, setIsClearing] = React.useState(false);
+  const [clearError, setClearError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     telemetry.statsTabOpened(viewMode, showModeBreakdown);
@@ -84,10 +98,30 @@ export function StatsTab(props: { workspaceId: string }) {
   const hasAnyData =
     active !== undefined || lastRequest !== undefined || (session?.responseCount ?? 0) > 0;
 
-  const onClearStats = async (): Promise<void> => {
-    const client = window.__ORPC_CLIENT__;
-    if (!client) throw new Error("ORPC client not initialized");
-    await client.workspace.stats.clear({ workspaceId: props.workspaceId });
+  const onClearStats =
+    props._clearStats ??
+    (async (): Promise<void> => {
+      const client = window.__ORPC_CLIENT__;
+      if (!client) throw new Error("ORPC client not initialized");
+      await client.workspace.stats.clear({ workspaceId: props.workspaceId });
+    });
+
+  const handleClearStats = async (): Promise<void> => {
+    if (isClearing) {
+      return;
+    }
+
+    setIsClearing(true);
+    setClearError(null);
+
+    try {
+      await onClearStats();
+    } catch (error) {
+      console.warn(`[StatsTab] Failed to clear stats for ${props.workspaceId}:`, error);
+      setClearError("Failed to clear stats. Please try again.");
+    } finally {
+      setIsClearing(false);
+    }
   };
 
   if (!hasAnyData) {
@@ -254,19 +288,28 @@ export function StatsTab(props: { workspaceId: string }) {
               {viewMode === "session" && (
                 <button
                   type="button"
-                  className="text-muted hover:text-foreground text-xs"
+                  className="text-muted hover:text-foreground text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isClearing}
                   onClick={() => {
-                    onClearStats().catch(() => {
-                      // ignore
-                    });
+                    void handleClearStats();
                   }}
                 >
-                  Clear stats
+                  {isClearing ? "Clearing..." : "Clear stats"}
                 </button>
               )}
               <span className="text-muted text-xs">{formatDuration(totalDuration)}</span>
             </div>
           </div>
+
+          {clearError && viewMode === "session" && (
+            <div
+              role="alert"
+              data-testid="clear-stats-error"
+              className="bg-destructive/10 text-destructive rounded px-2 py-1 text-xs"
+            >
+              {clearError}
+            </div>
+          )}
 
           {viewMode === "session" && session && session.responseCount > 0 && (
             <div className="text-muted-light flex flex-wrap gap-x-3 gap-y-1 text-xs">

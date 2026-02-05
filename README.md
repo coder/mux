@@ -86,7 +86,7 @@ See [AGENTS.md](./AGENTS.md) for development setup and guidelines.
 
 ## License
 
-Copyright (C) 2025 Coder Technologies, Inc.
+Copyright (C) 2026 Coder Technologies, Inc.
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, version 3 of the License.
 

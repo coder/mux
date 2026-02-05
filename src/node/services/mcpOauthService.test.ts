@@ -26,10 +26,10 @@ describe("McpOauthService store", () => {
     projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-project-"));
 
     config = new Config(muxHome);
-    mcpConfigService = new MCPConfigService();
+    mcpConfigService = new MCPConfigService(config);
     service = new McpOauthService(config, mcpConfigService);
 
-    const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+    const addResult = await mcpConfigService.addServer(serverName, {
       transport: "http",
       url: serverUrl,
     });
@@ -50,7 +50,7 @@ describe("McpOauthService store", () => {
   test("reading corrupt JSON store self-heals to empty", async () => {
     await fs.writeFile(getStoreFilePath(muxHome), "{ definitely not valid json", "utf-8");
 
-    const status = await service.getAuthStatus(projectPath, serverName);
+    const status = await service.getAuthStatus({ serverUrl });
     expect(status).toEqual({
       serverUrl: "https://example.com/",
       isLoggedIn: false,
@@ -60,56 +60,113 @@ describe("McpOauthService store", () => {
     });
 
     // The invalid store file should be overwritten with a minimal empty store.
-    expect(await readStoreFile()).toEqual({ version: 1, entries: {} });
+    expect(await readStoreFile()).toEqual({ version: 2, entries: {} });
   });
 
-  test("mismatched serverUrl invalidates stored credentials", async () => {
-    const mismatchedStore = {
-      version: 1,
-      entries: {
-        [projectPath]: {
-          [serverName]: {
-            serverUrl: "https://other.example.com",
-            updatedAtMs: Date.now(),
-            clientInformation: {
-              client_id: "client-id",
+  test("migrates v1 store to v2 (dedupes by updatedAtMs)", async () => {
+    const otherProjectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-project2-"));
+
+    try {
+      const v1Store = {
+        version: 1,
+        entries: {
+          [projectPath]: {
+            // Older duplicate for the same server URL.
+            [serverName]: {
+              serverUrl,
+              updatedAtMs: 1_000,
+              clientInformation: {
+                client_id: "client-id-old",
+              },
+              tokens: {
+                access_token: "access-token-old",
+                token_type: "Bearer",
+                refresh_token: "refresh-token-old",
+              },
             },
-            tokens: {
-              access_token: "access-token",
-              token_type: "Bearer",
-              refresh_token: "refresh-token",
+            // Newer duplicate for the same server URL.
+            duplicate: {
+              serverUrl,
+              updatedAtMs: 2_000,
+              clientInformation: {
+                client_id: "client-id-new",
+              },
+              tokens: {
+                access_token: "access-token-new",
+                token_type: "Bearer",
+                refresh_token: "refresh-token-new",
+              },
+            },
+          },
+          [otherProjectPath]: {
+            other: {
+              serverUrl: "https://other.example.com/mcp/",
+              updatedAtMs: 1_500,
+              clientInformation: {
+                client_id: "client-id-other",
+              },
+              tokens: {
+                access_token: "access-token-other",
+                token_type: "Bearer",
+              },
             },
           },
         },
-      },
-    };
-    await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(mismatchedStore), "utf-8");
+      };
 
-    const status = await service.getAuthStatus(projectPath, serverName);
-    expect(status.isLoggedIn).toBe(false);
+      await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(v1Store), "utf-8");
 
-    // Defensive behavior: a URL mismatch should clear the stored entry so we don't
-    // accidentally reuse credentials from a different server.
-    expect(await readStoreFile()).toEqual({ version: 1, entries: {} });
+      // Trigger store load + migration.
+      await service.getAuthStatus({ serverUrl });
+
+      expect(await readStoreFile()).toEqual({
+        version: 2,
+        entries: {
+          "https://example.com/": {
+            serverUrl: "https://example.com/",
+            updatedAtMs: 2_000,
+            clientInformation: {
+              client_id: "client-id-new",
+            },
+            tokens: {
+              access_token: "access-token-new",
+              token_type: "Bearer",
+              refresh_token: "refresh-token-new",
+            },
+          },
+          "https://other.example.com/mcp": {
+            serverUrl: "https://other.example.com/mcp",
+            updatedAtMs: 1_500,
+            clientInformation: {
+              client_id: "client-id-other",
+            },
+            tokens: {
+              access_token: "access-token-other",
+              token_type: "Bearer",
+            },
+          },
+        },
+      });
+    } finally {
+      await fs.rm(otherProjectPath, { recursive: true, force: true });
+    }
   });
 
   test("set/get/clear works via hasAuthTokens + logout", async () => {
     const populatedStore = {
-      version: 1,
+      version: 2,
       entries: {
-        [projectPath]: {
-          [serverName]: {
-            serverUrl,
-            updatedAtMs: Date.now(),
-            clientInformation: {
-              client_id: "client-id",
-            },
-            tokens: {
-              access_token: "access-token",
-              token_type: "Bearer",
-              refresh_token: "refresh-token",
-              scope: "mcp.read",
-            },
+        "https://example.com/": {
+          serverUrl,
+          updatedAtMs: Date.now(),
+          clientInformation: {
+            client_id: "client-id",
+          },
+          tokens: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            refresh_token: "refresh-token",
+            scope: "mcp.read",
           },
         },
       },
@@ -118,13 +175,11 @@ describe("McpOauthService store", () => {
 
     expect(
       await service.hasAuthTokens({
-        projectPath,
-        serverName,
         serverUrl,
       })
     ).toBe(true);
 
-    const status = await service.getAuthStatus(projectPath, serverName);
+    const status = await service.getAuthStatus({ serverUrl });
     expect(typeof status.updatedAtMs).toBe("number");
     expect(status).toEqual({
       serverUrl: "https://example.com/",
@@ -134,18 +189,16 @@ describe("McpOauthService store", () => {
       updatedAtMs: status.updatedAtMs,
     });
 
-    const logoutResult = await service.logout(projectPath, serverName);
+    const logoutResult = await service.logout({ serverUrl });
     expect(logoutResult).toEqual({ success: true, data: undefined });
 
     expect(
       await service.hasAuthTokens({
-        projectPath,
-        serverName,
         serverUrl,
       })
     ).toBe(false);
 
-    expect(await readStoreFile()).toEqual({ version: 1, entries: {} });
+    expect(await readStoreFile()).toEqual({ version: 2, entries: {} });
   });
 });
 
@@ -200,7 +253,7 @@ describe("McpOauthService.startDesktopFlow", () => {
     projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-flow-project-"));
 
     config = new Config(muxHome);
-    mcpConfigService = new MCPConfigService();
+    mcpConfigService = new MCPConfigService(config);
     service = new McpOauthService(config, mcpConfigService);
   });
 
@@ -285,7 +338,7 @@ describe("McpOauthService.startDesktopFlow", () => {
 
       const serverName = "oauth-server";
 
-      const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+      const addResult = await mcpConfigService.addServer(serverName, {
         transport: "http",
         url: baseUrl,
       });
@@ -394,7 +447,7 @@ describe("McpOauthService.startDesktopFlow", () => {
 
       const serverName = "oauth-server-trailing-slash";
 
-      const addResult = await mcpConfigService.addServer(projectPath, serverName, {
+      const addResult = await mcpConfigService.addServer(serverName, {
         transport: "http",
         url: baseUrl,
       });
@@ -415,13 +468,12 @@ describe("McpOauthService.startDesktopFlow", () => {
 
       // Stored credentials should continue to use a normalized URL for keying.
       const storeRaw = await fs.readFile(getStoreFilePath(muxHome), "utf-8");
+      const serverUrlKey = baseUrl.slice(0, -1);
       expect(JSON.parse(storeRaw)).toMatchObject({
-        version: 1,
+        version: 2,
         entries: {
-          [projectPath]: {
-            [serverName]: {
-              serverUrl: baseUrl.slice(0, -1),
-            },
+          [serverUrlKey]: {
+            serverUrl: serverUrlKey,
           },
         },
       });

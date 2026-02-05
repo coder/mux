@@ -112,11 +112,20 @@ export function createAsyncEventQueue<T>(): {
     while (!ended) {
       if (queue.length > 0) {
         yield queue.shift()!;
-      } else {
-        yield await new Promise<T>((resolve) => {
-          resolveNext = resolve;
-        });
+        continue;
       }
+
+      const value = await new Promise<T>((resolve) => {
+        resolveNext = resolve;
+      });
+
+      // end() may have been called while we were waiting. Ensure we don't yield
+      // a sentinel/invalid value back to consumers.
+      if (ended) {
+        return;
+      }
+
+      yield value;
     }
   }
 

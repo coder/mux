@@ -137,13 +137,18 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   openSettings?: (section?: string) => void;
 
   // Global Actions
-  onModelChange?: (model: string) => void;
   setPreferredModel: (model: string) => void;
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 
   // Workspace Actions
   onTruncateHistory?: (percentage?: number) => Promise<void>;
   resetInputHeight: () => void;
+  /** Callback to trigger message-sent side effects (auto-scroll, auto-background) */
+  onMessageSent?: () => void;
+  /** Callback to mark review IDs as checked after successful send */
+  onCheckReviews?: (reviewIds: string[]) => void;
+  /** Review IDs that are attached (for marking as checked on success) */
+  attachedReviewIds?: string[];
 }
 
 // ============================================================================
@@ -160,16 +165,7 @@ export async function processSlashCommand(
   context: SlashCommandContext
 ): Promise<CommandHandlerResult> {
   if (!parsed) return { clearInput: false, toastShown: false };
-  const {
-    api: client,
-    setInput,
-    setSendingState,
-    setToast,
-    variant,
-    setVimEnabled,
-    setPreferredModel,
-    onModelChange,
-  } = context;
+  const { api: client, setInput, setToast, variant, setVimEnabled, setPreferredModel } = context;
 
   const requireClient = (): RouterClient<AppRouter> | null => {
     if (client) return client;
@@ -261,7 +257,6 @@ export async function processSlashCommand(
 
       setInput("");
       setPreferredModel(modelString);
-      onModelChange?.(modelString);
       trackCommandUsed("model");
       setToast({
         id: Date.now().toString(),
@@ -280,75 +275,24 @@ export async function processSlashCommand(
     }
   }
 
-  if (parsed.type === "mcp-open") {
-    setInput("");
-    context.openSettings?.("projects");
-    return { clearInput: true, toastShown: false };
+  // model-oneshot ("/<model-alias> ...") is handled directly in ChatInput.
+  // This keeps the command parsing centralized, but routes actual sending through the
+  // normal message-send flow (so side effects like review completion and last-read
+  // tracking can't drift).
+
+  if (parsed.type === "model-oneshot") {
+    setToast({
+      id: Date.now().toString(),
+      type: "error",
+      message: "Model one-shot is handled in the chat input.",
+    });
+    return { clearInput: false, toastShown: true };
   }
 
   if (parsed.type === "debug-llm-request") {
     setInput("");
     window.dispatchEvent(createCustomEvent(CUSTOM_EVENTS.OPEN_DEBUG_LLM_REQUEST));
     return { clearInput: true, toastShown: false };
-  }
-
-  if (parsed.type === "mcp-add" || parsed.type === "mcp-edit" || parsed.type === "mcp-remove") {
-    const activeClient = requireClient();
-    if (!activeClient) {
-      return { clearInput: false, toastShown: true };
-    }
-
-    if (!context.projectPath) {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: "Select a workspace to manage MCP servers",
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    setSendingState(true);
-    setInput("");
-
-    try {
-      const projectPath = context.projectPath;
-      const result =
-        parsed.type === "mcp-add" || parsed.type === "mcp-edit"
-          ? await activeClient.projects.mcp.add({
-              projectPath,
-              name: parsed.name,
-              command: parsed.command,
-            })
-          : await activeClient.projects.mcp.remove({ projectPath, name: parsed.name });
-
-      if (!result.success) {
-        setToast({
-          id: Date.now().toString(),
-          type: "error",
-          message: result.error ?? "Failed to update MCP servers",
-        });
-        return { clearInput: false, toastShown: true };
-      }
-
-      const successMessage =
-        parsed.type === "mcp-add"
-          ? `Added MCP server ${parsed.name}`
-          : parsed.type === "mcp-edit"
-            ? `Updated MCP server ${parsed.name}`
-            : `Removed MCP server ${parsed.name}`;
-      setToast({ id: Date.now().toString(), type: "success", message: successMessage });
-      return { clearInput: true, toastShown: true };
-    } catch (error) {
-      console.error("Failed to update MCP servers", error);
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to update MCP servers",
-      });
-      return { clearInput: false, toastShown: true };
-    } finally {
-      setSendingState(false);
-    }
   }
 
   if (parsed.type === "idle-compaction") {

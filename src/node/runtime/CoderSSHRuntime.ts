@@ -551,6 +551,35 @@ export class CoderSSHRuntime extends SSHRuntime {
       });
     }
     if (statusResult.kind === "ok") {
+      // If the workspace is stopped, avoid SSH entirely.
+      //
+      // IMPORTANT tradeoff: This intentionally skips the dirty/unpushed checks performed by
+      // SSHRuntime.deleteWorkspace(). Any SSH connection can auto-start a stopped Coder
+      // workspace, which is surprising during deletion.
+      if (statusResult.status === "stopped") {
+        if (abortSignal?.aborted && !force) {
+          return { success: false, error: "Delete operation aborted" };
+        }
+
+        try {
+          log.debug("Coder workspace is stopped; deleting without SSH cleanup", {
+            coderWorkspaceName,
+          });
+          await this.coderService.deleteWorkspace(coderWorkspaceName);
+          return {
+            success: true,
+            deletedPath: this.getWorkspacePath(projectPath, workspaceName),
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          log.error("Failed to delete stopped Coder workspace", {
+            coderWorkspaceName,
+            error: message,
+          });
+          return { success: false, error: `Failed to delete Coder workspace: ${message}` };
+        }
+      }
+
       // Workspace is being deleted or already deleted - skip SSH (would hang connecting to dying host)
       if (statusResult.status === "deleted" || statusResult.status === "deleting") {
         log.debug("Coder workspace is deleted/deleting, skipping SSH cleanup", {

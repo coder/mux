@@ -8,12 +8,29 @@ import type {
   MCPServerInfo,
   MCPServerTransport,
 } from "@/common/types/mcp";
-import { log } from "@/node/services/log";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
+import assert from "@/common/utils/assert";
+import type { Config } from "@/node/config";
+import { log } from "@/node/services/log";
 
 export class MCPConfigService {
-  private getConfigPath(projectPath: string): string {
+  private readonly config: Config;
+
+  constructor(config: Config) {
+    assert(
+      typeof config.rootDir === "string" && config.rootDir.trim().length > 0,
+      "MCPConfigService: config.rootDir must be a non-empty string"
+    );
+
+    this.config = config;
+  }
+
+  private getGlobalConfigPath(): string {
+    return path.join(this.config.rootDir, "mcp.jsonc");
+  }
+
+  private getRepoOverridePath(projectPath: string): string {
     return path.join(projectPath, ".mux", "mcp.jsonc");
   }
 
@@ -26,10 +43,9 @@ export class MCPConfigService {
     }
   }
 
-  private async ensureProjectDir(projectPath: string): Promise<void> {
-    const muxDir = path.join(projectPath, ".mux");
-    if (!(await this.pathExists(muxDir))) {
-      await fs.promises.mkdir(muxDir, { recursive: true });
+  private async ensureMuxRootDir(): Promise<void> {
+    if (!(await this.pathExists(this.config.rootDir))) {
+      await fs.promises.mkdir(this.config.rootDir, { recursive: true });
     }
   }
 
@@ -111,18 +127,20 @@ export class MCPConfigService {
     };
   }
 
-  async getConfig(projectPath: string): Promise<MCPConfig> {
-    const filePath = this.getConfigPath(projectPath);
+  private async readConfigFile(filePath: string): Promise<MCPConfig> {
     try {
       const exists = await this.pathExists(filePath);
       if (!exists) {
         return { servers: {} };
       }
+
       const raw = await fs.promises.readFile(filePath, "utf-8");
       const parsed = jsonc.parse(raw) as { servers?: Record<string, unknown> } | undefined;
+
       if (!parsed || typeof parsed !== "object" || !parsed.servers) {
         return { servers: {} };
       }
+
       // Normalize all entries on read
       const servers: Record<string, MCPServerInfo> = {};
       for (const [name, entry] of Object.entries(parsed.servers)) {
@@ -130,14 +148,24 @@ export class MCPConfigService {
       }
       return { servers };
     } catch (error) {
-      log.error("Failed to read MCP config", { projectPath, error });
+      // Defensive: never crash on startup due to corrupt config.
+      log.error("Failed to read MCP config", { filePath, error });
       return { servers: {} };
     }
   }
 
-  private async saveConfig(projectPath: string, config: MCPConfig): Promise<void> {
-    await this.ensureProjectDir(projectPath);
-    const filePath = this.getConfigPath(projectPath);
+  private async getGlobalConfig(): Promise<MCPConfig> {
+    return this.readConfigFile(this.getGlobalConfigPath());
+  }
+
+  private async getRepoOverrideConfig(projectPath: string): Promise<MCPConfig> {
+    return this.readConfigFile(this.getRepoOverridePath(projectPath));
+  }
+
+  private async saveGlobalConfig(config: MCPConfig): Promise<void> {
+    await this.ensureMuxRootDir();
+
+    const filePath = this.getGlobalConfigPath();
 
     // Write minimal format:
     // - string for stdio servers without extra settings
@@ -178,17 +206,35 @@ export class MCPConfigService {
       output[name] = obj;
     }
 
-    await writeFileAtomic(filePath, JSON.stringify({ servers: output }, null, 2), "utf-8");
+    await writeFileAtomic(filePath, JSON.stringify({ servers: output }, null, 2), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
   }
 
-  /** List all servers with normalized config */
-  async listServers(projectPath: string): Promise<Record<string, MCPServerInfo>> {
-    const cfg = await this.getConfig(projectPath);
-    return cfg.servers;
+  /**
+   * List configured servers.
+   *
+   * - When no projectPath is provided: returns global servers from <muxHome>/mcp.jsonc
+   * - When projectPath is provided: merges global + <projectPath>/.mux/mcp.jsonc (override wins)
+   */
+  async listServers(projectPath?: string): Promise<Record<string, MCPServerInfo>> {
+    const globalCfg = await this.getGlobalConfig();
+
+    if (!projectPath) {
+      return globalCfg.servers;
+    }
+
+    const repoCfg = await this.getRepoOverrideConfig(projectPath);
+
+    // Repo overrides win by server name.
+    return {
+      ...globalCfg.servers,
+      ...repoCfg.servers,
+    };
   }
 
   async addServer(
-    projectPath: string,
     name: string,
     input: {
       transport?: MCPServerTransport;
@@ -213,7 +259,7 @@ export class MCPConfigService {
       }
     }
 
-    const cfg = await this.getConfig(projectPath);
+    const cfg = await this.getGlobalConfig();
     const existing = cfg.servers[name];
 
     const base = {
@@ -238,69 +284,63 @@ export class MCPConfigService {
     cfg.servers[name] = next;
 
     try {
-      await this.saveConfig(projectPath, cfg);
+      await this.saveGlobalConfig(cfg);
       return Ok(undefined);
     } catch (error) {
-      log.error("Failed to save MCP server", { projectPath, name, error });
+      log.error("Failed to save MCP server", { name, error });
       return Err(error instanceof Error ? error.message : String(error));
     }
   }
 
-  async setServerEnabled(
-    projectPath: string,
-    name: string,
-    enabled: boolean
-  ): Promise<Result<void>> {
-    const cfg = await this.getConfig(projectPath);
+  async setServerEnabled(name: string, enabled: boolean): Promise<Result<void>> {
+    const cfg = await this.getGlobalConfig();
     const entry = cfg.servers[name];
     if (!entry) {
       return Err(`Server ${name} not found`);
     }
     cfg.servers[name] = { ...entry, disabled: !enabled };
     try {
-      await this.saveConfig(projectPath, cfg);
+      await this.saveGlobalConfig(cfg);
       return Ok(undefined);
     } catch (error) {
-      log.error("Failed to update MCP server enabled state", { projectPath, name, error });
+      log.error("Failed to update MCP server enabled state", { name, error });
       return Err(error instanceof Error ? error.message : String(error));
     }
   }
 
-  async removeServer(projectPath: string, name: string): Promise<Result<void>> {
-    const cfg = await this.getConfig(projectPath);
+  async removeServer(name: string): Promise<Result<void>> {
+    const cfg = await this.getGlobalConfig();
     if (!cfg.servers[name]) {
       return Err(`Server ${name} not found`);
     }
     delete cfg.servers[name];
     try {
-      await this.saveConfig(projectPath, cfg);
+      await this.saveGlobalConfig(cfg);
       return Ok(undefined);
     } catch (error) {
-      log.error("Failed to remove MCP server", { projectPath, name, error });
+      log.error("Failed to remove MCP server", { name, error });
       return Err(error instanceof Error ? error.message : String(error));
     }
   }
 
-  async setToolAllowlist(
-    projectPath: string,
-    name: string,
-    toolAllowlist: string[]
-  ): Promise<Result<void>> {
-    const cfg = await this.getConfig(projectPath);
+  async setToolAllowlist(name: string, toolAllowlist: string[]): Promise<Result<void>> {
+    const cfg = await this.getGlobalConfig();
     const entry = cfg.servers[name];
     if (!entry) {
       return Err(`Server ${name} not found`);
     }
+
     // [] = no tools allowed, [...tools] = those tools allowed
     cfg.servers[name] = {
       ...entry,
       toolAllowlist,
     };
+
     try {
-      await this.saveConfig(projectPath, cfg);
+      await this.saveGlobalConfig(cfg);
       return Ok(undefined);
     } catch (error) {
-      log.error("Failed to update MCP server tool allowlist", { projectPath, name, error });
+      log.error("Failed to update MCP server tool allowlist", { name, error });
       return Err(error instanceof Error ? error.message : String(error));
     }
   }

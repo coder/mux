@@ -46,7 +46,16 @@ export class BackgroundBashStore {
   private foregroundIdsCache = new Map<string, Set<string>>();
   private terminatingIdsCache = new Map<string, Set<string>>();
 
-  private subscriptions = new Map<string, AbortController>();
+  private subscriptions = new Map<
+    string,
+    {
+      controller: AbortController;
+      iterator: AsyncIterator<{
+        processes: BackgroundProcessInfo[];
+        foregroundToolCallIds: string[];
+      }> | null;
+    }
+  >();
   private subscriptionCounts = new Map<string, number>();
   private retryAttempts = new Map<string, number>();
   private retryTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
@@ -55,8 +64,9 @@ export class BackgroundBashStore {
     this.client = client;
 
     if (!client) {
-      for (const controller of this.subscriptions.values()) {
-        controller.abort();
+      for (const subscription of this.subscriptions.values()) {
+        subscription.controller.abort();
+        void subscription.iterator?.return?.();
       }
       this.subscriptions.clear();
 
@@ -188,14 +198,21 @@ export class BackgroundBashStore {
     const { signal } = controller;
 
     const task = (async () => {
+      let iterator: AsyncIterator<{
+        processes: BackgroundProcessInfo[];
+        foregroundToolCallIds: string[];
+      }> | null = null;
+
       try {
-        const iterator = await client.workspace.backgroundBashes.subscribe(
+        const subscribedIterator = await client.workspace.backgroundBashes.subscribe(
           { workspaceId },
           { signal }
         );
+        iterator = subscribedIterator;
 
-        for await (const state of iterator) {
+        for await (const state of subscribedIterator) {
           controller.abort();
+          void subscribedIterator.return?.();
 
           const latestForegroundIds = new Set(state.foregroundToolCallIds);
           this.foregroundIdsCache.set(workspaceId, latestForegroundIds);
@@ -216,6 +233,7 @@ export class BackgroundBashStore {
           console.error("Failed to read foreground bash state:", err);
         }
       } finally {
+        void iterator?.return?.();
         this.autoBackgroundFetches.delete(workspaceId);
       }
     })();
@@ -244,9 +262,10 @@ export class BackgroundBashStore {
   }
 
   private stopSubscription(workspaceId: string): void {
-    const controller = this.subscriptions.get(workspaceId);
-    if (controller) {
-      controller.abort();
+    const subscription = this.subscriptions.get(workspaceId);
+    if (subscription) {
+      subscription.controller.abort();
+      void subscription.iterator?.return?.();
       this.subscriptions.delete(workspaceId);
     }
 
@@ -294,16 +313,37 @@ export class BackgroundBashStore {
 
     const controller = new AbortController();
     const { signal } = controller;
-    this.subscriptions.set(workspaceId, controller);
+
+    const subscription: {
+      controller: AbortController;
+      iterator: AsyncIterator<{
+        processes: BackgroundProcessInfo[];
+        foregroundToolCallIds: string[];
+      }> | null;
+    } = {
+      controller,
+      iterator: null,
+    };
+
+    this.subscriptions.set(workspaceId, subscription);
 
     (async () => {
       try {
-        const iterator = await client.workspace.backgroundBashes.subscribe(
+        const subscribedIterator = await client.workspace.backgroundBashes.subscribe(
           { workspaceId },
           { signal }
         );
 
-        for await (const state of iterator) {
+        // If we unsubscribed while subscribe() was in-flight, force-close the iterator so
+        // the backend can drop its EventEmitter listener.
+        if (signal.aborted || this.subscriptions.get(workspaceId) !== subscription) {
+          void subscribedIterator.return?.();
+          return;
+        }
+
+        subscription.iterator = subscribedIterator;
+
+        for await (const state of subscribedIterator) {
           if (signal.aborted) break;
 
           const previousProcesses = this.processesCache.get(workspaceId) ?? EMPTY_PROCESSES;
@@ -338,7 +378,12 @@ export class BackgroundBashStore {
           console.error("Failed to subscribe to background bash state:", err);
         }
       } finally {
-        this.subscriptions.delete(workspaceId);
+        void subscription.iterator?.return?.();
+        subscription.iterator = null;
+
+        if (this.subscriptions.get(workspaceId) === subscription) {
+          this.subscriptions.delete(workspaceId);
+        }
 
         if (!signal.aborted && this.client && this.subscriptionCounts.has(workspaceId)) {
           // Retry after unexpected disconnects so background bash status recovers without refresh.

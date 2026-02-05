@@ -35,7 +35,7 @@ import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
-import { isToolEnabledInResolvedChain } from "@/common/utils/agentTools";
+import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { ToolCallEndEvent, StreamEndEvent } from "@/common/types/stream";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
@@ -77,8 +77,12 @@ export interface TaskCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
-  /** PTC experiments to inherit to subagent */
-  experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean };
+  /** Experiments to inherit to subagent */
+  experiments?: {
+    programmaticToolCalling?: boolean;
+    programmaticToolCallingExclusive?: boolean;
+    execSubagentHardRestart?: boolean;
+  };
 }
 
 export interface TaskCreateResult {
@@ -867,7 +871,7 @@ export class TaskService {
     await this.emitWorkspaceMetadata(taskId);
 
     // Kick init (best-effort, async).
-    const secrets = secretsToRecord(this.config.getProjectSecrets(parentMeta.projectPath));
+    const secrets = secretsToRecord(this.config.getEffectiveSecrets(parentMeta.projectPath));
     runBackgroundInit(
       runtimeForTaskWorkspace,
       {
@@ -1901,7 +1905,7 @@ export class TaskService {
           workspacePath,
           trunkBranch,
         });
-        const secrets = secretsToRecord(this.config.getProjectSecrets(taskEntry.projectPath));
+        const secrets = secretsToRecord(this.config.getEffectiveSecrets(taskEntry.projectPath));
         let skipInitHook = false;
         const agentIdRaw = coerceNonEmptyString(task.agentId ?? task.agentType);
         if (agentIdRaw) {
@@ -2473,12 +2477,7 @@ export class TaskService {
                 workspaceId: childWorkspaceId,
               });
 
-              const inheritsExec = chain.some((agent) => agent.id === "exec");
-              const canEdit =
-                isToolEnabledInResolvedChain("file_edit_insert", chain) ||
-                isToolEnabledInResolvedChain("file_edit_replace_string", chain);
-
-              shouldGeneratePatch = inheritsExec && canEdit;
+              shouldGeneratePatch = isExecLikeEditingCapableInResolvedChain(chain);
             } catch {
               // ignore - treat as non-exec-like
             }

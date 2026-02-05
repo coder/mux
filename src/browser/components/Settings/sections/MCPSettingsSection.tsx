@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { useAPI } from "@/browser/contexts/API";
-import { useSettings } from "@/browser/contexts/SettingsContext";
-import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import {
   Trash2,
   Play,
@@ -10,7 +8,6 @@ import {
   CheckCircle,
   XCircle,
   Plus,
-  Server,
   Pencil,
   Check,
   X,
@@ -49,8 +46,7 @@ const ToolAllowlistSection: React.FC<{
   availableTools: string[];
   currentAllowlist?: string[];
   testedAt: number;
-  projectPath: string;
-}> = ({ serverName, availableTools, currentAllowlist, testedAt, projectPath }) => {
+}> = ({ serverName, availableTools, currentAllowlist, testedAt }) => {
   const { api } = useAPI();
   const [expanded, setExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -80,8 +76,7 @@ const ToolAllowlistSection: React.FC<{
       setSaving(true);
 
       try {
-        const result = await api.projects.mcp.setToolAllowlist({
-          projectPath,
+        const result = await api.mcp.setToolAllowlist({
           name: serverName,
           toolAllowlist: newAllowlist,
         });
@@ -96,7 +91,7 @@ const ToolAllowlistSection: React.FC<{
         setSaving(false);
       }
     },
-    [api, projectPath, serverName, localAllowlist, currentAllowlist, availableTools]
+    [api, serverName, localAllowlist, currentAllowlist, availableTools]
   );
 
   const handleAllowAll = useCallback(async () => {
@@ -107,8 +102,7 @@ const ToolAllowlistSection: React.FC<{
     setSaving(true);
 
     try {
-      const result = await api.projects.mcp.setToolAllowlist({
-        projectPath,
+      const result = await api.mcp.setToolAllowlist({
         name: serverName,
         toolAllowlist: newAllowlist,
       });
@@ -122,7 +116,7 @@ const ToolAllowlistSection: React.FC<{
     } finally {
       setSaving(false);
     }
-  }, [api, projectPath, serverName, allAllowed, currentAllowlist, availableTools]);
+  }, [api, serverName, allAllowed, currentAllowlist, availableTools]);
 
   const handleSelectNone = useCallback(async () => {
     if (!api || allDisabled) return;
@@ -131,8 +125,7 @@ const ToolAllowlistSection: React.FC<{
     setSaving(true);
 
     try {
-      const result = await api.projects.mcp.setToolAllowlist({
-        projectPath,
+      const result = await api.mcp.setToolAllowlist({
         name: serverName,
         toolAllowlist: [],
       });
@@ -146,7 +139,7 @@ const ToolAllowlistSection: React.FC<{
     } finally {
       setSaving(false);
     }
-  }, [api, projectPath, serverName, allDisabled, currentAllowlist, availableTools]);
+  }, [api, serverName, allDisabled, currentAllowlist, availableTools]);
 
   return (
     <div>
@@ -188,7 +181,7 @@ interface MCPOAuthAuthStatus {
   updatedAtMs?: number;
 }
 
-type MCPOAuthAPI = NonNullable<ReturnType<typeof useAPI>["api"]>["projects"]["mcpOauth"];
+type MCPOAuthAPI = NonNullable<ReturnType<typeof useAPI>["api"]>["mcpOauth"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   // In dev-server (browser) mode, the ORPC client can surface namespaces/procedures as Proxy
@@ -200,14 +193,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Defensive runtime guard: `projects.mcpOauth` may not exist when running against older backends
+ * Defensive runtime guard: `mcpOauth` may not exist when running against older backends
  * or in non-desktop environments. Treat OAuth as unavailable instead of surfacing raw exceptions.
  */
 function getMCPOAuthAPI(api: ReturnType<typeof useAPI>["api"]): MCPOAuthAPI | null {
   if (!api) return null;
 
-  // Avoid direct property access since `api.projects.mcpOauth` may be missing at runtime.
-  const maybeOauth: unknown = Reflect.get(api.projects, "mcpOauth");
+  // Avoid direct property access since `api.mcpOauth` may be missing at runtime.
+  const maybeOauth: unknown = Reflect.get(api, "mcpOauth");
   if (!isRecord(maybeOauth)) return null;
 
   const requiredFns = ["getAuthStatus", "logout"] as const;
@@ -267,12 +260,11 @@ function getMCPOAuthLoginFlowMode(input: {
 function useMCPOAuthLogin(input: {
   api: ReturnType<typeof useAPI>["api"];
   isDesktop: boolean;
-  projectPath: string;
   serverName: string;
   pendingServer?: MCPOAuthPendingServerConfig;
   onSuccess?: () => void | Promise<void>;
 }) {
-  const { api, isDesktop, projectPath, serverName, pendingServer, onSuccess } = input;
+  const { api, isDesktop, serverName, pendingServer, onSuccess } = input;
   const loginAttemptRef = useRef(0);
   const [flowId, setFlowId] = useState<string | null>(null);
 
@@ -343,8 +335,8 @@ function useMCPOAuthLogin(input: {
 
       const startResult =
         loginFlowMode === "desktop"
-          ? await mcpOauthApi.startDesktopFlow({ projectPath, serverName, pendingServer })
-          : await mcpOauthApi.startServerFlow({ projectPath, serverName, pendingServer });
+          ? await mcpOauthApi.startDesktopFlow({ serverName, pendingServer })
+          : await mcpOauthApi.startServerFlow({ serverName, pendingServer });
 
       if (attempt !== loginAttemptRef.current) {
         if (startResult.success) {
@@ -410,7 +402,7 @@ function useMCPOAuthLogin(input: {
       setLoginStatus("error");
       setLoginError(message);
     }
-  }, [api, isDesktop, onSuccess, pendingServer, projectPath, serverName]);
+  }, [api, isDesktop, onSuccess, pendingServer, serverName]);
 
   return {
     loginStatus,
@@ -422,19 +414,17 @@ function useMCPOAuthLogin(input: {
 }
 
 const MCPOAuthRequiredCallout: React.FC<{
-  projectPath: string;
   serverName: string;
   pendingServer?: MCPOAuthPendingServerConfig;
   disabledReason?: string;
   onLoginSuccess?: () => void | Promise<void>;
-}> = ({ projectPath, serverName, pendingServer, disabledReason, onLoginSuccess }) => {
+}> = ({ serverName, pendingServer, disabledReason, onLoginSuccess }) => {
   const { api } = useAPI();
   const isDesktop = !!window.api;
 
   const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } = useMCPOAuthLogin({
     api,
     isDesktop,
-    projectPath,
     serverName,
     pendingServer,
     onSuccess: onLoginSuccess,
@@ -532,12 +522,11 @@ const MCPOAuthRequiredCallout: React.FC<{
 };
 
 const RemoteMCPOAuthSection: React.FC<{
-  projectPath: string;
   serverName: string;
   transport: Exclude<MCPServerTransport, "stdio">;
   url: string;
   oauthRefreshNonce?: number;
-}> = ({ projectPath, serverName, transport, url, oauthRefreshNonce }) => {
+}> = ({ serverName, transport, url, oauthRefreshNonce }) => {
   const { api } = useAPI();
   const isDesktop = !!window.api;
 
@@ -561,7 +550,7 @@ const RemoteMCPOAuthSection: React.FC<{
     setAuthStatusError(null);
 
     try {
-      const status = await mcpOauthApi.getAuthStatus({ projectPath, serverName });
+      const status = await mcpOauthApi.getAuthStatus({ serverUrl: url });
       setAuthStatus(status);
     } catch (err) {
       setAuthStatus(null);
@@ -569,7 +558,7 @@ const RemoteMCPOAuthSection: React.FC<{
     } finally {
       setAuthStatusLoading(false);
     }
-  }, [api, projectPath, serverName]);
+  }, [api, url]);
 
   useEffect(() => {
     void refreshAuthStatus();
@@ -578,7 +567,6 @@ const RemoteMCPOAuthSection: React.FC<{
   const { loginStatus, loginError, loginInProgress, startLogin, cancelLogin } = useMCPOAuthLogin({
     api,
     isDesktop,
-    projectPath,
     serverName,
     onSuccess: refreshAuthStatus,
   });
@@ -628,7 +616,7 @@ const RemoteMCPOAuthSection: React.FC<{
     setLogoutInProgress(true);
 
     try {
-      const result = await mcpOauthApi.logout({ projectPath, serverName });
+      const result = await mcpOauthApi.logout({ serverUrl: url });
       if (!result.success) {
         setLogoutError(result.error);
         return;
@@ -641,7 +629,7 @@ const RemoteMCPOAuthSection: React.FC<{
     } finally {
       setLogoutInProgress(false);
     }
-  }, [api, cancelLogin, projectPath, refreshAuthStatus, serverName]);
+  }, [api, cancelLogin, refreshAuthStatus, url]);
 
   return (
     <div className="mt-1 flex items-center justify-between gap-2">
@@ -726,7 +714,7 @@ const RemoteMCPOAuthSection: React.FC<{
   );
 };
 
-export const ProjectSettingsSection: React.FC = () => {
+export const MCPSettingsSection: React.FC = () => {
   const { api } = useAPI();
   const policyState = usePolicy();
   const mcpAllowUserDefined =
@@ -734,24 +722,17 @@ export const ProjectSettingsSection: React.FC = () => {
   const mcpDisabledByPolicy = Boolean(
     mcpAllowUserDefined?.stdio === false && mcpAllowUserDefined.remote === false
   );
-  const { projectsTargetProjectPath, clearProjectsTargetProjectPath } = useSettings();
-  const { projects, getSecrets } = useProjectContext();
-  const projectList = Array.from(projects.keys());
-
-  // Core state
-  const [selectedProject, setSelectedProject] = useState<string>("");
   const [servers, setServers] = useState<Record<string, MCPServerInfo>>({});
   const [loading, setLoading] = useState(false);
-
-  const [projectSecretKeys, setProjectSecretKeys] = useState<string[]>([]);
+  const [globalSecretKeys, setGlobalSecretKeys] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Test state with caching
+  // Test state with caching (global MCP config)
   const {
     cache: testCache,
     setResult: cacheTestResult,
     clearResult: clearTestResult,
-  } = useMCPTestCache(selectedProject);
+  } = useMCPTestCache("__global__");
   const [testingServer, setTestingServer] = useState<string | null>(null);
   const [mcpOauthRefreshNonce, setMcpOauthRefreshNonce] = useState(0);
 
@@ -812,65 +793,45 @@ export const ProjectSettingsSection: React.FC = () => {
   const [editing, setEditing] = useState<EditableServer | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Set default project when projects load (or when deep-linking into a specific project)
-  useEffect(() => {
-    if (projectList.length === 0) return;
-
-    if (projectsTargetProjectPath) {
-      const target = projectsTargetProjectPath;
-      clearProjectsTargetProjectPath();
-
-      if (projectList.includes(target)) {
-        setSelectedProject(target);
-      } else if (!selectedProject || !projectList.includes(selectedProject)) {
-        setSelectedProject(projectList[0]);
-      }
-
-      return;
-    }
-
-    if (!selectedProject || !projectList.includes(selectedProject)) {
-      setSelectedProject(projectList[0]);
-    }
-  }, [projectList, selectedProject, projectsTargetProjectPath, clearProjectsTargetProjectPath]);
-
   const refresh = useCallback(async () => {
-    if (!api || !selectedProject) return;
+    if (!api) return;
     setLoading(true);
     try {
-      const mcpResult = await api.projects.mcp.list({ projectPath: selectedProject });
+      const mcpResult = await api.mcp.list({});
       setServers(mcpResult ?? {});
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load project settings");
+      setError(err instanceof Error ? err.message : "Failed to load MCP servers");
     } finally {
       setLoading(false);
     }
-  }, [api, selectedProject]);
+  }, [api]);
 
+  // Load global secrets (used for {secret:"KEY"} header values).
   useEffect(() => {
-    if (!selectedProject) {
-      setProjectSecretKeys([]);
+    if (!api) {
+      setGlobalSecretKeys([]);
       return;
     }
 
     let cancelled = false;
     (async () => {
       try {
-        const secrets = await getSecrets(selectedProject);
+        const secrets = await api.secrets.get({});
         if (cancelled) return;
-        setProjectSecretKeys(secrets.map((s) => s.key));
+        setGlobalSecretKeys(secrets.map((s) => s.key));
       } catch (err) {
         if (cancelled) return;
-        console.error("Failed to load project secrets:", err);
-        setProjectSecretKeys([]);
+        console.error("Failed to load global secrets:", err);
+        setGlobalSecretKeys([]);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [getSecrets, selectedProject]);
+  }, [api]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -882,10 +843,10 @@ export const ProjectSettingsSection: React.FC = () => {
 
   const handleRemove = useCallback(
     async (name: string) => {
-      if (!api || !selectedProject) return;
+      if (!api) return;
       setLoading(true);
       try {
-        const result = await api.projects.mcp.remove({ projectPath: selectedProject, name });
+        const result = await api.mcp.remove({ name });
         if (!result.success) {
           setError(result.error ?? "Failed to remove MCP server");
         } else {
@@ -898,20 +859,19 @@ export const ProjectSettingsSection: React.FC = () => {
         setLoading(false);
       }
     },
-    [api, selectedProject, refresh, clearTestResult]
+    [api, refresh, clearTestResult]
   );
 
   const handleToggleEnabled = useCallback(
     async (name: string, enabled: boolean) => {
-      if (!api || !selectedProject) return;
+      if (!api) return;
       // Optimistic update
       setServers((prev) => ({
         ...prev,
         [name]: { ...prev[name], disabled: !enabled },
       }));
       try {
-        const result = await api.projects.mcp.setEnabled({
-          projectPath: selectedProject,
+        const result = await api.mcp.setEnabled({
           name,
           enabled,
         });
@@ -932,15 +892,15 @@ export const ProjectSettingsSection: React.FC = () => {
         setError(err instanceof Error ? err.message : "Failed to update server");
       }
     },
-    [api, selectedProject]
+    [api]
   );
 
   const handleTest = useCallback(
     async (name: string) => {
-      if (!api || !selectedProject) return;
+      if (!api) return;
       setTestingServer(name);
       try {
-        const result = await api.projects.mcp.test({ projectPath: selectedProject, name });
+        const result = await api.mcp.test({ name });
         cacheTestResult(name, result);
       } catch (err) {
         cacheTestResult(name, {
@@ -951,14 +911,14 @@ export const ProjectSettingsSection: React.FC = () => {
         setTestingServer(null);
       }
     },
-    [api, selectedProject, cacheTestResult]
+    [api, cacheTestResult]
   );
 
   const serverDisplayValue = (entry: MCPServerInfo): string =>
     entry.transport === "stdio" ? entry.command : entry.url;
 
   const handleTestNewServer = useCallback(async () => {
-    if (!api || !selectedProject || !newServer.value.trim()) return;
+    if (!api || !newServer.value.trim()) return;
     setTestingNew(true);
     setNewTestResult(null);
 
@@ -967,7 +927,7 @@ export const ProjectSettingsSection: React.FC = () => {
         newServer.transport === "stdio"
           ? { headers: undefined, validation: { errors: [], warnings: [] } }
           : mcpHeaderRowsToRecord(newServer.headersRows, {
-              knownSecretKeys: new Set(projectSecretKeys),
+              knownSecretKeys: new Set(globalSecretKeys),
             });
 
       if (validation.errors.length > 0) {
@@ -976,8 +936,7 @@ export const ProjectSettingsSection: React.FC = () => {
 
       const pendingName = newServer.name.trim();
 
-      const result = await api.projects.mcp.test({
-        projectPath: selectedProject,
+      const result = await api.mcp.test({
         ...(newServer.transport === "stdio"
           ? { command: newServer.value.trim() }
           : {
@@ -999,16 +958,15 @@ export const ProjectSettingsSection: React.FC = () => {
     }
   }, [
     api,
-    selectedProject,
     newServer.name,
     newServer.transport,
     newServer.value,
     newServer.headersRows,
-    projectSecretKeys,
+    globalSecretKeys,
   ]);
 
   const handleAddServer = useCallback(async () => {
-    if (!api || !selectedProject || !newServer.name.trim() || !newServer.value.trim()) return;
+    if (!api || !newServer.name.trim() || !newServer.value.trim()) return;
 
     const serverName = newServer.name.trim();
     const serverTransport = newServer.transport;
@@ -1024,15 +982,14 @@ export const ProjectSettingsSection: React.FC = () => {
         serverTransport === "stdio"
           ? { headers: undefined, validation: { errors: [], warnings: [] } }
           : mcpHeaderRowsToRecord(serverHeadersRows, {
-              knownSecretKeys: new Set(projectSecretKeys),
+              knownSecretKeys: new Set(globalSecretKeys),
             });
 
       if (validation.errors.length > 0) {
         throw new Error(validation.errors[0]);
       }
 
-      const result = await api.projects.mcp.add({
-        projectPath: selectedProject,
+      const result = await api.mcp.add({
         name: serverName,
         ...(serverTransport === "stdio"
           ? { transport: "stdio", command: serverValue }
@@ -1064,8 +1021,7 @@ export const ProjectSettingsSection: React.FC = () => {
       // surface an OAuth callout without requiring a manual Test click.
       setTestingServer(serverName);
       try {
-        const testResult = await api.projects.mcp.test({
-          projectPath: selectedProject,
+        const testResult = await api.mcp.test({
           name: serverName,
         });
         cacheTestResult(serverName, testResult);
@@ -1082,7 +1038,7 @@ export const ProjectSettingsSection: React.FC = () => {
     } finally {
       setAddingServer(false);
     }
-  }, [api, selectedProject, newServer, newTestResult, refresh, cacheTestResult, projectSecretKeys]);
+  }, [api, newServer, newTestResult, refresh, cacheTestResult, globalSecretKeys]);
 
   const handleStartEdit = useCallback((name: string, entry: MCPServerInfo) => {
     setEditing({
@@ -1098,7 +1054,7 @@ export const ProjectSettingsSection: React.FC = () => {
   }, []);
 
   const handleSaveEdit = useCallback(async () => {
-    if (!api || !selectedProject || !editing?.value.trim()) return;
+    if (!api || !editing?.value.trim()) return;
     setSavingEdit(true);
     setError(null);
 
@@ -1107,15 +1063,14 @@ export const ProjectSettingsSection: React.FC = () => {
         editing.transport === "stdio"
           ? { headers: undefined, validation: { errors: [], warnings: [] } }
           : mcpHeaderRowsToRecord(editing.headersRows, {
-              knownSecretKeys: new Set(projectSecretKeys),
+              knownSecretKeys: new Set(globalSecretKeys),
             });
 
       if (validation.errors.length > 0) {
         throw new Error(validation.errors[0]);
       }
 
-      const result = await api.projects.mcp.add({
-        projectPath: selectedProject,
+      const result = await api.mcp.add({
         name: editing.name,
         ...(editing.transport === "stdio"
           ? { transport: "stdio", command: editing.value.trim() }
@@ -1139,26 +1094,13 @@ export const ProjectSettingsSection: React.FC = () => {
     } finally {
       setSavingEdit(false);
     }
-  }, [api, selectedProject, editing, refresh, clearTestResult, projectSecretKeys]);
-
-  if (projectList.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 text-center">
-        <Server className="text-muted mb-3 h-10 w-10" />
-        <p className="text-muted text-sm">
-          No projects configured. Add a project first to manage settings.
-        </p>
-      </div>
-    );
-  }
-
-  const projectName = (path: string) => path.split(/[\\/]/).pop() ?? path;
+  }, [api, editing, refresh, clearTestResult, globalSecretKeys]);
 
   const newHeadersValidation =
     newServer.transport === "stdio"
       ? { errors: [], warnings: [] }
       : mcpHeaderRowsToRecord(newServer.headersRows, {
-          knownSecretKeys: new Set(projectSecretKeys),
+          knownSecretKeys: new Set(globalSecretKeys),
         }).validation;
 
   const canAdd =
@@ -1173,36 +1115,20 @@ export const ProjectSettingsSection: React.FC = () => {
   const editHeadersValidation =
     editing && editing.transport !== "stdio"
       ? mcpHeaderRowsToRecord(editing.headersRows, {
-          knownSecretKeys: new Set(projectSecretKeys),
+          knownSecretKeys: new Set(globalSecretKeys),
         }).validation
       : { errors: [], warnings: [] };
 
   return (
     <div className="space-y-6">
-      {/* Intro + Project selector */}
+      {/* Intro */}
       <div>
         <p className="text-muted mb-4 text-xs">
-          Configure project-specific settings. Settings are stored in{" "}
-          <code className="text-accent">.mux/</code> within your project.
+          Configure global MCP servers. Global config lives in{" "}
+          <code className="text-accent">~/.mux/mcp.jsonc</code>, with optional repo overrides in{" "}
+          <code className="text-accent">./.mux/mcp.jsonc</code> and workspace overrides in{" "}
+          <code className="text-accent">.mux/mcp.local.jsonc</code>.
         </p>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-foreground text-sm">Project</div>
-            <div className="text-muted text-xs">Select a project to configure</div>
-          </div>
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto min-w-[160px] cursor-pointer rounded-md border px-3 text-sm transition-colors">
-              <SelectValue placeholder="Select project" />
-            </SelectTrigger>
-            <SelectContent>
-              {projectList.map((path) => (
-                <SelectItem key={path} value={path}>
-                  {projectName(path)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
       </div>
 
       {/* MCP Servers */}
@@ -1303,7 +1229,7 @@ export const ProjectSettingsSection: React.FC = () => {
                                         headersRows: rows,
                                       })
                                     }
-                                    secretKeys={projectSecretKeys}
+                                    secretKeys={globalSecretKeys}
                                     disabled={savingEdit}
                                   />
                                 </div>
@@ -1428,7 +1354,6 @@ export const ProjectSettingsSection: React.FC = () => {
                             )}
                           >
                             <RemoteMCPOAuthSection
-                              projectPath={selectedProject}
                               serverName={name}
                               transport={remoteEntry.transport}
                               url={remoteEntry.url}
@@ -1447,7 +1372,6 @@ export const ProjectSettingsSection: React.FC = () => {
                           {cached.result.oauthChallenge && (
                             <div className="mt-2">
                               <MCPOAuthRequiredCallout
-                                projectPath={selectedProject}
                                 serverName={name}
                                 disabledReason={
                                   remoteEntry
@@ -1470,7 +1394,6 @@ export const ProjectSettingsSection: React.FC = () => {
                             availableTools={cached.result.tools}
                             currentAllowlist={entry.toolAllowlist}
                             testedAt={cached.testedAt}
-                            projectPath={selectedProject}
                           />
                         </div>
                       )}
@@ -1562,7 +1485,7 @@ export const ProjectSettingsSection: React.FC = () => {
                           headersRows: rows,
                         }))
                       }
-                      secretKeys={projectSecretKeys}
+                      secretKeys={globalSecretKeys}
                       disabled={addingServer || testingNew}
                     />
                   </div>
@@ -1606,7 +1529,6 @@ export const ProjectSettingsSection: React.FC = () => {
                   newTestResult.result.oauthChallenge && (
                     <div className="mt-2">
                       <MCPOAuthRequiredCallout
-                        projectPath={selectedProject}
                         serverName={newServer.name.trim()}
                         pendingServer={(() => {
                           const pendingName = newServer.name.trim();

@@ -137,7 +137,7 @@ const SidebarContainer: React.FC<SidebarContainerProps> = ({
         // visual separation in the titlebar area (overlay buttons zone)
         isDesktop && collapsed && "border-l-0"
       )}
-      style={{ width }}
+      style={{ width, maxWidth: "100%" }}
       role={role}
       aria-label={ariaLabel}
     >

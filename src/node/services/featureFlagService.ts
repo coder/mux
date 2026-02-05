@@ -38,7 +38,11 @@ export class FeatureFlagService {
     const override = this.getOverride();
     const variant = await this.getVariant();
 
-    const enabled = override === "on" ? true : override === "off" ? false : variant === "stats";
+    // Stats tab is now default-on. Keep the persisted override as a kill switch.
+    //
+    // - "off": force disabled
+    // - "on" | "default": enabled (default behavior)
+    const enabled = override !== "off";
 
     return { enabled, variant, override };
   }

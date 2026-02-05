@@ -1,9 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useAutoResizeTextarea } from "@/browser/hooks/useAutoResizeTextarea";
-import { isVscodeWebview } from "@/browser/utils/env";
 import * as vim from "@/browser/utils/vim";
 import { Tooltip, TooltipTrigger, TooltipContent, HelpIndicator } from "./ui/tooltip";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -74,7 +72,6 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       }
     }, [vimEnabled]);
 
-    const [isFocused, setIsFocused] = useState(false);
     const [desiredColumn, setDesiredColumn] = useState<number | null>(null);
     const [pendingOp, setPendingOp] = useState<null | {
       op: "d" | "y" | "c";
@@ -180,7 +177,6 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
     // Build mode indicator content
     const showVimMode = vimEnabled && vimMode === "normal";
     const pendingCommand = showVimMode ? vim.formatPendingCommand(pendingOp) : "";
-    const showFocusHint = !isFocused && !isVscodeWebview();
 
     return (
       <div style={{ width: "100%" }} data-component="VimTextAreaContainer">
@@ -221,11 +217,6 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
               </>
             )}
           </div>
-          {showFocusHint && (
-            <div className="ml-auto flex items-center gap-1 font-mono">
-              <span>{formatKeybind(KEYBINDS.FOCUS_CHAT)} to focus</span>
-            </div>
-          )}
         </div>
         <div style={{ position: "relative" }} data-component="VimTextAreaWrapper">
           <textarea
@@ -233,8 +224,6 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDownInternal}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="none"

@@ -179,6 +179,45 @@ describe("createCodeExecutionTool", () => {
       expect(result.error).toContain("require");
     });
 
+    it("does not reject 'require(' inside string literals", async () => {
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
+
+      const result = (await tool.execute!(
+        {
+          code: 'return "this is a string containing require(fs) but should be allowed"',
+        },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+
+      expect(result.success).toBe(true);
+      expect(result.result).toContain("require(");
+    });
+
+    it("does not reject 'import(' inside string literals", async () => {
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
+
+      const result = (await tool.execute!(
+        { code: 'return `this is a template string containing import("fs")`' },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+
+      expect(result.success).toBe(true);
+      expect(result.result).toContain("import(");
+    });
+
+    it("rejects code using dynamic import()", async () => {
+      const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge({}));
+
+      const result = (await tool.execute!(
+        { code: 'return import("fs")' },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Code analysis failed");
+      expect(result.error).toContain("Dynamic import() is not available");
+    });
+
     it("includes line and column numbers for type errors", async () => {
       const mockTools: Record<string, Tool> = {
         bash: createMockTool("bash", z.object({ script: z.string() })),

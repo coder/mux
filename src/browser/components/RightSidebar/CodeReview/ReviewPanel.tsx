@@ -236,6 +236,10 @@ async function executeWorkspaceBashAndCache<T extends ReviewPanelCacheValue>(par
     throw new Error(result.error ?? "Unknown error");
   }
 
+  if (!result.data.success) {
+    throw new Error(result.data.output ?? result.data.error ?? "Command failed");
+  }
+
   const value = params.parse(result);
   reviewPanelCache.set(params.cacheKey, value);
   return value;
@@ -1151,6 +1155,10 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  const isNonGitWorkspace =
+    diffState.status === "error" &&
+    (/not a git repository\b/i.test(diffState.message) ||
+      /repository not found\b/i.test(diffState.message));
   // Show loading state while workspace is being created
   if (isCreating) {
     return (
@@ -1186,20 +1194,29 @@ export const ReviewPanel: React.FC<ReviewPanelProps> = ({
       />
 
       {diffState.status === "error" ? (
-        <div className="text-danger-soft bg-danger-soft/10 border-danger-soft/30 font-monospace m-3 rounded border p-6 text-xs leading-[1.5] break-words whitespace-pre-wrap">
-          {diffState.message}
-          {/* Show helpful hint when ref doesn't exist */}
-          {diffState.message.includes("unknown revision") && (
-            <div className="text-muted mt-3 flex items-start gap-2 border-t border-current/20 pt-3 font-sans text-[11px]">
-              <Lightbulb aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
-              <span>
-                The ref <code className="text-foreground">{filters.diffBase}</code> does not exist
-                in this repository. Use the dropdown above to select a different base (e.g., HEAD,
-                origin/master).
-              </span>
+        isNonGitWorkspace ? (
+          <div className="text-muted flex flex-col items-center justify-start gap-3 px-6 pt-12 pb-6 text-center">
+            <div className="text-foreground text-base font-medium">Not a git repository</div>
+            <div className="text-[13px] leading-[1.5]">
+              This project is not a git repository, so changes {"can't"} be computed.
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="text-danger-soft bg-danger-soft/10 border-danger-soft/30 font-monospace m-3 rounded border p-6 text-xs leading-[1.5] break-words whitespace-pre-wrap">
+            {diffState.message}
+            {/* Show helpful hint when ref doesn't exist */}
+            {diffState.message.includes("unknown revision") && (
+              <div className="text-muted mt-3 flex items-start gap-2 border-t border-current/20 pt-3 font-sans text-[11px]">
+                <Lightbulb aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />
+                <span>
+                  The ref <code className="text-foreground">{filters.diffBase}</code> does not exist
+                  in this repository. Use the dropdown above to select a different base (e.g., HEAD,
+                  origin/master).
+                </span>
+              </div>
+            )}
+          </div>
+        )
       ) : diffState.status === "loading" ? (
         <div className="text-muted flex h-full items-center justify-center text-sm">
           Loading diff...

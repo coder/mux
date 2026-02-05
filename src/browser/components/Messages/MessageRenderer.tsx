@@ -1,9 +1,9 @@
 import React from "react";
-import type { FilePart } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
 import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import type { ReviewNoteData } from "@/common/types/review";
+import type { EditingMessageState } from "@/browser/utils/chatEditing";
 import { UserMessage, type UserMessageNavigation } from "./UserMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
@@ -17,7 +17,7 @@ import { removeEphemeralMessage } from "@/browser/stores/WorkspaceStore";
 interface MessageRendererProps {
   message: DisplayedMessage;
   className?: string;
-  onEditUserMessage?: (messageId: string, content: string, fileParts?: FilePart[]) => void;
+  onEditUserMessage?: (message: EditingMessageState) => void;
   onEditQueuedMessage?: () => void;
   workspaceId?: string;
   isCompacting?: boolean;
