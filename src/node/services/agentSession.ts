@@ -1275,29 +1275,54 @@ export class AgentSession {
     const parsedAgentId = AgentIdSchema.safeParse(agentIdRaw);
     const agentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
 
-    const runtime = createRuntimeForWorkspace(metadata);
+    // Prefer resolving agent inheritance from the parent workspace: project agents may be untracked
+    // (and therefore absent from child worktrees), but they are always present in the parent that
+    // spawned the task.
+    const metadataCandidates: Array<typeof metadata> = [metadata];
 
-    // In-place workspaces (CLI/benchmarks) have projectPath === name.
-    // Use path directly instead of reconstructing via getWorkspacePath.
-    const isInPlace = metadata.projectPath === metadata.name;
-    const workspacePath = isInPlace
-      ? metadata.projectPath
-      : runtime.getWorkspacePath(metadata.projectPath, metadata.name);
-
-    const agentDiscoveryPath =
-      context.options?.disableWorkspaceAgents === true ? metadata.projectPath : workspacePath;
-
-    let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>>;
     try {
-      const agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, agentId);
-      chain = await resolveAgentInheritanceChain({
-        runtime,
-        workspacePath: agentDiscoveryPath,
-        agentId,
-        agentDefinition,
-        workspaceId: this.workspaceId,
-      });
+      const parentMetadataResult = await this.aiService.getWorkspaceMetadata(
+        metadata.parentWorkspaceId
+      );
+      if (parentMetadataResult.success) {
+        metadataCandidates.unshift(parentMetadataResult.data);
+      }
     } catch {
+      // ignore - fall back to child metadata
+    }
+
+    let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
+    for (const agentMetadata of metadataCandidates) {
+      try {
+        const runtime = createRuntimeForWorkspace(agentMetadata);
+
+        // In-place workspaces (CLI/benchmarks) have projectPath === name.
+        // Use path directly instead of reconstructing via getWorkspacePath.
+        const isInPlace = agentMetadata.projectPath === agentMetadata.name;
+        const workspacePath = isInPlace
+          ? agentMetadata.projectPath
+          : runtime.getWorkspacePath(agentMetadata.projectPath, agentMetadata.name);
+
+        const agentDiscoveryPath =
+          context.options?.disableWorkspaceAgents === true
+            ? agentMetadata.projectPath
+            : workspacePath;
+
+        const agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, agentId);
+        chain = await resolveAgentInheritanceChain({
+          runtime,
+          workspacePath: agentDiscoveryPath,
+          agentId,
+          agentDefinition,
+          workspaceId: this.workspaceId,
+        });
+        break;
+      } catch {
+        // ignore - try next candidate
+      }
+    }
+
+    if (!chain) {
       // If we fail to resolve tool policy/inheritance, treat as non-exec-like.
       return false;
     }
