@@ -157,6 +157,47 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
 
+function normalizePathForComparison(path: string): string {
+  // We only use this for string matching, not for filesystem access.
+  // normalize slashes so we can match Windows-style paths too.
+  return path.replaceAll("\\", "/");
+}
+
+/**
+ * propose_plan tool output writes paths under `~/.mux/...` while `api.workspace.getPlanContent()`
+ * returns a resolved absolute path (e.g. `/home/user/.mux/...`). For shared transcripts, treat
+ * these as the same file so mux-md can render the plan without disk access.
+ */
+function planPathsReferToSameFile(planPath: string, snapshotPath: string): boolean {
+  const normalizedPlanPath = normalizePathForComparison(planPath);
+  const normalizedSnapshotPath = normalizePathForComparison(snapshotPath);
+
+  if (normalizedPlanPath === normalizedSnapshotPath) {
+    return true;
+  }
+
+  const tildeSuffix = (path: string): string | undefined => {
+    if (!path.startsWith("~/")) {
+      return undefined;
+    }
+    // Drop the `~` so we can match against an absolute path suffix.
+    // Example: `~/.mux/plans/p/w.md` -> `/.mux/plans/p/w.md`
+    return path.slice(1);
+  };
+
+  const planSuffix = tildeSuffix(normalizedPlanPath);
+  if (planSuffix !== undefined && normalizedSnapshotPath.endsWith(planSuffix)) {
+    return true;
+  }
+
+  const snapshotSuffix = tildeSuffix(normalizedSnapshotPath);
+  if (snapshotSuffix !== undefined && normalizedPlanPath.endsWith(snapshotSuffix)) {
+    return true;
+  }
+
+  return false;
+}
+
 function inlinePlanContentForSharing(
   messages: MuxMessage[],
   planSnapshot: { path: string; content: string }
@@ -190,7 +231,7 @@ function inlinePlanContentForSharing(
         return part;
       }
 
-      if (output.planPath !== planSnapshot.path) {
+      if (!planPathsReferToSameFile(output.planPath, planSnapshot.path)) {
         return part;
       }
 

@@ -181,6 +181,100 @@ describe("buildChatJsonlForSharing", () => {
     expect((originalOutput as Record<string, unknown>).planContent).toBeUndefined();
   });
 
+  it("inlines planContent when propose_plan planPath uses ~ but planSnapshot.path is resolved", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "propose_plan",
+            state: "output-available",
+            input: { title: "My Plan" },
+            output: {
+              success: true,
+              planPath: "~/.mux/plans/p/w.md",
+              message: "Plan saved",
+            },
+          },
+        ],
+      },
+    ];
+
+    const planSnapshot = {
+      path: "/home/user/.mux/plans/p/w.md",
+      content: "# My Plan\n\n- Step 1",
+    };
+
+    const jsonl = buildChatJsonlForSharing(messages, {
+      includeToolOutput: true,
+      planSnapshot,
+    });
+
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool" || part.state !== "output-available") {
+      throw new Error("Expected completed tool part");
+    }
+
+    const output = part.output;
+    if (output === null || typeof output !== "object") {
+      throw new Error("Expected tool output object");
+    }
+
+    expect((output as Record<string, unknown>).planContent).toBe(planSnapshot.content);
+  });
+
+  it("matches propose_plan planPath and planSnapshot.path across Windows-style slashes", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "propose_plan",
+            state: "output-available",
+            input: { title: "My Plan" },
+            output: {
+              success: true,
+              planPath: "~\\.mux\\plans\\p\\w.md",
+              message: "Plan saved",
+            },
+          },
+        ],
+      },
+    ];
+
+    const planSnapshot = {
+      path: "C:\\Users\\user\\.mux\\plans\\p\\w.md",
+      content: "# My Plan\n\n- Step 1",
+    };
+
+    const jsonl = buildChatJsonlForSharing(messages, {
+      includeToolOutput: true,
+      planSnapshot,
+    });
+
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool" || part.state !== "output-available") {
+      throw new Error("Expected completed tool part");
+    }
+
+    const output = part.output;
+    if (output === null || typeof output !== "object") {
+      throw new Error("Expected tool output object");
+    }
+
+    expect((output as Record<string, unknown>).planContent).toBe(planSnapshot.content);
+  });
+
   it("preserves propose_plan output (with planContent) while stripping other tool outputs when includeToolOutput=false", () => {
     const messages: MuxMessage[] = [
       {
