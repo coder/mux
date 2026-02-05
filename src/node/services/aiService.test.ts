@@ -213,6 +213,61 @@ describe("AIService.resolveGatewayModelString", () => {
   });
 });
 
+describe("AIService.createModel (Codex OAuth routing)", () => {
+  async function writeProvidersConfig(root: string, config: object): Promise<void> {
+    await fs.writeFile(
+      path.join(root, "providers.jsonc"),
+      JSON.stringify(config, null, 2),
+      "utf-8"
+    );
+  }
+
+  function createService(root: string): AIService {
+    const config = new Config(root);
+    const historyService = new HistoryService(config);
+    const partialService = new PartialService(config, historyService);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+    return new AIService(config, historyService, partialService, initStateManager, providerService);
+  }
+
+  it("returns oauth_not_connected for required Codex models when OAuth is missing", async () => {
+    using muxHome = new DisposableTempDir("codex-oauth-missing");
+
+    await writeProvidersConfig(muxHome.path, {
+      openai: {},
+    });
+
+    const service = createService(muxHome.path);
+    const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toEqual({ type: "oauth_not_connected", provider: "openai" });
+    }
+  });
+
+  it("does not require an OpenAI API key when Codex OAuth is configured", async () => {
+    using muxHome = new DisposableTempDir("codex-oauth-present");
+
+    await writeProvidersConfig(muxHome.path, {
+      openai: {
+        codexOauth: {
+          access: "test-access-token",
+          refresh: "test-refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "test-account-id",
+        },
+      },
+    });
+
+    const service = createService(muxHome.path);
+    const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+
+    expect(result.success).toBe(true);
+  });
+});
+
 describe("normalizeAnthropicBaseURL", () => {
   it("appends /v1 to URLs without it", () => {
     expect(normalizeAnthropicBaseURL("https://api.anthropic.com")).toBe(

@@ -37,6 +37,12 @@ import {
   MUX_GATEWAY_SUPPORTED_PROVIDERS,
   type ProviderName,
 } from "@/common/constants/providers";
+import {
+  CODEX_ENDPOINT,
+  isCodexOauthAllowedModelId,
+  isCodexOauthRequiredModelId,
+} from "@/common/constants/codexOAuth";
+import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { BashOutputEvent } from "@/common/types/stream";
@@ -54,6 +60,7 @@ import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
+import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
@@ -546,6 +553,20 @@ export async function discoverAvailableSubagentsForToolContext(args: {
   );
 }
 
+const MUX_MODEL_COSTS_INCLUDED = Symbol("mux:modelCostsIncluded");
+
+type LanguageModelWithMuxCostsIncluded = LanguageModel & {
+  [MUX_MODEL_COSTS_INCLUDED]?: true;
+};
+
+function markModelCostsIncluded(model: LanguageModel): void {
+  (model as LanguageModelWithMuxCostsIncluded)[MUX_MODEL_COSTS_INCLUDED] = true;
+}
+
+function modelCostsIncluded(model: LanguageModel): boolean {
+  return (model as LanguageModelWithMuxCostsIncluded)[MUX_MODEL_COSTS_INCLUDED] === true;
+}
+
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
@@ -556,6 +577,7 @@ export class AIService extends EventEmitter {
   private mcpServerManager?: MCPServerManager;
   private policyService?: PolicyService;
   private telemetryService?: TelemetryService;
+  private codexOauthService?: CodexOauthService;
   private readonly initStateManager: InitStateManager;
   private mockModeEnabled: boolean;
   private mockAiStreamPlayer?: MockAiStreamPlayer;
@@ -613,6 +635,9 @@ export class AIService extends EventEmitter {
   }
   setTelemetryService(service: TelemetryService): void {
     this.telemetryService = service;
+  }
+  setCodexOauthService(service: CodexOauthService): void {
+    this.codexOauthService = service;
   }
   setMCPServerManager(manager: MCPServerManager): void {
     this.mcpServerManager = manager;
@@ -871,16 +896,33 @@ export class AIService extends EventEmitter {
 
       // Handle OpenAI provider (using Responses API)
       if (providerName === "openai") {
+        const fullModelId = `${providerName}:${modelId}`;
+
+        const codexOauthAllowed = isCodexOauthAllowedModelId(fullModelId);
+        const codexOauthRequired = isCodexOauthRequiredModelId(fullModelId);
+
+        const storedCodexOauth = parseCodexOauthAuth(
+          (providerConfig as { codexOauth?: unknown }).codexOauth
+        );
+
+        const shouldRouteThroughCodexOauth = codexOauthAllowed && Boolean(storedCodexOauth);
+
+        if (codexOauthRequired && !shouldRouteThroughCodexOauth) {
+          return Err({ type: "oauth_not_connected", provider: providerName });
+        }
+
         // Resolve credentials from config + env (single source of truth)
         const creds = resolveProviderCredentials("openai", providerConfig);
-        if (!creds.isConfigured) {
+        if (!shouldRouteThroughCodexOauth && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
         // Merge resolved credentials into config
         const configWithCreds = {
           ...providerConfig,
-          apiKey: creds.apiKey,
+          // When using Codex OAuth, we overwrite auth headers in fetch(), so the OpenAI API key
+          // isn't required. Still pass a placeholder to ensure the SDK never reads env vars.
+          apiKey: shouldRouteThroughCodexOauth ? (creds.apiKey ?? "codex-oauth") : creds.apiKey,
           ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
           ...(creds.organization && { organization: creds.organization }),
         };
@@ -895,6 +937,7 @@ export class AIService extends EventEmitter {
         }
 
         const baseFetch = getProviderFetch(providerConfig);
+        const codexOauthService = this.codexOauthService;
 
         // Wrap fetch to default truncation to "disabled" for OpenAI Responses API calls.
         // This preserves our compaction handling while still allowing explicit truncation (e.g., auto).
@@ -922,33 +965,59 @@ export class AIService extends EventEmitter {
 
               const method = (init?.method ?? "GET").toUpperCase();
               const isOpenAIResponses = /\/v1\/responses(\?|$)/.test(urlString);
+              const isOpenAIChatCompletions = /\/chat\/completions(\?|$)/.test(urlString);
+
+              let nextInput: Parameters<typeof fetch>[0] = input;
+              let nextInit: Parameters<typeof fetch>[1] | undefined = init;
 
               const body = init?.body;
               if (isOpenAIResponses && method === "POST" && typeof body === "string") {
-                // Clone headers to avoid mutating caller-provided objects
-                const headers = new Headers(init?.headers);
-                // Remove content-length if present, since body will change
-                headers.delete("content-length");
-
                 try {
                   const json = JSON.parse(body) as Record<string, unknown>;
                   const truncation = json.truncation;
                   if (truncation !== "auto" && truncation !== "disabled") {
                     json.truncation = "disabled";
                   }
+
+                  // Clone headers to avoid mutating caller-provided objects
+                  const headers = new Headers(init?.headers);
+                  // Remove content-length if present, since body will change
+                  headers.delete("content-length");
+
                   const newBody = JSON.stringify(json);
-                  const newInit: RequestInit = { ...init, headers, body: newBody };
-                  return baseFetch(input, newInit);
+                  nextInit = { ...init, headers, body: newBody };
                 } catch {
-                  // If body isn't JSON, fall through to normal fetch
-                  return baseFetch(input, init);
+                  // If body isn't JSON, fall through to normal fetch (but still allow Codex routing).
                 }
               }
 
-              // Default passthrough
-              return baseFetch(input, init);
-            } catch {
-              // On any unexpected error, fall back to original fetch
+              if (shouldRouteThroughCodexOauth && (isOpenAIResponses || isOpenAIChatCompletions)) {
+                if (!codexOauthService) {
+                  throw new Error("Codex OAuth service not initialized");
+                }
+
+                const authResult = await codexOauthService.getValidAuth();
+                if (!authResult.success) {
+                  throw new Error(authResult.error);
+                }
+
+                const headers = new Headers(nextInit?.headers);
+                headers.set("Authorization", `Bearer ${authResult.data.access}`);
+                if (authResult.data.accountId) {
+                  headers.set("ChatGPT-Account-Id", authResult.data.accountId);
+                }
+
+                nextInput = CODEX_ENDPOINT;
+                nextInit = { ...(nextInit ?? {}), headers };
+              }
+
+              return baseFetch(nextInput, nextInit);
+            } catch (error) {
+              // For normal OpenAI (API key) requests, fall back to the original fetch on unexpected errors.
+              // For Codex OAuth routing, failures should surface (falling back would hit api.openai.com).
+              if (shouldRouteThroughCodexOauth) {
+                throw error;
+              }
               return baseFetch(input, init);
             }
           },
@@ -970,6 +1039,9 @@ export class AIService extends EventEmitter {
         // Use Responses API for persistence and built-in tools
         // OpenAI manages reasoning state via previousResponseId - no middleware needed
         const model = provider.responses(modelId);
+        if (shouldRouteThroughCodexOauth) {
+          markModelCostsIncluded(model);
+        }
         return Ok(model);
       }
 
@@ -3152,6 +3224,7 @@ export class AIService extends EventEmitter {
           agentId: effectiveAgentId,
           mode: effectiveMode,
           routedThroughGateway,
+          ...(modelCostsIncluded(modelResult.data) ? { costsIncluded: true } : {}),
         },
         providerOptions,
         maxOutputTokens,

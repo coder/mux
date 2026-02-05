@@ -23,6 +23,12 @@ export const CODEX_OAUTH_AUTHORIZE_URL = `${CODEX_OAUTH_ORIGIN}/authorize`;
 export const CODEX_OAUTH_TOKEN_URL = `${CODEX_OAUTH_ORIGIN}/oauth/token`;
 export const CODEX_OAUTH_DEVICE_CODE_URL = `${CODEX_OAUTH_ORIGIN}/oauth/device/code`;
 
+// ChatGPT subscription endpoint for Codex-flavored requests.
+//
+// IMPORTANT: This is *not* the public OpenAI platform endpoint (api.openai.com).
+// Codex OAuth tokens are only valid against this ChatGPT backend.
+export const CODEX_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
+
 // We request offline_access to receive refresh tokens.
 export const CODEX_OAUTH_SCOPE = "openid profile email offline_access";
 
@@ -98,3 +104,21 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
  * For now, this matches CODEX_OAUTH_ALLOWED_MODELS.
  */
 export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>(CODEX_OAUTH_ALLOWED_MODELS);
+
+function normalizeCodexOauthModelId(modelId: string): string {
+  // Historically we treat OpenAI model IDs as "provider:model" strings.
+  // For convenience, accept bare provider model IDs (e.g. "gpt-5.2-codex").
+  if (modelId.includes(":")) {
+    return modelId;
+  }
+
+  return `openai:${modelId}`;
+}
+
+export function isCodexOauthAllowedModelId(modelId: string): boolean {
+  return CODEX_OAUTH_ALLOWED_MODELS.has(normalizeCodexOauthModelId(modelId));
+}
+
+export function isCodexOauthRequiredModelId(modelId: string): boolean {
+  return CODEX_OAUTH_REQUIRED_MODELS.has(normalizeCodexOauthModelId(modelId));
+}

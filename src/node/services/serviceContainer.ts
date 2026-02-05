@@ -198,6 +198,7 @@ export class ServiceContainer {
       this.providerService,
       this.windowService
     );
+    this.aiService.setCodexOauthService(this.codexOauthService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
     this.terminalService = new TerminalService(config, this.ptyService);
