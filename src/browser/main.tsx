@@ -33,10 +33,15 @@ window.addEventListener("unhandledrejection", (event) => {
   }
 });
 
+const app = <AppLoader />;
+
+// StrictMode adds meaningful dev-time checks, but it also double-invokes many React
+// lifecycles. For perf profiling and large-UIs work (e.g. huge diffs), it can be
+// helpful to opt out.
+const enableStrictMode = !(import.meta.env.DEV && import.meta.env.VITE_MUX_FAST_DEV === "1");
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <AppLoader />
-  </React.StrictMode>
+  enableStrictMode ? <React.StrictMode>{app}</React.StrictMode> : app
 );
 
 // Register service worker for PWA support

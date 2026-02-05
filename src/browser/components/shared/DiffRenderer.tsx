@@ -5,13 +5,13 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { cn } from "@/common/lib/utils";
 import { getLanguageFromPath } from "@/common/utils/git/languageDetector";
 import { useOverflowDetection } from "@/browser/hooks/useOverflowDetection";
 import { MessageSquare } from "lucide-react";
 import { InlineReviewNote, type ReviewActionCallbacks } from "./InlineReviewNote";
-import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip";
 import { groupDiffLines } from "@/browser/utils/highlighting/diffChunking";
 import { useTheme, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
@@ -255,26 +255,20 @@ const DiffLineGutter: React.FC<DiffLineGutterProps> = ({
   );
 };
 
-// Shared indicator component (+/- with optional hover replacement) - renders as a CSS Grid cell
+// Shared indicator component (+/-/space) - renders as a CSS Grid cell
 interface DiffIndicatorProps {
   type: DiffLineType;
   /** Background color for this cell (matches code background) */
   background: string;
-  /** Render review button overlay on hover */
-  reviewButton?: React.ReactNode;
-  /** When provided, enables drag-to-select behavior in SelectableDiffRenderer */
-  onMouseDown?: React.MouseEventHandler<HTMLSpanElement>;
-  onMouseEnter?: React.MouseEventHandler<HTMLSpanElement>;
+  /** Enables pointer cursor for interactive uses (e.g., selectable diffs) */
   isInteractive?: boolean;
+  /** Index for event delegation (SelectableDiffRenderer uses this). */
   lineIndex?: number;
 }
 
 const DiffIndicator: React.FC<DiffIndicatorProps> = ({
   type,
   background,
-  reviewButton,
-  onMouseDown,
-  onMouseEnter,
   isInteractive,
   lineIndex,
 }) => (
@@ -282,17 +276,9 @@ const DiffIndicator: React.FC<DiffIndicatorProps> = ({
     data-diff-indicator={true}
     data-line-index={lineIndex}
     className={cn("relative text-center select-none", isInteractive && "cursor-pointer")}
-    style={{ background }}
-    onMouseDown={onMouseDown}
-    onMouseEnter={onMouseEnter}
+    style={{ background, color: getIndicatorColor(type) }}
   >
-    <span
-      className={cn("transition-opacity", reviewButton && "group-hover:opacity-0")}
-      style={{ color: getIndicatorColor(type) }}
-    >
-      {getIndicatorChar(type)}
-    </span>
-    {reviewButton}
+    {getIndicatorChar(type)}
   </span>
 );
 
@@ -317,11 +303,31 @@ export const DiffContainer: React.FC<
     firstLineType?: DiffLineType;
     /** Type of the last line in the diff (for bottom padding background) */
     lastLineType?: DiffLineType;
+    /** Props applied to the inner grid element (useful for event delegation). */
+    contentProps?: React.HTMLAttributes<HTMLDivElement>;
+    /**
+     * Ref to the inner grid element (useful for measurements/overlays).
+     *
+     * Note: we accept a mutable ref here (instead of React.RefObject) so we can
+     * assign to `.current` without TS errors.
+     */
+    contentRef?:
+      | React.MutableRefObject<HTMLDivElement | null>
+      | ((node: HTMLDivElement | null) => void);
   }>
-> = ({ children, fontSize, maxHeight, className, firstLineType, lastLineType }) => {
+> = ({
+  children,
+  fontSize,
+  maxHeight,
+  className,
+  firstLineType,
+  lastLineType,
+  contentProps,
+  contentRef,
+}) => {
   const resolvedMaxHeight = maxHeight ?? "400px";
   const [isExpanded, setIsExpanded] = React.useState(false);
-  const contentRef = React.useRef<HTMLDivElement>(null);
+  const gridRefInternal = React.useRef<HTMLDivElement | null>(null);
   const clampContent = resolvedMaxHeight !== "none" && !isExpanded;
 
   React.useEffect(() => {
@@ -331,7 +337,7 @@ export const DiffContainer: React.FC<
   }, [maxHeight]);
 
   // Use RAF-throttled overflow detection to avoid forced reflows during React commit
-  const isOverflowing = useOverflowDetection(contentRef, { enabled: clampContent });
+  const isOverflowing = useOverflowDetection(gridRefInternal, { enabled: clampContent });
   const showOverflowControls = clampContent && isOverflowing;
 
   // PaddingStrip uses CSS Grid columns to align with diff lines:
@@ -351,6 +357,12 @@ export const DiffContainer: React.FC<
     </>
   );
 
+  const {
+    className: contentClassName,
+    style: contentStyle,
+    ...restContentProps
+  } = contentProps ?? {};
+
   return (
     <div
       className={cn(
@@ -359,13 +371,24 @@ export const DiffContainer: React.FC<
       )}
     >
       <div
-        ref={contentRef}
+        ref={(node) => {
+          gridRefInternal.current = node;
+
+          if (typeof contentRef === "function") {
+            contentRef(node);
+          } else if (contentRef) {
+            contentRef.current = node;
+          }
+        }}
+        {...restContentProps}
         className={cn(
-          "font-monospace grid",
+          "font-monospace grid relative",
           clampContent ? "overflow-y-hidden" : "overflow-y-visible",
-          showOverflowControls && "pb-6"
+          showOverflowControls && "pb-6",
+          contentClassName
         )}
         style={{
+          ...contentStyle,
           fontSize: fontSize ?? "12px",
           lineHeight: 1.4,
           maxHeight: clampContent ? resolvedMaxHeight : undefined,
@@ -1143,10 +1166,12 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const handleSubmitNote = (data: ReviewNoteData) => {
       if (!onReviewNote) return;
       onReviewNote(data);
+      hideReviewButton();
       setSelection(null);
     };
 
     const handleCancelNote = () => {
+      hideReviewButton();
       setSelection(null);
     };
 
@@ -1164,6 +1189,210 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
     const selectionHighlight =
       "inset 0 0 0 100vmax hsl(from var(--color-review-accent) h s l / 0.16)";
 
+    // Perf: Large diffs can have hundreds/thousands of lines. Avoid mounting O(lines)
+    // tooltip/icon trees and avoid per-line closures by using:
+    // - a single portalled "add review" button rendered into the hovered indicator cell
+    // - event delegation on the diff grid via data-line-index
+    const gridRef = React.useRef<HTMLDivElement>(null);
+    const lastHoverLineIndexRef = React.useRef<number | null>(null);
+    const lastDragLineIndexRef = React.useRef<number | null>(null);
+    const lastPointerPositionRef = React.useRef<{ x: number; y: number } | null>(null);
+
+    const [hoveredIndicatorEl, setHoveredIndicatorEl] = React.useState<HTMLElement | null>(null);
+    const [hoveredLineIndex, setHoveredLineIndex] = React.useState<number | null>(null);
+
+    const hideReviewButton = React.useCallback(() => {
+      lastHoverLineIndexRef.current = null;
+      setHoveredIndicatorEl(null);
+      setHoveredLineIndex(null);
+    }, []);
+
+    const getClosestHTMLElement = (
+      target: EventTarget | null,
+      selector: string
+    ): HTMLElement | null => {
+      // React `e.target` can be a Text node (the +/- character), and `instanceof Element`
+      // can be unreliable across realms in Electron. Prefer nodeType-based checks.
+      if (!target || typeof target !== "object") return null;
+
+      const nodeType = (target as Partial<Node>).nodeType;
+      if (typeof nodeType !== "number") return null;
+
+      const startEl =
+        nodeType === 1 ? (target as unknown as Element) : (target as Node).parentElement;
+
+      const el = startEl?.closest(selector);
+      return el ? (el as HTMLElement) : null;
+    };
+
+    const getLineIndexFromElement = (el: HTMLElement | null): number | null => {
+      if (!el) return null;
+      const raw = el.dataset.lineIndex;
+      if (!raw) return null;
+      const idx = Number(raw);
+      return Number.isFinite(idx) ? idx : null;
+    };
+
+    const handleGridMouseDown: React.MouseEventHandler<HTMLDivElement> = (e) => {
+      if (!onReviewNote) return;
+      if (e.button !== 0) return;
+
+      // Clicking the hover comment button should not start a selection.
+      if (getClosestHTMLElement(e.target, "[data-review-comment-button]")) {
+        return;
+      }
+
+      const indicatorEl = getClosestHTMLElement(e.target, "[data-diff-indicator]");
+      if (!indicatorEl) return;
+
+      const lineIndex = getLineIndexFromElement(indicatorEl);
+      if (lineIndex === null) return;
+
+      // Prevent text selection / drag selection in the code cell.
+      e.preventDefault();
+      e.stopPropagation();
+
+      hideReviewButton();
+      startDragSelection(lineIndex, e.shiftKey);
+    };
+
+    const handleGridMouseOver: React.MouseEventHandler<HTMLDivElement> = (e) => {
+      if (!onReviewNote) return;
+
+      lastPointerPositionRef.current = { x: e.clientX, y: e.clientY };
+
+      const indicatorEl = getClosestHTMLElement(e.target, "[data-diff-indicator]");
+      if (!indicatorEl) {
+        // Leaving the indicator column should immediately clear the affordance.
+        if (lastHoverLineIndexRef.current !== null) {
+          hideReviewButton();
+        }
+        return;
+      }
+
+      const lineIndex = getLineIndexFromElement(indicatorEl);
+      if (lineIndex === null) {
+        hideReviewButton();
+        return;
+      }
+
+      // Drag-to-select: update range on hover of new indicators.
+      if (isDragging) {
+        hideReviewButton();
+
+        if (lastDragLineIndexRef.current === lineIndex) return;
+        lastDragLineIndexRef.current = lineIndex;
+
+        updateDragSelection(lineIndex);
+        return;
+      }
+
+      // While composing a note, keep the hover button hidden.
+      if (selection) {
+        hideReviewButton();
+        return;
+      }
+
+      // Show on mouseover (not mousemove) so it appears immediately on entry.
+      if (lastHoverLineIndexRef.current === lineIndex) return;
+      lastHoverLineIndexRef.current = lineIndex;
+
+      setHoveredIndicatorEl(indicatorEl);
+      setHoveredLineIndex(lineIndex);
+    };
+
+    const handleGridMouseMove: React.MouseEventHandler<HTMLDivElement> = (e) => {
+      if (!onReviewNote) return;
+      lastPointerPositionRef.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const handleGridMouseLeave: React.MouseEventHandler<HTMLDivElement> = () => {
+      lastPointerPositionRef.current = null;
+      hideReviewButton();
+    };
+
+    React.useEffect(() => {
+      // While selecting/composing, keep the hover button hidden and clear stale hover state
+      // so it doesn't reappear unexpectedly after cancel/submit.
+      if (selection || isDragging) {
+        hideReviewButton();
+      }
+    }, [hideReviewButton, isDragging, selection]);
+
+    React.useEffect(() => {
+      if (!onReviewNote) return;
+
+      let raf: number | null = null;
+
+      const updateHoverUnderPointer = () => {
+        raf = null;
+
+        // Only show while not selecting/composing.
+        if (selection || isDragging) return;
+
+        const pos = lastPointerPositionRef.current;
+        const gridEl = gridRef.current;
+        if (!pos || !gridEl) return;
+
+        const elUnderPointer = document.elementFromPoint(pos.x, pos.y);
+        if (!elUnderPointer || !gridEl.contains(elUnderPointer)) {
+          hideReviewButton();
+          return;
+        }
+
+        const indicatorEl = elUnderPointer.closest<HTMLElement>("[data-diff-indicator]");
+        if (!indicatorEl) {
+          hideReviewButton();
+          return;
+        }
+
+        const rawLineIndex = indicatorEl.dataset.lineIndex;
+        const lineIndex = rawLineIndex ? Number(rawLineIndex) : null;
+        if (lineIndex === null || !Number.isFinite(lineIndex)) {
+          hideReviewButton();
+          return;
+        }
+
+        if (lastHoverLineIndexRef.current === lineIndex) return;
+        lastHoverLineIndexRef.current = lineIndex;
+
+        setHoveredIndicatorEl(indicatorEl);
+        setHoveredLineIndex(lineIndex);
+      };
+
+      const handleScroll = () => {
+        if (raf !== null) return;
+        raf = window.requestAnimationFrame(updateHoverUnderPointer);
+      };
+
+      // Capture phase is important: scroll doesn't bubble, but it is captured.
+      window.addEventListener("scroll", handleScroll, true);
+      return () => {
+        window.removeEventListener("scroll", handleScroll, true);
+        if (raf !== null) {
+          window.cancelAnimationFrame(raf);
+        }
+      };
+    }, [hideReviewButton, isDragging, onReviewNote, selection]);
+    React.useEffect(() => {
+      if (!selection) return;
+
+      const handleKeyDown = (e: KeyboardEvent) => {
+        const isEscape = e.key === "Escape" || e.keyCode === 27;
+        if (!isEscape) return;
+
+        // While composing a review note, Escape should cancel the composition.
+        // Use capture to beat global window listeners (e.g. stream interrupt).
+        e.preventDefault();
+        e.stopPropagation();
+
+        hideReviewButton();
+        setSelection(null);
+      };
+
+      window.addEventListener("keydown", handleKeyDown, true);
+      return () => window.removeEventListener("keydown", handleKeyDown, true);
+    }, [hideReviewButton, selection]);
     return (
       <DiffContainer
         fontSize={fontSize}
@@ -1171,6 +1400,13 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
         className={className}
         firstLineType={firstLineType}
         lastLineType={lastLineType}
+        contentRef={gridRef}
+        contentProps={{
+          onMouseDown: handleGridMouseDown,
+          onMouseOver: handleGridMouseOver,
+          onMouseMove: handleGridMouseMove,
+          onMouseLeave: handleGridMouseLeave,
+        }}
       >
         {highlightedLineData.map((lineInfo, displayIndex) => {
           const isSelected = isLineSelected(displayIndex);
@@ -1184,13 +1420,13 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
           const anchoredReviews = inlineReviewsByAnchor.get(displayIndex);
 
           // Each line renders as 3 CSS Grid cells: gutter | indicator | code
-          // Use display:contents wrapper for selection state + group hover behavior
+          // Use display:contents wrapper for selection state
           return (
             <React.Fragment key={displayIndex}>
               <div
                 className={cn(
                   SELECTABLE_DIFF_LINE_CLASS,
-                  "group relative col-span-3 grid cursor-text grid-cols-subgrid"
+                  "col-span-3 grid cursor-text grid-cols-subgrid"
                 )}
                 data-selected={isSelected ? "true" : "false"}
               >
@@ -1208,40 +1444,6 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
                   background={codeBg}
                   lineIndex={displayIndex}
                   isInteractive={Boolean(onReviewNote)}
-                  onMouseDown={(e) => {
-                    if (!onReviewNote) return;
-                    if (e.button !== 0) return;
-                    e.preventDefault();
-                    e.stopPropagation();
-                    startDragSelection(displayIndex, e.shiftKey);
-                  }}
-                  onMouseEnter={() => {
-                    if (!onReviewNote) return;
-                    updateDragSelection(displayIndex);
-                  }}
-                  reviewButton={
-                    onReviewNote && (
-                      <Tooltip open={selection || isDragging ? false : undefined}>
-                        <TooltipTrigger asChild>
-                          <button
-                            className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 hover:text-[var(--color-review-accent)] active:scale-90"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleCommentButtonClick(displayIndex, e.shiftKey);
-                            }}
-                            aria-label="Add review comment"
-                          >
-                            <MessageSquare className="size-3" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" align="start">
-                          Add review comment
-                          <br />
-                          (Shift-click or drag to select range)
-                        </TooltipContent>
-                      </Tooltip>
-                    )
-                  }
                 />
                 <span
                   className="min-w-0 whitespace-pre [&_span:not(.search-highlight)]:!bg-transparent"
@@ -1284,6 +1486,30 @@ export const SelectableDiffRenderer = React.memo<SelectableDiffRendererProps>(
             </React.Fragment>
           );
         })}
+
+        {onReviewNote &&
+          !selection &&
+          !isDragging &&
+          hoveredIndicatorEl &&
+          hoveredLineIndex !== null &&
+          createPortal(
+            <button
+              type="button"
+              data-review-comment-button={true}
+              className="absolute inset-0 z-10 flex items-center justify-center rounded-sm text-[var(--color-review-accent)]/60 hover:text-[var(--color-review-accent)] active:scale-90"
+              style={{ background: "inherit" }}
+              title={"Add review comment\n(Shift-click or drag to select range)"}
+              aria-label="Add review comment"
+              tabIndex={-1}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCommentButtonClick(hoveredLineIndex, e.shiftKey);
+              }}
+            >
+              <MessageSquare className="size-3" />
+            </button>,
+            hoveredIndicatorEl
+          )}
       </DiffContainer>
     );
   }
