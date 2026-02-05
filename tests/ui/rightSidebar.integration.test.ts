@@ -753,14 +753,15 @@ describeIntegration("RightSidebar (UI)", () => {
       // Width should persist when switching to Costs (verify via UI)
       expect(getSidebarWidth()).toBe(widthAfterReviewResize);
 
-      // Resize again on Costs tab
+      // Resize again on Costs tab (shrink).
+      // The sidebar may already be clamped to its max width depending on the viewport,
+      // so shrinking is the most reliable way to ensure a second drag produces a change.
       fireEvent.mouseDown(resizeHandle, { clientX: 800 });
-      fireEvent.mouseMove(document, { clientX: 500 });
+      fireEvent.mouseMove(document, { clientX: 900 });
       fireEvent.mouseUp(document);
 
       await waitFor(() => {
         const width = getSidebarWidth();
-        // Width should have changed
         if (width === widthAfterReviewResize) throw new Error("Width should have changed");
       });
 
