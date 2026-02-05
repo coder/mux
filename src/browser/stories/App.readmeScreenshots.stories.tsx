@@ -563,183 +563,157 @@ export const CodeReview: AppStory = {
 };
 
 // README: docs/img/agent-status.webp
+// This story renders the full app. The screenshot is produced by Playwright
+// clipping the left sidebar region and then upscaling to 1600×1171 with sharp.
 export const AgentStatusSidebar: AppStory = {
-  render: () => {
-    // Intentionally zoom/crop so the Storybook canvas focuses on the left sidebar's
-    // per-workspace agent status indicators (matching the README screenshot intent).
-    const viewportWidthPx = 1600;
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaces = [
+          createWorkspace({
+            id: "ws-status-1",
+            name: "feature/docs",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+          }),
+          createWorkspace({
+            id: "ws-status-2",
+            name: "feature/sidebar",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+          }),
+          createWorkspace({
+            id: "ws-status-3",
+            name: "bugfix/stream",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+          }),
+          createWorkspace({
+            id: "ws-status-4",
+            name: "refactor/store",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+          }),
+          createWorkspace({
+            id: "ws-status-5",
+            name: "feature/right-sidebar",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+          }),
+          createSSHWorkspace({
+            id: "ws-status-ssh",
+            name: "deploy/prod",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+            host: "prod.example.com",
+          }),
+          createWorkspace({
+            id: "ws-status-6",
+            name: "release/v1.0.0",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+          }),
+          createWorkspace({
+            id: "ws-status-7",
+            name: "main",
+            projectName: README_PROJECT_NAME,
+            projectPath: README_PROJECT_PATH,
+          }),
+        ];
 
-    // LeftSidebar uses `w-72` (288px) when expanded.
-    // We crop by scaling the *full-size* app and clipping the viewport, rather than
-    // shrinking the app down to the crop size (which can create blank margins when we
-    // offset the crop).
-    const cropWidthPx = 288;
-    const zoomScale = viewportWidthPx / cropWidthPx;
+        const chatHandlers = new Map([
+          [
+            "ws-status-1",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Working on README screenshot stories.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 100_000,
+                toolCalls: [createStatusTool("call-1", "📝", "Building Storybook states")],
+              }),
+            ]),
+          ],
+          [
+            "ws-status-2",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Tuning sidebar virtualization.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 95_000,
+                toolCalls: [createStatusTool("call-1", "🔍", "Reviewing perf regressions")],
+              }),
+            ]),
+          ],
+          [
+            "ws-status-3",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Investigating stream stalls.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 90_000,
+                toolCalls: [createStatusTool("call-1", "🧪", "Reproducing with Playwright")],
+              }),
+            ]),
+          ],
+          [
+            "ws-status-4",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Refactoring WorkspaceStore subscriptions.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 85_000,
+                toolCalls: [createStatusTool("call-1", "🔄", "Cleaning up state")],
+              }),
+            ]),
+          ],
+          [
+            "ws-status-5",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Adding split pane layout fixtures.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 80_000,
+                toolCalls: [
+                  createStatusTool(
+                    "call-1",
+                    "🚀",
+                    "PR ready for review",
+                    "https://github.com/mux/cmux/pull/1234"
+                  ),
+                ],
+              }),
+            ]),
+          ],
+          [
+            "ws-status-ssh",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Deploying staging.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 70_000,
+                toolCalls: [createStatusTool("call-1", "⏳", "Waiting for CI")],
+              }),
+            ]),
+          ],
+          [
+            "ws-status-6",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Preparing release notes.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 65_000,
+                toolCalls: [createStatusTool("call-1", "📝", "Drafting changelog")],
+              }),
+            ]),
+          ],
+          ["ws-status-7", createStaticChatHandler([])],
+        ]);
 
-    // The first workspace row starts ~170px down in the full app layout. Offset the
-    // crop so the zoomed view is primarily the workspace list (not the titlebar).
-    const cropOffsetYPx = 150;
+        expandProjects([README_PROJECT_PATH]);
+        selectWorkspace(workspaces[0]);
+        collapseRightSidebar();
 
-    return (
-      <div style={{ width: viewportWidthPx, height: "100dvh", overflow: "hidden" }}>
-        <div
-          style={{
-            width: viewportWidthPx,
-            height: "100dvh",
-            transformOrigin: "top left",
-            transform: `translate(0px, -${cropOffsetYPx}px) scale(${zoomScale})`,
-          }}
-        >
-          <AppWithMocks
-            setup={() => {
-              const workspaces = [
-                createWorkspace({
-                  id: "ws-status-1",
-                  name: "feature/docs",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                }),
-                createWorkspace({
-                  id: "ws-status-2",
-                  name: "feature/sidebar",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                }),
-                createWorkspace({
-                  id: "ws-status-3",
-                  name: "bugfix/stream",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                }),
-                createWorkspace({
-                  id: "ws-status-4",
-                  name: "refactor/store",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                }),
-                createWorkspace({
-                  id: "ws-status-5",
-                  name: "feature/right-sidebar",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                }),
-                createSSHWorkspace({
-                  id: "ws-status-ssh",
-                  name: "deploy/prod",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                  host: "prod.example.com",
-                }),
-                createWorkspace({
-                  id: "ws-status-6",
-                  name: "release/v1.0.0",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                }),
-                createWorkspace({
-                  id: "ws-status-7",
-                  name: "main",
-                  projectName: README_PROJECT_NAME,
-                  projectPath: README_PROJECT_PATH,
-                }),
-              ];
-
-              const chatHandlers = new Map([
-                [
-                  "ws-status-1",
-                  createStaticChatHandler([
-                    createAssistantMessage("msg-1", "Working on README screenshot stories.", {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 100_000,
-                      toolCalls: [createStatusTool("call-1", "📝", "Building Storybook states")],
-                    }),
-                  ]),
-                ],
-                [
-                  "ws-status-2",
-                  createStaticChatHandler([
-                    createAssistantMessage("msg-1", "Tuning sidebar virtualization.", {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 95_000,
-                      toolCalls: [createStatusTool("call-1", "🔍", "Reviewing perf regressions")],
-                    }),
-                  ]),
-                ],
-                [
-                  "ws-status-3",
-                  createStaticChatHandler([
-                    createAssistantMessage("msg-1", "Investigating stream stalls.", {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 90_000,
-                      toolCalls: [createStatusTool("call-1", "🧪", "Reproducing with Playwright")],
-                    }),
-                  ]),
-                ],
-                [
-                  "ws-status-4",
-                  createStaticChatHandler([
-                    createAssistantMessage("msg-1", "Refactoring WorkspaceStore subscriptions.", {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 85_000,
-                      toolCalls: [createStatusTool("call-1", "🔄", "Cleaning up state")],
-                    }),
-                  ]),
-                ],
-                [
-                  "ws-status-5",
-                  createStaticChatHandler([
-                    createAssistantMessage("msg-1", "Adding split pane layout fixtures.", {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 80_000,
-                      toolCalls: [
-                        createStatusTool(
-                          "call-1",
-                          "🚀",
-                          "PR ready for review",
-                          "https://github.com/mux/cmux/pull/1234"
-                        ),
-                      ],
-                    }),
-                  ]),
-                ],
-                [
-                  "ws-status-ssh",
-                  createStaticChatHandler([
-                    createAssistantMessage("msg-1", "Deploying staging.", {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 70_000,
-                      toolCalls: [createStatusTool("call-1", "⏳", "Waiting for CI")],
-                    }),
-                  ]),
-                ],
-                [
-                  "ws-status-6",
-                  createStaticChatHandler([
-                    createAssistantMessage("msg-1", "Preparing release notes.", {
-                      historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 65_000,
-                      toolCalls: [createStatusTool("call-1", "📝", "Drafting changelog")],
-                    }),
-                  ]),
-                ],
-                ["ws-status-7", createStaticChatHandler([])],
-              ]);
-
-              expandProjects([README_PROJECT_PATH]);
-              selectWorkspace(workspaces[0]);
-              collapseRightSidebar();
-
-              return createMockORPCClient({
-                projects: groupWorkspacesByProject(workspaces),
-                workspaces,
-                onChat: createOnChatAdapter(chatHandlers),
-              });
-            }}
-          />
-        </div>
-      </div>
-    );
-  },
+        return createMockORPCClient({
+          projects: groupWorkspacesByProject(workspaces),
+          workspaces,
+          onChat: createOnChatAdapter(chatHandlers),
+        });
+      }}
+    />
+  ),
 };
 
 // README: docs/img/git-status.webp
