@@ -373,7 +373,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                   </HeaderButton>
                 </DetailLabel>
 
-                {(failedPatchSubject || (shownConflictPaths && shownConflictPaths.length > 0)) && (
+                {(failedPatchSubject ?? (shownConflictPaths && shownConflictPaths.length > 0)) && (
                   <div className="bg-code-bg mb-2 flex flex-col gap-1 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
                     {failedPatchSubject && (
                       <div className="flex min-w-0 items-start gap-1.5">
@@ -384,7 +384,7 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                     {shownConflictPaths && shownConflictPaths.length > 0 && (
                       <div className="flex min-w-0 items-start gap-1.5">
                         <span className="text-secondary shrink-0 font-medium">Conflicts:</span>
-                        <span className="text-text font-mono min-w-0 break-words">
+                        <span className="text-text min-w-0 font-mono break-words">
                           {shownConflictPaths.join(", ")}
                           {remainingConflictPaths > 0 && (
                             <span className="text-secondary"> +{remainingConflictPaths} more</span>

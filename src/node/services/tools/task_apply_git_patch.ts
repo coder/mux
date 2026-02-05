@@ -176,7 +176,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
   function parseFailedPatchSubjectFromGitAmOutput(output: string): string | undefined {
     const normalized = output.replace(/\r/g, "");
 
-    const patchFailedMatch = normalized.match(/^Patch failed at \d+ (.+)$/m);
+    const patchFailedMatch = /^Patch failed at \d+ (.+)$/m.exec(normalized);
     if (patchFailedMatch) {
       const subject = patchFailedMatch[1].trim();
       return subject.length > 0 ? subject : undefined;
