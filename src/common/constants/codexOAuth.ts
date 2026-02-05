@@ -22,9 +22,6 @@ export const CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const CODEX_OAUTH_AUTHORIZE_URL = `${CODEX_OAUTH_ORIGIN}/oauth/authorize`;
 export const CODEX_OAUTH_TOKEN_URL = `${CODEX_OAUTH_ORIGIN}/oauth/token`;
 
-// Codex responses endpoint (ChatGPT backend).
-export const CODEX_OAUTH_CODEX_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
-
 // ChatGPT subscription endpoint for Codex-flavored requests.
 //
 // IMPORTANT: This is *not* the public OpenAI platform endpoint (api.openai.com).
@@ -46,10 +43,10 @@ export const CODEX_OAUTH_DEVICE_VERIFY_URL = `${CODEX_OAUTH_ORIGIN}/codex/device
 // Guide-aligned alias exports (so future ports can follow the guide naming).
 // ------------------------------------------------------------------------------------
 
+export const ISSUER = CODEX_OAUTH_ORIGIN;
 export const CLIENT_ID = CODEX_OAUTH_CLIENT_ID;
 export const AUTHORIZE_ENDPOINT = CODEX_OAUTH_AUTHORIZE_URL;
 export const TOKEN_ENDPOINT = CODEX_OAUTH_TOKEN_URL;
-export const CODEX_ENDPOINT = CODEX_OAUTH_CODEX_ENDPOINT;
 export const SCOPES = CODEX_OAUTH_SCOPE;
 export const DEVICE_USERCODE = CODEX_OAUTH_DEVICE_USERCODE_URL;
 export const DEVICE_TOKEN_POLL = CODEX_OAUTH_DEVICE_TOKEN_POLL_URL;
@@ -106,29 +103,31 @@ export function buildCodexRefreshBody(input: { refreshToken: string }): URLSearc
  * The values in this set are providerModelIds (no `openai:` prefix).
  */
 export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.2",
   "gpt-5.2-codex",
   "gpt-5.1-codex",
-  "gpt-5.1-codex-mini",
-  "gpt-5.1-codex-max",
 ]);
 
 /**
  * Models that *require* Codex OAuth (i.e. cannot fall back to OpenAI API keys).
- *
- * For now, this matches CODEX_OAUTH_ALLOWED_MODELS.
  */
-export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>(CODEX_OAUTH_ALLOWED_MODELS);
+export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>([
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.2-codex",
+  "gpt-5.1-codex",
+]);
 
 function normalizeCodexOauthModelId(modelId: string): string {
-  // Most UI code uses the canonical provider:model format.
-  //
-  // Some settings store the provider model id without prefix, so accept both to
-  // keep callers simple.
-  if (modelId.includes(":")) {
-    return modelId;
+  // Accept either provider:model or bare model ids and normalize to providerModelId.
+  const colonIndex = modelId.indexOf(":");
+  if (colonIndex !== -1) {
+    return modelId.slice(colonIndex + 1);
   }
 
-  return `openai:${modelId}`;
+  return modelId;
 }
 
 export function isCodexOauthAllowedModelId(modelId: string): boolean {

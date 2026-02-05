@@ -253,6 +253,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     await writeProvidersConfig(muxHome.path, {
       openai: {
         codexOauth: {
+          type: "oauth",
           access: "test-access-token",
           refresh: "test-refresh-token",
           expires: Date.now() + 60_000,
