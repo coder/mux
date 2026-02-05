@@ -1767,6 +1767,42 @@ export class StreamManager extends EventEmitter {
       errorMessage = `Model '${modelName || streamInfo.model}' does not exist or is not available. Please check your model selection.`;
     }
 
+    // Normalize Anthropic overload errors (HTTP 529 / overloaded_error) into a stable,
+    // user-friendly message. Keep errorType = server_error so the frontend's auto-retry
+    // behavior remains unchanged.
+    const canonicalModel = normalizeGatewayModel(streamInfo.model);
+    const isAnthropic = canonicalModel.startsWith("anthropic:");
+
+    const hasErrorProperty = (data: unknown): data is { error: { type?: string } } => {
+      return (
+        typeof data === "object" &&
+        data !== null &&
+        "error" in data &&
+        typeof data.error === "object" &&
+        data.error !== null
+      );
+    };
+
+    const isOverloadedApiCallError = (apiError: APICallError): boolean => {
+      return (
+        apiError.statusCode === 529 ||
+        (hasErrorProperty(apiError.data) && apiError.data.error.type === "overloaded_error")
+      );
+    };
+
+    const isAnthropicOverloaded =
+      isAnthropic &&
+      ((APICallError.isInstance(actualError) && isOverloadedApiCallError(actualError)) ||
+        (RetryError.isInstance(actualError) &&
+          actualError.lastError &&
+          APICallError.isInstance(actualError.lastError) &&
+          isOverloadedApiCallError(actualError.lastError)));
+
+    if (isAnthropicOverloaded) {
+      errorMessage = "Anthropic is temporarily overloaded (HTTP 529). Please retry in a moment.";
+      errorType = "server_error";
+    }
+
     const muxGatewayUnauthorized =
       streamInfo.model.startsWith("mux-gateway:") &&
       ((APICallError.isInstance(actualError) && actualError.statusCode === 401) ||

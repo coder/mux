@@ -17,6 +17,7 @@ import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { getRetryStateKey, VIM_ENABLED_KEY } from "@/common/constants/storage";
 import { cn } from "@/common/lib/utils";
+import { getModelProvider } from "@/common/utils/ai/models";
 import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 
 interface RetryBarrierProps {
@@ -141,10 +142,27 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     props.className
   );
 
+  const lastMessage = workspaceState?.messages.at(-1);
+  const lastStreamError = lastMessage?.type === "stream-error" ? lastMessage : null;
+  const streamErrorProvider = lastStreamError?.model ? getModelProvider(lastStreamError.model) : "";
+
+  const isAnthropicOverloaded =
+    streamErrorProvider === "anthropic" &&
+    lastStreamError?.errorType === "server_error" &&
+    /\bHTTP\s*529\b|overloaded/i.test(lastStreamError?.error ?? "");
+
+  const isRateLimited = lastStreamError?.errorType === "rate_limit";
+
+  const interruptionReason = isAnthropicOverloaded
+    ? "AI Provider is overloaded"
+    : isRateLimited
+      ? "Rate limited"
+      : null;
+
   let statusIcon: React.ReactNode = (
     <AlertTriangle aria-hidden="true" className="text-warning h-4 w-4 shrink-0" />
   );
-  let statusText: React.ReactNode = <>Stream interrupted</>;
+  let statusText: React.ReactNode = <>{interruptionReason ?? "Stream interrupted"}</>;
   let actionButton: React.ReactNode;
 
   if (effectiveAutoRetry) {
@@ -153,12 +171,20 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     statusIcon = (
       <RefreshCw aria-hidden="true" className="text-warning h-4 w-4 shrink-0 animate-spin" />
     );
+    const reasonPrefix = interruptionReason ? <>{interruptionReason} — </> : null;
+
     statusText =
       countdown === 0 ? (
-        <>Retrying... (attempt {attempt + 1})</>
+        <>
+          {reasonPrefix}
+          Retrying... (attempt {attempt + 1})
+        </>
       ) : (
         <>
-          Retrying in <span className="text-warning font-mono font-semibold">{countdown}s</span>{" "}
+          {reasonPrefix}
+          Retrying in <span className="text-warning font-mono font-semibold">
+            {countdown}s
+          </span>{" "}
           (attempt {attempt + 1})
         </>
       );
