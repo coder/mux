@@ -1049,6 +1049,7 @@ export class AIService extends EventEmitter {
                   // These are accepted by the standard OpenAI API but cause 400 errors on
                   // chatgpt.com/backend-api/codex/responses.
                   delete json.max_output_tokens;
+                  delete json.service_tier;
                   delete json.prompt_cache_key;
                   delete json.prompt_cache_retention;
                   delete json.safety_identifier;
