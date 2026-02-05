@@ -78,7 +78,7 @@ import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 
-// Display labels for CLI help (OFF, LOW, MED, HIGH, XHIGH)
+// Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
 
 type CLIMode = "plan" | "exec";

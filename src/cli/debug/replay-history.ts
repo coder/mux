@@ -16,6 +16,8 @@ import * as path from "path";
 import { parseArgs } from "util";
 import { defaultConfig } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
+import type { ThinkingLevel } from "@/common/types/thinking";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { createMuxMessage } from "@/common/types/message";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { AIService } from "@/node/services/aiService";
@@ -136,7 +138,10 @@ async function main() {
   );
 
   const modelString = values.model ?? "openai:gpt-5-codex";
-  const thinkingLevel = (values.thinking ?? "high") as "low" | "medium" | "high";
+  const thinkingLevel = enforceThinkingPolicy(
+    modelString,
+    (values.thinking ?? "high") as ThinkingLevel
+  );
 
   try {
     // Stream the message - pass all messages including the new one

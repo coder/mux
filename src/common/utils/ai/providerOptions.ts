@@ -11,8 +11,7 @@ import type { XaiProviderOptions } from "@ai-sdk/xai";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
-  ANTHROPIC_EFFORT,
-  ANTHROPIC_EFFORT_MAX,
+  getAnthropicEffort,
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
@@ -20,7 +19,6 @@ import {
 } from "@/common/types/thinking";
 import { log } from "@/node/services/log";
 import type { MuxMessage } from "@/common/types/message";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeGatewayModel } from "./models";
 
 /**
@@ -56,7 +54,7 @@ type ProviderOptions =
  * 4. Extract previousResponseId for OpenAI persistence (when available)
  *
  * @param modelString - Full model string (e.g., "anthropic:claude-opus-4-1")
- * @param thinkingLevel - Unified thinking level
+ * @param thinkingLevel - Unified thinking level (must be pre-clamped via enforceThinkingPolicy)
  * @param messages - Conversation history to extract previousResponseId from
  * @param lostResponseIds - Optional callback to check if a responseId has been invalidated by OpenAI
  * @param muxProviderOptions - Optional provider overrides from config
@@ -73,8 +71,9 @@ export function buildProviderOptions(
   workspaceId?: string, // Optional for non-OpenAI providers
   openaiTruncationMode?: OpenAIResponsesProviderOptions["truncation"]
 ): ProviderOptions {
-  // Always clamp to the model's supported thinking policy (e.g., gpt-5-pro = HIGH only)
-  const effectiveThinking = enforceThinkingPolicy(modelString, thinkingLevel);
+  // Caller is responsible for enforcing thinking policy before calling this function.
+  // agentSession.ts is the canonical enforcement point.
+  const effectiveThinking = thinkingLevel;
   // Parse provider from normalized model string
   const [provider, modelName] = normalizeGatewayModel(modelString).split(":", 2);
 
@@ -99,10 +98,8 @@ export function buildProviderOptions(
     const isOpus46 = modelName?.includes("opus-4-6") ?? false;
 
     if (isOpus45 || isOpus46) {
-      // Opus 4.6 supports "max" effort (via ANTHROPIC_EFFORT_MAX), Opus 4.5 caps at "high"
-      const effortLevel = isOpus46
-        ? ANTHROPIC_EFFORT_MAX[effectiveThinking]
-        : ANTHROPIC_EFFORT[effectiveThinking];
+      // xhigh maps to "max" effort; policy clamps Opus 4.5 to "high" max
+      const effortLevel = getAnthropicEffort(effectiveThinking);
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
       // Opus 4.6: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
@@ -265,24 +262,13 @@ export function buildProviderOptions(
       };
 
       if (isGemini3) {
-        const isFlash = modelString.includes("gemini-3-flash");
-        if (isFlash) {
-          // Flash supports: minimal (maps to off), low, medium, high
-          // When off, we don't set thinkingConfig at all (API defaults to minimal)
-          // "xhigh" and "max" map to "high" (Flash's maximum)
-          thinkingConfig.thinkingLevel =
-            effectiveThinking === "xhigh" || effectiveThinking === "max"
-              ? "high"
-              : effectiveThinking;
-        } else {
-          // Pro only supports: low, high - map medium/xhigh/max to high
-          thinkingConfig.thinkingLevel =
-            effectiveThinking === "medium" ||
-            effectiveThinking === "xhigh" ||
-            effectiveThinking === "max"
-              ? "high"
-              : effectiveThinking;
-        }
+        // Policy enforcement already clamped to valid levels for Flash/Pro,
+        // so effectiveThinking is guaranteed in the model's allowed set.
+        // Flash: off/low/medium/high; Pro: low/high. "xhigh" can't reach here.
+        thinkingConfig.thinkingLevel = effectiveThinking as Exclude<
+          ThinkingLevel,
+          "off" | "xhigh" | "max"
+        >;
       } else {
         // Gemini 2.5 uses thinkingBudget
         const budget = GEMINI_THINKING_BUDGETS[effectiveThinking];

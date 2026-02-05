@@ -94,7 +94,7 @@ import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 import { DEFAULT_TASK_SETTINGS, SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 import type {
   StreamAbortEvent,
@@ -1647,7 +1647,7 @@ export class AIService extends EventEmitter {
 
       // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
-      const effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? "off";
+      const effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? THINKING_LEVEL_OFF;
 
       // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
       // Similar to how OpenAI handles reasoning vs non-reasoning models
