@@ -104,10 +104,12 @@ export function buildProviderOptions(
         ? ANTHROPIC_EFFORT_MAX[effectiveThinking]
         : ANTHROPIC_EFFORT[effectiveThinking];
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-      // Opus 4.6: adaptive thinking, model decides depth based on effort
+      // Opus 4.6: adaptive thinking when on, disabled when off
       // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
       const thinking: AnthropicProviderOptions["thinking"] = isOpus46
-        ? { type: "adaptive" }
+        ? effectiveThinking === "off"
+          ? { type: "disabled" }
+          : { type: "adaptive" }
         : budgetTokens > 0
           ? { type: "enabled", budgetTokens }
           : undefined;

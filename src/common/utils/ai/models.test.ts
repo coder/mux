@@ -73,6 +73,12 @@ describe("supports1MContext", () => {
     expect(supports1MContext("anthropic:claude-haiku-4-5")).toBe(false);
     expect(supports1MContext("mux-gateway:anthropic/claude-opus-4-5")).toBe(false);
   });
+
+  it("should return true for Opus 4.6 models", () => {
+    expect(supports1MContext("anthropic:claude-opus-4-6")).toBe(true);
+    expect(supports1MContext("anthropic:claude-opus-4-6-20260201")).toBe(true);
+    expect(supports1MContext("mux-gateway:anthropic/claude-opus-4-6")).toBe(true);
+  });
 });
 
 describe("isValidModelFormat", () => {

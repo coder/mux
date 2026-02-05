@@ -334,6 +334,28 @@ describe("enforceThinkingPolicy", () => {
       expect(enforceThinkingPolicy("openai:gpt-5-pro", "xhigh")).toBe("high");
     });
   });
+
+  describe("max level enforcement", () => {
+    test("preserves max for Opus 4.6", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "max")).toBe("max");
+    });
+
+    test("preserves max for gateway Opus 4.6", () => {
+      expect(enforceThinkingPolicy("mux-gateway:anthropic/claude-opus-4-6", "max")).toBe("max");
+    });
+
+    test("clamps max to high for Opus 4.5 (does not support max)", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "max")).toBe("high");
+    });
+
+    test("clamps max to xhigh for OpenAI models with xhigh support", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.2", "max")).toBe("xhigh");
+    });
+
+    test("clamps max to high for standard Anthropic models", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "max")).toBe("high");
+    });
+  });
 });
 
 // Note: Tests for invalid levels removed - TypeScript type system prevents invalid

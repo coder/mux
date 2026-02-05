@@ -458,7 +458,7 @@ export const TaskTerminateToolResultSchema = z
 // -----------------------------------------------------------------------------
 
 const TaskListStatusSchema = z.enum(["queued", "running", "awaiting_report", "reported"]);
-const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 export const TaskListToolArgsSchema = z
   .object({
