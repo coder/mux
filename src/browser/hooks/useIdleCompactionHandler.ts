@@ -33,10 +33,14 @@ type ExecuteCompactionFn = (opts: {
   source: string;
 }) => Promise<CompactionResult>;
 
+type SendOptionsReader = (workspaceId: string) => ReturnType<typeof getSendOptionsFromStorage>;
+
 export interface IdleCompactionHandlerParams {
   api: RouterClient<AppRouter> | null;
   /** @internal For testing only - inject a mock executeCompaction */
   _executeCompaction?: ExecuteCompactionFn;
+  /** @internal For testing only - inject a mock send options reader */
+  _getSendOptionsFromStorage?: SendOptionsReader;
 }
 
 /**
@@ -46,7 +50,9 @@ export interface IdleCompactionHandlerParams {
  * Compactions are serialized: only one runs at a time, with others queued.
  */
 export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): void {
-  const { api, _executeCompaction = executeCompactionDefault } = params;
+  const { api, _executeCompaction = executeCompactionDefault, _getSendOptionsFromStorage } = params;
+  const readSendOptions: SendOptionsReader =
+    _getSendOptionsFromStorage ?? getSendOptionsFromStorage;
 
   // Track which workspaces we've triggered compaction for (to prevent duplicates)
   const triggeredWorkspacesRef = useRef(new Set<string>());
@@ -68,7 +74,7 @@ export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): v
       isRunningRef.current = true;
 
       // Read send options from storage for consistent model/thinking choices.
-      const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
+      const sendMessageOptions = readSendOptions(workspaceId);
 
       const cleanup = () => {
         // Always clear from triggered set after completion (success, failure, or rejection).
@@ -114,5 +120,5 @@ export function useIdleCompactionHandler(params: IdleCompactionHandlerParams): v
 
     const unsubscribe = workspaceStore.onIdleCompactionNeeded(handleIdleCompactionNeeded);
     return unsubscribe;
-  }, [api, _executeCompaction]);
+  }, [api, _executeCompaction, readSendOptions]);
 }
