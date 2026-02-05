@@ -23,6 +23,12 @@ function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string)
   (service as any).renamingWorkspaces.add(workspaceId);
 }
 
+// Helper to access private archivingWorkspaces set
+function addToArchivingWorkspaces(service: WorkspaceService, workspaceId: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call
+  (service as any).archivingWorkspaces.add(workspaceId);
+}
+
 async function withTempMuxRoot<T>(fn: (root: string) => Promise<T>): Promise<T> {
   const originalMuxRoot = process.env.MUX_ROOT;
   const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-plan-"));
@@ -156,6 +162,106 @@ describe("WorkspaceService rename lock", () => {
     if (!result.success) {
       expect(result.error).toContain("stream is active");
     }
+  });
+});
+
+describe("WorkspaceService executeBash archive guards", () => {
+  let workspaceService: WorkspaceService;
+  let waitForInitMock: ReturnType<typeof mock>;
+  let getWorkspaceMetadataMock: ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    waitForInitMock = mock(() => Promise.resolve());
+
+    getWorkspaceMetadataMock = mock(() =>
+      Promise.resolve({ success: false as const, error: "not found" })
+    );
+
+    const aiService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: getWorkspaceMetadataMock,
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const mockHistoryService: Partial<HistoryService> = {
+      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    };
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+      getProjectSecrets: mock(() => []),
+    };
+
+    const mockPartialService: Partial<PartialService> = {
+      commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+    };
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      waitForInit: waitForInitMock,
+    };
+
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      mockHistoryService as HistoryService,
+      mockPartialService as PartialService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+  });
+
+  test("archived workspace => executeBash returns error mentioning archived", async () => {
+    const workspaceId = "ws-archived";
+
+    const archivedMetadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: "ws",
+      projectName: "proj",
+      projectPath: "/tmp/proj",
+      runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+      archivedAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    getWorkspaceMetadataMock.mockReturnValue(Promise.resolve(Ok(archivedMetadata)));
+
+    const result = await workspaceService.executeBash(workspaceId, "echo hello");
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("archived");
+    }
+
+    // This must happen before init/runtime operations.
+    expect(waitForInitMock).toHaveBeenCalledTimes(0);
+  });
+
+  test("archiving workspace => executeBash returns error mentioning being archived", async () => {
+    const workspaceId = "ws-archiving";
+
+    addToArchivingWorkspaces(workspaceService, workspaceId);
+
+    const result = await workspaceService.executeBash(workspaceId, "echo hello");
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("being archived");
+    }
+
+    expect(waitForInitMock).toHaveBeenCalledTimes(0);
+    expect(getWorkspaceMetadataMock).toHaveBeenCalledTimes(0);
   });
 });
 

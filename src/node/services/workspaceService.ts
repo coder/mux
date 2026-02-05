@@ -617,6 +617,10 @@ export class WorkspaceService extends EventEmitter {
   // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
   private readonly removingWorkspaces = new Set<string>();
 
+  // Tracks workspaces currently being archived to prevent runtime-affecting operations (e.g. SSH)
+  // from waking a dedicated workspace during archive().
+  private readonly archivingWorkspaces = new Set<string>();
+
   /** Check if a workspace is currently being removed. */
   isRemoving(workspaceId: string): boolean {
     return this.removingWorkspaces.has(workspaceId);
@@ -1758,6 +1762,8 @@ export class WorkspaceService extends EventEmitter {
       return Err("Cannot archive the Chat with Mux system workspace");
     }
 
+    this.archivingWorkspaces.add(workspaceId);
+
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -1829,6 +1835,8 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to archive workspace: ${message}`);
+    } finally {
+      this.archivingWorkspaces.delete(workspaceId);
     }
   }
 
@@ -3103,19 +3111,27 @@ export class WorkspaceService extends EventEmitter {
       return Err(`Workspace ${workspaceId} is being removed`);
     }
 
+    // NOTE: This guard must run before any init/runtime operations that could wake a stopped SSH
+    // runtime (e.g., Coder workspaces started via `coder ssh --wait=yes`).
+    if (this.archivingWorkspaces.has(workspaceId)) {
+      return Err(`Workspace ${workspaceId} is being archived; cannot execute bash`);
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
+    }
+
+    const metadata = metadataResult.data;
+    if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) {
+      return Err(`Workspace ${workspaceId} is archived; cannot execute bash`);
+    }
+
     // Wait for workspace initialization (container creation, code sync, etc.)
     // Same behavior as AI tools - 5 min timeout, then proceeds anyway
     await this.initStateManager.waitForInit(workspaceId);
 
     try {
-      // Get workspace metadata
-      const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
-      if (!metadataResult.success) {
-        return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
-      }
-
-      const metadata = metadataResult.data;
-
       // Get actual workspace path from config
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
