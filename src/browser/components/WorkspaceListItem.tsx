@@ -188,7 +188,9 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
         <Tooltip>
           <TooltipTrigger asChild>
             <button
+              type="button"
               className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+              onKeyDown={stopKeyboardPropagation}
               onClick={(e) => {
                 e.stopPropagation();
                 draft.onDelete();
@@ -394,7 +396,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    type="button"
                     className="text-muted hover:text-destructive inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-100 transition-colors duration-200"
+                    onKeyDown={stopKeyboardPropagation}
                     onClick={(e) => {
                       e.stopPropagation();
                       void onCancelCreation(workspaceId);
@@ -411,7 +415,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
+                    type="button"
                     className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+                    onKeyDown={stopKeyboardPropagation}
                     onClick={(e) => {
                       e.stopPropagation();
                       void onArchiveWorkspace(workspaceId, e.currentTarget);

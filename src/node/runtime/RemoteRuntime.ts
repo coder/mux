@@ -192,31 +192,36 @@ export abstract class RemoteRuntime implements Runtime {
 
     // Handle abort signal
     if (options.abortSignal) {
-      options.abortSignal.addEventListener(
-        "abort",
-        () => {
-          aborted = true;
+      const abortSignal = options.abortSignal;
+      const onAbort = () => {
+        aborted = true;
 
-          // For SSH/Docker, killing the local client too aggressively (SIGKILL) can leave the
-          // remote command running. Prefer SIGTERM first so the runtime can tear down cleanly,
-          // then hard-kill if it doesn't exit promptly.
-          try {
-            childProcess.kill();
-          } catch {
-            // ignore
+        // For SSH/Docker, killing the local client too aggressively (SIGKILL) can leave the
+        // remote command running. Prefer SIGTERM first so the runtime can tear down cleanly,
+        // then hard-kill if it doesn't exit promptly.
+        //
+        // Note: SSH2's ChildProcess shim only sends a remote signal when an explicit signal
+        // string is provided, so always pass SIGTERM.
+        try {
+          childProcess.kill("SIGTERM");
+        } catch {
+          // ignore
+        }
+
+        const hardKillHandle = setTimeout(() => {
+          const hasExited = childProcess.exitCode !== null || childProcess.signalCode !== null;
+          if (hasExited) {
+            return;
           }
+          disposable[Symbol.dispose]();
+        }, 1000);
+        hardKillHandle.unref();
+      };
 
-          const hardKillHandle = setTimeout(() => {
-            const hasExited = childProcess.exitCode !== null || childProcess.signalCode !== null;
-            if (hasExited) {
-              return;
-            }
-            disposable[Symbol.dispose]();
-          }, 1000);
-          hardKillHandle.unref();
-        },
-        { once: true }
-      );
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+
+      // Avoid retaining closures on long-lived abort signals once the process exits.
+      void exitCode.finally(() => abortSignal.removeEventListener("abort", onAbort));
     }
 
     // Handle timeout
@@ -225,7 +230,7 @@ export abstract class RemoteRuntime implements Runtime {
         timedOut = true;
 
         try {
-          childProcess.kill();
+          childProcess.kill("SIGTERM");
         } catch {
           // ignore
         }

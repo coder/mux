@@ -305,7 +305,7 @@ describeIntegration("Workspace deletion integration tests", () => {
             collector.start();
 
             try {
-              await collector.waitForSubscription();
+              await collector.waitForSubscription(type === "ssh" ? 20000 : 10000);
 
               const sawHookStarted = await waitFor(
                 () =>
@@ -317,13 +317,34 @@ describeIntegration("Workspace deletion integration tests", () => {
                       event.line.includes("HOOK_STARTED")
                     );
                   }),
-                type === "ssh" ? 20000 : 5000
+                type === "ssh" ? 20000 : 15000
               );
 
               expect(sawHookStarted).toBe(true);
 
+              // Stop collecting before removal to reduce noisy subscription errors when the
+              // workspace disappears mid-stream.
+              collector.stop();
+
               const archiveResult = await env.orpc.workspace.archive({ workspaceId });
               expect(archiveResult.success).toBe(true);
+
+              // Verify workspace is no longer in config (archive during init should behave like remove).
+              const config = env.config.loadConfigOrDefault();
+              const project = config.projects.get(tempGitRepo);
+              if (project) {
+                const stillInConfig = project.workspaces.some((w) => w.id === workspaceId);
+                expect(stillInConfig).toBe(false);
+              }
+
+              // Local worktree runtime should also delete the local branch.
+              if (type === "local") {
+                using branchProc = execAsync(
+                  `git -C "${tempGitRepo}" branch --list "${branchName}"`
+                );
+                const { stdout } = await branchProc.result;
+                expect(stdout.trim()).toBe("");
+              }
 
               // Wait long enough that the init hook would have written the marker if it wasn't aborted.
               await new Promise((resolve) => setTimeout(resolve, (sleepSeconds + 2) * 1000));

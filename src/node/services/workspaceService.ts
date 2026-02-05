@@ -1795,7 +1795,10 @@ export class WorkspaceService extends EventEmitter {
 
   /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
-   * but can be viewed on the project page. Safe and reversible.
+   * but can be viewed on the project page.
+   *
+   * Note: if the workspace is still initializing/creating, we treat archive as
+   * "cancel creation" and remove it (force). That path is not reversible.
    */
   async archive(workspaceId: string): Promise<Result<void>> {
     if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
