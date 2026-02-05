@@ -367,6 +367,13 @@ export interface MuxMetadata {
   systemMessageTokens?: number; // Token count for system message sent with this request (calculated by AIService)
   partial?: boolean; // Whether this message was interrupted and is incomplete
   synthetic?: boolean; // Whether this message was synthetically generated (e.g., [CONTINUE] sentinel)
+  /**
+   * UI hint: show in the chat UI even when synthetic.
+   *
+   * Synthetic messages are hidden by default because most are for model context only.
+   * Set this flag for synthetic notices that should be visible to users.
+   */
+  uiVisible?: boolean;
   error?: string; // Error message if stream failed
   errorType?: StreamErrorType; // Error type/category if stream failed
   // Compaction source: "user" (manual /compact), "idle" (auto-triggered), or legacy boolean `true`

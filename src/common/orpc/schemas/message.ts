@@ -112,6 +112,7 @@ export const MuxMessageSchema = z.object({
       agentId: AgentIdSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
       synthetic: z.boolean().optional(),
+      uiVisible: z.boolean().optional(),
 
       agentSkillSnapshot: z
         .object({

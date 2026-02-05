@@ -125,3 +125,18 @@ export function isPlanLikeInResolvedChain(
 ): boolean {
   return isToolEnabledInResolvedChain("propose_plan", agents, maxDepth);
 }
+
+export function isExecLikeEditingCapableInResolvedChain(
+  agents: ReadonlyArray<ToolsConfigCarrier & { id: AgentId }>,
+  maxDepth = 10
+): boolean {
+  const inheritsExec = agents.some((agent) => agent.id === "exec");
+  if (!inheritsExec) {
+    return false;
+  }
+
+  return (
+    isToolEnabledInResolvedChain("file_edit_insert", agents, maxDepth) ||
+    isToolEnabledInResolvedChain("file_edit_replace_string", agents, maxDepth)
+  );
+}

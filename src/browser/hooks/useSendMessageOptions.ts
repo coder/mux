@@ -20,6 +20,7 @@ interface ExperimentValues {
   programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
   system1: boolean | undefined;
+  execSubagentHardRestart: boolean | undefined;
 }
 
 /**
@@ -62,6 +63,7 @@ function constructSendMessageOptions(
       programmaticToolCalling: experimentValues.programmaticToolCalling,
       programmaticToolCallingExclusive: experimentValues.programmaticToolCallingExclusive,
       system1: experimentValues.system1,
+      execSubagentHardRestart: experimentValues.execSubagentHardRestart,
     },
   };
 }
@@ -108,6 +110,9 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
   );
   const system1 = useExperimentOverrideValue(EXPERIMENT_IDS.SYSTEM_1);
+  const execSubagentHardRestart = useExperimentOverrideValue(
+    EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART
+  );
 
   const [preferredSystem1Model] = usePersistedState<unknown>(PREFERRED_SYSTEM_1_MODEL_KEY, "", {
     listener: true,
@@ -136,7 +141,7 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     thinkingLevel,
     baseModel,
     providerOptions,
-    { programmaticToolCalling, programmaticToolCallingExclusive, system1 },
+    { programmaticToolCalling, programmaticToolCallingExclusive, system1, execSubagentHardRestart },
     system1Model,
     system1ThinkingLevel
   );

@@ -80,8 +80,12 @@ export interface ToolConfiguration {
   taskService?: TaskService;
   /** Enable agent_report tool (only valid for child task workspaces) */
   enableAgentReport?: boolean;
-  /** PTC experiments inherited from parent (for subagent spawning) */
-  experiments?: { programmaticToolCalling?: boolean; programmaticToolCallingExclusive?: boolean };
+  /** Experiments inherited from parent (for subagent spawning) */
+  experiments?: {
+    programmaticToolCalling?: boolean;
+    programmaticToolCallingExclusive?: boolean;
+    execSubagentHardRestart?: boolean;
+  };
   /** Available sub-agents for the task tool description (dynamic context) */
   availableSubagents?: AgentDefinitionDescriptor[];
   /** Available skills for the agent_skill_read tool description (dynamic context) */

@@ -2261,9 +2261,11 @@ export class StreamingMessageAggregator {
         }
 
         const isSynthetic = message.metadata?.synthetic === true;
+        const isUiVisibleSynthetic = message.metadata?.uiVisible === true;
 
-        // Synthetic messages are typically for model context only, but can be shown in debug mode.
-        if (isSynthetic && !showSyntheticMessages) {
+        // Synthetic messages are typically for model context only.
+        // Show them only in debug mode, or when explicitly marked as UI-visible.
+        if (isSynthetic && !showSyntheticMessages && !isUiVisibleSynthetic) {
           continue;
         }
 

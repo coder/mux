@@ -83,10 +83,11 @@ export const WorkspaceConfigSchema = z.object({
     .object({
       programmaticToolCalling: z.boolean().optional(),
       programmaticToolCallingExclusive: z.boolean().optional(),
+      execSubagentHardRestart: z.boolean().optional(),
     })
     .optional()
     .meta({
-      description: "PTC experiments inherited from parent for restart-safe resumptions.",
+      description: "Experiments inherited from parent for restart-safe resumptions.",
     }),
   taskBaseCommitSha: z.string().optional().meta({
     description:
