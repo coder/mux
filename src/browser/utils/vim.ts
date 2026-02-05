@@ -12,6 +12,20 @@ import assert from "@/common/utils/assert";
 
 export type VimMode = "insert" | "normal";
 
+export type Pending =
+  | {
+      kind: "op";
+      op: "d" | "y" | "c";
+      at: number;
+      count: number;
+      args?: string[];
+    }
+  | {
+      kind: "g";
+      at: number;
+      count: number;
+    };
+
 export interface VimState {
   text: string;
   cursor: number;
@@ -24,7 +38,7 @@ export interface VimState {
    * Note: `0` is only treated as a count digit if a count is already in progress.
    */
   count: number | null;
-  pendingOp: null | { op: "d" | "y" | "c"; at: number; count: number; args?: string[] };
+  pending: Pending | null;
 }
 
 export type VimAction = "undo" | "redo" | "escapeInNormalMode";
@@ -66,23 +80,32 @@ function assertVimState(state: VimState): void {
     assert(state.count >= 1, "Vim count must be >= 1");
     assert(state.count <= 10000, "Vim count must be <= 10000");
   }
-  if (state.pendingOp) {
+  if (state.pending) {
+    const pending = state.pending;
+
     assert(
-      state.pendingOp.op === "d" || state.pendingOp.op === "c" || state.pendingOp.op === "y",
-      "Unexpected Vim pending operator"
+      pending.kind === "op" || pending.kind === "g",
+      `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`
     );
 
-    assert(Number.isFinite(state.pendingOp.at), "Vim pendingOp.at must be a finite timestamp");
+    assert(Number.isFinite(pending.at), "Vim pending.at must be a finite timestamp");
 
-    assert(Number.isFinite(state.pendingOp.count), "Vim pendingOp.count must be a finite number");
-    assert(Number.isInteger(state.pendingOp.count), "Vim pendingOp.count must be an integer");
-    assert(state.pendingOp.count >= 1, "Vim pendingOp.count must be >= 1");
-    assert(state.pendingOp.count <= 10000, "Vim pendingOp.count must be <= 10000");
+    assert(Number.isFinite(pending.count), "Vim pending.count must be a finite number");
+    assert(Number.isInteger(pending.count), "Vim pending.count must be an integer");
+    assert(pending.count >= 1, "Vim pending.count must be >= 1");
+    assert(pending.count <= 10000, "Vim pending.count must be <= 10000");
 
-    if (state.pendingOp.args != null) {
-      assert(Array.isArray(state.pendingOp.args), "Vim pendingOp.args must be an array");
-      for (const arg of state.pendingOp.args) {
-        assert(typeof arg === "string", "Vim pendingOp args must be strings");
+    if (pending.kind === "op") {
+      assert(
+        pending.op === "d" || pending.op === "c" || pending.op === "y",
+        "Unexpected Vim pending operator"
+      );
+
+      if (pending.args != null) {
+        assert(Array.isArray(pending.args), "Vim pending.args must be an array");
+        for (const arg of pending.args) {
+          assert(typeof arg === "string", "Vim pending args must be strings");
+        }
       }
     }
   }
@@ -559,7 +582,7 @@ function handleInsertModeKey(state: VimState, key: string, modifiers: KeyModifie
       mode: "normal",
       cursor: normalCursor,
       desiredColumn: null,
-      pendingOp: null,
+      pending: null,
       count: null,
     });
   }
@@ -575,9 +598,9 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
   const now = Date.now();
   let nextState = state;
 
-  // Check for timeout on pending operator (800ms like Vim)
-  if (nextState.pendingOp && now - nextState.pendingOp.at > 800) {
-    nextState = { ...nextState, pendingOp: null, count: null };
+  // Check for timeout on pending command sequences (800ms like Vim)
+  if (nextState.pending && now - nextState.pending.at > 800) {
+    nextState = { ...nextState, pending: null, count: null };
   }
 
   // Count parsing (like `2w`, `20l`).
@@ -598,9 +621,9 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
     }
   }
 
-  // Handle pending operator + motion/text-object
-  if (nextState.pendingOp) {
-    const result = handlePendingOperator(nextState, nextState.pendingOp, key, modifiers, now);
+  // Handle pending command sequences (operators, multi-key prefixes, etc.)
+  if (nextState.pending) {
+    const result = handlePending(nextState, nextState.pending, key, modifiers, now);
     if (result) return result;
   }
 
@@ -615,6 +638,10 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
   // Handle mode transitions (i/a/I/A/o/O)
   const insertResult = tryEnterInsertMode(nextState, key);
   if (insertResult) return insertResult;
+
+  // Handle multi-key prefix commands (e.g. `g` prefix).
+  const prefixResult = tryHandlePrefix(nextState, key, now);
+  if (prefixResult) return prefixResult;
 
   const count = nextState.count ?? 1;
 
@@ -650,11 +677,32 @@ function handleNormalModeKey(state: VimState, key: string, modifiers: KeyModifie
 }
 
 /**
+ * Handle pending command sequences (operators, multi-key prefixes, etc.).
+ */
+function handlePending(
+  state: VimState,
+  pending: Pending,
+  key: string,
+  modifiers: KeyModifiers,
+  now: number
+): VimKeyResult | null {
+  switch (pending.kind) {
+    case "op":
+      return handlePendingOperator(state, pending, key, modifiers, now);
+    case "g":
+      return handlePendingG(state, pending, key);
+    default:
+      assert(false, `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`);
+      return null;
+  }
+}
+
+/**
  * Handle pending operator + motion/text-object combinations.
  */
 function handlePendingOperator(
   state: VimState,
-  pending: NonNullable<VimState["pendingOp"]>,
+  pending: Extract<Pending, { kind: "op" }>,
   key: string,
   _modifiers: KeyModifiers,
   now: number
@@ -748,13 +796,45 @@ function handlePendingOperator(
     // Text object prefix
     if (key === "i") {
       return handleKey(state, {
-        pendingOp: { op: pending.op, at: now, count: pending.count, args: ["i"] },
+        pending: { kind: "op", op: pending.op, at: now, count: pending.count, args: ["i"] },
       });
     }
   }
 
   // Unknown motion - cancel pending operation
-  return handleKey(state, { pendingOp: null, count: null });
+  return handleKey(state, { pending: null, count: null });
+}
+
+/**
+ * Handle pending `g` prefix commands.
+ */
+function handlePendingG(
+  state: VimState,
+  pending: Extract<Pending, { kind: "g" }>,
+  key: string
+): VimKeyResult | null {
+  // `gg`: go to line {count} (default 1).
+  if (key === "g") {
+    const text = state.text;
+    const lineNumber = state.count ?? pending.count;
+
+    const { row } = getRowCol(text, state.cursor);
+    const { lines } = getLinesInfo(text);
+
+    // Vim uses 1-indexed line numbers.
+    const targetRow = Math.max(0, Math.min(lines.length - 1, lineNumber - 1));
+    const delta = targetRow - row;
+
+    const result = moveVertical(text, state.cursor, delta, state.desiredColumn);
+    return handleCommand(state, {
+      cursor: clampCursorForMode(text, result.cursor, "normal"),
+      desiredColumn: result.desiredColumn,
+      pending: null,
+    });
+  }
+
+  // Unknown g-prefixed command - cancel.
+  return handleKey(state, { pending: null, count: null });
 }
 
 function clampCursorForMode(text: string, cursor: number, mode: VimMode): number {
@@ -774,7 +854,7 @@ function completeOperation(state: VimState, updates: Partial<VimState>): VimStat
     ...state,
     ...updates,
     cursor: nextCursor,
-    pendingOp: null,
+    pending: null,
     desiredColumn: null,
     count: null,
   };
@@ -1036,8 +1116,25 @@ function tryEnterInsertMode(state: VimState, key: string): VimKeyResult | null {
     text: result.text,
     cursor: result.cursor,
     desiredColumn: null,
-    pendingOp: null,
+    pending: null,
   });
+}
+
+/**
+ * Try to handle multi-key prefix commands (e.g. `g` prefix).
+ */
+function tryHandlePrefix(state: VimState, key: string, now: number): VimKeyResult | null {
+  // `g` introduces a multi-key sequence (e.g. `gg`).
+  if (key === "g") {
+    // Consume the current count into the pending state so it doesn't get cleared.
+    const prefixCount = state.count ?? 1;
+    return handleKey(state, {
+      pending: { kind: "g", at: now, count: prefixCount },
+      count: null,
+    });
+  }
+
+  return null;
 }
 
 /**
@@ -1143,6 +1240,21 @@ function tryHandleNavigation(state: VimState, key: string, count: number): VimKe
       const newCursor = lineEnd > lineStart ? lineEnd - 1 : lineStart;
       return handleCommand(state, { cursor: newCursor, desiredColumn: null });
     }
+
+    case "G": {
+      const { row } = getRowCol(text, cursor);
+      const { lines } = getLinesInfo(text);
+
+      const targetRow =
+        state.count == null ? lines.length - 1 : Math.max(0, Math.min(lines.length - 1, count - 1));
+
+      const delta = targetRow - row;
+      const result = moveVertical(text, cursor, delta, desiredColumn);
+      return handleCommand(state, {
+        cursor: clampCursorForMode(text, result.cursor, "normal"),
+        desiredColumn: result.desiredColumn,
+      });
+    }
   }
 
   return null;
@@ -1196,7 +1308,7 @@ function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResul
         yankBuffer: result.yankBuffer,
         mode: "insert",
         desiredColumn: null,
-        pendingOp: null,
+        pending: null,
       });
     }
 
@@ -1221,7 +1333,7 @@ function tryHandleEdit(state: VimState, key: string, count: number): VimKeyResul
         text: nextText,
         cursor: nextCursor,
         desiredColumn: null,
-        pendingOp: null,
+        pending: null,
       });
     }
   }
@@ -1238,19 +1350,19 @@ function tryHandleOperator(state: VimState, key: string, now: number): VimKeyRes
   switch (key) {
     case "d":
       return handleKey(state, {
-        pendingOp: { op: "d", at: now, count: opCount, args: [] },
+        pending: { kind: "op", op: "d", at: now, count: opCount, args: [] },
         count: null,
       });
 
     case "c":
       return handleKey(state, {
-        pendingOp: { op: "c", at: now, count: opCount, args: [] },
+        pending: { kind: "op", op: "c", at: now, count: opCount, args: [] },
         count: null,
       });
 
     case "y":
       return handleKey(state, {
-        pendingOp: { op: "y", at: now, count: opCount, args: [] },
+        pending: { kind: "op", op: "y", at: now, count: opCount, args: [] },
         count: null,
       });
 
@@ -1265,19 +1377,35 @@ function tryHandleOperator(state: VimState, key: string, now: number): VimKeyRes
 }
 
 /**
- * Format pending operator command for display in mode indicator.
- * Returns empty string if no pending command.
- * Examples: "d", "c", "ci", "di"
+ * Format pending command text for display in the mode indicator.
+ * Returns an empty string if no pending command.
+ *
+ * Examples:
+ * - "d", "c", "ci", "di"
+ * - "g", "5g"
  */
 export function formatPendingCommand(
-  pendingOp: VimState["pendingOp"],
+  pending: VimState["pending"],
   count: VimState["count"]
 ): string {
   const countText = count == null ? "" : String(count);
 
-  if (!pendingOp) return countText;
+  if (!pending) return countText;
 
-  const opCountText = pendingOp.count === 1 ? "" : String(pendingOp.count);
-  const args = pendingOp.args?.join("") ?? "";
-  return `${opCountText}${pendingOp.op}${args}${countText}`;
+  switch (pending.kind) {
+    case "op": {
+      const opCountText = pending.count === 1 ? "" : String(pending.count);
+      const args = pending.args?.join("") ?? "";
+      return `${opCountText}${pending.op}${args}${countText}`;
+    }
+
+    case "g": {
+      const prefixCountText = pending.count === 1 ? "" : String(pending.count);
+      return `${prefixCountText}g${countText}`;
+    }
+
+    default:
+      assert(false, `Unexpected Vim pending kind: ${(pending as { kind?: unknown }).kind}`);
+      return countText;
+  }
 }

@@ -74,12 +74,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
 
     const [desiredColumn, setDesiredColumn] = useState<number | null>(null);
     const [count, setCount] = useState<number | null>(null);
-    const [pendingOp, setPendingOp] = useState<null | {
-      op: "d" | "y" | "c";
-      at: number;
-      count: number;
-      args?: string[];
-    }>(null);
+    const [pending, setPending] = useState<vim.Pending | null>(null);
     const yankBufferRef = useRef<string>("");
 
     useAutoResizeTextarea(textareaRef, value, 50);
@@ -124,7 +119,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
         yankBuffer: yankBufferRef.current,
         desiredColumn,
         count,
-        pendingOp,
+        pending,
       };
 
       // Handle key press through centralized state machine
@@ -171,8 +166,8 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
       if (newState.count !== count) {
         setCount(newState.count);
       }
-      if (newState.pendingOp !== pendingOp) {
-        setPendingOp(newState.pendingOp);
+      if (newState.pending !== pending) {
+        setPending(newState.pending);
       }
 
       // Set cursor after React state updates (important for mode transitions)
@@ -182,7 +177,7 @@ export const VimTextArea = React.forwardRef<HTMLTextAreaElement, VimTextAreaProp
 
     // Build mode indicator content
     const showVimMode = vimEnabled && vimMode === "normal";
-    const pendingCommand = showVimMode ? vim.formatPendingCommand(pendingOp, count) : "";
+    const pendingCommand = showVimMode ? vim.formatPendingCommand(pending, count) : "";
 
     return (
       <div style={{ width: "100%" }} data-component="VimTextAreaContainer">

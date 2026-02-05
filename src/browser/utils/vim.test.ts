@@ -58,7 +58,7 @@ describe("Vim Command Integration Tests", () => {
     yankBuffer: "",
     desiredColumn: null,
     count: null,
-    pendingOp: null,
+    pending: null,
   };
 
   describe("Mode Transitions", () => {
@@ -197,6 +197,77 @@ describe("Vim Command Integration Tests", () => {
     });
   });
 
+  describe("Line Navigation (gg/G)", () => {
+    const text = "aaa\nbbb\nccc\nddd\neee";
+
+    test("gg goes to first line (preserves column)", () => {
+      const state = executeVimCommands({ ...initialState, text, cursor: 14, mode: "normal" }, [
+        "g",
+        "g",
+      ]);
+      expect(state.cursor).toBe(2);
+    });
+
+    test("5gg goes to line 5 (preserves column)", () => {
+      const state = executeVimCommands({ ...initialState, text, cursor: 1, mode: "normal" }, [
+        "5",
+        "g",
+        "g",
+      ]);
+      expect(state.cursor).toBe(17);
+    });
+
+    test("G goes to last line", () => {
+      const state = executeVimCommands({ ...initialState, text, cursor: 5, mode: "normal" }, ["G"]);
+      expect(state.cursor).toBe(17);
+    });
+
+    test("3G goes to line 3", () => {
+      const state = executeVimCommands({ ...initialState, text, cursor: 2, mode: "normal" }, [
+        "3",
+        "G",
+      ]);
+      expect(state.cursor).toBe(10);
+    });
+  });
+
+  describe("Pending timeout", () => {
+    test("stale g-prefix pending is cleared before handling next key", () => {
+      const text = "aaa\nbbb";
+      const state = executeVimCommands(
+        {
+          ...initialState,
+          text,
+          cursor: 5,
+          mode: "normal",
+          pending: { kind: "g", at: 0, count: 1 },
+        },
+        ["g"]
+      );
+
+      // If the old pending hadn't timed out, we'd treat this as `gg` and jump to the first line.
+      expect(state.cursor).toBe(5);
+      expect(state.pending?.kind).toBe("g");
+    });
+
+    test("stale operator pending is cleared before handling next key", () => {
+      const state = executeVimCommands(
+        {
+          ...initialState,
+          text: "hello world",
+          cursor: 0,
+          mode: "normal",
+          pending: { kind: "op", op: "d", at: 0, count: 1, args: [] },
+        },
+        ["w"]
+      );
+
+      // If the old pending hadn't timed out, we'd treat this as `dw` and delete text.
+      expect(state.text).toBe("hello world");
+      expect(state.cursor).toBe(6);
+      expect(state.pending).toBeNull();
+    });
+  });
   describe("WORD Motions (W/B/E)", () => {
     test("W moves to next WORD (whitespace-separated)", () => {
       const state = executeVimCommands(
