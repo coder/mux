@@ -17,6 +17,10 @@ interface PolicyContextValue {
 
 const PolicyContext = createContext<PolicyContextValue | null>(null);
 
+// User request: keep churn guard while still surfacing updated policy reasons.
+const getPolicySignature = (response: PolicyGetResponse): string =>
+  JSON.stringify({ status: response.status, policy: response.policy });
+
 export function PolicyProvider(props: { children: React.ReactNode }) {
   const apiState = useAPI();
   const api = apiState.api;
@@ -32,9 +36,18 @@ export function PolicyProvider(props: { children: React.ReactNode }) {
 
     try {
       const next = await api.policy.get();
-      setResponse(next);
+      // User request: avoid churn from identical payloads while letting reason updates through.
+      setResponse((prev) => {
+        if (!prev) {
+          return next;
+        }
+        if (getPolicySignature(prev) === getPolicySignature(next)) {
+          return prev;
+        }
+        return next;
+      });
     } catch {
-      setResponse(null);
+      setResponse((prev) => (prev ? null : prev));
     } finally {
       setLoading(false);
     }

@@ -10,6 +10,7 @@ import { readPersistedString } from "@/browser/hooks/usePersistedState";
 import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
+import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { getEffectiveContextLimit } from "./contextLimit";
 import { getExplicitCompactionSuggestion } from "./suggestion";
 
@@ -87,8 +88,19 @@ export function checkContextSwitch(
   targetModel: string,
   previousModel: string | null,
   use1M: boolean,
-  options: ContextSwitchOptions
+  options: ContextSwitchOptions,
+  opts?: { allowSameModel?: boolean }
 ): ContextSwitchWarning | null {
+  // Only warn on same-model changes when the caller knows the effective limit changed
+  // (ex: 1M context toggle). Otherwise, workspace entry/sync should stay silent.
+  if (
+    !opts?.allowSameModel &&
+    previousModel &&
+    normalizeGatewayModel(targetModel) === normalizeGatewayModel(previousModel)
+  ) {
+    return null;
+  }
+
   const targetLimit = getEffectiveContextLimit(targetModel, use1M);
 
   // Unknown model or context fits with 10% buffer - no warning

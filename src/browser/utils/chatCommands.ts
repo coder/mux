@@ -137,7 +137,6 @@ export interface SlashCommandContext extends Omit<CommandHandlerContext, "worksp
   openSettings?: (section?: string) => void;
 
   // Global Actions
-  onModelChange?: (model: string) => void;
   setPreferredModel: (model: string) => void;
   setVimEnabled: (cb: (prev: boolean) => boolean) => void;
 
@@ -174,7 +173,6 @@ export async function processSlashCommand(
     variant,
     setVimEnabled,
     setPreferredModel,
-    onModelChange,
   } = context;
 
   const requireClient = (): RouterClient<AppRouter> | null => {
@@ -267,7 +265,6 @@ export async function processSlashCommand(
 
       setInput("");
       setPreferredModel(modelString);
-      onModelChange?.(modelString);
       trackCommandUsed("model");
       setToast({
         id: Date.now().toString(),

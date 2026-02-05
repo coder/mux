@@ -23,6 +23,7 @@ import {
 
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { setWorkspaceModelWithOrigin } from "@/browser/utils/modelChange";
 import { getModelKey } from "@/common/constants/storage";
 import { waitForChatMessagesLoaded } from "./storyPlayHelpers.js";
 import { setupSimpleChatStory, setupStreamingChatStory, setWorkspaceInput } from "./storyHelpers";
@@ -2002,19 +2003,17 @@ export const ToolHooksOutputExpanded: AppStory = {
  * Scenario: Workspace has ~150K tokens of context. The user switches from Sonnet (200K+ limit)
  * to GPT-4o (128K limit). Since 150K > 90% of 128K, the warning banner appears.
  */
+const contextSwitchWorkspaceId = "ws-context-switch";
+
 export const ContextSwitchWarning: AppStory = {
   render: () => (
     <AppWithMocks
       setup={() => {
-        const workspaceId = "ws-context-switch";
-
-        // Set GPT-4o as current model (128K limit)
-        // Previous message was from Sonnet with 150K tokens
-        // On mount, effect sees model "changed" from Sonnet → GPT-4o and triggers warning
-        updatePersistedState(getModelKey(workspaceId), "openai:gpt-4o");
+        // Start on Sonnet so the explicit switch to GPT-4o triggers the warning.
+        updatePersistedState(getModelKey(contextSwitchWorkspaceId), "anthropic:claude-sonnet-4-5");
 
         return setupSimpleChatStory({
-          workspaceId,
+          workspaceId: contextSwitchWorkspaceId,
           messages: [
             createUserMessage("msg-1", "Help me refactor this large codebase", {
               historySequence: 1,
@@ -2040,6 +2039,11 @@ export const ContextSwitchWarning: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitForChatMessagesLoaded(storyRoot);
+    setWorkspaceModelWithOrigin(contextSwitchWorkspaceId, "openai:gpt-4o", "user");
+  },
   parameters: {
     docs: {
       description: {
