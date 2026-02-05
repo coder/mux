@@ -26,6 +26,7 @@ import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { isRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
 // Re-export project types from dedicated types file (for preload usage)
@@ -721,6 +722,15 @@ export class Config {
    * Get the session directory for a specific workspace
    */
   getSessionDir(workspaceId: string): string {
+    if (isRemoteWorkspaceId(workspaceId)) {
+      // Guardrail: remote workspaces are served by a separate mux server and should never
+      // read/write to the local ~/.mux/sessions directory.
+      throw new Error(
+        `Config.getSessionDir called with remote workspace ID: ${workspaceId}. ` +
+          "Remote workspaces do not have local session directories."
+      );
+    }
+
     return path.join(this.sessionsDir, workspaceId);
   }
 
