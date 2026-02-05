@@ -129,6 +129,8 @@ export const ProviderConfigInfoSchema = z.object({
   models: z.array(z.string()).optional(),
   /** OpenAI-specific fields */
   serviceTier: z.enum(["auto", "default", "flex", "priority"]).optional(),
+  /** OpenAI-only: whether Codex OAuth tokens are present in providers.jsonc */
+  codexOauthSet: z.boolean().optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
   /** Mux Gateway-specific fields */
@@ -242,6 +244,51 @@ export const muxGovernorOauth = {
   },
 };
 
+// Codex OAuth (ChatGPT subscription auth)
+export const codexOauth = {
+  startDesktopFlow: {
+    input: z.void(),
+    output: ResultSchema(z.object({ flowId: z.string(), authorizeUrl: z.string() }), z.string()),
+  },
+  waitForDesktopFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelDesktopFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+  startDeviceFlow: {
+    input: z.void(),
+    output: ResultSchema(
+      z.object({
+        flowId: z.string(),
+        userCode: z.string(),
+        verifyUrl: z.string(),
+        intervalSeconds: z.number().int().positive(),
+      }),
+      z.string()
+    ),
+  },
+  waitForDeviceFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelDeviceFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+};
 // Mux Gateway
 export const muxGateway = {
   getAccountStatus: {

@@ -9,6 +9,7 @@ import type {
 } from "@/common/orpc/types";
 import { log } from "@/node/services/log";
 import { checkProviderConfigured } from "@/node/utils/providerRequirements";
+import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
 
 // Re-export types for backward compatibility
@@ -74,6 +75,8 @@ export class ProviderService {
         bearerToken?: string;
         accessKeyId?: string;
         secretAccessKey?: string;
+        /** OpenAI-only: stored Codex OAuth tokens (never sent to frontend). */
+        codexOauth?: unknown;
       };
 
       const forcedBaseUrl = this.policyService?.isEnforced()
@@ -89,6 +92,9 @@ export class ProviderService {
         Array.isArray(allowedModels) && config.models
           ? config.models.filter((m) => allowedModels.includes(m))
           : config.models;
+
+      const codexOauthSet =
+        provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
@@ -109,6 +115,9 @@ export class ProviderService {
         providerInfo.serviceTier = serviceTier;
       }
 
+      if (provider === "openai") {
+        providerInfo.codexOauthSet = codexOauthSet;
+      }
       // AWS/Bedrock-specific fields
       if (provider === "bedrock") {
         providerInfo.aws = {
@@ -128,6 +137,10 @@ export class ProviderService {
 
       // Compute isConfigured using shared utility (checks config + env vars)
       providerInfo.isConfigured = checkProviderConfigured(provider, config).isConfigured;
+
+      if (provider === "openai" && codexOauthSet) {
+        providerInfo.isConfigured = true;
+      }
 
       result[provider] = providerInfo;
     }
@@ -176,6 +189,64 @@ export class ProviderService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: `Failed to set models: ${message}` };
+    }
+  }
+
+  /**
+   * Set provider config values that aren't representable as strings.
+   *
+   * Intended for persisted auth blobs (e.g. Codex OAuth tokens) that should never
+   * cross the frontend boundary.
+   */
+  public setConfigValue(provider: string, keyPath: string[], value: unknown): Result<void, string> {
+    try {
+      // Load current providers config or create empty
+      const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+      if (this.policyService?.isEnforced()) {
+        if (!this.policyService.isProviderAllowed(provider as ProviderName)) {
+          return { success: false, error: `Provider ${provider} is not allowed by policy` };
+        }
+
+        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider as ProviderName);
+        const isBaseUrlEdit = keyPath.length === 1 && keyPath[0] === "baseUrl";
+        if (isBaseUrlEdit && forcedBaseUrl) {
+          return { success: false, error: `Provider ${provider} base URL is locked by policy` };
+        }
+      }
+
+      // Ensure provider exists
+      if (!providersConfig[provider]) {
+        providersConfig[provider] = {};
+      }
+
+      // Set nested property value
+      let current = providersConfig[provider] as Record<string, unknown>;
+      for (let i = 0; i < keyPath.length - 1; i++) {
+        const key = keyPath[i];
+        if (!(key in current) || typeof current[key] !== "object" || current[key] === null) {
+          current[key] = {};
+        }
+        current = current[key] as Record<string, unknown>;
+      }
+
+      if (keyPath.length > 0) {
+        const lastKey = keyPath[keyPath.length - 1];
+        if (value === undefined) {
+          delete current[lastKey];
+        } else {
+          current[lastKey] = value;
+        }
+      }
+
+      // Save updated config
+      this.config.saveProvidersConfig(providersConfig);
+      this.emitConfigChanged();
+
+      return { success: true, data: undefined };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: `Failed to set provider config: ${message}` };
     }
   }
 

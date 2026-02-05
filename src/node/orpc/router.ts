@@ -1172,6 +1172,48 @@ export const router = (authToken?: string) => {
           await context.muxGovernorOauthService.cancelDesktopFlow(input.flowId);
         }),
     },
+    codexOauth: {
+      startDesktopFlow: t
+        .input(schemas.codexOauth.startDesktopFlow.input)
+        .output(schemas.codexOauth.startDesktopFlow.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.startDesktopFlow();
+        }),
+      waitForDesktopFlow: t
+        .input(schemas.codexOauth.waitForDesktopFlow.input)
+        .output(schemas.codexOauth.waitForDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.codexOauthService.waitForDesktopFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDesktopFlow: t
+        .input(schemas.codexOauth.cancelDesktopFlow.input)
+        .output(schemas.codexOauth.cancelDesktopFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.codexOauthService.cancelDesktopFlow(input.flowId);
+        }),
+      startDeviceFlow: t
+        .input(schemas.codexOauth.startDeviceFlow.input)
+        .output(schemas.codexOauth.startDeviceFlow.output)
+        .handler(({ context }) => {
+          return context.codexOauthService.startDeviceFlow();
+        }),
+      waitForDeviceFlow: t
+        .input(schemas.codexOauth.waitForDeviceFlow.input)
+        .output(schemas.codexOauth.waitForDeviceFlow.output)
+        .handler(({ context, input }) => {
+          return context.codexOauthService.waitForDeviceFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDeviceFlow: t
+        .input(schemas.codexOauth.cancelDeviceFlow.input)
+        .output(schemas.codexOauth.cancelDeviceFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.codexOauthService.cancelDeviceFlow(input.flowId);
+        }),
+    },
     general: {
       listDirectory: t
         .input(schemas.general.listDirectory.input)
