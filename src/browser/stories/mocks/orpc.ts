@@ -309,12 +309,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   let statsTabOverride: "default" | "on" | "off" = "default";
 
   const getStatsTabState = () => {
-    const enabled =
-      statsTabOverride === "on"
-        ? true
-        : statsTabOverride === "off"
-          ? false
-          : statsTabVariant === "stats";
+    // Stats tab is default-on; keep override as a local kill switch.
+    const enabled = statsTabOverride !== "off";
 
     return { enabled, variant: statsTabVariant, override: statsTabOverride } as const;
   };

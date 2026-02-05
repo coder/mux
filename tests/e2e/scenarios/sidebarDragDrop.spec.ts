@@ -199,12 +199,12 @@ test.describe("sidebar drag and drop", () => {
     const tablists = await sidebar.getByRole("tablist").all();
     expect(tablists.length).toBe(2);
 
-    // Verify each tablist has expected tabs
-    const topTabs = await tablists[0].getByRole("tab").all();
-    const bottomTabs = await tablists[1].getByRole("tab").all();
-
-    expect(topTabs.length).toBe(3); // Costs, Review, Explorer
-    expect(bottomTabs.length).toBe(1); // Costs (duplicate tab in split)
+    // Verify each tablist has expected tabs.
+    //
+    // Stats is default-on, and both Stats + Explorer get auto-injected into the first tabset
+    // when loading a persisted layout that doesn't list every built-in tab.
+    await expect(tablists[0].getByRole("tab")).toHaveCount(4); // Costs, Review, Explorer, Stats
+    await expect(tablists[1].getByRole("tab")).toHaveCount(1); // Costs (duplicate tab in split)
   });
 
   // Note: Full drag-drop tests require real browser mouse events which
