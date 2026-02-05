@@ -271,6 +271,56 @@ export function ProvidersSection() {
       }
 
       setCodexOauthStatus("starting");
+
+      if (!isDesktop) {
+        const startResult = await api.codexOauth.startDeviceFlow();
+
+        if (attempt !== codexOauthAttemptRef.current) {
+          if (startResult.success) {
+            void api.codexOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
+          }
+          popup?.close();
+          return;
+        }
+
+        if (!startResult.success) {
+          popup?.close();
+          setCodexOauthStatus("error");
+          setCodexOauthError(startResult.error);
+          return;
+        }
+
+        setCodexOauthDeviceFlow({
+          flowId: startResult.data.flowId,
+          userCode: startResult.data.userCode,
+          verifyUrl: startResult.data.verifyUrl,
+        });
+        setCodexOauthStatus("waiting");
+
+        if (popup) {
+          popup.location.href = startResult.data.verifyUrl;
+        }
+
+        const waitResult = await api.codexOauth.waitForDeviceFlow({
+          flowId: startResult.data.flowId,
+        });
+
+        if (attempt !== codexOauthAttemptRef.current) {
+          return;
+        }
+
+        if (!waitResult.success) {
+          setCodexOauthStatus("error");
+          setCodexOauthError(waitResult.error);
+          return;
+        }
+
+        setCodexOauthStatus("idle");
+        setCodexOauthDeviceFlow(null);
+        await refresh();
+        return;
+      }
+
       const startResult = await api.codexOauth.startDesktopFlow();
 
       if (attempt !== codexOauthAttemptRef.current) {
@@ -292,12 +342,8 @@ export function ProvidersSection() {
       setCodexOauthDesktopFlowId(flowId);
       setCodexOauthStatus("waiting");
 
-      if (isDesktop) {
-        // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
-        window.open(authorizeUrl, "_blank", "noopener");
-      } else if (popup) {
-        popup.location.href = authorizeUrl;
-      }
+      // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+      window.open(authorizeUrl, "_blank", "noopener");
 
       const waitResult = await api.codexOauth.waitForDesktopFlow({ flowId });
 

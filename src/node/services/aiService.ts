@@ -1003,14 +1003,16 @@ export class AIService extends EventEmitter {
                           if (role !== "system" && role !== "developer") continue;
 
                           const content = (item as { content?: unknown }).content;
-                          if (typeof content === "string" && content.trim().length > 0) {
-                            derivedInstructions = content;
-                            // Avoid double-system prompts by removing the system/developer message.
-                            json.input = [
-                              ...responseInputArray.slice(0, i),
-                              ...responseInputArray.slice(i + 1),
-                            ];
+                          if (typeof content !== "string" || content.trim().length === 0) {
+                            continue;
                           }
+
+                          derivedInstructions = content;
+                          // Avoid double-system prompts by removing the system/developer message.
+                          json.input = [
+                            ...responseInputArray.slice(0, i),
+                            ...responseInputArray.slice(i + 1),
+                          ];
                           break;
                         }
                       }
