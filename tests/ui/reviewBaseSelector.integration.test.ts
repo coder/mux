@@ -39,8 +39,16 @@ async function setupReviewPanel(
 ): Promise<void> {
   await setupWorkspaceView(view, metadata, workspaceId);
   await view.selectTab("review");
-  // Wait for the review panel to be ready
-  await view.findAllByText(/No changes found/i, {}, { timeout: 60_000 });
+  // Wait for ReviewControls to render (base selector is always shown).
+  // We avoid waiting on diff output here because the default base is `origin/main`,
+  // which may not exist in test repos.
+  await waitFor(
+    () => {
+      const btn = view.container.querySelector('[data-testid="review-base-value"]');
+      if (!btn) throw new Error("Base selector trigger not found");
+    },
+    { timeout: 60_000 }
+  );
 }
 
 /**
