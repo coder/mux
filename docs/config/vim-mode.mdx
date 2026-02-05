@@ -208,15 +208,39 @@ Counts are not yet supported for every command (e.g. repeating paste, undo/redo,
 
 ## Text Objects
 
-Text objects let you operate on semantic units:
+Text objects let you operate on semantic units.
 
-### Inner Word (iw)
+### Words
 
-- **diw** - Delete inner word (word under cursor)
-- **ciw** - Change inner word
-- **yiw** - Yank inner word
+- **iw** - Inner word (word under cursor)
+  - **diw** - Delete inner word
+  - **ciw** - Change inner word
+  - **yiw** - Yank inner word
 
-Text objects work from anywhere within the word - you don't need to be at the start.
+- **aw** - A word (includes surrounding whitespace)
+  - **daw** - Delete word + whitespace
+  - **caw** - Change word + whitespace
+  - **yaw** - Yank word + whitespace
+
+Text objects work from anywhere within the word — you don't need to be at the start.
+
+### Delimiters (current line only)
+
+Quotes:
+
+- **i"** / **a"** - Inside / around double quotes
+- **i'** / **a'** - Inside / around single quotes
+
+Brackets:
+
+- **i(** / **a(** - Inside / around parentheses
+- **i[** / **a[** - Inside / around square brackets
+- **i\{** / **a\{** - Inside / around curly braces
+
+Notes:
+
+- These are currently **line-local** (they don’t search across lines).
+- Escaping and complex nesting behavior is not yet supported.
 
 ## Visual Feedback
 
@@ -256,7 +280,7 @@ In Vim mode, **Ctrl+C always interrupts streams** (similar to terminal interrupt
 Features that may be added in the future:
 
 - **ge** - Backward end of word motion
-- **i"**, **i'**, **i(**, **i[**, **i\{** - More text objects
+- **More text objects** - Multi-line delimiters, escaping, and additional objects
 - **Visual block mode (Ctrl-v)** - Blockwise selection
 - **Macros** - Recording and replaying command sequences
 - **Marks** - Named cursor positions
