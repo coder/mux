@@ -627,6 +627,21 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
     expect(instructions.trim().length).toBeGreaterThan(0);
     expect(instructions).toBe(systemPrompt);
+
+    // Codex endpoint requires store=false
+    const store = (parsedBody as { store?: unknown }).store;
+    expect(store).toBe(false);
+
+    // System message should be removed from input to avoid double-system
+    const input = (parsedBody as { input?: unknown[] }).input;
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (item && typeof item === "object" && "role" in item) {
+          expect((item as { role: string }).role).not.toBe("system");
+          expect((item as { role: string }).role).not.toBe("developer");
+        }
+      }
+    }
   });
 });
 

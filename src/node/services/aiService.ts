@@ -567,6 +567,28 @@ function modelCostsIncluded(model: LanguageModel): boolean {
   return (model as LanguageModelWithMuxCostsIncluded)[MUX_MODEL_COSTS_INCLUDED] === true;
 }
 
+/**
+ * Extract text from AI SDK message content.
+ * Content may be a plain string or a structured array like [{type:"text", text:"..."}].
+ */
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return (content as unknown[])
+      .filter(
+        (part): part is { type: string; text: string } =>
+          typeof part === "object" &&
+          part !== null &&
+          (part as { type?: unknown }).type === "text" &&
+          typeof (part as { text?: unknown }).text === "string"
+      )
+      .map((part) => part.text)
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
@@ -1004,46 +1026,52 @@ export class AIService extends EventEmitter {
                   }
 
                   // Codex OAuth (chatgpt.com/backend-api/codex/responses) rejects requests unless
-                  // `instructions` is present and non-empty. The AI SDK maps `system` prompts into
-                  // the `input` array (role: system|developer) but does *not* automatically populate
-                  // `instructions`, so we lift the system prompt into `instructions` when routing
-                  // through Codex OAuth.
+                  // `instructions` is present and non-empty, and `store` is set to false.
+                  // The AI SDK maps `system` prompts into the `input` array
+                  // (role: system|developer) but does *not* automatically populate
+                  // `instructions`, so we lift all system prompts into `instructions` when
+                  // routing through Codex OAuth.
                   if (shouldRouteThroughCodexOauth) {
+                    // Codex endpoint requires store=false (it does not support server-side storage).
+                    json.store = false;
+
                     const existingInstructions =
                       typeof json.instructions === "string" ? json.instructions.trim() : "";
 
                     if (existingInstructions.length === 0) {
-                      let derivedInstructions: string | undefined;
+                      const derivedParts: string[] = [];
+                      const keptInput: unknown[] = [];
 
                       const responseInput = json.input;
                       if (Array.isArray(responseInput)) {
-                        const responseInputArray: unknown[] = responseInput;
-
-                        for (let i = 0; i < responseInputArray.length; i++) {
-                          const item = responseInputArray[i];
-                          if (!item || typeof item !== "object") continue;
-
-                          const role = (item as { role?: unknown }).role;
-                          if (role !== "system" && role !== "developer") continue;
-
-                          const content = (item as { content?: unknown }).content;
-                          if (typeof content !== "string" || content.trim().length === 0) {
+                        for (const item of responseInput as unknown[]) {
+                          if (!item || typeof item !== "object") {
+                            keptInput.push(item);
                             continue;
                           }
 
-                          derivedInstructions = content;
-                          // Avoid double-system prompts by removing the system/developer message.
-                          json.input = [
-                            ...responseInputArray.slice(0, i),
-                            ...responseInputArray.slice(i + 1),
-                          ];
-                          break;
+                          const role = (item as { role?: unknown }).role;
+                          if (role !== "system" && role !== "developer") {
+                            keptInput.push(item);
+                            continue;
+                          }
+
+                          // Extract text from string content or structured content arrays
+                          // (AI SDK may produce [{type:"text", text:"..."}])
+                          const content = (item as { content?: unknown }).content;
+                          const text = extractTextContent(content);
+                          if (text.length > 0) {
+                            derivedParts.push(text);
+                          }
+                          // Drop this system/developer item from input (don't push to keptInput)
                         }
+
+                        json.input = keptInput;
                       }
 
-                      json.instructions = derivedInstructions?.trim().length
-                        ? derivedInstructions.trim()
-                        : "You are a helpful assistant.";
+                      const joined = derivedParts.join("\n\n").trim();
+                      json.instructions =
+                        joined.length > 0 ? joined : "You are a helpful assistant.";
                     }
                   }
 
