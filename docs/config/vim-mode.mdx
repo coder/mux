@@ -124,6 +124,33 @@ Vim's power comes from combining operators with motions. All operators work with
 - **D** - Same as **d$** (delete to end of line)
 - **C** - Same as **c$** (change to end of line)
 
+## Count Prefixes
+
+Many motions and commands support numeric count prefixes:
+
+- **3w** - Move forward three words
+- **20l** - Move right 20 characters
+- **2dd** - Delete two lines
+- **d3w** - Delete three words
+
+### Parsing rules
+
+- Digits **1–9** start a count.
+- **0** appends only if a count is already in progress; otherwise it remains the **0** motion.
+- Counts are capped at **10,000**.
+
+### Supported commands (MVP)
+
+Counts currently apply to:
+
+- Motions: **h/j/k/l**, **w/W**, **b/B**, **e/E**, **0**, **$**, **\_**
+- Edits: **x**, **~**
+- Operator + motion combos, including **dd/yy/cc**
+
+### Limitations
+
+Counts are not yet supported for every command (e.g. repeating paste, undo/redo, or insert-mode entry).
+
 ## Text Objects
 
 Text objects let you operate on semantic units:
@@ -175,7 +202,6 @@ Features that may be added in the future:
 - **ge** - Backward end of word motion
 - **f\{char\}**, **t\{char\}** - Find character motions
 - **i"**, **i'**, **i(**, **i[**, **i\{** - More text objects
-- **2w**, **3dd**, **5x** - Count prefixes
 - **Visual mode** - Character, line, and block selection
 - **Macros** - Recording and replaying command sequences
 - **Marks** - Named cursor positions

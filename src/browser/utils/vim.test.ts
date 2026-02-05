@@ -56,8 +56,9 @@ describe("Vim Command Integration Tests", () => {
     cursor: 0,
     mode: "insert",
     yankBuffer: "",
-    pendingOp: null,
     desiredColumn: null,
+    count: null,
+    pendingOp: null,
   };
 
   describe("Mode Transitions", () => {
@@ -656,6 +657,54 @@ describe("Vim Command Integration Tests", () => {
         ["e"]
       );
       expect(state.cursor).toBe(11); // Should move to end of "world"
+    });
+  });
+
+  describe("Count Prefixes", () => {
+    test("3w moves forward three words", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one two three four", cursor: 0, mode: "normal" },
+        ["3", "w"]
+      );
+      expect(state.cursor).toBe(14);
+    });
+
+    test("20l moves right 20 characters (0 appends to count)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcdefghijklmnopqrstuvwxyz", cursor: 0, mode: "normal" },
+        ["2", "0", "l"]
+      );
+      expect(state.cursor).toBe(20);
+    });
+
+    test("5x deletes five characters", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "hello world", cursor: 0, mode: "normal" },
+        ["5", "x"]
+      );
+      expect(state.text).toBe(" world");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("hello");
+    });
+
+    test("2dd deletes two lines", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one\ntwo\nthree\nfour", cursor: 0, mode: "normal" },
+        ["2", "d", "d"]
+      );
+      expect(state.text).toBe("three\nfour");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("one\ntwo\n");
+    });
+
+    test("d3w deletes three words", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one two three four", cursor: 0, mode: "normal" },
+        ["d", "3", "w"]
+      );
+      expect(state.text).toBe("four");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("one two three ");
     });
   });
 
