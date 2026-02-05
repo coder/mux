@@ -96,6 +96,8 @@ export interface MockORPCClientOptions {
   agentDefinitions?: AgentDefinitionDescriptor[];
   /** Initial per-subagent AI defaults for config.getConfig (e.g., Settings → Tasks section) */
   subagentAiDefaults?: SubagentAiDefaults;
+  /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
+  stopCoderWorkspaceOnArchive?: boolean;
   /** Per-workspace chat callback. Return messages to emit, or use the callback for streaming. */
   onChat?: (workspaceId: string, emit: (msg: WorkspaceChatMessage) => void) => (() => void) | void;
   /** Mock for executeBash per workspace */
@@ -272,6 +274,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     taskSettings: initialTaskSettings,
     subagentAiDefaults: initialSubagentAiDefaults,
     agentAiDefaults: initialAgentAiDefaults,
+    stopCoderWorkspaceOnArchive: initialStopCoderWorkspaceOnArchive = true,
     agentDefinitions: initialAgentDefinitions,
     listBranches: customListBranches,
     gitInit: customGitInit,
@@ -388,6 +391,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
   let muxGatewayEnabled: boolean | undefined = undefined;
   let muxGatewayModels: string[] | undefined = undefined;
+  let stopCoderWorkspaceOnArchive = initialStopCoderWorkspaceOnArchive;
 
   const deriveSubagentAiDefaults = () => {
     const raw: Record<string, unknown> = {};
@@ -503,6 +507,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           taskSettings,
           muxGatewayEnabled,
           muxGatewayModels,
+          stopCoderWorkspaceOnArchive,
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
@@ -544,6 +549,10 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       }) => {
         muxGatewayEnabled = input.muxGatewayEnabled ? undefined : false;
         muxGatewayModels = input.muxGatewayModels.length > 0 ? input.muxGatewayModels : undefined;
+        return Promise.resolve(undefined);
+      },
+      updateCoderPrefs: (input: { stopCoderWorkspaceOnArchive: boolean }) => {
+        stopCoderWorkspaceOnArchive = input.stopCoderWorkspaceOnArchive;
         return Promise.resolve(undefined);
       },
       unenrollMuxGovernor: () => Promise.resolve(undefined),

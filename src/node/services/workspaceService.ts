@@ -27,6 +27,7 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
@@ -49,6 +50,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
+  WorkspaceMetadata,
 } from "@/common/types/workspace";
 import { isDynamicToolPart } from "@/common/types/toolParts";
 import { buildAskUserQuestionSummary } from "@/common/utils/tools/askUserQuestionSummary";
@@ -74,6 +76,7 @@ import type { WorkspaceAISettingsSchema } from "@/common/orpc/schemas";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
+import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -614,6 +617,10 @@ export class WorkspaceService extends EventEmitter {
   // Tracks workspaces currently being removed to prevent new sessions/streams during deletion.
   private readonly removingWorkspaces = new Set<string>();
 
+  // Tracks workspaces currently being archived to prevent runtime-affecting operations (e.g. SSH)
+  // from waking a dedicated workspace during archive().
+  private readonly archivingWorkspaces = new Set<string>();
+
   /** Check if a workspace is currently being removed. */
   isRemoving(workspaceId: string): boolean {
     return this.removingWorkspaces.has(workspaceId);
@@ -640,6 +647,7 @@ export class WorkspaceService extends EventEmitter {
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
   private sessionTimingService?: SessionTimingService;
+  private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
 
   setPolicyService(service: PolicyService): void {
     this.policyService = service;
@@ -674,6 +682,10 @@ export class WorkspaceService extends EventEmitter {
    */
   setSessionTimingService(sessionTimingService: SessionTimingService): void {
     this.sessionTimingService = sessionTimingService;
+  }
+
+  setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
+    this.workspaceLifecycleHooks = hooks;
   }
 
   /**
@@ -1750,6 +1762,8 @@ export class WorkspaceService extends EventEmitter {
       return Err("Cannot archive the Chat with Mux system workspace");
     }
 
+    this.archivingWorkspaces.add(workspaceId);
+
     try {
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
@@ -1757,8 +1771,30 @@ export class WorkspaceService extends EventEmitter {
       }
       const { projectPath, workspacePath } = workspace;
 
+      // Lifecycle hooks run *before* we persist archivedAt.
+      //
+      // NOTE: Archiving is typically a quick UI action, but it can fail if a hook needs to perform
+      // cleanup (e.g., stopping a dedicated mux-created Coder workspace) and that cleanup fails.
+      if (this.workspaceLifecycleHooks) {
+        const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+        if (!metadataResult.success) {
+          return Err(metadataResult.error);
+        }
+
+        const hookResult = await this.workspaceLifecycleHooks.runBeforeArchive({
+          workspaceId,
+          workspaceMetadata: metadataResult.data,
+        });
+        if (!hookResult.success) {
+          return Err(hookResult.error);
+        }
+      }
+
       // Archiving removes the workspace from the sidebar; ensure we don't leave a stream running
       // "headless" with no obvious UI affordance to interrupt it.
+      //
+      // NOTE: We only interrupt after beforeArchive hooks succeed, so a hook failure doesn't stop
+      // an active stream.
       if (this.aiService.isStreaming(workspaceId)) {
         const stopResult = await this.interruptStream(workspaceId);
         if (!stopResult.success) {
@@ -1799,6 +1835,8 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to archive workspace: ${message}`);
+    } finally {
+      this.archivingWorkspaces.delete(workspaceId);
     }
   }
 
@@ -1817,6 +1855,8 @@ export class WorkspaceService extends EventEmitter {
       }
       const { projectPath, workspacePath } = workspace;
 
+      let didUnarchive = false;
+
       await this.config.editConfig((config) => {
         const projectConfig = config.projects.get(projectPath);
         if (projectConfig) {
@@ -1824,13 +1864,25 @@ export class WorkspaceService extends EventEmitter {
             projectConfig.workspaces.find((w) => w.id === workspaceId) ??
             projectConfig.workspaces.find((w) => w.path === workspacePath);
           if (workspaceEntry) {
-            // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt
-            // This also bumps workspace to top of recency
-            workspaceEntry.unarchivedAt = new Date().toISOString();
+            const wasArchived = isWorkspaceArchived(
+              workspaceEntry.archivedAt,
+              workspaceEntry.unarchivedAt
+            );
+            if (wasArchived) {
+              // Just set unarchivedAt - archived state is derived from archivedAt > unarchivedAt.
+              // This also bumps workspace to top of recency.
+              workspaceEntry.unarchivedAt = new Date().toISOString();
+              didUnarchive = true;
+            }
           }
         }
         return config;
       });
+
+      // Only run hooks when the workspace is transitioning from archived → unarchived.
+      if (!didUnarchive) {
+        return Ok(undefined);
+      }
 
       // Emit updated metadata
       const allMetadata = await this.config.getAllWorkspaceMetadata();
@@ -1841,6 +1893,32 @@ export class WorkspaceService extends EventEmitter {
           session.emitMetadata(updatedMetadata);
         } else {
           this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        }
+      }
+
+      // Lifecycle hooks run *after* we persist unarchivedAt.
+      //
+      // Why best-effort: Unarchive is a quick UI action and should not fail permanently due to a
+      // start error (e.g., Coder workspace start).
+      if (this.workspaceLifecycleHooks) {
+        let hookMetadata: WorkspaceMetadata | undefined = updatedMetadata;
+        if (!hookMetadata) {
+          const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+          if (metadataResult.success) {
+            hookMetadata = metadataResult.data;
+          } else {
+            log.debug("Failed to load workspace metadata for afterUnarchive hooks", {
+              workspaceId,
+              error: metadataResult.error,
+            });
+          }
+        }
+
+        if (hookMetadata) {
+          await this.workspaceLifecycleHooks.runAfterUnarchive({
+            workspaceId,
+            workspaceMetadata: hookMetadata,
+          });
         }
       }
 
@@ -3035,19 +3113,27 @@ export class WorkspaceService extends EventEmitter {
       return Err(`Workspace ${workspaceId} is being removed`);
     }
 
+    // NOTE: This guard must run before any init/runtime operations that could wake a stopped SSH
+    // runtime (e.g., Coder workspaces started via `coder ssh --wait=yes`).
+    if (this.archivingWorkspaces.has(workspaceId)) {
+      return Err(`Workspace ${workspaceId} is being archived; cannot execute bash`);
+    }
+
+    const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
+    if (!metadataResult.success) {
+      return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
+    }
+
+    const metadata = metadataResult.data;
+    if (isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt)) {
+      return Err(`Workspace ${workspaceId} is archived; cannot execute bash`);
+    }
+
     // Wait for workspace initialization (container creation, code sync, etc.)
     // Same behavior as AI tools - 5 min timeout, then proceeds anyway
     await this.initStateManager.waitForInit(workspaceId);
 
     try {
-      // Get workspace metadata
-      const metadataResult = await this.aiService.getWorkspaceMetadata(workspaceId);
-      if (!metadataResult.success) {
-        return Err(`Failed to get workspace metadata: ${metadataResult.error}`);
-      }
-
-      const metadata = metadataResult.data;
-
       // Get actual workspace path from config
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {

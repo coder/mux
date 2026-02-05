@@ -499,6 +499,7 @@ export const router = (authToken?: string) => {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
             muxGatewayModels: config.muxGatewayModels,
+            stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
             subagentAiDefaults: config.subagentAiDefaults ?? {},
@@ -545,6 +546,18 @@ export const router = (authToken?: string) => {
               ...config,
               muxGatewayEnabled: input.muxGatewayEnabled ? undefined : false,
               muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
+            };
+          });
+        }),
+      updateCoderPrefs: t
+        .input(schemas.config.updateCoderPrefs.input)
+        .output(schemas.config.updateCoderPrefs.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            return {
+              ...config,
+              // Default ON: store `false` only.
+              stopCoderWorkspaceOnArchive: input.stopCoderWorkspaceOnArchive ? undefined : false,
             };
           });
         }),

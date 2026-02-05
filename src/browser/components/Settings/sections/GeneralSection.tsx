@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useTheme, THEME_OPTIONS, type ThemeMode } from "@/browser/contexts/ThemeContext";
 import {
   Select,
@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Input } from "@/browser/components/ui/input";
+import { Switch } from "@/browser/components/ui/switch";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useAPI } from "@/browser/contexts/API";
 import {
@@ -151,6 +152,77 @@ export function GeneralSection() {
   const editorConfig = normalizeEditorConfig(rawEditorConfig);
   const [sshHost, setSshHost] = useState<string>("");
   const [sshHostLoaded, setSshHostLoaded] = useState(false);
+
+  // Backend config: default to ON so archiving is safest even before async load completes.
+  const [stopCoderWorkspaceOnArchive, setStopCoderWorkspaceOnArchive] = useState(true);
+  const stopCoderWorkspaceOnArchiveLoadNonceRef = useRef(0);
+
+  // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
+  // toggles can't race and persist a stale value via out-of-order writes.
+  const stopCoderWorkspaceOnArchiveUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const stopCoderWorkspaceOnArchivePendingUpdateRef = useRef<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    if (!api) {
+      return;
+    }
+
+    const nonce = ++stopCoderWorkspaceOnArchiveLoadNonceRef.current;
+
+    void api.config
+      .getConfig()
+      .then((cfg) => {
+        // If the user toggled the setting while this request was in flight, keep the UI selection.
+        if (nonce !== stopCoderWorkspaceOnArchiveLoadNonceRef.current) {
+          return;
+        }
+
+        setStopCoderWorkspaceOnArchive(cfg.stopCoderWorkspaceOnArchive);
+      })
+      .catch(() => {
+        // Best-effort only. Keep the default (ON) if config fails to load.
+      });
+  }, [api]);
+
+  const handleStopCoderWorkspaceOnArchiveChange = useCallback(
+    (checked: boolean) => {
+      // Invalidate any in-flight initial load so it doesn't overwrite the user's selection.
+      stopCoderWorkspaceOnArchiveLoadNonceRef.current++;
+      setStopCoderWorkspaceOnArchive(checked);
+
+      if (!api?.config?.updateCoderPrefs) {
+        return;
+      }
+
+      stopCoderWorkspaceOnArchivePendingUpdateRef.current = checked;
+
+      stopCoderWorkspaceOnArchiveUpdateChainRef.current =
+        stopCoderWorkspaceOnArchiveUpdateChainRef.current
+          .then(async () => {
+            // Drain the pending ref so a toggle that happens while updateCoderPrefs is in-flight
+            // doesn't get stranded without a subsequent write scheduled.
+            for (;;) {
+              const pending = stopCoderWorkspaceOnArchivePendingUpdateRef.current;
+              if (pending === undefined) {
+                return;
+              }
+
+              // Clear before awaiting so rapid toggles coalesce into a new pending value.
+              stopCoderWorkspaceOnArchivePendingUpdateRef.current = undefined;
+
+              try {
+                await api.config.updateCoderPrefs({ stopCoderWorkspaceOnArchive: pending });
+              } catch {
+                // Best-effort only. Swallow errors so the queue doesn't get stuck.
+              }
+            }
+          })
+          .catch(() => {
+            // Best-effort only.
+          });
+    },
+    [api]
+  );
 
   // Load SSH host from server on mount (browser mode only)
   useEffect(() => {
@@ -301,6 +373,21 @@ export function GeneralSection() {
           )}
         </div>
       )}
+
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex-1">
+          <div className="text-foreground text-sm">Stop Coder workspace when archiving</div>
+          <div className="text-muted text-xs">
+            When enabled, archiving a Mux workspace will stop its dedicated Coder workspace first.
+          </div>
+        </div>
+        <Switch
+          checked={stopCoderWorkspaceOnArchive}
+          onCheckedChange={handleStopCoderWorkspaceOnArchiveChange}
+          disabled={!api?.config?.updateCoderPrefs}
+          aria-label="Toggle stopping the dedicated Coder workspace when archiving a Mux workspace"
+        />
+      </div>
 
       {isBrowserMode && sshHostLoaded && (
         <div className="flex items-center justify-between">
