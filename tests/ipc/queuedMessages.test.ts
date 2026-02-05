@@ -64,8 +64,10 @@ async function waitForQueuedMessageEvent(
   while (Date.now() - startTime < timeoutMs) {
     const events = collector.getEvents().filter(isQueuedMessageChanged);
     if (events.length > currentCount) {
-      // Return the newest event
-      return events[events.length - 1];
+      // Return the FIRST new event after the baseline count.
+      // This avoids races where the queue is updated twice before we poll
+      // (e.g. message queued, then immediately cleared on auto-send).
+      return events[currentCount];
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -171,17 +173,20 @@ describeIntegration("Queued messages", () => {
 
         await collector.waitForEvent("stream-start", 5000);
 
-        // Queue a message
-        await sendMessageWithModel(
+        // Queue a message (capture the queue-add event deterministically)
+        const queuedEventPromise = waitForQueuedMessageEvent(collector);
+        const queueResult = await sendMessageWithModel(
           env,
           workspaceId,
           "This message should be restored",
           modelString("anthropic", "claude-sonnet-4-5")
         );
+        expect(queueResult.success).toBe(true);
 
-        // Verify message was queued
-        const queued = await getQueuedMessages(collector);
-        expect(queued).toEqual(["This message should be restored"]);
+        // Verify message was queued (avoid reading the latest state which may already be cleared)
+        const queuedEvent = await queuedEventPromise;
+        expect(queuedEvent).toBeDefined();
+        expect(queuedEvent?.queuedMessages).toEqual(["This message should be restored"]);
 
         // Capture event count BEFORE interrupt to avoid race condition
         // (clear event may arrive before or with stream-abort)
@@ -245,17 +250,20 @@ describeIntegration("Queued messages", () => {
 
         await collector.waitForEvent("stream-start", 5000);
 
-        // Queue a message
-        await sendMessageWithModel(
+        // Queue a message (capture the queue-add event deterministically)
+        const queuedEventPromise = waitForQueuedMessageEvent(collector);
+        const queueResult = await sendMessageWithModel(
           env,
           workspaceId,
           "This message should be sent immediately",
           modelString("anthropic", "claude-sonnet-4-5")
         );
+        expect(queueResult.success).toBe(true);
 
-        // Verify message was queued
-        const queued = await getQueuedMessages(collector);
-        expect(queued).toEqual(["This message should be sent immediately"]);
+        // Verify message was queued (avoid reading the latest state which may already be cleared)
+        const queuedEvent = await queuedEventPromise;
+        expect(queuedEvent).toBeDefined();
+        expect(queuedEvent?.queuedMessages).toEqual(["This message should be sent immediately"]);
 
         // Interrupt the stream with sendQueuedImmediately flag
         const client = resolveOrpcClient(env);
@@ -267,6 +275,10 @@ describeIntegration("Queued messages", () => {
 
         // Wait for stream abort
         await collector.waitForEvent("stream-abort", 5000);
+
+        const preAutoSendStreamEndCount = collector
+          .getEvents()
+          .filter((e) => "type" in e && e.type === "stream-end").length;
 
         // Should NOT get restore-to-input event (message is sent, not restored)
         // Instead, we should see the queued message being sent as a new user message
@@ -284,7 +296,7 @@ describeIntegration("Queued messages", () => {
 
         // Wait for the immediately-sent message's stream to start and complete
         await collector.waitForEventN("stream-start", 2, 10000);
-        await collector.waitForEvent("stream-end", 15000);
+        await collector.waitForEventN("stream-end", preAutoSendStreamEndCount + 1, 15000);
         collector.stop();
       } finally {
         await cleanup();
