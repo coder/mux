@@ -1068,6 +1068,17 @@ export class AIService extends EventEmitter {
                     }
                   }
 
+                  // Strip server-side item `id` fields from input items. Since we set
+                  // store=false, the Codex endpoint cannot resolve these references and
+                  // returns 404. Items must be sent as full inline content without ids.
+                  if (Array.isArray(json.input)) {
+                    for (const item of json.input as Array<Record<string, unknown>>) {
+                      if (item && typeof item === "object" && "id" in item) {
+                        delete item.id;
+                      }
+                    }
+                  }
+
                   const existingInstructions =
                     typeof json.instructions === "string" ? json.instructions.trim() : "";
 

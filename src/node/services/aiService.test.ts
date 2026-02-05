@@ -643,6 +643,134 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       }
     }
   });
+
+  it("strips id fields from input items when routing through Codex OAuth", async () => {
+    using muxHome = new DisposableTempDir("codex-oauth-strip-ids");
+
+    const config = new Config(muxHome.path);
+    const historyService = new HistoryService(config);
+    const partialService = new PartialService(config, historyService);
+    const initStateManager = new InitStateManager(config);
+    const providerService = new ProviderService(config);
+
+    const service = new AIService(
+      config,
+      historyService,
+      partialService,
+      initStateManager,
+      providerService
+    );
+
+    const requests: Array<{
+      input: Parameters<typeof fetch>[0];
+      init?: Parameters<typeof fetch>[1];
+    }> = [];
+
+    const baseFetch = (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      requests.push({ input, init });
+
+      const responseBody = {
+        id: "resp_test",
+        created_at: 0,
+        model: "gpt-5.2-codex",
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            id: "msg_test",
+            content: [{ type: "output_text", text: "ok", annotations: [] }],
+          },
+        ],
+        usage: {
+          input_tokens: 1,
+          output_tokens: 1,
+        },
+      };
+
+      return Promise.resolve(
+        new Response(JSON.stringify(responseBody), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        })
+      );
+    };
+
+    config.loadProvidersConfig = () => ({
+      openai: {
+        apiKey: "test-openai-api-key",
+        codexOauth: {
+          type: "oauth",
+          access: "test-access-token",
+          refresh: "test-refresh-token",
+          expires: Date.now() + 60_000,
+          accountId: "test-account-id",
+        },
+        fetch: baseFetch,
+      },
+    });
+
+    // @ts-expect-error - accessing private field for testing
+    service.codexOauthService = {
+      getValidAuth: () =>
+        Promise.resolve({
+          success: true,
+          data: {
+            type: "oauth",
+            access: "test-access-token",
+            refresh: "test-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId: "test-account-id",
+          },
+        }),
+    };
+
+    const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+    expect(modelResult.success).toBe(true);
+    if (!modelResult.success) return;
+
+    const model = modelResult.data;
+    if (typeof model === "string") {
+      throw new Error("Expected a LanguageModelV2 instance, got a model id string");
+    }
+
+    // Send a prompt whose input items carry server-side `id` fields
+    // (mimicking what the AI SDK sends after a previous response).
+    await model.doGenerate({
+      prompt: [
+        {
+          role: "system",
+          content: "You are a helpful assistant",
+        },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Hello" }],
+        },
+      ],
+    });
+
+    expect(requests.length).toBeGreaterThan(0);
+
+    const lastRequest = requests[requests.length - 1];
+    const bodyString = lastRequest.init?.body;
+    expect(typeof bodyString).toBe("string");
+    if (typeof bodyString !== "string") {
+      throw new Error("Expected request body to be a string");
+    }
+
+    const parsedBody = JSON.parse(bodyString) as { input?: unknown[] };
+    const input = parsedBody.input;
+    expect(Array.isArray(input)).toBe(true);
+    if (!Array.isArray(input)) return;
+
+    // Verify no input item has an `id` field
+    for (const item of input) {
+      if (item && typeof item === "object") {
+        expect("id" in item).toBe(false);
+      }
+    }
+  });
 });
 
 describe("normalizeAnthropicBaseURL", () => {
