@@ -264,6 +264,111 @@ async function findSubagentTranscriptEntryByScanningSessions(params: {
   return best;
 }
 
+type ReplayBufferedStreamMessage = Extract<
+  WorkspaceChatMessage,
+  {
+    type: "stream-delta" | "reasoning-delta" | "stream-end" | "stream-abort" | "stream-error";
+  }
+>;
+
+type ReplayBufferedDeltaMessage = Extract<
+  ReplayBufferedStreamMessage,
+  { type: "stream-delta" | "reasoning-delta" }
+>;
+
+function isReplayBufferedStreamMessage(
+  message: WorkspaceChatMessage
+): message is ReplayBufferedStreamMessage {
+  return (
+    message.type === "stream-delta" ||
+    message.type === "reasoning-delta" ||
+    message.type === "stream-end" ||
+    message.type === "stream-abort" ||
+    message.type === "stream-error"
+  );
+}
+
+function isReplayBufferedDeltaMessage(
+  message: ReplayBufferedStreamMessage
+): message is ReplayBufferedDeltaMessage {
+  return message.type === "stream-delta" || message.type === "reasoning-delta";
+}
+
+function isReplayMessage(message: WorkspaceChatMessage): boolean {
+  return (message as { replay?: unknown }).replay === true;
+}
+
+function replayBufferedDeltaKey(message: ReplayBufferedDeltaMessage): string {
+  return JSON.stringify([message.type, message.messageId, message.timestamp, message.delta]);
+}
+
+function createReplayBufferedStreamMessageRelay(push: (message: WorkspaceChatMessage) => void): {
+  handleSessionMessage: (message: WorkspaceChatMessage) => void;
+  finishReplay: () => void;
+} {
+  let isReplaying = true;
+  const bufferedLiveStreamMessages: ReplayBufferedStreamMessage[] = [];
+
+  // Counter (not a Set) so we don't drop more buffered events than were replayed.
+  const replayedDeltaKeyCounts = new Map<string, number>();
+
+  const noteReplayedDelta = (message: ReplayBufferedDeltaMessage) => {
+    const key = replayBufferedDeltaKey(message);
+    replayedDeltaKeyCounts.set(key, (replayedDeltaKeyCounts.get(key) ?? 0) + 1);
+  };
+
+  const shouldDropBufferedDelta = (message: ReplayBufferedDeltaMessage): boolean => {
+    const key = replayBufferedDeltaKey(message);
+    const remaining = replayedDeltaKeyCounts.get(key) ?? 0;
+    if (remaining <= 0) {
+      return false;
+    }
+    if (remaining === 1) {
+      replayedDeltaKeyCounts.delete(key);
+    } else {
+      replayedDeltaKeyCounts.set(key, remaining - 1);
+    }
+    return true;
+  };
+
+  const handleSessionMessage = (message: WorkspaceChatMessage) => {
+    if (isReplaying && isReplayBufferedStreamMessage(message)) {
+      if (!isReplayMessage(message)) {
+        // Preserve stream event order during replay buffering (P1): if we buffer only deltas,
+        // terminal events like stream-end can overtake them and flip the message back to partial
+        // in the frontend event processor.
+        bufferedLiveStreamMessages.push(message);
+        return;
+      }
+
+      // Track replayed deltas so we can skip replay/live duplicates (P2).
+      if (isReplayBufferedDeltaMessage(message)) {
+        noteReplayedDelta(message);
+      }
+    }
+
+    push(message);
+  };
+
+  const finishReplay = () => {
+    // Flush buffered live stream messages after replay (`caught-up` already queued by replayHistory).
+    for (const message of bufferedLiveStreamMessages) {
+      if (isReplayBufferedDeltaMessage(message) && shouldDropBufferedDelta(message)) {
+        continue;
+      }
+      push(message);
+    }
+
+    isReplaying = false;
+
+    // Avoid retaining replay delta keys (including delta text) for the lifetime of the subscription.
+    replayedDeltaKeyCounts.clear();
+    bufferedLiveStreamMessages.length = 0;
+  };
+
+  return { handleSessionMessage, finishReplay };
+}
+
 export const router = (authToken?: string) => {
   const t = os.$context<ORPCContext>().use(createAuthMiddleware(authToken));
 
@@ -2053,93 +2158,13 @@ export const router = (authToken?: string) => {
           // IMPORTANT: We subscribe before replay so we can receive stream replay (`replayStream()`)
           // and init replay events (which do not set `replay: true`).
           //
-          // However, this means live stream events can arrive while replay is still in progress.
-          // If those live deltas overlap with replayed deltas, the frontend will double-append
-          // text (and double-count tokens).
-          //
-          // To make reconnect/replay idempotent and preserve causal ordering, buffer live
-          // stream events during replay and flush them after `caught-up`, skipping any deltas
-          // that were already replayed.
-          type BufferedStreamMessage = Extract<
-            WorkspaceChatMessage,
-            {
-              type:
-                | "stream-delta"
-                | "reasoning-delta"
-                | "stream-end"
-                | "stream-abort"
-                | "stream-error";
-            }
-          >;
-
-          type DeltaMessage = Extract<
-            BufferedStreamMessage,
-            { type: "stream-delta" | "reasoning-delta" }
-          >;
-
-          const isBufferedStreamMessage = (
-            message: WorkspaceChatMessage
-          ): message is BufferedStreamMessage =>
-            message.type === "stream-delta" ||
-            message.type === "reasoning-delta" ||
-            message.type === "stream-end" ||
-            message.type === "stream-abort" ||
-            message.type === "stream-error";
-
-          const isDeltaMessage = (message: BufferedStreamMessage): message is DeltaMessage =>
-            message.type === "stream-delta" || message.type === "reasoning-delta";
-
-          const isReplay = (message: WorkspaceChatMessage): boolean =>
-            typeof message === "object" &&
-            message !== null &&
-            "replay" in message &&
-            (message as { replay?: unknown }).replay === true;
-
-          const deltaKey = (message: DeltaMessage): string =>
-            JSON.stringify([message.type, message.messageId, message.timestamp, message.delta]);
-
-          let isReplaying = true;
-          const bufferedLiveStreamMessages: BufferedStreamMessage[] = [];
-
-          // Counter (not a Set) so we don't drop more buffered events than were replayed.
-          const replayedDeltaKeyCounts = new Map<string, number>();
-
-          const noteReplayedDelta = (message: DeltaMessage) => {
-            const key = deltaKey(message);
-            replayedDeltaKeyCounts.set(key, (replayedDeltaKeyCounts.get(key) ?? 0) + 1);
-          };
-
-          const shouldDropBufferedDelta = (message: DeltaMessage): boolean => {
-            const key = deltaKey(message);
-            const remaining = replayedDeltaKeyCounts.get(key) ?? 0;
-            if (remaining <= 0) {
-              return false;
-            }
-            if (remaining === 1) {
-              replayedDeltaKeyCounts.delete(key);
-            } else {
-              replayedDeltaKeyCounts.set(key, remaining - 1);
-            }
-            return true;
-          };
+          // Live stream deltas can overlap with replayed deltas on reconnect. Buffer live stream
+          // events during replay and flush after `caught-up`, skipping any deltas already delivered
+          // by replay.
+          const replayRelay = createReplayBufferedStreamMessageRelay(push);
 
           const unsubscribe = session.onChatEvent(({ message }) => {
-            if (isReplaying && isBufferedStreamMessage(message)) {
-              if (!isReplay(message)) {
-                // Preserve stream event order during replay buffering (P1): if we buffer only
-                // deltas, terminal events like stream-end can overtake them and flip the message
-                // back to partial in the frontend event processor.
-                bufferedLiveStreamMessages.push(message);
-                return;
-              }
-
-              // Track replayed deltas so we can skip replay/live duplicates (P2).
-              if (isDeltaMessage(message)) {
-                noteReplayedDelta(message);
-              }
-            }
-
-            push(message);
+            replayRelay.handleSessionMessage(message);
           });
 
           // 2. Replay history (sends caught-up at the end)
@@ -2147,18 +2172,7 @@ export const router = (authToken?: string) => {
             push(message);
           });
 
-          // Flush buffered live stream messages after replay (`caught-up` already queued by replayHistory).
-          for (const message of bufferedLiveStreamMessages) {
-            if (isDeltaMessage(message) && shouldDropBufferedDelta(message)) {
-              continue;
-            }
-            push(message);
-          }
-          isReplaying = false;
-
-          // Avoid retaining replay delta keys (including delta text) for the lifetime of the subscription.
-          replayedDeltaKeyCounts.clear();
-          bufferedLiveStreamMessages.length = 0;
+          replayRelay.finishReplay();
 
           // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
           // Client uses this to detect stalled connections vs. intentionally idle streams.
