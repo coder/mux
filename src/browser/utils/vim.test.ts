@@ -801,9 +801,10 @@ describe("Vim Command Integration Tests", () => {
         { ...initialState, text: "hello world", cursor: 6, mode: "insert" },
         ["Escape", "d", "$"]
       );
-      // Cursor at 6 in insert mode stays at 6 after ESC (on 'w')
-      // d$ deletes from 'w' to end of line
-      expect(state.text).toBe("hello ");
+      // In Vim, exiting insert mode moves the cursor left by 1.
+      // Cursor at 6 in insert mode becomes 5 after ESC (on the space before "world").
+      // d$ deletes from that space to the end of the line.
+      expect(state.text).toBe("hello");
       expect(state.mode).toBe("normal");
     });
 
