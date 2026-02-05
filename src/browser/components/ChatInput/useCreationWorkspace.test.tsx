@@ -41,8 +41,17 @@ const updatePersistedStateMock = mock((key: string, value: unknown) => {
   updatePersistedStateCalls.push([key, value]);
 });
 
+const readPersistedStringMock = mock((key: string) => {
+  if (Object.prototype.hasOwnProperty.call(persistedPreferences, key)) {
+    const value = persistedPreferences[key];
+    return typeof value === "string" ? value : undefined;
+  }
+  return undefined;
+});
+
 void mock.module("@/browser/hooks/usePersistedState", () => ({
   readPersistedState: readPersistedStateMock,
+  readPersistedString: readPersistedStringMock,
   updatePersistedState: updatePersistedStateMock,
 }));
 

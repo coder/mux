@@ -10,24 +10,31 @@ import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { getSendOptionsFromStorage } from "./sendOptions";
 import { normalizeModelPreference } from "./buildSendMessageOptions";
 
-const dom = new GlobalWindow();
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
-(globalThis as any).window = dom.window;
-(globalThis as any).document = dom.window.document;
-(globalThis as any).location = new URL("https://example.com/");
-(globalThis as any).StorageEvent = dom.window.StorageEvent;
-(globalThis as any).CustomEvent = dom.window.CustomEvent;
-/* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 
 describe("getSendOptionsFromStorage", () => {
   beforeEach(() => {
+    const windowInstance = new GlobalWindow();
+    (globalThis as any).window = windowInstance.window;
+    (globalThis as any).document = windowInstance.window.document;
+    (globalThis as any).location = new URL("https://example.com/");
+    (globalThis as any).StorageEvent = windowInstance.window.StorageEvent;
+    (globalThis as any).CustomEvent = windowInstance.window.CustomEvent;
+
     window.localStorage.clear();
     window.localStorage.setItem("model-default", JSON.stringify("openai:default"));
   });
 
   afterEach(() => {
     window.localStorage.clear();
+    (globalThis as any).window = undefined;
+    (globalThis as any).document = undefined;
+    (globalThis as any).location = undefined;
+    (globalThis as any).StorageEvent = undefined;
+    (globalThis as any).CustomEvent = undefined;
   });
+
+  /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access */
 
   test("normalizes stored model preference with shared helper", () => {
     const workspaceId = "ws-1";
