@@ -540,8 +540,9 @@ export const RemoteServers: AppStory = {
 
     await userEvent.click(editButtons[0]);
 
-    await dialogCanvas.findByText(/^Edit server$/i);
-    await dialogCanvas.findByRole("button", { name: /clear token/i });
+    // Editor header includes the server label/id (e.g., "Edit Work desktop").
+    await dialogCanvas.findByText(/^Edit Work desktop$/i);
+    await dialogCanvas.findByRole("button", { name: /^Clear local token$/i });
 
     // Verify mappings are loaded into the editor.
     await dialogCanvas.findByDisplayValue("/home/user/projects/my-app");
