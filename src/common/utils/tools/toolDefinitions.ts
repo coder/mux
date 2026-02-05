@@ -386,6 +386,9 @@ export const TaskApplyGitPatchToolResultSchema = z.union([
       success: z.literal(false),
       taskId: z.string(),
       error: z.string(),
+      dryRun: z.boolean().optional(),
+      conflictPaths: z.array(z.string()).optional(),
+      failedPatchSubject: z.string().optional(),
       note: z.string().optional(),
     })
     .strict(),
