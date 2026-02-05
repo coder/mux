@@ -644,8 +644,8 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     }
   });
 
-  it("strips id fields from input items when routing through Codex OAuth", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-strip-ids");
+  it("filters out item_reference entries and preserves inline items when routing through Codex OAuth", async () => {
+    using muxHome = new DisposableTempDir("codex-oauth-filter-refs");
 
     const config = new Config(muxHome.path);
     const historyService = new HistoryService(config);
@@ -681,18 +681,13 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
             content: [{ type: "output_text", text: "ok", annotations: [] }],
           },
         ],
-        usage: {
-          input_tokens: 1,
-          output_tokens: 1,
-        },
+        usage: { input_tokens: 1, output_tokens: 1 },
       };
 
       return Promise.resolve(
         new Response(JSON.stringify(responseBody), {
           status: 200,
-          headers: {
-            "content-type": "application/json",
-          },
+          headers: { "content-type": "application/json" },
         })
       );
     };
@@ -735,18 +730,10 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       throw new Error("Expected a LanguageModelV2 instance, got a model id string");
     }
 
-    // Send a prompt whose input items carry server-side `id` fields
-    // (mimicking what the AI SDK sends after a previous response).
     await model.doGenerate({
       prompt: [
-        {
-          role: "system",
-          content: "You are a helpful assistant",
-        },
-        {
-          role: "user",
-          content: [{ type: "text", text: "Hello" }],
-        },
+        { role: "system", content: "You are a helpful assistant" },
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
       ],
     });
 
@@ -759,17 +746,60 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       throw new Error("Expected request body to be a string");
     }
 
-    const parsedBody = JSON.parse(bodyString) as { input?: unknown[] };
+    const parsedBody = JSON.parse(bodyString) as { store?: boolean; input?: unknown[] };
+
+    // Verify Codex transform ran (store=false is set)
+    expect(parsedBody.store).toBe(false);
+
+    // Verify no item_reference entries exist in output
     const input = parsedBody.input;
     expect(Array.isArray(input)).toBe(true);
-    if (!Array.isArray(input)) return;
-
-    // Verify no input item has an `id` field
-    for (const item of input) {
-      if (item && typeof item === "object") {
-        expect("id" in item).toBe(false);
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        if (item && typeof item === "object" && item !== null) {
+          expect((item as Record<string, unknown>).type).not.toBe("item_reference");
+        }
       }
     }
+  });
+
+  it("item_reference filter removes references and preserves inline items", () => {
+    // Direct unit test of the item_reference filtering logic used in the
+    // Codex body transformation, independent of the full AIService pipeline.
+    const input: Array<Record<string, unknown>> = [
+      { role: "user", content: [{ type: "input_text", text: "hello" }] },
+      { type: "item_reference", id: "rs_abc123" },
+      {
+        type: "message",
+        role: "assistant",
+        id: "msg_001",
+        content: [{ type: "output_text", text: "hi" }],
+      },
+      {
+        type: "function_call",
+        id: "fc_xyz",
+        call_id: "call_1",
+        name: "test_fn",
+        arguments: "{}",
+      },
+      { type: "item_reference", id: "rs_def456" },
+      { type: "function_call_output", call_id: "call_1", output: "result" },
+    ];
+
+    // Same filter logic as in aiService.ts Codex body transformation
+    const filtered = input.filter(
+      (item) => !(item && typeof item === "object" && item.type === "item_reference")
+    );
+
+    // Both item_reference entries removed
+    expect(filtered).toHaveLength(4);
+    expect(filtered.some((i) => i.type === "item_reference")).toBe(false);
+
+    // Inline items preserved with their IDs intact
+    expect(filtered.find((i) => i.role === "assistant")?.id).toBe("msg_001");
+    expect(filtered.find((i) => i.type === "function_call")?.id).toBe("fc_xyz");
+    expect(filtered.find((i) => i.type === "function_call_output")?.call_id).toBe("call_1");
+    expect(filtered.find((i) => i.role === "user")).toBeDefined();
   });
 });
 

@@ -1068,15 +1068,17 @@ export class AIService extends EventEmitter {
                     }
                   }
 
-                  // Strip server-side item `id` fields from input items. Since we set
-                  // store=false, the Codex endpoint cannot resolve these references and
-                  // returns 404. Items must be sent as full inline content without ids.
+                  // Filter out item_reference entries from the input. The AI SDK sends
+                  // these as an optimization when store=true — bare { type: "item_reference",
+                  // id: "rs_..." } objects that the server expands by looking up stored
+                  // content. With store=false (required for Codex), these lookups fail.
+                  // The full inline content is always present alongside references, so
+                  // removing them doesn't lose conversation context.
                   if (Array.isArray(json.input)) {
-                    for (const item of json.input as Array<Record<string, unknown>>) {
-                      if (item && typeof item === "object" && "id" in item) {
-                        delete item.id;
-                      }
-                    }
+                    json.input = (json.input as Array<Record<string, unknown>>).filter(
+                      (item) =>
+                        !(item && typeof item === "object" && item.type === "item_reference")
+                    );
                   }
 
                   const existingInstructions =
