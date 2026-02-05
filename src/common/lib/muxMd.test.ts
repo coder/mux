@@ -85,6 +85,39 @@ describe("muxMd", () => {
         }
       }
     });
+
+    it("should use globalThis.__MUX_MD_URL_OVERRIDE__ in browser mode without preload", () => {
+      const originalOverride = process.env.MUX_MD_URL_OVERRIDE;
+      const originalDefineOverride = globalThis.__MUX_MD_URL_OVERRIDE__;
+      const globalWithWindow = globalThis as unknown as {
+        window?: Record<string, unknown>;
+      };
+      const originalWindow = globalWithWindow.window;
+
+      // When running `make dev-server`, the renderer runs in a normal browser where `window.api`
+      // is not available, so we rely on the Vite-injected define.
+      process.env.MUX_MD_URL_OVERRIDE = "https://should-not-be-used.test";
+      globalThis.__MUX_MD_URL_OVERRIDE__ = "https://mux-md-staging.test/some/path";
+      globalWithWindow.window = {};
+
+      try {
+        expect(getMuxMdBaseUrl()).toBe("https://mux-md-staging.test");
+      } finally {
+        if (originalOverride === undefined) {
+          delete process.env.MUX_MD_URL_OVERRIDE;
+        } else {
+          process.env.MUX_MD_URL_OVERRIDE = originalOverride;
+        }
+
+        globalThis.__MUX_MD_URL_OVERRIDE__ = originalDefineOverride;
+
+        if (originalWindow === undefined) {
+          delete globalWithWindow.window;
+        } else {
+          globalWithWindow.window = originalWindow;
+        }
+      }
+    });
   });
 
   describe("isMuxMdUrl", () => {

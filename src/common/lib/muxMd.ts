@@ -29,6 +29,10 @@ function getMuxMdUrlOverrideRaw(): string | undefined {
     const fromPreload = window.api?.muxMdUrlOverride;
     if (fromPreload && fromPreload.trim().length > 0) return fromPreload;
 
+    // In dev-server browser mode (no Electron preload), Vite injects the env var into the bundle.
+    const fromViteDefine = globalThis.__MUX_MD_URL_OVERRIDE__;
+    if (fromViteDefine && fromViteDefine.trim().length > 0) return fromViteDefine;
+
     // Important: avoid falling back to `process.env` in the renderer bundle.
     return undefined;
   }
