@@ -48,6 +48,7 @@ import {
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
+type CopilotLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
 
 interface CodexOauthDeviceFlow {
   flowId: string;
@@ -117,6 +118,10 @@ function getProviderFields(provider: ProviderName): FieldConfig[] {
 
   if (provider === "mux-gateway") {
     return [];
+  }
+
+  if (provider === "github-copilot") {
+    return []; // OAuth-based, no manual key entry
   }
 
   // Default for most providers
@@ -775,6 +780,102 @@ export function ProvidersSection() {
           ? "Re-login to Mux Gateway"
           : "Login to Mux Gateway";
 
+  // --- GitHub Copilot Device Code Flow ---
+  const [copilotLoginStatus, setCopilotLoginStatus] = useState<CopilotLoginStatus>("idle");
+  const [copilotLoginError, setCopilotLoginError] = useState<string | null>(null);
+  const [copilotFlowId, setCopilotFlowId] = useState<string | null>(null);
+  const [copilotUserCode, setCopilotUserCode] = useState<string | null>(null);
+  const [copilotVerificationUri, setCopilotVerificationUri] = useState<string | null>(null);
+  const copilotLoginAttemptRef = useRef(0);
+
+  const copilotApiKeySet = config?.["github-copilot"]?.apiKeySet ?? false;
+  const copilotLoginInProgress =
+    copilotLoginStatus === "waiting" || copilotLoginStatus === "starting";
+  const copilotIsLoggedIn = copilotApiKeySet || copilotLoginStatus === "success";
+
+  const cancelCopilotLogin = () => {
+    copilotLoginAttemptRef.current++;
+    if (api && copilotFlowId) {
+      void (api as CopilotOAuthCapable).copilotOauth?.cancelDeviceFlow({
+        flowId: copilotFlowId,
+      });
+    }
+    setCopilotFlowId(null);
+    setCopilotUserCode(null);
+    setCopilotVerificationUri(null);
+    setCopilotLoginStatus("idle");
+    setCopilotLoginError(null);
+  };
+
+  const clearCopilotCredentials = () => {
+    if (!api) return;
+    cancelCopilotLogin();
+    updateOptimistically("github-copilot", { apiKeySet: false });
+    void api.providers.setProviderConfig({
+      provider: "github-copilot",
+      keyPath: ["apiKey"],
+      value: "",
+    });
+  };
+
+  const startCopilotLogin = async () => {
+    const attempt = ++copilotLoginAttemptRef.current;
+    try {
+      setCopilotLoginError(null);
+      setCopilotLoginStatus("starting");
+
+      if (!api) {
+        setCopilotLoginStatus("error");
+        setCopilotLoginError("API not connected.");
+        return;
+      }
+
+      const copilotApi = (api as CopilotOAuthCapable).copilotOauth;
+      if (!copilotApi) {
+        setCopilotLoginStatus("error");
+        setCopilotLoginError("Copilot OAuth not available. Please update Mux.");
+        return;
+      }
+
+      const startResult = await copilotApi.startDeviceFlow({});
+
+      if (attempt !== copilotLoginAttemptRef.current) return;
+
+      if (!startResult.success) {
+        setCopilotLoginStatus("error");
+        setCopilotLoginError(startResult.error);
+        return;
+      }
+
+      const { flowId, verificationUri, userCode } = startResult.data;
+      setCopilotFlowId(flowId);
+      setCopilotUserCode(userCode);
+      setCopilotVerificationUri(verificationUri);
+      setCopilotLoginStatus("waiting");
+
+      // Open verification URL in browser
+      window.open(verificationUri, "_blank", "noopener");
+
+      // Wait for flow to complete (polling happens on backend)
+      const waitResult = await copilotApi.waitForDeviceFlow({ flowId });
+
+      if (attempt !== copilotLoginAttemptRef.current) return;
+
+      if (waitResult.success) {
+        setCopilotLoginStatus("success");
+        return;
+      }
+
+      setCopilotLoginStatus("error");
+      setCopilotLoginError(waitResult.error);
+    } catch (err) {
+      if (attempt !== copilotLoginAttemptRef.current) return;
+      const message = err instanceof Error ? err.message : String(err);
+      setCopilotLoginStatus("error");
+      setCopilotLoginError(message);
+    }
+  };
+
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
 
   useEffect(() => {
@@ -821,6 +922,9 @@ export function ProvidersSection() {
       const next = prev === provider ? null : provider;
       if (prev === "mux-gateway" && next !== "mux-gateway") {
         cancelMuxGatewayLogin();
+      }
+      if (prev === "github-copilot" && next !== "github-copilot") {
+        cancelCopilotLogin();
       }
       return next;
     });
@@ -1084,6 +1188,93 @@ export function ProvidersSection() {
                     )}
                   </div>
                 )}
+
+                {provider === "github-copilot" && (
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">
+                        Authentication
+                      </label>
+                      <span className="text-muted text-xs">
+                        {copilotIsLoggedIn ? "Logged in" : "Not logged in"}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            void startCopilotLogin();
+                          }}
+                          disabled={copilotLoginInProgress}
+                        >
+                          {copilotLoginStatus === "error"
+                            ? "Try again"
+                            : copilotLoginInProgress
+                              ? "Waiting for authorization..."
+                              : copilotIsLoggedIn
+                                ? "Re-login with GitHub"
+                                : "Login with GitHub"}
+                        </Button>
+
+                        {copilotLoginInProgress && (
+                          <Button variant="secondary" size="sm" onClick={cancelCopilotLogin}>
+                            Cancel
+                          </Button>
+                        )}
+
+                        {copilotIsLoggedIn && (
+                          <Button variant="ghost" size="sm" onClick={clearCopilotCredentials}>
+                            Log out
+                          </Button>
+                        )}
+                      </div>
+
+                      {copilotLoginStatus === "waiting" && copilotUserCode && (
+                        <div className="bg-background-tertiary space-y-2 rounded-md p-3">
+                          <p className="text-muted text-xs">Enter this code on GitHub:</p>
+                          <div className="flex items-center gap-2">
+                            <code className="text-accent text-lg font-bold tracking-widest">
+                              {copilotUserCode}
+                            </code>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(copilotUserCode);
+                              }}
+                              className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                          {copilotVerificationUri && (
+                            <p className="text-muted text-xs">
+                              If the browser didn&apos;t open,{" "}
+                              <a
+                                href={copilotVerificationUri}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-accent hover:text-accent-light underline"
+                              >
+                                click here
+                              </a>
+                              .
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {copilotLoginStatus === "error" && copilotLoginError && (
+                        <p className="text-destructive text-xs">
+                          Login failed: {copilotLoginError}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {fields.map((fieldConfig) => {
                   const isEditing =
                     editingField?.provider === provider && editingField?.field === fieldConfig.key;

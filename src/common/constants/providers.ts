@@ -86,6 +86,12 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createOllama",
     requiresApiKey: false, // Local service
   },
+  "github-copilot": {
+    displayName: "GitHub Copilot",
+    import: () => import("@ai-sdk/openai"),
+    factoryName: "createOpenAI",
+    requiresApiKey: true, // Uses OAuth token stored as apiKey
+  },
 } as const satisfies Record<string, ProviderDefinition>;
 
 /**
