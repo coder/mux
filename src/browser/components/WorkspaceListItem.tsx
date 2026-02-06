@@ -24,7 +24,6 @@ import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -340,8 +339,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
 
-  const showUnreadBar =
-    !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
+  const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -595,10 +593,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     {/* Always render text in same structure; Shimmer just adds animation class */}
                     <Shimmer
-                      className={cn(
-                        "w-full truncate",
-                        !(isWorking || isCreating) && "no-shimmer"
-                      )}
+                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
                       colorClass="var(--color-foreground)"
                     >
                       {displayTitle}

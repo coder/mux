@@ -1630,11 +1630,14 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private enrichFrontendMetadata(metadata: FrontendWorkspaceMetadata): FrontendWorkspaceMetadata {
+    const isInitializing =
+      this.initStateManager.getInitState(metadata.id)?.status === "running" || undefined;
     return {
       ...metadata,
       isRemoving: this.removingWorkspaces.has(metadata.id) || undefined,
-      isInitializing:
-        this.initStateManager.getInitState(metadata.id)?.status === "running" || undefined,
+      isInitializing,
+      // Populate the schema's `status` field so the frontend can use `status === "creating"`
+      status: isInitializing ? "creating" : undefined,
     };
   }
 

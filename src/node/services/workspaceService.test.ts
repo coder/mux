@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { describe, expect, test, mock, beforeEach, spyOn } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
@@ -12,12 +12,13 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { SessionTimingService } from "./sessionTimingService";
 import type { AIService } from "./aiService";
-import type { InitStateManager } from "./initStateManager";
+import type { InitStateManager, InitStatus } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
 import type { BashToolResult } from "@/common/types/tools";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -93,7 +94,10 @@ describe("WorkspaceService rename lock", () => {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
-    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -206,6 +210,8 @@ describe("WorkspaceService executeBash archive guards", () => {
     };
 
     const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
       waitForInit: waitForInitMock,
     };
 
@@ -300,7 +306,10 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
-    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -441,7 +450,10 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
-    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -565,6 +577,8 @@ describe("WorkspaceService remove timing rollup", () => {
       const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
+        on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
         clearInMemoryState: mock(() => undefined),
       };
       const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
@@ -683,7 +697,10 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
-    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -819,7 +836,10 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
 
     const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
-    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -971,7 +991,10 @@ describe("WorkspaceService archiveMergedInProject", () => {
 
     const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
-    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock(() => undefined),
+    };
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -1451,8 +1474,8 @@ describe("WorkspaceService init cancellation", () => {
       const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
-        // WorkspaceService subscribes to init-end events on construction.
         on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
         clearInMemoryState: clearInMemoryStateMock,
       };
       const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
@@ -1531,8 +1554,8 @@ describe("WorkspaceService init cancellation", () => {
       const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
-        // WorkspaceService subscribes to init-end events on construction.
         on: mock(() => undefined as unknown as InitStateManager),
+        getInitState: mock(() => undefined),
         clearInMemoryState: mock((_workspaceId: string) => undefined),
       };
       const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
