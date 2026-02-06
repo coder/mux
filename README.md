@@ -14,7 +14,7 @@
 
 </div>
 
-Mux is a desktop & browser application for parallel agentic development.
+Mux is a desktop & browser application for parallel agentic development. It enables developers to plan and execute tasks with multiple AI agents on local or remote compute.
 
 <p><img src="./docs/img/mux-demo.gif" alt="mux product demo" width="100%" /></p>
 
