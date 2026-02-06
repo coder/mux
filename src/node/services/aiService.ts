@@ -1181,6 +1181,33 @@ export class AIService extends EventEmitter {
         const model = provider.responses(modelId);
         if (shouldRouteThroughCodexOauth) {
           markModelCostsIncluded(model);
+
+          // Wrap model to inject store=false into providerOptions so the SDK
+          // sends full inline content instead of item_reference lookups.
+          // The Codex endpoint requires store=false; without this, the SDK
+          // defaults to store=true and sends bare { type: "item_reference" }
+          // items that can't be resolved.
+          const injectStoreFlag = (
+            options: Parameters<typeof model.doStream>[0]
+          ): Parameters<typeof model.doStream>[0] => {
+            const openaiOpts =
+              (options.providerOptions?.openai as Record<string, unknown> | undefined) ?? {};
+            return {
+              ...options,
+              providerOptions: {
+                ...options.providerOptions,
+                openai: {
+                  ...openaiOpts,
+                  store: false,
+                },
+              },
+            };
+          };
+
+          const originalDoStream = model.doStream.bind(model);
+          const originalDoGenerate = model.doGenerate.bind(model);
+          model.doStream = (options) => originalDoStream(injectStoreFlag(options));
+          model.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
         }
         return Ok(model);
       }
