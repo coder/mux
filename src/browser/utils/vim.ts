@@ -1052,12 +1052,17 @@ function applyLastEditOnce(state: VimState, lastEdit: LastEdit): VimState {
         });
       }
 
-      const result = changeRange(text, range.from, range.to, yankBuffer);
+      const removed = text.slice(range.from, range.to);
+      const yankText = removed.endsWith("\n") ? removed.slice(0, -1) : removed;
+
+      const replacement = range.to < text.length ? "\n" : "";
+      const newText = text.slice(0, range.from) + replacement + text.slice(range.to);
+
       return completeOperation(state, {
         mode: "insert",
-        text: result.text,
-        cursor: result.cursor,
-        yankBuffer: result.yankBuffer,
+        text: newText,
+        cursor: range.from,
+        yankBuffer: yankText,
       });
     }
 
@@ -1819,6 +1824,22 @@ function applyVisualOperator(state: VimState, op: "d" | "c" | "y"): VimState {
     }
 
     case "c": {
+      if (range.kind === "line") {
+        const yankText = removed.endsWith("\n") ? removed.slice(0, -1) : removed;
+
+        const replacement = range.end < text.length ? "\n" : "";
+        const newText = text.slice(0, range.start) + replacement + text.slice(range.end);
+
+        return completeOperation(state, {
+          mode: "insert",
+          text: newText,
+          cursor: range.start,
+          yankBuffer: yankText,
+          visualAnchor: null,
+          ...(visualLastEdit != null ? { lastEdit: visualLastEdit } : {}),
+        });
+      }
+
       const result = changeRange(text, range.start, range.end, yankBuffer);
       return completeOperation(state, {
         mode: "insert",

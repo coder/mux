@@ -207,6 +207,19 @@ describe("Vim Command Integration Tests", () => {
       expect(state.cursor).toBe(0);
       expect(state.yankBuffer).toBe("one\ntwo\n");
     });
+
+    test("V enters visual line mode and c changes whole lines", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one\ntwo\nthree", cursor: 0, mode: "normal" },
+        ["V", "j", "c"]
+      );
+
+      expect(state.mode).toBe("insert");
+      expect(state.visualAnchor).toBeNull();
+      expect(state.text).toBe("\nthree");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("one\ntwo");
+    });
   });
 
   describe("Navigation", () => {
