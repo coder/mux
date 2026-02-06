@@ -46,6 +46,9 @@ export function validateRedirectUri(uri: string, opts?: { allowedHosts?: string[
 /**
  * Check whether a hostname is a private/internal address.
  * For SSRF protection before outbound fetches.
+ *
+ * Covers IPv4 private ranges, IPv6 loopback/link-local/ULA,
+ * and IPv6-mapped IPv4 addresses (e.g. ::ffff:127.0.0.1).
  */
 export function isPrivateHost(hostname: string): boolean {
   const lower = hostname.toLowerCase();
@@ -55,8 +58,28 @@ export function isPrivateHost(hostname: string): boolean {
   // localhost
   if (bare === "localhost") return true;
 
-  // IPv4 private ranges
-  const ipv4Private = [
+  // IPv6-mapped IPv4 (::ffff:x.x.x.x) — extract the IPv4 part and check it
+  const v4MappedMatch = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(bare);
+  if (v4MappedMatch) {
+    return isPrivateIPv4(v4MappedMatch[1]);
+  }
+
+  // Plain IPv4 private ranges
+  if (isPrivateIPv4(bare)) return true;
+
+  // IPv6 loopback
+  if (bare === "::1") return true;
+  // IPv6 link-local (fe80::/10)
+  if (bare.startsWith("fe80")) return true;
+  // IPv6 Unique Local Address (fc00::/7 — covers fc00:: and fd00::)
+  if (bare.startsWith("fc") || bare.startsWith("fd")) return true;
+
+  return false;
+}
+
+/** Check an IPv4 address string against private/reserved ranges. */
+function isPrivateIPv4(ip: string): boolean {
+  const patterns = [
     /^127\./, // loopback
     /^10\./, // Class A private
     /^172\.(1[6-9]|2\d|3[01])\./, // Class B private
@@ -64,16 +87,7 @@ export function isPrivateHost(hostname: string): boolean {
     /^169\.254\./, // link-local
     /^0\./, // "this" network
   ];
-  for (const re of ipv4Private) {
-    if (re.test(bare)) return true;
-  }
-
-  // IPv6 loopback
-  if (bare === "::1") return true;
-  // IPv6 link-local
-  if (bare.startsWith("fe80")) return true;
-
-  return false;
+  return patterns.some((re) => re.test(ip));
 }
 
 /**

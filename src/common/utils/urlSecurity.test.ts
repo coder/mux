@@ -115,6 +115,16 @@ describe("isPrivateHost", () => {
     ["fe80::1", "IPv6 link-local"],
     ["localhost", "localhost"],
     ["LOCALHOST", "localhost uppercase"],
+    // IPv6-mapped IPv4 private addresses
+    ["::ffff:127.0.0.1", "IPv6-mapped loopback"],
+    ["::ffff:10.0.0.1", "IPv6-mapped Class A private"],
+    ["::ffff:192.168.1.1", "IPv6-mapped Class C private"],
+    ["::ffff:169.254.1.1", "IPv6-mapped link-local"],
+    ["[::ffff:127.0.0.1]", "IPv6-mapped loopback with brackets"],
+    // IPv6 Unique Local Addresses (fc00::/7)
+    ["fc00::1", "IPv6 ULA (fc00::)"],
+    ["fd00::1", "IPv6 ULA (fd00::)"],
+    ["fdab:1234::1", "IPv6 ULA (fdab prefix)"],
   ] as const;
 
   for (const [host, label] of privateCases) {
@@ -130,6 +140,9 @@ describe("isPrivateHost", () => {
     ["203.0.113.1", "documentation range (public)"],
     ["172.15.0.1", "just below Class B private range"],
     ["172.32.0.1", "just above Class B private range"],
+    // IPv6-mapped public IPv4 should not be blocked
+    ["::ffff:8.8.8.8", "IPv6-mapped public IP"],
+    ["2001:db8::1", "IPv6 documentation range (not ULA)"],
   ] as const;
 
   for (const [host, label] of publicCases) {
