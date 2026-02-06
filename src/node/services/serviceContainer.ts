@@ -419,6 +419,7 @@ export class ServiceContainer {
     await this.muxGatewayOauthService.dispose();
     await this.muxGovernorOauthService.dispose();
     await this.codexOauthService.dispose();
+
     this.copilotOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }

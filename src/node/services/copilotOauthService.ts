@@ -141,17 +141,19 @@ export class CopilotOauthService {
     return result;
   }
 
-  async cancelDeviceFlow(flowId: string): Promise<void> {
+  cancelDeviceFlow(flowId: string): void {
     const flow = this.flows.get(flowId);
     if (!flow) return;
 
     log.debug(`Copilot OAuth device flow cancelled (flowId=${flowId})`);
-    await this.finishFlow(flowId, Err("Device flow cancelled"));
+    this.finishFlow(flowId, Err("Device flow cancelled"));
   }
 
-  async dispose(): Promise<void> {
+  dispose(): void {
     const flowIds = [...this.flows.keys()];
-    await Promise.all(flowIds.map((id) => this.finishFlow(id, Err("App shutting down"))));
+    for (const id of flowIds) {
+      this.finishFlow(id, Err("App shutting down"));
+    }
     this.flows.clear();
   }
 
@@ -224,7 +226,7 @@ export class CopilotOauthService {
     }
   }
 
-  private async finishFlow(flowId: string, result: Result<void, string>): Promise<void> {
+  private finishFlow(flowId: string, result: Result<void, string>): void {
     const flow = this.flows.get(flowId);
     if (!flow || flow.cancelled) return;
 

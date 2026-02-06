@@ -1439,7 +1439,7 @@ export class AIService extends EventEmitter {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
-        const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+        const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
 
         const baseFetch = getProviderFetch(providerConfig);
         const copilotFetchFn = async (
@@ -1447,7 +1447,7 @@ export class AIService extends EventEmitter {
           init?: Parameters<typeof fetch>[1]
         ) => {
           const headers = new Headers(init?.headers);
-          headers.set("Authorization", `Bearer ${creds.apiKey}`);
+          headers.set("Authorization", `Bearer ${creds.apiKey ?? ""}`);
           headers.set("Openai-Intent", "conversation-edits");
           headers.delete("x-api-key");
           return baseFetch(input, { ...init, headers });
