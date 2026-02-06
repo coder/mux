@@ -1075,9 +1075,10 @@ export const ProjectSecretsModal: AppStory = {
     );
     if (!manageSecretsButton) throw new Error("manage secrets button not found");
 
-    // Force it visible so the click is reliable in CI
+    // Force it visible and dispatch a direct click (userEvent.click can conflict
+    // with the Tooltip asChild wrapper in headless Chromium)
     manageSecretsButton.style.opacity = "1";
-    await userEvent.click(manageSecretsButton);
+    manageSecretsButton.click();
 
     // Wait for modal with secrets to appear (portaled to document.body)
     await waitFor(
