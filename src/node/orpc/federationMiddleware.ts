@@ -411,6 +411,11 @@ export function createFederationMiddleware() {
       return options.next();
     }
 
+    // Skip routes that handle their own remote splitting
+    if (isExactPath(options.path, ["workspace", "getSessionUsageBatch"])) {
+      return options.next();
+    }
+
     const rewrittenInput = rewriteFederationInputIds(input);
     if (!rewrittenInput) {
       return options.next();

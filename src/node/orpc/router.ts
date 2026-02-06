@@ -63,6 +63,7 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { decodeRemoteWorkspaceId, encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";
@@ -3643,7 +3644,82 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getSessionUsageBatch.input)
         .output(schemas.workspace.getSessionUsageBatch.output)
         .handler(async ({ context, input }) => {
-          return context.sessionUsageService.getSessionUsageBatch(input.workspaceIds);
+          // Partition workspace IDs into local vs per-remote-server buckets.
+          // Federation middleware is skipped for this route because the input
+          // is an array that may mix local and multi-server remote IDs.
+          const localIds: string[] = [];
+          const remoteServerBuckets = new Map<string, { serverId: string; remoteIds: string[] }>();
+
+          for (const id of input.workspaceIds) {
+            const decoded = decodeRemoteWorkspaceId(id);
+            if (!decoded) {
+              localIds.push(id);
+              continue;
+            }
+            const bucket = remoteServerBuckets.get(decoded.serverId);
+            if (bucket) {
+              bucket.remoteIds.push(decoded.remoteId);
+            } else {
+              remoteServerBuckets.set(decoded.serverId, {
+                serverId: decoded.serverId,
+                remoteIds: [decoded.remoteId],
+              });
+            }
+          }
+
+          // Fetch local results.
+          const localResultsPromise =
+            localIds.length > 0
+              ? context.sessionUsageService.getSessionUsageBatch(localIds)
+              : Promise.resolve(
+                  {} as Record<string, z.infer<typeof schemas.workspace.getSessionUsage.output>>
+                );
+
+          // Fetch remote results per server.
+          const config = context.config.loadConfigOrDefault();
+          const remoteResultsPromise = Promise.all(
+            Array.from(remoteServerBuckets.values()).map(async ({ serverId, remoteIds }) => {
+              const server = config.remoteServers?.find((entry) => entry.id === serverId) ?? null;
+              assert(server, `Remote server not found for ID: ${serverId}`);
+
+              const authToken =
+                context.remoteServersService.getAuthToken({ id: serverId }) ?? undefined;
+              const client = createRemoteClient<RemoteMuxOrpcClient>({
+                baseUrl: server.baseUrl,
+                authToken,
+                timeoutMs: 30_000,
+              });
+
+              const results = await client.workspace.getSessionUsageBatch({
+                workspaceIds: remoteIds,
+              });
+
+              // Re-key results with encoded IDs so the caller sees the
+              // original remote-encoded workspace IDs it sent in.
+              const reKeyed: Record<
+                string,
+                z.infer<typeof schemas.workspace.getSessionUsage.output>
+              > = {};
+              for (const [remoteId, usage] of Object.entries(results)) {
+                reKeyed[encodeRemoteWorkspaceId(serverId, remoteId)] = usage;
+              }
+              return reKeyed;
+            })
+          );
+
+          const [localResults, remoteResults] = await Promise.all([
+            localResultsPromise,
+            remoteResultsPromise,
+          ]);
+
+          // Merge local + all remote result dictionaries.
+          const merged: Record<string, z.infer<typeof schemas.workspace.getSessionUsage.output>> = {
+            ...localResults,
+          };
+          for (const remoteResult of remoteResults) {
+            Object.assign(merged, remoteResult);
+          }
+          return merged;
         }),
       stats: {
         subscribe: t

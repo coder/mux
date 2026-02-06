@@ -79,6 +79,9 @@ export interface RemoteMuxOrpcClient {
     getSubagentTranscript: (
       input: z.infer<typeof schemas.workspace.getSubagentTranscript.input>
     ) => Promise<z.infer<typeof schemas.workspace.getSubagentTranscript.output>>;
+    getSessionUsageBatch: (
+      input: z.infer<typeof schemas.workspace.getSessionUsageBatch.input>
+    ) => Promise<z.infer<typeof schemas.workspace.getSessionUsageBatch.output>>;
   };
   agents: {
     list: (
