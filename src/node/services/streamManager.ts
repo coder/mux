@@ -162,6 +162,8 @@ interface WorkspaceStreamInfo {
   lastPartTimestamp: number;
 
   model: string;
+  /** Effective thinking level after model policy clamping */
+  thinkingLevel?: string;
   initialMetadata?: Partial<MuxMetadata>;
   request: StreamRequestConfig;
   // Track last prepared step messages for safe retries after tool steps
@@ -975,7 +977,8 @@ export class StreamManager extends EventEmitter {
     maxOutputTokens?: number,
     toolPolicy?: ToolPolicy,
     hasQueuedMessage?: () => boolean,
-    workspaceName?: string
+    workspaceName?: string,
+    thinkingLevel?: string
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
@@ -1014,6 +1017,7 @@ export class StreamManager extends EventEmitter {
       startTime,
       lastPartTimestamp: startTime,
       model: modelString,
+      thinkingLevel,
       initialMetadata,
       didRetryPreviousResponseIdAtStep: false,
       stepTracker,
@@ -1229,6 +1233,7 @@ export class StreamManager extends EventEmitter {
       startTime: streamInfo.startTime,
       ...(streamStartAgentId && { agentId: streamStartAgentId }),
       ...(streamStartMode && { mode: streamStartMode }),
+      ...(streamInfo.thinkingLevel && { thinkingLevel: streamInfo.thinkingLevel }),
     } as StreamStartEvent);
   }
 
@@ -2261,7 +2266,8 @@ export class StreamManager extends EventEmitter {
     toolPolicy?: ToolPolicy,
     providedStreamToken?: StreamToken,
     hasQueuedMessage?: () => boolean,
-    workspaceName?: string
+    workspaceName?: string,
+    thinkingLevel?: string
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -2335,7 +2341,8 @@ export class StreamManager extends EventEmitter {
           maxOutputTokens,
           toolPolicy,
           hasQueuedMessage,
-          workspaceName
+          workspaceName,
+          thinkingLevel
         );
 
         // Guard against a narrow race:

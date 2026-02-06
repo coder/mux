@@ -2300,6 +2300,7 @@ export class AIService extends EventEmitter {
           startTime: Date.now(),
           agentId: effectiveAgentId,
           mode: effectiveMode,
+          thinkingLevel: effectiveThinkingLevel,
         };
         this.emit("stream-start", streamStartEvent);
 
@@ -2342,6 +2343,7 @@ export class AIService extends EventEmitter {
           startTime: Date.now(),
           agentId: effectiveAgentId,
           mode: effectiveMode,
+          thinkingLevel: effectiveThinkingLevel,
         };
         this.emit("stream-start", streamStartEvent);
 
@@ -3158,7 +3160,8 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
         streamToken, // Pass the pre-generated stream token
         hasQueuedMessage,
-        metadata.name
+        metadata.name,
+        effectiveThinkingLevel
       );
 
       if (!streamResult.success) {

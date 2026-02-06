@@ -54,6 +54,9 @@ export const DeleteMessageSchema = z.object({
   historySequences: z.array(z.number()),
 });
 
+// Matches THINKING_LEVELS from src/common/types/thinking.ts
+const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
+
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
   workspaceId: z.string(),
@@ -75,6 +78,9 @@ export const StreamStartEventSchema = z.object({
   }),
   agentId: AgentIdSchema.optional().catch(undefined).meta({
     description: "Agent id for this stream",
+  }),
+  thinkingLevel: ThinkingLevelSchema.optional().meta({
+    description: "Effective thinking level after model policy clamping",
   }),
 });
 

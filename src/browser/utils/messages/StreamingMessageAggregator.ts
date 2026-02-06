@@ -111,6 +111,9 @@ interface StreamingContext {
 
   /** Mode (plan/exec) */
   mode?: string;
+
+  /** Effective thinking level after model policy clamping */
+  thinkingLevel?: string;
 }
 
 /**
@@ -1155,6 +1158,20 @@ export class StreamingMessageAggregator {
     return undefined;
   }
 
+  /**
+   * Returns the effective thinking level for the current or most recent stream.
+   * This reflects the actual level used after model policy clamping, not the
+   * user-configured level.
+   */
+  getCurrentThinkingLevel(): string | undefined {
+    // If there's an active stream, return its thinking level
+    for (const context of this.activeStreams.values()) {
+      return context.thinkingLevel;
+    }
+
+    return undefined;
+  }
+
   clearActiveStreams(): void {
     const activeMessageIds = Array.from(this.activeStreams.keys());
     this.activeStreams.clear();
@@ -1234,6 +1251,7 @@ export class StreamingMessageAggregator {
       toolExecutionMs: 0,
       pendingToolStarts: new Map(),
       mode: data.mode,
+      thinkingLevel: data.thinkingLevel,
     };
 
     // Use messageId as key - ensures only ONE stream per message
