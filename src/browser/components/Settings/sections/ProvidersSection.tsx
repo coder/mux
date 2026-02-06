@@ -788,9 +788,7 @@ export function ProvidersSection() {
   const [copilotVerificationUri, setCopilotVerificationUri] = useState<string | null>(null);
   const [copilotCodeCopied, setCopilotCodeCopied] = useState(false);
   const [copilotEnterpriseUrl, setCopilotEnterpriseUrl] = useState(
-    () =>
-      ((config?.["github-copilot"] as Record<string, unknown> | undefined)
-        ?.enterpriseDomain as string) ?? ""
+    () => config?.["github-copilot"]?.enterpriseDomain ?? ""
   );
   const copilotLoginAttemptRef = useRef(0);
   const copilotFlowIdRef = useRef<string | null>(null);

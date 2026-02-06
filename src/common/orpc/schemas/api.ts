@@ -138,6 +138,8 @@ export const ProviderConfigInfoSchema = z.object({
   codexOauthDefaultAuth: z.enum(["oauth", "apiKey"]).optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
+  /** GitHub Copilot-specific: enterprise domain (e.g. "github.mycompany.com") */
+  enterpriseDomain: z.string().optional(),
   /** Mux Gateway-specific fields */
   couponCodeSet: z.boolean().optional(),
 });
