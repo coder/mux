@@ -10,7 +10,6 @@ import type { BrowserWindow } from "electron";
 import { Command } from "commander";
 import { validateProjectPath } from "@/node/utils/pathUtils";
 import { createOrpcServer } from "@/node/orpc/server";
-import type { ORPCContext } from "@/node/orpc/context";
 import { VERSION } from "@/version";
 import {
   buildMuxMdnsServiceOptions,
@@ -101,39 +100,7 @@ const mockWindow: BrowserWindow = {
   const sshHost = CLI_SSH_HOST ?? process.env.MUX_SSH_HOST ?? config.getServerSshHost();
   serviceContainer.serverService.setSshHost(sshHost);
 
-  // Build oRPC context from services
-  const context: ORPCContext = {
-    config: serviceContainer.config,
-    aiService: serviceContainer.aiService,
-    projectService: serviceContainer.projectService,
-    workspaceService: serviceContainer.workspaceService,
-    taskService: serviceContainer.taskService,
-    muxGatewayOauthService: serviceContainer.muxGatewayOauthService,
-    muxGovernorOauthService: serviceContainer.muxGovernorOauthService,
-    codexOauthService: serviceContainer.codexOauthService,
-    copilotOauthService: serviceContainer.copilotOauthService,
-    providerService: serviceContainer.providerService,
-    terminalService: serviceContainer.terminalService,
-    editorService: serviceContainer.editorService,
-    windowService: serviceContainer.windowService,
-    updateService: serviceContainer.updateService,
-    tokenizerService: serviceContainer.tokenizerService,
-    serverService: serviceContainer.serverService,
-    menuEventService: serviceContainer.menuEventService,
-    workspaceMcpOverridesService: serviceContainer.workspaceMcpOverridesService,
-    mcpConfigService: serviceContainer.mcpConfigService,
-    mcpOauthService: serviceContainer.mcpOauthService,
-    featureFlagService: serviceContainer.featureFlagService,
-    sessionTimingService: serviceContainer.sessionTimingService,
-    mcpServerManager: serviceContainer.mcpServerManager,
-    voiceService: serviceContainer.voiceService,
-    telemetryService: serviceContainer.telemetryService,
-    experimentsService: serviceContainer.experimentsService,
-    policyService: serviceContainer.policyService,
-    sessionUsageService: serviceContainer.sessionUsageService,
-    signingService: serviceContainer.signingService,
-    coderService: serviceContainer.coderService,
-  };
+  const context = serviceContainer.toORPCContext();
 
   const mdnsAdvertiser = new MdnsAdvertiserService();
   const server = await createOrpcServer({

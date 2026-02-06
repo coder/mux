@@ -52,6 +52,7 @@ import {
 } from "@/node/runtime/coderLifecycleHooks";
 import { setGlobalCoderService } from "@/node/runtime/runtimeFactory";
 import { PolicyService } from "@/node/services/policyService";
+import type { ORPCContext } from "@/node/orpc/context";
 
 const MUX_HELP_CHAT_WELCOME_MESSAGE_ID = "mux-chat-welcome";
 const MUX_HELP_CHAT_WELCOME_MESSAGE = `Hi, I'm Mux.
@@ -357,6 +358,46 @@ export class ServiceContainer {
         error: appendResult.error,
       });
     }
+  }
+
+  /**
+   * Build the ORPCContext from this container's services.
+   * Centralizes the ServiceContainer → ORPCContext mapping so callers
+   * (desktop/main.ts, cli/server.ts) don't duplicate a 30-field spread.
+   */
+  toORPCContext(): Omit<ORPCContext, "headers"> {
+    return {
+      config: this.config,
+      aiService: this.aiService,
+      projectService: this.projectService,
+      workspaceService: this.workspaceService,
+      taskService: this.taskService,
+      providerService: this.providerService,
+      muxGatewayOauthService: this.muxGatewayOauthService,
+      muxGovernorOauthService: this.muxGovernorOauthService,
+      codexOauthService: this.codexOauthService,
+      copilotOauthService: this.copilotOauthService,
+      terminalService: this.terminalService,
+      editorService: this.editorService,
+      windowService: this.windowService,
+      updateService: this.updateService,
+      tokenizerService: this.tokenizerService,
+      serverService: this.serverService,
+      menuEventService: this.menuEventService,
+      voiceService: this.voiceService,
+      mcpConfigService: this.mcpConfigService,
+      mcpOauthService: this.mcpOauthService,
+      workspaceMcpOverridesService: this.workspaceMcpOverridesService,
+      mcpServerManager: this.mcpServerManager,
+      featureFlagService: this.featureFlagService,
+      sessionTimingService: this.sessionTimingService,
+      telemetryService: this.telemetryService,
+      experimentsService: this.experimentsService,
+      sessionUsageService: this.sessionUsageService,
+      policyService: this.policyService,
+      signingService: this.signingService,
+      coderService: this.coderService,
+    };
   }
 
   /**

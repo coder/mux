@@ -565,39 +565,7 @@ async function loadServices(): Promise<void> {
     ],
   });
 
-  // Build the oRPC context with all services
-  const orpcContext = {
-    config: services.config,
-    aiService: services.aiService,
-    projectService: services.projectService,
-    workspaceService: services.workspaceService,
-    taskService: services.taskService,
-    muxGatewayOauthService: services.muxGatewayOauthService,
-    muxGovernorOauthService: services.muxGovernorOauthService,
-    codexOauthService: services.codexOauthService,
-    copilotOauthService: services.copilotOauthService,
-    providerService: services.providerService,
-    terminalService: services.terminalService,
-    editorService: services.editorService,
-    windowService: services.windowService,
-    updateService: services.updateService,
-    tokenizerService: services.tokenizerService,
-    serverService: services.serverService,
-    featureFlagService: services.featureFlagService,
-    sessionTimingService: services.sessionTimingService,
-    workspaceMcpOverridesService: services.workspaceMcpOverridesService,
-    mcpConfigService: services.mcpConfigService,
-    mcpOauthService: services.mcpOauthService,
-    mcpServerManager: services.mcpServerManager,
-    menuEventService: services.menuEventService,
-    voiceService: services.voiceService,
-    telemetryService: services.telemetryService,
-    experimentsService: services.experimentsService,
-    sessionUsageService: services.sessionUsageService,
-    policyService: services.policyService,
-    signingService: services.signingService,
-    coderService: services.coderService,
-  };
+  const orpcContext = services.toORPCContext();
 
   electronIpcMain.handle("mux:get-is-rosetta", async () => {
     if (process.platform !== "darwin") {
