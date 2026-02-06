@@ -361,23 +361,6 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       pendingDraftId={pendingDraftId}
                       onReady={handleChatReady}
                       onWorkspaceCreated={onWorkspaceCreated}
-                      workspaces={archivedWorkspaces}
-                      onWorkspacesChanged={() => {
-                        // Refresh archived list after unarchive/delete
-                        if (!api) return;
-
-                        void api.workspace.list({ archived: true }).then((all) => {
-                          let projectArchived = all.filter((w) => w.projectPath === projectPath);
-                          if (!remoteMuxServersEnabled) {
-                            projectArchived = projectArchived.filter(
-                              (w) => !isRemoteWorkspaceId(w.id)
-                            );
-                          }
-
-                          archivedMapRef.current = new Map(projectArchived.map((w) => [w.id, w]));
-                          syncArchivedState();
-                        });
-                      }}
                     />
                   </>
                 )}
@@ -403,7 +386,13 @@ export const ProjectPage: React.FC<ProjectPageProps> = ({
                       // Refresh archived list after unarchive/delete
                       if (!api) return;
                       void api.workspace.list({ archived: true }).then((all) => {
-                        setArchivedWorkspaces(all.filter((w) => w.projectPath === projectPath));
+                        let projectArchived = all.filter((w) => w.projectPath === projectPath);
+                        if (!remoteMuxServersEnabled) {
+                          projectArchived = projectArchived.filter(
+                            (w) => !isRemoteWorkspaceId(w.id)
+                          );
+                        }
+                        setArchivedWorkspaces(projectArchived);
                       });
                     }}
                   />

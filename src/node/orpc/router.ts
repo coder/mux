@@ -63,7 +63,6 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
 import { isWorkspaceArchived } from "@/common/utils/archive";
-import { decodeRemoteWorkspaceId, encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 import * as path from "node:path";

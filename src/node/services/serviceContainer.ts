@@ -400,6 +400,7 @@ export class ServiceContainer {
       policyService: this.policyService,
       signingService: this.signingService,
       coderService: this.coderService,
+      remoteServersService: this.remoteServersService,
     };
   }
 

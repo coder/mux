@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle, Loader2, Pencil, Plus, Trash2, X, XCircle } from "lucide-react";
 
 import { useAPI, type APIClient } from "@/browser/contexts/API";

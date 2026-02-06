@@ -1,4 +1,3 @@
-import React from "react";
 import { Globe } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { RuntimeBadge } from "./RuntimeBadge";

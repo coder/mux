@@ -62,6 +62,8 @@ export function buildOrpcContext(env: TestEnvironment): ORPCContext {
     workspaceService: env.services.workspaceService,
     muxGatewayOauthService: env.services.muxGatewayOauthService,
     muxGovernorOauthService: env.services.muxGovernorOauthService,
+    codexOauthService: env.services.codexOauthService,
+    copilotOauthService: env.services.copilotOauthService,
     taskService: env.services.taskService,
     providerService: env.services.providerService,
     terminalService: env.services.terminalService,
