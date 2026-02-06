@@ -2082,10 +2082,12 @@ export class StreamingMessageAggregator {
           });
         } else if (isDynamicToolPart(part)) {
           // Determine status based on part state and result
-          let status: "pending" | "executing" | "completed" | "failed" | "interrupted";
+          let status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
           if (part.state === "output-available") {
             // Check if result indicates failure (for tools that return { success: boolean })
             status = hasFailureResult(part.output) ? "failed" : "completed";
+          } else if (part.state === "output-redacted") {
+            status = "redacted";
           } else if (part.state === "input-available") {
             // Most unfinished tool calls in partial messages represent an interruption.
             // ask_user_question is different: it's intentionally waiting on user input,

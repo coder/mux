@@ -45,7 +45,7 @@ export const NestedToolCallSchema = z.object({
   toolName: z.string(),
   input: z.unknown(),
   output: z.unknown().optional(),
-  state: z.enum(["input-available", "output-available"]),
+  state: z.enum(["input-available", "output-available", "output-redacted"]),
   timestamp: z.number().optional(),
 });
 
@@ -62,10 +62,15 @@ export const DynamicToolPartAvailableSchema = MuxToolPartBase.extend({
   output: z.unknown(),
   nestedCalls: z.array(NestedToolCallSchema).optional(),
 });
+export const DynamicToolPartRedactedSchema = MuxToolPartBase.extend({
+  state: z.literal("output-redacted"),
+  nestedCalls: z.array(NestedToolCallSchema).optional(),
+});
 
 export const DynamicToolPartSchema = z.discriminatedUnion("state", [
   DynamicToolPartAvailableSchema,
   DynamicToolPartPendingSchema,
+  DynamicToolPartRedactedSchema,
 ]);
 
 // Alias for message schemas

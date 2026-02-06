@@ -521,7 +521,7 @@ export type DisplayedMessage =
       toolName: string;
       args: unknown;
       result?: unknown;
-      status: "pending" | "executing" | "completed" | "failed" | "interrupted";
+      status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
       isPartial: boolean; // Whether the parent message was interrupted
       historySequence: number; // Global ordering across all messages
       streamSequence?: number; // Local ordering within this assistant message
@@ -533,7 +533,7 @@ export type DisplayedMessage =
         toolName: string;
         input: unknown;
         output?: unknown;
-        state: "input-available" | "output-available";
+        state: "input-available" | "output-available" | "output-redacted";
         timestamp?: number;
       }>;
     }

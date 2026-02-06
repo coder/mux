@@ -118,6 +118,7 @@ export {
   BranchListResultSchema,
   DynamicToolPartAvailableSchema,
   DynamicToolPartPendingSchema,
+  DynamicToolPartRedactedSchema,
   DynamicToolPartSchema,
   FilePartSchema,
   MuxFilePartSchema,

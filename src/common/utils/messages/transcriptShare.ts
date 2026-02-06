@@ -108,7 +108,7 @@ function stripNestedToolCallOutput(call: NestedToolCall): NestedToolCall {
   const { output: _output, ...rest } = call;
   return {
     ...rest,
-    state: "input-available",
+    state: "output-redacted",
   };
 }
 
@@ -128,7 +128,7 @@ function stripToolPartOutput(part: MuxToolPart): MuxToolPart {
   const { output: _output, ...rest } = part;
   return {
     ...rest,
-    state: "input-available",
+    state: "output-redacted",
     nestedCalls,
   };
 }

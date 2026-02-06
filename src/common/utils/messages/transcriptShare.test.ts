@@ -7,7 +7,7 @@ function splitJsonlLines(jsonl: string): string[] {
 }
 
 describe("buildChatJsonlForSharing", () => {
-  it("strips tool output and sets state back to input-available when includeToolOutput=false", () => {
+  it("strips tool output and sets state to output-redacted when includeToolOutput=false", () => {
     const messages: MuxMessage[] = [
       {
         id: "assistant-1",
@@ -36,7 +36,7 @@ describe("buildChatJsonlForSharing", () => {
       throw new Error("Expected tool part");
     }
 
-    expect(part.state).toBe("input-available");
+    expect(part.state).toBe("output-redacted");
     expect(part).not.toHaveProperty("output");
 
     // Original messages should be unchanged (no mutation during stripping)
@@ -48,7 +48,7 @@ describe("buildChatJsonlForSharing", () => {
     expect(originalPart).toHaveProperty("output");
   });
 
-  it("strips nestedCalls output and sets nestedCalls state back to input-available when includeToolOutput=false", () => {
+  it("strips nestedCalls output and sets nestedCalls state to output-redacted when includeToolOutput=false", () => {
     const messages: MuxMessage[] = [
       {
         id: "assistant-1",
@@ -83,7 +83,7 @@ describe("buildChatJsonlForSharing", () => {
     }
 
     expect(part.state).toBe("input-available");
-    expect(part.nestedCalls?.[0].state).toBe("input-available");
+    expect(part.nestedCalls?.[0].state).toBe("output-redacted");
     expect(part.nestedCalls?.[0]).not.toHaveProperty("output");
 
     // Original nested call should still include output
@@ -370,7 +370,7 @@ describe("buildChatJsonlForSharing", () => {
       throw new Error("Expected tool part");
     }
 
-    expect(strippedPart.state).toBe("input-available");
+    expect(strippedPart.state).toBe("output-redacted");
     expect(strippedPart).not.toHaveProperty("output");
 
     // Original messages should be unchanged (no mutation during injection/stripping)
