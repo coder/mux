@@ -1320,6 +1320,12 @@ export class CoderService {
        * This avoids races where `coder create` finishes server-side after mux aborts the CLI.
        */
       waitForExistence?: boolean;
+      /**
+       * When `waitForExistence` is true: if we only see "not found" for this many ms
+       * without ever observing the workspace exist, treat it as success and return early.
+       * Defaults to `timeoutMs` (no separate short-circuit).
+       */
+      waitForExistenceTimeoutMs?: number;
     }
   ): Promise<Result<void>> {
     const timeoutMs = options?.timeoutMs ?? 60_000;
@@ -1380,8 +1386,15 @@ export class CoderService {
 
         // For cancel-init, avoid treating an initial not_found as success: `coder create` may still
         // complete server-side after we abort the local CLI. Keep polling until we either observe
-        // the workspace exist (and then disappear), or we hit the overall timeout.
+        // the workspace exist (and then disappear), or we hit the existence-wait window.
         if (sawWorkspaceExist) {
+          return Ok(undefined);
+        }
+
+        // Short-circuit: if we've never seen the workspace and the shorter existence-wait
+        // window has elapsed, assume the server-side create never completed.
+        const existenceTimeout = options?.waitForExistenceTimeoutMs ?? timeoutMs;
+        if (Date.now() - startTime > existenceTimeout) {
           return Ok(undefined);
         }
 

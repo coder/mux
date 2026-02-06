@@ -353,7 +353,7 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     expect(sshDeleteSpy).not.toHaveBeenCalled();
     expect(deleteWorkspaceEventually).toHaveBeenCalledWith(
       "my-ws",
-      expect.objectContaining({ waitForExistence: true })
+      expect.objectContaining({ waitForExistence: true, waitForExistenceTimeoutMs: 10_000 })
     );
   });
 

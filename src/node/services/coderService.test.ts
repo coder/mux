@@ -1437,6 +1437,56 @@ describe("deleteWorkspaceEventually", () => {
       nowSpy.mockRestore();
     }
   });
+
+  it("short-circuits on waitForExistenceTimeoutMs before overall timeout", async () => {
+    const service = new CoderService();
+
+    let now = 0;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "not_found" as const,
+    });
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn((ms: number) => {
+      now += ms;
+      return Promise.resolve();
+    });
+
+    try {
+      const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+        timeoutMs: 60_000,
+        waitForExistence: true,
+        // Short existence-wait window: succeed after ~5s of only not_found
+        waitForExistenceTimeoutMs: 5_000,
+      });
+
+      expect(result.success).toBe(true);
+      expect(getWorkspaceStatusSpy).toHaveBeenCalled();
+      // Should never attempt `coder delete` since we only saw not_found
+      expect(serviceHack.runCoderCommand).not.toHaveBeenCalled();
+      // Should have returned well before the 60s overall timeout
+      expect(now).toBeLessThan(10_000);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
 
 describe("compareVersions", () => {

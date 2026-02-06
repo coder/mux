@@ -548,6 +548,9 @@ export class CoderSSHRuntime extends SSHRuntime {
         signal: abortSignal,
         // Avoid races where coder create finishes server-side after we abort the local CLI.
         waitForExistence: true,
+        // If the workspace never appears on the server within 10s, assume it was never created
+        // and return early instead of waiting the full 60s timeout.
+        waitForExistenceTimeoutMs: 10_000,
       });
 
       if (!deleteResult.success) {
