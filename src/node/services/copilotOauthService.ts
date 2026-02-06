@@ -2,6 +2,7 @@ import * as crypto from "crypto";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
+import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
 
 const GITHUB_COPILOT_CLIENT_ID = "Ov23li8tweQw6odWQebz";
@@ -29,6 +30,7 @@ interface DeviceFlow {
   cancelled: boolean;
   timeout: ReturnType<typeof setTimeout>;
   cleanupTimeout: ReturnType<typeof setTimeout> | null;
+  pollingStarted: boolean;
   resultPromise: Promise<Result<void, string>>;
   resolveResult: (result: Result<void, string>) => void;
 }
@@ -36,7 +38,10 @@ interface DeviceFlow {
 export class CopilotOauthService {
   private readonly flows = new Map<string, DeviceFlow>();
 
-  constructor(private readonly providerService: ProviderService) {}
+  constructor(
+    private readonly providerService: ProviderService,
+    private readonly windowService?: WindowService
+  ) {}
 
   async startDeviceFlow(opts?: {
     enterpriseUrl?: string;
@@ -89,6 +94,7 @@ export class CopilotOauthService {
         interval: data.interval ?? 5,
         domain,
         cancelled: false,
+        pollingStarted: false,
         timeout,
         cleanupTimeout: null,
         resultPromise,
@@ -117,8 +123,11 @@ export class CopilotOauthService {
       return Err("Device flow not found");
     }
 
-    // Start polling in background
-    void this.pollForToken(flow);
+    // Start polling in background (guard against re-entrant calls, e.g. React StrictMode re-mount)
+    if (!flow.pollingStarted) {
+      flow.pollingStarted = true;
+      void this.pollForToken(flow);
+    }
 
     const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
@@ -150,9 +159,15 @@ export class CopilotOauthService {
   }
 
   dispose(): void {
-    const flowIds = [...this.flows.keys()];
-    for (const id of flowIds) {
-      this.finishFlow(id, Err("App shutting down"));
+    for (const flow of this.flows.values()) {
+      clearTimeout(flow.timeout);
+      if (flow.cleanupTimeout !== null) clearTimeout(flow.cleanupTimeout);
+      flow.cancelled = true;
+      try {
+        flow.resolveResult(Err("App shutting down"));
+      } catch {
+        /* already resolved */
+      }
     }
     this.flows.clear();
   }
@@ -161,12 +176,6 @@ export class CopilotOauthService {
     const urls = githubUrls(flow.domain);
 
     while (!flow.cancelled) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, flow.interval * 1000 + POLLING_SAFETY_MARGIN_MS)
-      );
-
-      if (flow.cancelled) return;
-
       try {
         const res = await fetch(urls.accessToken, {
           method: "POST",
@@ -205,28 +214,31 @@ export class CopilotOauthService {
           }
 
           log.debug(`Copilot OAuth completed successfully (flowId=${flow.flowId})`);
+          this.windowService?.focusMainWindow();
           void this.finishFlow(flow.flowId, Ok(undefined));
           return;
         }
 
         if (data.error === "authorization_pending") {
-          continue;
-        }
-
-        if (data.error === "slow_down") {
+          // Expected during normal flow — will retry after sleep below
+        } else if (data.error === "slow_down") {
           flow.interval = data.interval ?? flow.interval + 5;
-          continue;
+        } else if (data.error) {
+          // Any other error
+          void this.finishFlow(flow.flowId, Err(`GitHub OAuth error: ${data.error}`));
+          return;
         }
-
-        // Any other error
-        void this.finishFlow(flow.flowId, Err(`GitHub OAuth error: ${data.error ?? "unknown"}`));
-        return;
       } catch (error) {
         if (flow.cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
-        void this.finishFlow(flow.flowId, Err(`Polling failed: ${message}`));
-        return;
+        log.warn(`Copilot OAuth polling error (will retry): ${message}`);
+        // Transient errors — fall through to sleep, then retry
       }
+
+      // Sleep before next iteration (placed at end so the first poll happens immediately)
+      await new Promise((resolve) =>
+        setTimeout(resolve, flow.interval * 1000 + POLLING_SAFETY_MARGIN_MS)
+      );
     }
   }
 
