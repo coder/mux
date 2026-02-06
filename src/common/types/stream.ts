@@ -60,19 +60,3 @@ export type UsageDeltaEvent = z.infer<typeof UsageDeltaEventSchema>;
  * Used by Coder workspaces to show "Starting Coder workspace..." while ensureReady() blocks.
  */
 export type RuntimeStatusEvent = z.infer<typeof RuntimeStatusEventSchema>;
-
-export type AIServiceEvent =
-  | StreamStartEvent
-  | StreamDeltaEvent
-  | StreamEndEvent
-  | StreamAbortEvent
-  | ErrorEvent
-  | ToolCallStartEvent
-  | ToolCallDeltaEvent
-  | ToolCallEndEvent
-  | BashOutputEvent
-  | TaskCreatedEvent
-  | ReasoningDeltaEvent
-  | ReasoningEndEvent
-  | UsageDeltaEvent
-  | RuntimeStatusEvent;

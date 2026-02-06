@@ -169,9 +169,6 @@ export function isDefaultSourceContent(content?: Partial<UserMessageContent>): b
   return text === "Continue" && !hasFiles && !hasReviews;
 }
 
-/** @deprecated Use isDefaultSourceContent. Legacy alias for backward compatibility. */
-export const isDefaultContinueMessage = isDefaultSourceContent;
-
 /**
  * Rebuild a ContinueMessage from persisted data.
  * Use this when reading from storage/history where the data may have been
