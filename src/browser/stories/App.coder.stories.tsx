@@ -341,9 +341,10 @@ export const CoderTemplatesParseError: AppStory = {
 
     await canvas.findByText(mockParseError);
 
-    const templateSelect = await canvas.findByTestId("coder-template-select");
+    // Re-query inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
-      if (!templateSelect.hasAttribute("data-disabled")) {
+      const templateSelect = canvas.queryByTestId("coder-template-select");
+      if (!templateSelect?.hasAttribute("data-disabled")) {
         throw new Error("Template dropdown should be disabled when templates fail to load");
       }
     });
@@ -456,15 +457,17 @@ export const CoderOutdated: AppStory = {
     // Wait for runtime controls
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
-    // Coder button should appear but be disabled
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
+    // Coder button should appear but be disabled.
+    // Re-query inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
-      if (!coderButton.hasAttribute("disabled")) {
+      const btn = canvas.queryByRole("button", { name: /Coder/i });
+      if (!btn?.hasAttribute("disabled")) {
         throw new Error("Coder button should be disabled when CLI is outdated");
       }
     });
 
     // Hover over Coder button to trigger tooltip with version error
+    const coderButton = canvas.getByRole("button", { name: /Coder/i });
     await userEvent.hover(coderButton);
 
     // Wait for tooltip to appear with version info
@@ -521,11 +524,12 @@ export const CoderNoPresets: AppStory = {
     // Template dropdown should be visible
     await canvas.findByTestId("coder-template-select");
 
-    // Preset dropdown should be visible but disabled (shows "No presets" placeholder)
-    const presetSelect = await canvas.findByTestId("coder-preset-select");
+    // Preset dropdown should be visible but disabled (shows "No presets" placeholder).
+    // Re-query inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
       // Radix UI Select sets data-disabled="" (empty string) when disabled
-      if (!presetSelect.hasAttribute("data-disabled")) {
+      const presetSelect = canvas.queryByTestId("coder-preset-select");
+      if (!presetSelect?.hasAttribute("data-disabled")) {
         throw new Error("Preset dropdown should be disabled when template has no presets");
       }
     });
@@ -571,13 +575,13 @@ export const CoderNoRunningWorkspaces: AppStory = {
     const existingButton = await canvas.findByRole("button", { name: "Existing" });
     await userEvent.click(existingButton);
 
-    // Workspace dropdown should show "No workspaces found" placeholder
+    // Workspace dropdown should show "No workspaces found" placeholder.
     // Note: Radix UI Select doesn't render native <option> elements - the placeholder
-    // text appears directly in the SelectTrigger element
-    const workspaceSelect = await canvas.findByTestId("coder-workspace-select");
+    // text appears directly in the SelectTrigger element.
+    // Re-query inside waitFor to avoid stale DOM refs after React re-renders.
     await waitFor(() => {
-      const triggerText = workspaceSelect.textContent;
-      if (!triggerText?.includes("No workspaces found")) {
+      const workspaceSelect = canvas.queryByTestId("coder-workspace-select");
+      if (!workspaceSelect?.textContent?.includes("No workspaces found")) {
         throw new Error("Should show 'No workspaces found' placeholder");
       }
     });

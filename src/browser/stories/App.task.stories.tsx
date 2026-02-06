@@ -551,18 +551,15 @@ export const TaskTranscriptViewer: AppStory = {
     await userEvent.click(viewTranscriptButton);
 
     // Dialog content is portaled outside the canvasElement, but inside the iframe body.
-    const dialog = await waitFor(() => {
-      const dialogs = Array.from(
+    // Wait for the dialog to appear, then for messages to render.
+    // Both steps re-query the DOM to avoid stale refs if the portal re-mounts.
+    await waitFor(() => {
+      const dialog = Array.from(
         canvasElement.ownerDocument.body.querySelectorAll('[role="dialog"]')
-      );
-      const match = dialogs.find((el) => el.textContent?.includes(taskId));
-      if (!match) {
+      ).find((el) => el.textContent?.includes(taskId));
+      if (!dialog) {
         throw new Error("Transcript dialog not found");
       }
-      return match;
-    });
-
-    await waitFor(() => {
       // MessageRenderer renders each message inside a MessageWindow with data-message-block.
       if (dialog.querySelectorAll("[data-message-block]").length === 0) {
         const debugText = dialog.textContent?.trim().slice(0, 200) ?? "<no text>";
