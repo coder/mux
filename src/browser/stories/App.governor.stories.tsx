@@ -17,7 +17,7 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createWorkspace, groupWorkspacesByProject } from "./mockFactory";
 import { selectWorkspace, expandProjects, collapseRightSidebar } from "./storyHelpers";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
-import { within, userEvent } from "@storybook/test";
+import { within, userEvent, waitFor } from "@storybook/test";
 import type { PolicyGetResponse, PolicySource, EffectivePolicy } from "@/common/orpc/types";
 import { getExperimentKey, EXPERIMENT_IDS } from "@/common/constants/experiments";
 
@@ -211,7 +211,14 @@ export const PolicyBlocked: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await openSettingsToGovernor(canvasElement);
+    const body = within(canvasElement.ownerDocument.body);
+    // PolicyBlockedScreen shows a message about policy blocking
+    await waitFor(
+      () => {
+        body.getByText(/blocked by policy/i);
+      },
+      { timeout: 10_000 }
+    );
   },
 };
 
