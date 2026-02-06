@@ -152,6 +152,7 @@ function createWorkspaceServiceMocks(
       resumeStream,
       remove,
       emit,
+      hasQueuedMessages: mock(() => false),
     } as unknown as WorkspaceService,
     sendMessage,
     resumeStream,

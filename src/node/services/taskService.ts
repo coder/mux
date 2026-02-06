@@ -2101,13 +2101,17 @@ export class TaskService {
       return;
     }
 
+    // Snapshot queue state synchronously before any await — AgentSession's stream-end
+    // handler drains the queue concurrently, so checking later would race.
+    const hadQueuedMessages = this.workspaceService.hasQueuedMessages(workspaceId);
+
     // Don't send the agent_report reminder if a follow-up message is incoming:
     // 1. Compaction with follow-up: the original message will be re-dispatched after compaction.
     if (await this.isCompactionStreamWithFollowUp(workspaceId)) {
       return;
     }
     // 2. Queued user message: will be sent after stream-end processing.
-    if (this.workspaceService.hasQueuedMessages(workspaceId)) {
+    if (hadQueuedMessages) {
       return;
     }
 
