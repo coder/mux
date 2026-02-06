@@ -58,10 +58,20 @@ export function isPrivateHost(hostname: string): boolean {
   // localhost
   if (bare === "localhost") return true;
 
-  // IPv6-mapped IPv4 (::ffff:x.x.x.x) — extract the IPv4 part and check it
-  const v4MappedMatch = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(bare);
-  if (v4MappedMatch) {
-    return isPrivateIPv4(v4MappedMatch[1]);
+  // IPv6-mapped IPv4 in dotted-decimal form (::ffff:x.x.x.x)
+  const v4DottedMatch = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(bare);
+  if (v4DottedMatch) {
+    return isPrivateIPv4(v4DottedMatch[1]);
+  }
+
+  // IPv6-mapped IPv4 in hex form (::ffff:HHHH:HHHH) — Node's URL normalizes
+  // dotted-decimal to this form (e.g. ::ffff:127.0.0.1 → ::ffff:7f00:1)
+  const v4HexMatch = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(bare);
+  if (v4HexMatch) {
+    const hi = parseInt(v4HexMatch[1], 16);
+    const lo = parseInt(v4HexMatch[2], 16);
+    const reconstructed = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    return isPrivateIPv4(reconstructed);
   }
 
   // Plain IPv4 private ranges
@@ -69,8 +79,8 @@ export function isPrivateHost(hostname: string): boolean {
 
   // IPv6 loopback
   if (bare === "::1") return true;
-  // IPv6 link-local (fe80::/10)
-  if (bare.startsWith("fe80")) return true;
+  // IPv6 link-local (fe80::/10 covers fe80:: through febf::)
+  if (/^fe[89ab][0-9a-f]/.test(bare)) return true;
   // IPv6 Unique Local Address (fc00::/7 — covers fc00:: and fd00::)
   if (bare.startsWith("fc") || bare.startsWith("fd")) return true;
 

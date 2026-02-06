@@ -112,19 +112,33 @@ describe("isPrivateHost", () => {
     ["0.1.2.3", '"this" network prefix'],
     ["::1", "IPv6 loopback"],
     ["[::1]", "IPv6 loopback with brackets"],
-    ["fe80::1", "IPv6 link-local"],
-    ["localhost", "localhost"],
-    ["LOCALHOST", "localhost uppercase"],
-    // IPv6-mapped IPv4 private addresses
-    ["::ffff:127.0.0.1", "IPv6-mapped loopback"],
-    ["::ffff:10.0.0.1", "IPv6-mapped Class A private"],
-    ["::ffff:192.168.1.1", "IPv6-mapped Class C private"],
-    ["::ffff:169.254.1.1", "IPv6-mapped link-local"],
-    ["[::ffff:127.0.0.1]", "IPv6-mapped loopback with brackets"],
+    // IPv6-mapped IPv4 private addresses (dotted-decimal form)
+    ["::ffff:127.0.0.1", "IPv6-mapped loopback (dotted)"],
+    ["::ffff:10.0.0.1", "IPv6-mapped Class A private (dotted)"],
+    ["::ffff:192.168.1.1", "IPv6-mapped Class C private (dotted)"],
+    ["::ffff:169.254.1.1", "IPv6-mapped link-local (dotted)"],
+    ["[::ffff:127.0.0.1]", "IPv6-mapped loopback with brackets (dotted)"],
+    // IPv6-mapped IPv4 in hex form (as Node's URL normalizes them)
+    ["::ffff:7f00:1", "IPv6-mapped loopback (hex, Node-normalized)"],
+    ["::ffff:a00:1", "IPv6-mapped 10.0.0.1 (hex, Node-normalized)"],
+    ["::ffff:c0a8:101", "IPv6-mapped 192.168.1.1 (hex, Node-normalized)"],
+    ["::ffff:ac10:1", "IPv6-mapped 172.16.0.1 (hex, Node-normalized)"],
+    ["::ffff:a9fe:101", "IPv6-mapped 169.254.1.1 (hex, Node-normalized)"],
+    ["[::ffff:7f00:1]", "IPv6-mapped loopback (hex, bracketed)"],
+    // IPv6 link-local full fe80::/10 range (fe80:: through febf::)
+    ["fe80::1", "IPv6 link-local (fe80)"],
+    ["fe8a::1", "IPv6 link-local (fe8a)"],
+    ["fe8f::1", "IPv6 link-local (fe8f)"],
+    ["fe90::1", "IPv6 link-local (fe90)"],
+    ["fea0::1", "IPv6 link-local (fea0)"],
+    ["feb0::1", "IPv6 link-local (feb0)"],
+    ["febf::1", "IPv6 link-local (febf)"],
     // IPv6 Unique Local Addresses (fc00::/7)
     ["fc00::1", "IPv6 ULA (fc00::)"],
     ["fd00::1", "IPv6 ULA (fd00::)"],
     ["fdab:1234::1", "IPv6 ULA (fdab prefix)"],
+    ["localhost", "localhost"],
+    ["LOCALHOST", "localhost uppercase"],
   ] as const;
 
   for (const [host, label] of privateCases) {
@@ -141,8 +155,11 @@ describe("isPrivateHost", () => {
     ["172.15.0.1", "just below Class B private range"],
     ["172.32.0.1", "just above Class B private range"],
     // IPv6-mapped public IPv4 should not be blocked
-    ["::ffff:8.8.8.8", "IPv6-mapped public IP"],
+    ["::ffff:8.8.8.8", "IPv6-mapped public IP (dotted)"],
+    ["::ffff:808:808", "IPv6-mapped public IP (hex, Node-normalized)"],
     ["2001:db8::1", "IPv6 documentation range (not ULA)"],
+    // Just outside the fe80::/10 link-local range
+    ["fec0::1", "just above link-local range (fec0)"],
   ] as const;
 
   for (const [host, label] of publicCases) {
@@ -178,5 +195,25 @@ describe("validateOutboundUrl", () => {
 
   it("rejects non-http(s) schemes", () => {
     expect(() => validateOutboundUrl("file:///etc/passwd")).toThrow("Unsupported protocol: file:");
+  });
+
+  // Critical: Node's URL normalizes ::ffff:127.0.0.1 to ::ffff:7f00:1 (hex).
+  // validateOutboundUrl must detect the private address after normalization.
+  it("rejects IPv6-mapped private IPs after Node URL normalization", () => {
+    expect(() => validateOutboundUrl("http://[::ffff:127.0.0.1]/")).toThrow(/private addresses/);
+  });
+
+  it("rejects IPv6-mapped 10.x private IPs after normalization", () => {
+    expect(() => validateOutboundUrl("http://[::ffff:10.0.0.1]/")).toThrow(/private addresses/);
+  });
+
+  it("allows IPv6-mapped public IPs after normalization", () => {
+    const url = validateOutboundUrl("http://[::ffff:8.8.8.8]/");
+    expect(url).toBeDefined();
+  });
+
+  it("rejects IPv6 link-local addresses in full fe80::/10 range", () => {
+    expect(() => validateOutboundUrl("http://[fe8a::1]/")).toThrow(/private addresses/);
+    expect(() => validateOutboundUrl("http://[febf::1]/")).toThrow(/private addresses/);
   });
 });
