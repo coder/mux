@@ -69,6 +69,11 @@ describe("WorkspaceContext", () => {
       workspace: {
         list: () => Promise.resolve(initialWorkspaces),
       },
+      // Navigate to the workspace so it becomes the selected one —
+      // only the selected workspace gets an onChat subscription.
+      localStorage: {
+        [SELECTED_WORKSPACE_KEY]: JSON.stringify({ workspaceId: "ws-sync-load" }),
+      },
     });
 
     const ctx = await setup();
