@@ -436,6 +436,10 @@ storybook-build: node_modules/.installed src/version.ts ## Build static Storyboo
 	$(check_node_version)
 	@bun x storybook build
 
+capture-readme-screenshots: node_modules/.installed src/version.ts ## Capture README screenshots from running Storybook
+	@echo "Capturing README screenshots from Storybook (must be running on port 6006)..."
+	@bun run scripts/capture-readme-screenshots.ts
+
 test-storybook: node_modules/.installed ## Run Storybook interaction tests (requires Storybook to be running or built)
 	$(check_node_version)
 	@# Storybook story transitions can exceed Jest's default 15s timeout on loaded CI runners.
