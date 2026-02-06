@@ -1130,6 +1130,29 @@ describe("Vim Command Integration Tests", () => {
       expect(state.text).toBe("cd");
       expect(state.cursor).toBe(0);
     });
+
+    test("dot repeats last visual delete (v...d)", () => {
+      const initial = { ...initialState, text: "abcdefghi", cursor: 0, mode: "normal" as const };
+
+      const state = executeVimCommands(initial, ["v", "l", "l", "d", "."]);
+      expect(state.text).toBe("ghi");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("def");
+    });
+
+    test("dot repeats last visual-line delete (V...d)", () => {
+      const initial = {
+        ...initialState,
+        text: "one\ntwo\nthree\nfour\nfive",
+        cursor: 0,
+        mode: "normal" as const,
+      };
+
+      const state = executeVimCommands(initial, ["V", "j", "d", "."]);
+      expect(state.text).toBe("five");
+      expect(state.cursor).toBe(0);
+      expect(state.yankBuffer).toBe("three\nfour\n");
+    });
   });
 
   describe("_ motion (first non-whitespace character)", () => {

@@ -59,6 +59,12 @@ export type LastEdit =
       textObject: VimTextObject;
       count: number;
     }
+  | {
+      kind: "opVisual";
+      op: "d" | "c";
+      rangeKind: "char" | "line";
+      count: number;
+    }
   | { kind: "paste"; variant: "p" | "P"; count: number };
 
 export type Pending =
@@ -343,6 +349,15 @@ function assertVimState(state: VimState): void {
       case "opTextObject":
         assert(lastEdit.op === "d" || lastEdit.op === "c", "Unexpected Vim lastEdit operator");
         assert(isVimTextObject(lastEdit.textObject), "Unexpected Vim lastEdit text object");
+        assertCount(lastEdit.count);
+        break;
+
+      case "opVisual":
+        assert(lastEdit.op === "d" || lastEdit.op === "c", "Unexpected Vim lastEdit operator");
+        assert(
+          lastEdit.rangeKind === "char" || lastEdit.rangeKind === "line",
+          "Unexpected Vim lastEdit visual range kind"
+        );
         assertCount(lastEdit.count);
         break;
 
@@ -999,6 +1014,51 @@ function applyLastEditOnce(state: VimState, lastEdit: LastEdit): VimState {
 
     case "opTextObject": {
       return applyOperatorTextObject(state, lastEdit.op, lastEdit.textObject, lastEdit.count);
+    }
+
+    case "opVisual": {
+      const { text, cursor, yankBuffer } = state;
+      const safeCount = Math.max(1, Math.min(10000, lastEdit.count));
+
+      if (lastEdit.rangeKind === "char") {
+        const to = Math.min(text.length, cursor + safeCount);
+
+        if (lastEdit.op === "d") {
+          const result = deleteRange(text, cursor, to, true, yankBuffer);
+          return completeOperation(state, {
+            text: result.text,
+            cursor: result.cursor,
+            yankBuffer: result.yankBuffer,
+          });
+        }
+
+        const result = changeRange(text, cursor, to, yankBuffer);
+        return completeOperation(state, {
+          mode: "insert",
+          text: result.text,
+          cursor: result.cursor,
+          yankBuffer: result.yankBuffer,
+        });
+      }
+
+      const range = getLinewiseRange(text, cursor, safeCount);
+
+      if (lastEdit.op === "d") {
+        const result = deleteRange(text, range.from, range.to, true, yankBuffer);
+        return completeOperation(state, {
+          text: result.text,
+          cursor: result.cursor,
+          yankBuffer: result.yankBuffer,
+        });
+      }
+
+      const result = changeRange(text, range.from, range.to, yankBuffer);
+      return completeOperation(state, {
+        mode: "insert",
+        text: result.text,
+        cursor: result.cursor,
+        yankBuffer: result.yankBuffer,
+      });
     }
 
     default:
@@ -1728,6 +1788,23 @@ function applyVisualOperator(state: VimState, op: "d" | "c" | "y"): VimState {
   const { text, yankBuffer } = state;
   const removed = text.slice(range.start, range.end);
 
+  // Record visual edits for dot repeat.
+  let visualLastEdit: LastEdit | null = null;
+  if (op === "d" || op === "c") {
+    if (range.kind === "char") {
+      const charCount = range.end - range.start;
+      if (charCount > 0) {
+        visualLastEdit = { kind: "opVisual", op, rangeKind: "char", count: charCount };
+      }
+    } else {
+      assert(state.visualAnchor != null, "Expected visualAnchor in visual line mode");
+      const { row: anchorRow } = getRowCol(text, state.visualAnchor);
+      const { row: cursorRow } = getRowCol(text, state.cursor);
+      const lineCount = Math.abs(cursorRow - anchorRow) + 1;
+      visualLastEdit = { kind: "opVisual", op, rangeKind: "line", count: lineCount };
+    }
+  }
+
   switch (op) {
     case "d": {
       const result = deleteRange(text, range.start, range.end, true, yankBuffer);
@@ -1737,6 +1814,7 @@ function applyVisualOperator(state: VimState, op: "d" | "c" | "y"): VimState {
         cursor: result.cursor,
         yankBuffer: result.yankBuffer,
         visualAnchor: null,
+        ...(visualLastEdit != null ? { lastEdit: visualLastEdit } : {}),
       });
     }
 
@@ -1748,6 +1826,7 @@ function applyVisualOperator(state: VimState, op: "d" | "c" | "y"): VimState {
         cursor: result.cursor,
         yankBuffer: result.yankBuffer,
         visualAnchor: null,
+        ...(visualLastEdit != null ? { lastEdit: visualLastEdit } : {}),
       });
     }
 
