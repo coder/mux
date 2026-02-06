@@ -3244,7 +3244,9 @@ export const router = (authToken?: string) => {
                   try {
                     const workspaces = await client.workspace.list(undefined);
                     for (const metadata of workspaces) {
-                      if (remoteProjectPathMap.has(metadata.projectPath)) {
+                      // Normalize to match the keys in remoteProjectPathMap (built via stripTrailingSlashes).
+                      const normalizedPath = stripTrailingSlashes(metadata.projectPath.trim());
+                      if (remoteProjectPathMap.has(normalizedPath)) {
                         allowedWorkspaceIds.add(metadata.id);
                       }
                     }
@@ -3260,7 +3262,8 @@ export const router = (authToken?: string) => {
                   try {
                     const workspaces = await client.workspace.list({ archived: true });
                     for (const metadata of workspaces) {
-                      if (remoteProjectPathMap.has(metadata.projectPath)) {
+                      const normalizedPath = stripTrailingSlashes(metadata.projectPath.trim());
+                      if (remoteProjectPathMap.has(normalizedPath)) {
                         allowedWorkspaceIds.add(metadata.id);
                       }
                     }
@@ -3388,7 +3391,9 @@ export const router = (authToken?: string) => {
                     try {
                       const workspaces = await client.workspace.list(undefined);
                       for (const metadata of workspaces) {
-                        if (remoteProjectPathMap.has(metadata.projectPath)) {
+                        // Normalize to match the keys in remoteProjectPathMap (built via stripTrailingSlashes).
+                        const normalizedPath = stripTrailingSlashes(metadata.projectPath.trim());
+                        if (remoteProjectPathMap.has(normalizedPath)) {
                           allowedWorkspaceIds.add(metadata.id);
                         }
                       }
@@ -3407,7 +3412,8 @@ export const router = (authToken?: string) => {
                     try {
                       const workspaces = await client.workspace.list({ archived: true });
                       for (const metadata of workspaces) {
-                        if (remoteProjectPathMap.has(metadata.projectPath)) {
+                        const normalizedPath = stripTrailingSlashes(metadata.projectPath.trim());
+                        if (remoteProjectPathMap.has(normalizedPath)) {
                           allowedWorkspaceIds.add(metadata.id);
                         }
                       }
