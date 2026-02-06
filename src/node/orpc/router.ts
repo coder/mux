@@ -23,11 +23,7 @@ import {
   buildRemoteProjectPathMap,
   encodeRemoteIdBestEffort,
   getRemoteServersForWorkspaceViews,
-  resolveRemoteWorkspaceProxy,
   rewriteRemoteFrontendWorkspaceMetadataForLocalProject,
-  rewriteRemoteFrontendWorkspaceMetadataIds,
-  rewriteRemoteTaskToolPartsInMessage,
-  rewriteRemoteWorkspaceChatMessageIds,
   sleepMs,
   type RemoteMuxOrpcClient,
 } from "./remoteMuxProxying";
@@ -960,16 +956,6 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.list.input)
         .output(schemas.agents.list.output)
         .handler(async ({ context, input }) => {
-          const remote = input.workspaceId
-            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
-            : null;
-          if (remote) {
-            return remote.client.agents.list({
-              ...input,
-              workspaceId: remote.remoteWorkspaceId,
-            });
-          }
-
           // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1059,16 +1045,6 @@ export const router = (authToken?: string) => {
         .input(schemas.agents.get.input)
         .output(schemas.agents.get.output)
         .handler(async ({ context, input }) => {
-          const remote = input.workspaceId
-            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
-            : null;
-          if (remote) {
-            return remote.client.agents.get({
-              ...input,
-              workspaceId: remote.remoteWorkspaceId,
-            });
-          }
-
           // Wait for workspace init before discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1082,16 +1058,6 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.list.input)
         .output(schemas.agentSkills.list.output)
         .handler(async ({ context, input }) => {
-          const remote = input.workspaceId
-            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
-            : null;
-          if (remote) {
-            return remote.client.agentSkills.list({
-              ...input,
-              workspaceId: remote.remoteWorkspaceId,
-            });
-          }
-
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1103,16 +1069,6 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.listDiagnostics.input)
         .output(schemas.agentSkills.listDiagnostics.output)
         .handler(async ({ context, input }) => {
-          const remote = input.workspaceId
-            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
-            : null;
-          if (remote) {
-            return remote.client.agentSkills.listDiagnostics({
-              ...input,
-              workspaceId: remote.remoteWorkspaceId,
-            });
-          }
-
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -1124,16 +1080,6 @@ export const router = (authToken?: string) => {
         .input(schemas.agentSkills.get.input)
         .output(schemas.agentSkills.get.output)
         .handler(async ({ context, input }) => {
-          const remote = input.workspaceId
-            ? resolveRemoteWorkspaceProxy(context, input.workspaceId)
-            : null;
-          if (remote) {
-            return remote.client.agentSkills.get({
-              ...input,
-              workspaceId: remote.remoteWorkspaceId,
-            });
-          }
-
           // Wait for workspace init before agent discovery (SSH may not be ready yet)
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
@@ -2658,22 +2604,12 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.archive.input)
         .output(schemas.workspace.archive.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            return remote.client.workspace.archive({ workspaceId: remote.remoteWorkspaceId });
-          }
-
           return context.workspaceService.archive(input.workspaceId);
         }),
       unarchive: t
         .input(schemas.workspace.unarchive.input)
         .output(schemas.workspace.unarchive.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            return remote.client.workspace.unarchive({ workspaceId: remote.remoteWorkspaceId });
-          }
-
           return context.workspaceService.unarchive(input.workspaceId);
         }),
       archiveMergedInProject: t
@@ -2703,15 +2639,6 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.sendMessage.input)
         .output(schemas.workspace.sendMessage.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            return remote.client.workspace.sendMessage({
-              workspaceId: remote.remoteWorkspaceId,
-              message: input.message,
-              options: input.options,
-            });
-          }
-
           const result = await context.workspaceService.sendMessage(
             input.workspaceId,
             input.message,
@@ -2728,15 +2655,6 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.answerAskUserQuestion.input)
         .output(schemas.workspace.answerAskUserQuestion.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            return remote.client.workspace.answerAskUserQuestion({
-              workspaceId: remote.remoteWorkspaceId,
-              toolCallId: input.toolCallId,
-              answers: input.answers,
-            });
-          }
-
           const result = await context.workspaceService.answerAskUserQuestion(
             input.workspaceId,
             input.toolCallId,
@@ -2753,14 +2671,6 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.resumeStream.input)
         .output(schemas.workspace.resumeStream.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            return remote.client.workspace.resumeStream({
-              workspaceId: remote.remoteWorkspaceId,
-              options: input.options,
-            });
-          }
-
           const result = await context.workspaceService.resumeStream(
             input.workspaceId,
             input.options
@@ -2778,14 +2688,6 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.interruptStream.input)
         .output(schemas.workspace.interruptStream.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            return remote.client.workspace.interruptStream({
-              workspaceId: remote.remoteWorkspaceId,
-              options: input.options,
-            });
-          }
-
           const result = await context.workspaceService.interruptStream(
             input.workspaceId,
             input.options
@@ -2842,17 +2744,6 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getInfo.input)
         .output(schemas.workspace.getInfo.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            const metadata = await remote.client.workspace.getInfo({
-              workspaceId: remote.remoteWorkspaceId,
-            });
-
-            return metadata
-              ? rewriteRemoteFrontendWorkspaceMetadataIds(metadata, remote.serverId)
-              : metadata;
-          }
-
           return context.workspaceService.getInfo(input.workspaceId);
         }),
       getLastLlmRequest: t
@@ -2865,17 +2756,6 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.getFullReplay.input)
         .output(schemas.workspace.getFullReplay.output)
         .handler(async ({ context, input }) => {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            const events = await remote.client.workspace.getFullReplay({
-              workspaceId: remote.remoteWorkspaceId,
-            });
-
-            return events.map((event) =>
-              rewriteRemoteWorkspaceChatMessageIds(event, remote.serverId)
-            );
-          }
-
           return context.workspaceService.getFullReplay(input.workspaceId);
         }),
       getSubagentTranscript: t
@@ -2884,45 +2764,6 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const taskId = input.taskId.trim();
           assert(taskId.length > 0, "workspace.getSubagentTranscript: taskId must be non-empty");
-
-          const remoteTask = resolveRemoteWorkspaceProxy(context, taskId);
-          if (remoteTask) {
-            const requestingWorkspaceIdTrimmedForRemote = input.workspaceId?.trim();
-            let remoteRequestingWorkspaceId: string | undefined;
-
-            if (
-              requestingWorkspaceIdTrimmedForRemote &&
-              requestingWorkspaceIdTrimmedForRemote.length > 0
-            ) {
-              const decodedRequesting = decodeRemoteWorkspaceId(
-                requestingWorkspaceIdTrimmedForRemote
-              );
-              if (decodedRequesting) {
-                const requestingServerId = decodedRequesting.serverId.trim();
-                assert(
-                  requestingServerId === remoteTask.serverId,
-                  "workspace.getSubagentTranscript: requesting workspace must be on the same remote server"
-                );
-
-                const remoteIdTrimmed = decodedRequesting.remoteId.trim();
-                if (remoteIdTrimmed.length > 0) {
-                  remoteRequestingWorkspaceId = remoteIdTrimmed;
-                }
-              }
-            }
-
-            const transcript = await remoteTask.client.workspace.getSubagentTranscript({
-              taskId: remoteTask.remoteWorkspaceId,
-              workspaceId: remoteRequestingWorkspaceId,
-            });
-
-            return {
-              ...transcript,
-              messages: transcript.messages.map((message) =>
-                rewriteRemoteTaskToolPartsInMessage(message, remoteTask.serverId)
-              ),
-            };
-          }
 
           const requestingWorkspaceIdTrimmed = input.workspaceId?.trim();
           const requestingWorkspaceId =
@@ -3119,40 +2960,6 @@ export const router = (authToken?: string) => {
         .input(schemas.workspace.onChat.input)
         .output(schemas.workspace.onChat.output)
         .handler(async function* ({ context, input, signal }) {
-          const remote = resolveRemoteWorkspaceProxy(context, input.workspaceId);
-          if (remote) {
-            const controller = new AbortController();
-
-            const onRemoteAbort = () => {
-              controller.abort();
-            };
-
-            if (signal) {
-              if (signal.aborted) {
-                onRemoteAbort();
-              } else {
-                signal.addEventListener("abort", onRemoteAbort, { once: true });
-              }
-            }
-
-            try {
-              const iterator = await remote.client.workspace.onChat(
-                { workspaceId: remote.remoteWorkspaceId },
-                { signal: controller.signal }
-              );
-
-              for await (const event of iterator) {
-                yield rewriteRemoteWorkspaceChatMessageIds(event, remote.serverId);
-              }
-            } finally {
-              // Best-effort: abort the underlying HTTP stream if the local subscription ends.
-              signal?.removeEventListener("abort", onRemoteAbort);
-              controller.abort();
-            }
-
-            return;
-          }
-
           const session = context.workspaceService.getOrCreateSession(input.workspaceId);
           const { push, iterate, end } = createAsyncMessageQueue<WorkspaceChatMessage>();
 
