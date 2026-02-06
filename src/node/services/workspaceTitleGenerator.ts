@@ -1,4 +1,4 @@
-import { generateText, Output } from "ai";
+import { streamText, Output } from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
 import { log } from "./log";
@@ -87,7 +87,11 @@ export async function generateWorkspaceIdentity(
     }
 
     try {
-      const result = await generateText({
+      // Use streamText instead of generateText: the Codex OAuth endpoint
+      // (chatgpt.com/backend-api/codex/responses) requires stream:true in the
+      // request body and rejects non-streaming requests with 400.  streamText
+      // sets stream:true automatically, while generateText does not.
+      const stream = streamText({
         model: modelResult.data,
         output: Output.object({ schema: workspaceIdentitySchema }),
         prompt: `Generate a workspace name and title for this development task:
@@ -99,13 +103,16 @@ Requirements:
 - title: A 2-5 word description in verb-noun format. Examples: "Fix plan mode", "Add user authentication", "Refactor sidebar layout"`,
       });
 
+      // Awaiting .output triggers full stream consumption and JSON parsing.
+      const output = await stream.output;
+
       const suffix = generateNameSuffix();
-      const sanitizedName = sanitizeBranchName(result.output.name, 20);
+      const sanitizedName = sanitizeBranchName(output.name, 20);
       const nameWithSuffix = `${sanitizedName}-${suffix}`;
 
       return Ok({
         name: nameWithSuffix,
-        title: result.output.title.trim(),
+        title: output.title.trim(),
         modelUsed: modelString,
       });
     } catch (error) {

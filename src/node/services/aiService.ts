@@ -1063,6 +1063,7 @@ export class AIService extends EventEmitter {
                     "temperature",
                     "top_p",
                     "include",
+                    "text", // structured output via Output.object → text.format
                   ]);
 
                   for (const key of Object.keys(json)) {
