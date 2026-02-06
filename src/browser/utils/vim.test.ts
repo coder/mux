@@ -677,6 +677,28 @@ describe("Vim Command Integration Tests", () => {
       expect(state.lastFind).toEqual({ variant: "f", char: "x" });
     });
 
+    test("dFx deletes backward through previous matching character (includes cursor)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdef", cursor: 6, mode: "normal" },
+        ["d", "F", "x"]
+      );
+      expect(state.text).toBe("abc");
+      expect(state.cursor).toBe(2);
+      expect(state.yankBuffer).toBe("xdef");
+      expect(state.lastFind).toEqual({ variant: "F", char: "x" });
+    });
+
+    test("dTx deletes backward till after previous matching character (includes cursor)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdef", cursor: 6, mode: "normal" },
+        ["d", "T", "x"]
+      );
+      expect(state.text).toBe("abcx");
+      expect(state.cursor).toBe(3);
+      expect(state.yankBuffer).toBe("def");
+      expect(state.lastFind).toEqual({ variant: "T", char: "x" });
+    });
+
     test("dW deletes to next WORD (whitespace-separated)", () => {
       const state = executeVimCommands(
         { ...initialState, text: "foo-bar baz", cursor: 0, mode: "normal" },
@@ -733,6 +755,30 @@ describe("Vim Command Integration Tests", () => {
       expect(state.mode).toBe("insert");
       expect(state.yankBuffer).toBe("abc");
       expect(state.lastFind).toEqual({ variant: "t", char: "x" });
+    });
+
+    test("cFx changes backward through previous matching character (includes cursor)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdef", cursor: 6, mode: "normal" },
+        ["c", "F", "x"]
+      );
+      expect(state.text).toBe("abc");
+      expect(state.cursor).toBe(3);
+      expect(state.mode).toBe("insert");
+      expect(state.yankBuffer).toBe("xdef");
+      expect(state.lastFind).toEqual({ variant: "F", char: "x" });
+    });
+
+    test("cTx changes backward till after previous matching character (includes cursor)", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "abcxdef", cursor: 6, mode: "normal" },
+        ["c", "T", "x"]
+      );
+      expect(state.text).toBe("abcx");
+      expect(state.cursor).toBe(4);
+      expect(state.mode).toBe("insert");
+      expect(state.yankBuffer).toBe("def");
+      expect(state.lastFind).toEqual({ variant: "T", char: "x" });
     });
 
     test("cw changes to end of word (like ce)", () => {

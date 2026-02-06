@@ -2055,7 +2055,7 @@ function applyOperatorFind(
       }
     : {
         from: dest,
-        to: cursor,
+        to: Math.min(text.length, cursor + 1),
       };
 
   if (isFindForward(variant)) {
