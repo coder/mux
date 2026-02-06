@@ -1050,7 +1050,8 @@ export const ProjectSecretsModal: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     // The manage-secrets button is hidden (opacity-0) until the project row is hovered.
-    // Wait for sidebar to render, then hover → find button → click → verify modal.
+    // In the CI test runner, CSS :hover state doesn't reliably trigger via userEvent,
+    // so we force the button visible before clicking.
     const body = within(canvasElement.ownerDocument.body);
 
     // Wait for project row to render
@@ -1068,23 +1069,14 @@ export const ProjectSecretsModal: AppStory = {
       `[data-project-path="${README_PROJECT_PATH}"]`
     )!;
 
-    // Hover to reveal the opacity-0 manage-secrets button
-    await userEvent.hover(projectRow);
-
-    // Wait for the button to become available after hover
-    await waitFor(
-      () => {
-        within(projectRow).getByRole("button", {
-          name: new RegExp(`Manage secrets for ${README_PROJECT_NAME}`, "i"),
-        });
-      },
-      { timeout: 5_000 }
+    // Find the button by aria-label (it exists in DOM even at opacity-0)
+    const manageSecretsButton = projectRow.querySelector<HTMLElement>(
+      `button[aria-label="Manage secrets for ${README_PROJECT_NAME}"]`
     );
+    if (!manageSecretsButton) throw new Error("manage secrets button not found");
 
-    const manageSecretsButton = within(projectRow).getByRole("button", {
-      name: new RegExp(`Manage secrets for ${README_PROJECT_NAME}`, "i"),
-    });
-
+    // Force it visible so the click is reliable in CI
+    manageSecretsButton.style.opacity = "1";
     await userEvent.click(manageSecretsButton);
 
     // Wait for modal with secrets to appear (portaled to document.body)
