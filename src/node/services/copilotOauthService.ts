@@ -18,10 +18,11 @@ function githubUrls(domain: string) {
   };
 }
 
-function normalizeDomain(url: string): string {
+export function normalizeDomain(url: string): string {
   try {
     const withProtocol = url.includes("://") ? url : `https://${url}`;
-    return new URL(withProtocol).hostname;
+    // Use .host (not .hostname) to preserve non-standard ports for GHES instances
+    return new URL(withProtocol).host;
   } catch {
     // Fall back to basic cleanup if URL parsing fails
     return url

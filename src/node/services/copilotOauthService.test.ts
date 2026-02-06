@@ -6,6 +6,8 @@ import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { CopilotOauthService } from "./copilotOauthService";
 
+import { normalizeDomain } from "./copilotOauthService";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -747,6 +749,42 @@ describe("CopilotOauthService", () => {
       if (!waitResult.success) {
         expect(waitResult.error).toContain("disk full");
       }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // normalizeDomain
+  // ---------------------------------------------------------------------------
+
+  describe("normalizeDomain", () => {
+    it("strips protocol and returns host for standard URLs", () => {
+      expect(normalizeDomain("https://github.com")).toBe("github.com");
+    });
+
+    it("preserves non-standard port for enterprise servers", () => {
+      expect(normalizeDomain("https://github.myco.com:8443")).toBe("github.myco.com:8443");
+    });
+
+    it("omits port when using standard HTTPS port 443", () => {
+      expect(normalizeDomain("https://github.myco.com:443")).toBe("github.myco.com");
+    });
+
+    it("omits port when using standard HTTP port 80", () => {
+      expect(normalizeDomain("http://github.myco.com:80")).toBe("github.myco.com");
+    });
+
+    it("handles bare domain without protocol", () => {
+      expect(normalizeDomain("github.myco.com")).toBe("github.myco.com");
+    });
+
+    it("handles bare domain with port and no protocol", () => {
+      expect(normalizeDomain("github.myco.com:8443")).toBe("github.myco.com:8443");
+    });
+
+    it("strips trailing path", () => {
+      expect(normalizeDomain("https://github.myco.com:8443/some/path")).toBe(
+        "github.myco.com:8443"
+      );
     });
   });
 
