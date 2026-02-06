@@ -20,6 +20,7 @@ import {
   createFileReadTool,
   createFileEditTool,
   createBashTool,
+  createWebSearchTool,
   createStaticChatHandler,
   type GitStatusFixture,
 } from "./mockFactory";
@@ -39,6 +40,7 @@ import {
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   GIT_STATUS_INDICATOR_MODE_KEY,
+  LEFT_SIDEBAR_COLLAPSED_KEY,
   RIGHT_SIDEBAR_TAB_KEY,
   RIGHT_SIDEBAR_WIDTH_KEY,
   getRightSidebarLayoutKey,
@@ -108,19 +110,25 @@ const SAMPLE_NUMSTAT_OUTPUT = `14\t2\tsrc/browser/components/WorkspaceShell.tsx
 
 const HERO_TERMINAL_SCREEN_STATE = [
   "\u001b[2J\u001b[H", // clear + home
-  "mux-dev (exec mode)   ────────────────────────────────────────────────────────────────",
-  "$ bun test",
+  "\u001b[1;36m❯\u001b[0m bun test",
   "",
-  " PASS  tests/ui/sidebar.test.tsx",
-  " PASS  tests/ui/rightSidebar.test.tsx",
-  " PASS  tests/ui/chat.test.tsx",
+  " \u001b[32m✓\u001b[0m tests/ui/sidebar.test.tsx \u001b[90m(12 tests)\u001b[0m",
+  " \u001b[32m✓\u001b[0m tests/ui/rightSidebar.test.tsx \u001b[90m(8 tests)\u001b[0m",
+  " \u001b[32m✓\u001b[0m tests/ui/chat.test.tsx \u001b[90m(15 tests)\u001b[0m",
+  " \u001b[32m✓\u001b[0m tests/ui/workspaceStore.test.tsx \u001b[90m(7 tests)\u001b[0m",
   "",
-  "Test Suites: 3 passed, 3 total",
-  "Tests:       42 passed, 42 total",
-  "Time:        4.21s",
+  " \u001b[1;32mTest Suites:\u001b[0m 4 passed, 4 total",
+  " \u001b[1;32mTests:\u001b[0m       42 passed, 42 total",
+  " \u001b[90mTime:\u001b[0m        4.21s",
   "",
-  "$ make static-check",
-  "…",
+  "\u001b[1;36m❯\u001b[0m make lint",
+  "\u001b[32m✔\u001b[0m No lint errors found",
+  "",
+  "\u001b[1;36m❯\u001b[0m make typecheck",
+  "\u001b[90mChecking 284 files...\u001b[0m",
+  "\u001b[32m✔\u001b[0m No type errors found",
+  "",
+  "\u001b[1;36m❯\u001b[0m \u001b[7m \u001b[0m",
 ].join("\r\n");
 
 function createMultiModelSessionUsage(totalUsd: number): MockSessionUsage {
@@ -461,10 +469,87 @@ export const ProductHero: AppStory = {
               ),
             ]),
           ],
+          // Agent statuses on other workspaces to show sidebar activity indicators.
+          [
+            "ws-review",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Reviewing sidebar component performance.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 20_000,
+                toolCalls: [createStatusTool("call-1", "🔍", "Reviewing perf regressions")],
+              }),
+            ]),
+          ],
+          [
+            "ws-ahead",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Running integration tests.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 15_000,
+                toolCalls: [createStatusTool("call-1", "🧪", "Running test suite")],
+              }),
+            ]),
+          ],
+          [
+            "ws-dirty",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Fixing scroll position restoration.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 12_000,
+                toolCalls: [createStatusTool("call-1", "📝", "Editing scroll logic")],
+              }),
+            ]),
+          ],
+          [
+            "ws-diverged",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Refactoring store subscriptions.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 10_000,
+                toolCalls: [createStatusTool("call-1", "🔄", "Cleaning up state")],
+              }),
+            ]),
+          ],
+          [
+            "ws-ssh",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Deploying staging.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 8_000,
+                toolCalls: [createStatusTool("call-1", "🚀", "Deploying to staging")],
+              }),
+            ]),
+          ],
+          [
+            "ws-tb-flakes",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Investigating flaky tests.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 6_000,
+                toolCalls: [createStatusTool("call-1", "🧪", "Reproducing flakes")],
+              }),
+            ]),
+          ],
+          [
+            "ws-docs-readme",
+            createStaticChatHandler([
+              createAssistantMessage("msg-1", "Updating README screenshots.", {
+                historySequence: 1,
+                timestamp: STABLE_TIMESTAMP - 4_000,
+                toolCalls: [createStatusTool("call-1", "📝", "Refreshing docs")],
+              }),
+            ]),
+          ],
         ]);
 
         // Make the sidebar look expanded/busy, matching the README hero composition.
-        expandProjects([README_PROJECT_PATH, TERMINAL_BENCH_PROJECT_PATH]);
+        // Expand all projects so the sidebar is densely populated with workspaces.
+        expandProjects([
+          README_PROJECT_PATH,
+          TERMINAL_BENCH_PROJECT_PATH,
+          DOCS_PROJECT_PATH,
+          INFRA_PROJECT_PATH,
+        ]);
         selectWorkspace(wsHero);
 
         // Force a split layout: Review (top) + Terminal (bottom).
@@ -532,6 +617,7 @@ export const ProductHero: AppStory = {
 };
 
 // README: docs/img/code-review.webp
+// Left sidebar collapsed, 50/50 split between chat and review pane, rich multi-turn chat.
 export const CodeReview: AppStory = {
   render: () => (
     <AppWithMocks
@@ -545,9 +631,72 @@ export const CodeReview: AppStory = {
           projectPath: README_PROJECT_PATH,
         });
 
+        // Collapse left sidebar to maximize space for chat + review.
+        window.localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(true));
+
+        // 50/50 split: 800px review pane out of 1600px viewport.
         window.localStorage.setItem(RIGHT_SIDEBAR_TAB_KEY, JSON.stringify("review"));
-        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "700");
+        window.localStorage.setItem(RIGHT_SIDEBAR_WIDTH_KEY, "800");
         window.localStorage.removeItem(getRightSidebarLayoutKey(workspaceId));
+
+        const REVIEW_DIFF = `diff --git a/src/browser/components/WorkspaceShell.tsx b/src/browser/components/WorkspaceShell.tsx
+index aaa1111..bbb2222 100644
+--- a/src/browser/components/WorkspaceShell.tsx
++++ b/src/browser/components/WorkspaceShell.tsx
+@@ -1,8 +1,18 @@
+ import React from 'react';
++import { useRightSidebarLayout } from '../hooks/useRightSidebarLayout';
++import { clamp } from '../utils/layout';
+ 
+-export function WorkspaceShell() {
+-  return <div className="shell" />;
++export function WorkspaceShell(props: WorkspaceShellProps) {
++  const layout = useRightSidebarLayout(props.workspaceId);
++  const sidebarWidth = clamp(layout.width, 200, 800);
++
++  return (
++    <div className="shell">
++      <header className="shell-header" aria-label="Workspace">Mux</header>
++      <main className="shell-content" style={{ marginRight: sidebarWidth }} />
++      <aside className="shell-sidebar" style={{ width: sidebarWidth }} />
++    </div>
++  );
+ }
+
+diff --git a/src/browser/utils/layout.ts b/src/browser/utils/layout.ts
+new file mode 100644
+index 0000000..abc1234
+--- /dev/null
++++ b/src/browser/utils/layout.ts
+@@ -0,0 +1,12 @@
++export function clamp(n: number, min: number, max: number) {
++  return Math.max(min, Math.min(max, n));
++}
++
++export function px(value: number) {
++  return value + "px";
++}
+
+diff --git a/src/browser/hooks/useRightSidebarLayout.ts b/src/browser/hooks/useRightSidebarLayout.ts
+new file mode 100644
+index 0000000..def5678
+--- /dev/null
++++ b/src/browser/hooks/useRightSidebarLayout.ts
+@@ -0,0 +1,18 @@
++import { usePersistedState } from './usePersistedState';
++import { getRightSidebarLayoutKey } from '@/common/constants/storage';
++
++export function useRightSidebarLayout(workspaceId: string) {
++  const [layout] = usePersistedState(
++    getRightSidebarLayoutKey(workspaceId),
++    { width: 400, collapsed: false }
++  );
++  return layout;
++}`;
+
+        const REVIEW_NUMSTAT = `10\t2\tsrc/browser/components/WorkspaceShell.tsx
+12\t0\tsrc/browser/utils/layout.ts
+18\t0\tsrc/browser/hooks/useRightSidebarLayout.ts`;
 
         const client = createMockORPCClient({
           projects: groupWorkspacesByProject([workspace]),
@@ -559,54 +708,135 @@ export const CodeReview: AppStory = {
                 createStaticChatHandler([
                   createUserMessage(
                     "msg-1",
-                    "Review this PR — focus on the layout changes and flag anything risky.",
+                    "Review this PR — focus on the layout changes and flag anything risky. The PR adds a right sidebar layout system to WorkspaceShell.",
                     {
                       historySequence: 1,
-                      timestamp: STABLE_TIMESTAMP - 40_000,
+                      timestamp: STABLE_TIMESTAMP - 90_000,
                     }
                   ),
-                  createAssistantMessage("msg-2", "Let me read through the changed files.", {
+                  createAssistantMessage("msg-2", "I'll start by reading the changed files.", {
                     historySequence: 2,
-                    timestamp: STABLE_TIMESTAMP - 30_000,
+                    timestamp: STABLE_TIMESTAMP - 80_000,
                     toolCalls: [
                       createFileReadTool(
                         "call-read-1",
                         "src/browser/components/WorkspaceShell.tsx",
-                        'export function WorkspaceShell(props: WorkspaceShellProps) {\n  const layout = useRightSidebarLayout(props.workspaceId);\n  return <div className="workspace-shell">...</div>;\n}'
+                        'import React from \'react\';\nimport { useRightSidebarLayout } from \'../hooks/useRightSidebarLayout\';\nimport { clamp } from \'../utils/layout\';\n\nexport function WorkspaceShell(props: WorkspaceShellProps) {\n  const layout = useRightSidebarLayout(props.workspaceId);\n  const sidebarWidth = clamp(layout.width, 200, 800);\n  return (\n    <div className="shell">\n      <header className="shell-header" aria-label="Workspace">Mux</header>\n      <main className="shell-content" style={{ marginRight: sidebarWidth }} />\n      <aside className="shell-sidebar" style={{ width: sidebarWidth }} />\n    </div>\n  );\n}'
+                      ),
+                      createFileReadTool(
+                        "call-read-2",
+                        "src/browser/utils/layout.ts",
+                        'export function clamp(n: number, min: number, max: number) {\n  return Math.max(min, Math.min(max, n));\n}\n\nexport function px(value: number) {\n  return value + "px";\n}'
+                      ),
+                      createFileReadTool(
+                        "call-read-3",
+                        "src/browser/hooks/useRightSidebarLayout.ts",
+                        "import { usePersistedState } from './usePersistedState';\nimport { getRightSidebarLayoutKey } from '@/common/constants/storage';\n\nexport function useRightSidebarLayout(workspaceId: string) {\n  const [layout] = usePersistedState(\n    getRightSidebarLayoutKey(workspaceId),\n    { width: 400, collapsed: false }\n  );\n  return layout;\n}"
                       ),
                     ],
                   }),
                   createAssistantMessage(
                     "msg-3",
-                    "I ran the type checker to make sure there are no regressions.",
+                    "The layout hook looks clean. Let me check for type safety and run the tests.",
                     {
                       historySequence: 3,
-                      timestamp: STABLE_TIMESTAMP - 20_000,
+                      timestamp: STABLE_TIMESTAMP - 60_000,
                       toolCalls: [
-                        createBashTool("call-bash-1", "bun run typecheck", "No errors found."),
+                        createBashTool(
+                          "call-bash-1",
+                          "bun run typecheck",
+                          "src/browser/utils/layout.ts:2:14 - warning: 'n' could be NaN\n\nFound 0 errors, 1 warning."
+                        ),
+                        createBashTool(
+                          "call-bash-2",
+                          "bun test -- WorkspaceShell useRightSidebarLayout layout",
+                          "PASS  tests/ui/WorkspaceShell.test.tsx (6 tests)\nPASS  tests/ui/useRightSidebarLayout.test.tsx (4 tests)\nPASS  tests/ui/layout.test.tsx (3 tests)\n\nTest Suites: 3 passed, 3 total\nTests:       13 passed, 13 total\nTime:        1.84s"
+                        ),
                       ],
                     }
                   ),
                   createAssistantMessage(
                     "msg-4",
-                    "**PR Summary**: This PR adds layout utilities and restructures WorkspaceShell. Two concerns:\n1. The `clamp()` utility doesn't guard against NaN\n2. The shell header has no `aria-label` for accessibility\n\nOverall low-risk — the changes are additive.",
+                    "I also looked at how this integrates with the existing resize handle.",
                     {
                       historySequence: 4,
-                      timestamp: STABLE_TIMESTAMP - 10_000,
+                      timestamp: STABLE_TIMESTAMP - 40_000,
+                      toolCalls: [
+                        createWebSearchTool(
+                          "call-web-1",
+                          "react resize observer sidebar layout pattern"
+                        ),
+                        createFileReadTool(
+                          "call-read-4",
+                          "src/browser/components/ResizeHandle.tsx",
+                          'export function ResizeHandle(props: ResizeHandleProps) {\n  const onMouseDown = useCallback((e: React.MouseEvent) => {\n    e.preventDefault();\n    const startX = e.clientX;\n    // ...\n  }, []);\n  return <div className="resize-handle" onMouseDown={onMouseDown} />;\n}'
+                        ),
+                      ],
                     }
                   ),
+                  createAssistantMessage(
+                    "msg-5",
+                    `**PR Summary**
+
+**3 files changed** (+40, −2)
+
+**Changes:**
+- \`WorkspaceShell.tsx\` — Restructured to accept \`workspaceId\` prop and integrate the new sidebar layout hook. Added \`aria-label\` for accessibility.
+- \`layout.ts\` — New \`clamp()\` and \`px()\` utilities.
+- \`useRightSidebarLayout.ts\` — New hook that reads persisted layout state.
+
+**Findings:**
+1. ⚠️ \`clamp()\` doesn't guard against \`NaN\` — \`Math.max(NaN, min)\` returns \`NaN\`. Add a runtime check or default.
+2. ⚠️ The sidebar width range (200–800) is hardcoded. Consider extracting to constants.
+3. ✅ The \`aria-label\` on the header is a good accessibility addition.
+4. ✅ Tests are comprehensive — 13 passing across 3 suites.
+
+**Verdict:** Low risk, mostly additive. Fix the NaN guard before merging.`,
+                    {
+                      historySequence: 5,
+                      timestamp: STABLE_TIMESTAMP - 20_000,
+                    }
+                  ),
+                  createUserMessage("msg-6", "Good catch on the NaN issue. Fix it and ship.", {
+                    historySequence: 6,
+                    timestamp: STABLE_TIMESTAMP - 15_000,
+                  }),
+                  createAssistantMessage("msg-7", "Fixed and pushed.", {
+                    historySequence: 7,
+                    timestamp: STABLE_TIMESTAMP - 10_000,
+                    toolCalls: [
+                      createFileEditTool(
+                        "call-edit-1",
+                        "src/browser/utils/layout.ts",
+                        "@@ -1,3 +1,4 @@\n export function clamp(n: number, min: number, max: number) {\n+  if (Number.isNaN(n)) return min;\n   return Math.max(min, Math.min(max, n));\n }"
+                      ),
+                      createBashTool(
+                        "call-bash-3",
+                        "bun test -- layout",
+                        "PASS  tests/ui/layout.test.tsx (4 tests)\n\nTests: 4 passed, 4 total\nTime: 0.42s"
+                      ),
+                      createStatusTool(
+                        "call-status-1",
+                        "🚀",
+                        "PR ready",
+                        "https://github.com/coder/mux/pull/2035"
+                      ),
+                    ],
+                  }),
                 ]),
               ],
             ])
           ),
           executeBash: createGitStatusExecutor(
-            new Map([[workspaceId, { dirty: 3 }]]),
+            new Map([
+              [workspaceId, { ahead: 2, dirty: 0, outgoingAdditions: 40, outgoingDeletions: 2 }],
+            ]),
             new Map([
               [
                 workspaceId,
                 {
-                  diffOutput: SAMPLE_DIFF_OUTPUT,
-                  numstatOutput: SAMPLE_NUMSTAT_OUTPUT,
+                  diffOutput: REVIEW_DIFF,
+                  numstatOutput: REVIEW_NUMSTAT,
                 },
               ],
             ])
