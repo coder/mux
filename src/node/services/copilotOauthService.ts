@@ -10,6 +10,8 @@ const SCOPE = "read:user";
 const POLLING_SAFETY_MARGIN_MS = 3000;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const COMPLETED_FLOW_TTL_MS = 60 * 1000;
+// Only surface top-tier model families from the Copilot API
+export const COPILOT_MODEL_PREFIXES = ["gpt-5", "claude-", "gemini-3", "grok-code"];
 
 function githubUrls(domain: string) {
   return {
@@ -260,8 +262,12 @@ export class CopilotOauthService {
                 data?: Array<{ id: string }>;
               };
               if (modelsData.data && modelsData.data.length > 0) {
-                const modelIds = modelsData.data.map((m) => m.id);
-                this.providerService.setModels("github-copilot", modelIds);
+                const modelIds = modelsData.data
+                  .map((m) => m.id)
+                  .filter((id) => COPILOT_MODEL_PREFIXES.some((prefix) => id.startsWith(prefix)));
+                if (modelIds.length > 0) {
+                  this.providerService.setModels("github-copilot", modelIds);
+                }
               }
             }
           } catch (e) {

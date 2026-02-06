@@ -4,9 +4,7 @@ import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
-import { CopilotOauthService, copilotBaseUrl } from "./copilotOauthService";
-
-import { normalizeDomain } from "./copilotOauthService";
+import { CopilotOauthService, copilotBaseUrl, normalizeDomain } from "./copilotOauthService";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -42,7 +40,7 @@ function authorizationPendingResponse(): Response {
 }
 
 /** Models list response from Copilot API. */
-function modelsResponse(models: string[] = ["gpt-4o", "claude-sonnet-4"]): Response {
+function modelsResponse(models: string[] = ["gpt-5", "claude-sonnet-4"]): Response {
   return jsonResponse({ data: models.map((id) => ({ id })) });
 }
 
@@ -695,7 +693,7 @@ describe("CopilotOauthService", () => {
   // -------------------------------------------------------------------------
 
   describe("model fetching after successful auth", () => {
-    it("fetches models from Copilot API and stores them via setModels", async () => {
+    it("fetches models from Copilot API and stores only allowed prefixes via setModels", async () => {
       let modelsUrl = "";
       let modelsAuthHeader = "";
       mockFetch((input, init) => {
@@ -706,7 +704,15 @@ describe("CopilotOauthService", () => {
         if (url.includes("/models")) {
           modelsUrl = url;
           modelsAuthHeader = (init?.headers as Record<string, string>)?.Authorization ?? "";
-          return modelsResponse(["gpt-4o", "o3-mini"]);
+          // Return a mix of matching and non-matching models
+          return modelsResponse([
+            "gpt-5",
+            "claude-sonnet-4.5",
+            "gpt-4o",
+            "o3-mini",
+            "gemini-3-pro-preview",
+            "grok-code-mini",
+          ]);
         }
         return tokenSuccessResponse("ghp_model_token");
       });
@@ -724,11 +730,42 @@ describe("CopilotOauthService", () => {
       expect(modelsUrl).toBe("https://api.githubcopilot.com/models");
       expect(modelsAuthHeader).toBe("Bearer ghp_model_token");
 
-      // Verify models were stored
+      // Verify only models matching allowed prefixes were stored
       expect(deps.setModelsCalls).toHaveLength(1);
       const call = deps.setModelsCalls[0];
       expect(call?.provider).toBe("github-copilot");
-      expect(call?.models).toEqual(["gpt-4o", "o3-mini"]);
+      expect(call?.models).toEqual([
+        "gpt-5",
+        "claude-sonnet-4.5",
+        "gemini-3-pro-preview",
+        "grok-code-mini",
+      ]);
+    });
+
+    it("excludes models not matching any allowed prefix", async () => {
+      mockFetch((input) => {
+        const url = String(input);
+        if (url.includes("/login/device/code")) {
+          return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          // All models are non-matching
+          return modelsResponse(["gpt-4o", "o3-mini", "o1-preview"]);
+        }
+        return tokenSuccessResponse();
+      });
+
+      const startResult = await service.startDeviceFlow();
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+
+      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
+        timeoutMs: 10_000,
+      });
+      expect(waitResult.success).toBe(true);
+
+      // setModels should not be called when all models are filtered out
+      expect(deps.setModelsCalls).toHaveLength(0);
     });
 
     it("uses enterprise proxy URL for model fetch", async () => {
@@ -740,7 +777,7 @@ describe("CopilotOauthService", () => {
         }
         if (url.includes("/models")) {
           modelsUrl = url;
-          return modelsResponse(["gpt-4o"]);
+          return modelsResponse(["claude-sonnet-4"]);
         }
         return tokenSuccessResponse();
       });
