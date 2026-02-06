@@ -1,4 +1,5 @@
 import { os } from "@orpc/server";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ORPCContext } from "./context";
 import { decodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
@@ -403,6 +404,13 @@ function isExactPath(path: readonly string[], expected: readonly string[]): bool
 
 export function createFederationMiddleware() {
   return os.$context<ORPCContext>().middleware(async (options, input, output) => {
+    // Skip federation when the remote servers experiment is disabled.
+    if (
+      !options.context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.REMOTE_MUX_SERVERS)
+    ) {
+      return options.next();
+    }
+
     const rewrittenInput = rewriteFederationInputIds(input);
     if (!rewrittenInput) {
       return options.next();

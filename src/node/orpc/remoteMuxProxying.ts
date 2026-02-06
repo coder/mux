@@ -8,6 +8,7 @@ import type {
 import type { MuxMessage } from "@/common/types/message";
 import { decodeRemoteWorkspaceId, encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import type { ORPCContext } from "./context";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import assert from "node:assert/strict";
@@ -153,6 +154,11 @@ export function encodeRemoteIdBestEffort(serverId: string, remoteId: string): st
 }
 
 export function getRemoteServersForWorkspaceViews(context: ORPCContext) {
+  // Don't fan out to remote servers when the experiment is disabled.
+  if (!context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.REMOTE_MUX_SERVERS)) {
+    return [];
+  }
+
   const config = context.config.loadConfigOrDefault();
   const servers = config.remoteServers ?? [];
   return servers.filter((server) => server.enabled !== false && server.projectMappings.length > 0);
