@@ -522,16 +522,13 @@ export const TaskTranscriptViewer: AppStory = {
 
     // Find the transcript button associated with our specific task.
     // The app may render multiple tasks (and multiple "View transcript" buttons).
-    const taskIdButton = await waitFor(
-      () => {
-        const button = canvas.queryByRole("button", { name: taskId });
-        if (!button) {
-          throw new Error(`Task id button not rendered yet: ${taskId}`);
-        }
-        return button;
-      },
-      { timeout: 5_000 }
-    );
+    const taskIdButton = await waitFor(() => {
+      const button = canvas.queryByRole("button", { name: taskId });
+      if (!button) {
+        throw new Error(`Task id button not rendered yet: ${taskId}`);
+      }
+      return button;
+    });
 
     let viewTranscriptButton: HTMLElement | null = null;
     let searchNode: HTMLElement | null = taskIdButton;
@@ -565,16 +562,13 @@ export const TaskTranscriptViewer: AppStory = {
       return match;
     });
 
-    await waitFor(
-      () => {
-        // MessageRenderer renders each message inside a MessageWindow with data-message-block.
-        if (dialog.querySelectorAll("[data-message-block]").length === 0) {
-          const debugText = dialog.textContent?.trim().slice(0, 200) ?? "<no text>";
-          throw new Error(`Transcript messages not rendered. Dialog text: ${debugText}`);
-        }
-      },
-      { timeout: 5_000 }
-    );
+    await waitFor(() => {
+      // MessageRenderer renders each message inside a MessageWindow with data-message-block.
+      if (dialog.querySelectorAll("[data-message-block]").length === 0) {
+        const debugText = dialog.textContent?.trim().slice(0, 200) ?? "<no text>";
+        throw new Error(`Transcript messages not rendered. Dialog text: ${debugText}`);
+      }
+    });
   },
 };
 
@@ -716,31 +710,27 @@ async function playTaskApplyGitPatchCommitListStory(
     getToolHeader().click();
   }
 
-  await waitFor(
-    () => {
-      const currentToolHeader = getToolHeader();
-      if (!isExpanded(currentToolHeader)) {
-        throw new Error("Apply patch tool did not expand");
-      }
+  await waitFor(() => {
+    const currentToolHeader = getToolHeader();
+    if (!isExpanded(currentToolHeader)) {
+      throw new Error("Apply patch tool did not expand");
+    }
 
-      const text = getMessageWindow().textContent ?? "";
-      const missing: string[] = [];
+    const text = getMessageWindow().textContent ?? "";
+    const missing: string[] = [];
 
-      if (!text.includes("feat: add Apply Patch tool UI")) {
-        missing.push("feat: add Apply Patch tool UI");
-      }
+    if (!text.includes("feat: add Apply Patch tool UI")) {
+      missing.push("feat: add Apply Patch tool UI");
+    }
 
-      if (!text.includes("fix: render applied commit list")) {
-        missing.push("fix: render applied commit list");
-      }
+    if (!text.includes("fix: render applied commit list")) {
+      missing.push("fix: render applied commit list");
+    }
 
-      if (missing.length > 0) {
-        throw new Error(`Expected commit subject not found: ${missing.join(", ")}`);
-      }
-    },
-    // Keep this below the Storybook test-runner per-story timeout.
-    { timeout: 3000 }
-  );
+    if (missing.length > 0) {
+      throw new Error(`Expected commit subject not found: ${missing.join(", ")}`);
+    }
+  });
 }
 
 /**

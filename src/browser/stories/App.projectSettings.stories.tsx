@@ -188,7 +188,7 @@ async function openWorkspaceMCPModal(canvasElement: HTMLElement): Promise<void> 
   await userEvent.click(mcpButton);
 
   try {
-    await body.findByRole("dialog", {}, { timeout: 5000 });
+    await body.findByRole("dialog");
   } catch {
     const retryButton = await canvas.findByTestId("workspace-mcp-button");
     await userEvent.click(retryButton);

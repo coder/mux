@@ -105,12 +105,9 @@ export const CostsTab: AppStory = {
     const canvas = within(canvasElement);
 
     // Session usage is fetched async via WorkspaceStore; wait to avoid snapshot races.
-    await waitFor(
-      () => {
-        canvas.getByRole("tab", { name: /costs.*\$0\.56/i });
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByRole("tab", { name: /costs.*\$0\.56/i });
+    });
   },
 };
 
@@ -214,12 +211,9 @@ export const ReviewTab: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for session usage to land (avoid theme/mode snapshots diverging on timing).
-    await waitFor(
-      () => {
-        canvas.getByRole("tab", { name: /costs.*\$0\.42/i });
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByRole("tab", { name: /costs.*\$0\.42/i });
+    });
 
     const reviewTab = canvas.getByRole("tab", { name: /^review/i });
     await userEvent.click(reviewTab);
@@ -261,17 +255,14 @@ export const ExplorerTab: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for explorer tab to be available and click it
-    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i }, { timeout: 3000 });
+    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i });
     await userEvent.click(explorerTab);
 
     // Wait for file tree to load (mock returns src, tests, node_modules, etc.)
-    await waitFor(
-      () => {
-        canvas.getByText("src");
-        canvas.getByText("package.json");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByText("src");
+      canvas.getByText("package.json");
+    });
 
     // Verify ignored folder is shown with reduced opacity (node_modules)
     await waitFor(() => {
@@ -311,29 +302,23 @@ export const ExplorerTabExpanded: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for explorer tab and click it
-    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i }, { timeout: 3000 });
+    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i });
     await userEvent.click(explorerTab);
 
     // Wait for file tree to load
-    await waitFor(
-      () => {
-        canvas.getByText("src");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByText("src");
+    });
 
     // Click on src folder to expand it
     const srcFolder = canvas.getByText("src");
     await userEvent.click(srcFolder);
 
     // Wait for src contents to load and collapse all button to appear
-    await waitFor(
-      () => {
-        canvas.getByText("App.tsx");
-        canvas.getByText("components");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByText("App.tsx");
+      canvas.getByText("components");
+    });
 
     // Verify collapse all button is visible (tooltip text)
     await waitFor(() => {
@@ -376,16 +361,13 @@ export const ExplorerTabSelected: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for explorer tab and click it
-    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i }, { timeout: 3000 });
+    const explorerTab = await canvas.findByRole("tab", { name: /^explorer/i });
     await userEvent.click(explorerTab);
 
     // Wait for file tree to load
-    await waitFor(
-      () => {
-        canvas.getByText("src");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByText("src");
+    });
 
     // Click on src folder to select it (will have focus/selected blue background)
     // Using a folder instead of a file to avoid opening a file viewer tab
@@ -428,7 +410,7 @@ export const StatsTabIdle: AppStory = {
     const canvas = within(canvasElement);
 
     // Feature flags are async, so allow more time.
-    const statsTab = await canvas.findByRole("tab", { name: /^stats/i }, { timeout: 3000 });
+    const statsTab = await canvas.findByRole("tab", { name: /^stats/i });
     await userEvent.click(statsTab);
 
     await waitFor(() => {
@@ -470,15 +452,12 @@ export const StatsTabStreaming: AppStory = {
     const canvas = within(canvasElement);
 
     // Feature flags are async; wait for Stats tab to appear, then select it.
-    const statsTab = await canvas.findByRole("tab", { name: /^stats/i }, { timeout: 5000 });
+    const statsTab = await canvas.findByRole("tab", { name: /^stats/i });
     await userEvent.click(statsTab);
 
-    await waitFor(
-      () => {
-        canvas.getByRole("tab", { name: /^stats/i, selected: true });
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByRole("tab", { name: /^stats/i, selected: true });
+    });
 
     // Verify timing header is shown (with pulsing active indicator)
     await waitFor(() => {
@@ -635,34 +614,24 @@ export const ReviewTabSortByLastEdit: AppStory = {
 
     // Verify the sort dropdown shows "Last edit"
     // Use a more specific selector since there are multiple combobox elements
-    const sortSelect = await canvas.findByRole(
-      "combobox",
-      { name: /sort hunks by/i },
-      { timeout: 3000 }
-    );
+    const sortSelect = await canvas.findByRole("combobox", { name: /sort hunks by/i });
     await expect(sortSelect).toHaveValue("last-edit");
 
     // Wait for hunks to load - look for file paths in the diff
     // Use getAllByText since files appear in both file tree and hunk headers
-    await waitFor(
-      () => {
-        canvas.getAllByText(/format\.ts/i);
-        canvas.getAllByText(/Button\.tsx/i);
-        canvas.getAllByText(/client\.ts/i);
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getAllByText(/format\.ts/i);
+      canvas.getAllByText(/Button\.tsx/i);
+      canvas.getAllByText(/client\.ts/i);
+    });
 
     // Verify relative time indicators are shown (e.g., "5m ago", "30m ago", "2h ago")
     // These come from the firstSeenAt timestamps we set
-    await waitFor(
-      async () => {
-        // At least one relative time indicator should be visible
-        const timeIndicators = canvas.getAllByText(/ago|just now/i);
-        await expect(timeIndicators.length).toBeGreaterThan(0);
-      },
-      { timeout: 3000 }
-    );
+    await waitFor(async () => {
+      // At least one relative time indicator should be visible
+      const timeIndicators = canvas.getAllByText(/ago|just now/i);
+      await expect(timeIndicators.length).toBeGreaterThan(0);
+    });
   },
 };
 
@@ -721,20 +690,13 @@ export const ReviewTabSortByFileOrder: AppStory = {
 
     // Verify the sort dropdown shows "File order"
     // Use a more specific selector since there are multiple combobox elements
-    const sortSelect = await canvas.findByRole(
-      "combobox",
-      { name: /sort hunks by/i },
-      { timeout: 3000 }
-    );
+    const sortSelect = await canvas.findByRole("combobox", { name: /sort hunks by/i });
     await expect(sortSelect).toHaveValue("file-order");
 
     // Wait for hunks to load - use getAllByText since files appear in both file tree and hunk headers
-    await waitFor(
-      () => {
-        canvas.getAllByText(/format\.ts/i);
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getAllByText(/format\.ts/i);
+    });
 
     // Switch to "Last edit" sorting
     await userEvent.selectOptions(sortSelect, "last-edit");
@@ -829,12 +791,9 @@ export const DiffPaddingAlignment: AppStory = {
     );
 
     // Wait for diff content to render
-    await waitFor(
-      () => {
-        canvas.getByText(/add\(a: number/i);
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByText(/add\(a: number/i);
+    });
 
     // Visual verification: the padding strip should align with the diff gutter
     // This is primarily a visual regression test for Chromatic
@@ -1101,23 +1060,17 @@ export const ReviewTabWithFileFilter: AppStory = {
     );
 
     // Wait for file tree to load
-    await waitFor(
-      () => {
-        canvas.getByText("Files");
-      },
-      { timeout: 3000 }
-    );
+    await waitFor(() => {
+      canvas.getByText("Files");
+    });
 
     // Verify file filter indicator is visible in the header (has clear button with ✕)
-    await waitFor(
-      async () => {
-        // Look for the filter indicator button by its title attribute which includes "Filtering:"
-        const filterIndicator = canvasElement.querySelector('button[title^="Filtering:"]');
-        await expect(filterIndicator).toBeInTheDocument();
-        await expect(filterIndicator).toHaveTextContent("Button.tsx");
-      },
-      { timeout: 3000 }
-    );
+    await waitFor(async () => {
+      // Look for the filter indicator button by its title attribute which includes "Filtering:"
+      const filterIndicator = canvasElement.querySelector('button[title^="Filtering:"]');
+      await expect(filterIndicator).toBeInTheDocument();
+      await expect(filterIndicator).toHaveTextContent("Button.tsx");
+    });
   },
 };
 
@@ -1212,12 +1165,9 @@ export const ReviewTabWithUntrackedFiles: AppStory = {
     );
 
     // Wait for the untracked files banner to appear
-    await waitFor(
-      () => {
-        canvas.getByText(/3 untracked files/i);
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByText(/3 untracked files/i);
+    });
 
     // Expand the banner to show file list and Track All button
     const bannerButton = canvas.getByText(/untracked files/i);
@@ -1358,12 +1308,9 @@ export const CostsTabCompactionModelWarning: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for the warning to appear
-    await waitFor(
-      () => {
-        canvas.getByText(/compaction model context/i);
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      canvas.getByText(/compaction model context/i);
+    });
   },
   parameters: {
     docs: {

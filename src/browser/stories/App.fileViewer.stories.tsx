@@ -559,7 +559,7 @@ export const BinaryFileError: AppStory = {
     await canvas.findByRole("tab", { name: /app\.exe/i }, { timeout: 10000 });
 
     // Wait for error message
-    await canvas.findByText(/unable to display binary file/i, {}, { timeout: 5000 });
+    await canvas.findByText(/unable to display binary file/i);
 
     // Double-RAF for scroll stabilization
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -610,7 +610,7 @@ export const LargeFileError: AppStory = {
     await canvas.findByRole("tab", { name: /dump\.sql/i }, { timeout: 10000 });
 
     // Wait for error message
-    await canvas.findByText(/file is too large/i, {}, { timeout: 5000 });
+    await canvas.findByText(/file is too large/i);
 
     // Double-RAF for scroll stabilization
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
