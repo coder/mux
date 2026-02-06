@@ -156,7 +156,10 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
       // with createTool() - they have special properties. Instead, spread providerOptions
       // directly onto the tool object. While this doesn't work for regular tools (SDK
       // requires providerOptions at creation time), provider-defined tools handle it.
-      const isProviderDefinedTool = (existingTool as { type?: string }).type === "provider-defined";
+      // AI SDK uses type: "provider" for provider-native tools (e.g., Anthropic's webSearch_20250305).
+      // If this check fails, the tool is reconstructed via createTool() which strips the provider
+      // identity — causing the API to treat it as a regular client-side tool with no server execution.
+      const isProviderDefinedTool = existingTool.type === "provider";
 
       if (isProviderDefinedTool) {
         // Provider-defined tools: add providerOptions directly (SDK handles it differently)

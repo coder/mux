@@ -757,6 +757,7 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo
   ): Promise<void> {
     if (!streamInfo.softInterrupt.pending) return;
+
     try {
       streamInfo.state = StreamState.STOPPING;
 
