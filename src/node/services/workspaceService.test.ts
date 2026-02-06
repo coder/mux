@@ -1,6 +1,7 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { describe, expect, test, mock, beforeEach, spyOn } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
+import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import { EventEmitter } from "events";
 import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
@@ -1171,6 +1172,78 @@ describe("WorkspaceService init cancellation", () => {
 
       expect(initAbortControllers.has(workspaceId)).toBe(false);
     } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("remove() calls runtime.deleteWorkspace when force=true", async () => {
+    const workspaceId = "ws-remove-runtime-delete";
+    const projectPath = "/tmp/proj";
+
+    const deleteWorkspaceMock = mock(() =>
+      Promise.resolve({ success: true as const, deletedPath: "/tmp/deleted" })
+    );
+
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-ws-remove-runtime-"));
+    try {
+      const mockAIService = {
+        isStreaming: mock(() => false),
+        stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+        getWorkspaceMetadata: mock(() =>
+          Promise.resolve(
+            Ok({
+              id: workspaceId,
+              name: "ws",
+              projectPath,
+              projectName: "proj",
+              runtimeConfig: { type: "local" },
+            })
+          )
+        ),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        on: mock(() => {}),
+        // eslint-disable-next-line @typescript-eslint/no-empty-function
+        off: mock(() => {}),
+      } as unknown as AIService;
+
+      const mockConfig: Partial<Config> = {
+        srcDir: "/tmp/src",
+        getSessionDir: mock((id: string) => path.join(tempRoot, id)),
+        removeWorkspace: mock(() => Promise.resolve()),
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+      };
+
+      const mockHistoryService: Partial<HistoryService> = {};
+      const mockPartialService: Partial<PartialService> = {};
+      const mockInitStateManager: Partial<InitStateManager> = {
+        // WorkspaceService subscribes to init-end events on construction.
+        on: mock(() => undefined as unknown as InitStateManager),
+        clearInMemoryState: mock((_workspaceId: string) => undefined),
+      };
+      const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+      const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+        cleanup: mock(() => Promise.resolve()),
+      };
+
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        mockHistoryService as HistoryService,
+        mockPartialService as PartialService,
+        mockAIService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager
+      );
+
+      const result = await workspaceService.remove(workspaceId, true);
+      expect(result.success).toBe(true);
+      expect(deleteWorkspaceMock).toHaveBeenCalledWith(projectPath, "ws", true);
+    } finally {
+      createRuntimeSpy.mockRestore();
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
     }
   });

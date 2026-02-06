@@ -1282,6 +1282,140 @@ export class CoderService {
     );
   }
 
+  /** Promise-based sleep helper */
+  private sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+
+      const onAbort = () => {
+        clearTimeout(timeout);
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  /**
+   * Delete a Coder workspace, retrying across transient build states.
+   *
+   * This is used for "cancel creation" because aborting the local `coder create`
+   * process does not guarantee the control-plane build is canceled.
+   */
+  async deleteWorkspaceEventually(
+    name: string,
+    options?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /** Allow deletion for mux-managed workspaces that don't use the mux- prefix. */
+      allowNonMuxPrefix?: boolean;
+      /**
+       * If true, treat an initial "not found" as inconclusive and keep polling.
+       * This avoids races where `coder create` finishes server-side after mux aborts the CLI.
+       */
+      waitForExistence?: boolean;
+      /**
+       * If waitForExistence is true, how long to tolerate "not found" before assuming the
+       * workspace will never materialize.
+       */
+      existenceGraceMs?: number;
+    }
+  ): Promise<Result<void>> {
+    const timeoutMs = options?.timeoutMs ?? 60_000;
+    const startTime = Date.now();
+    const existenceGraceMs = options?.existenceGraceMs ?? 15_000;
+
+    const allowNonMuxPrefix = options?.allowNonMuxPrefix === true;
+    if (!allowNonMuxPrefix && !name.startsWith("mux-")) {
+      log.warn("Refusing to delete Coder workspace without mux- prefix", { name });
+      return Ok(undefined);
+    }
+
+    const isTimedOut = () => Date.now() - startTime > timeoutMs;
+    const remainingMs = () => Math.max(0, timeoutMs - (Date.now() - startTime));
+
+    const unstableStates = new Set<CoderWorkspaceStatus>([
+      "starting",
+      "pending",
+      "stopping",
+      "canceling",
+    ]);
+
+    let sawWorkspaceExist = false;
+    let lastError: string | undefined;
+    let attempt = 0;
+
+    while (!isTimedOut()) {
+      if (options?.signal?.aborted) {
+        return Err("Delete operation aborted");
+      }
+
+      const statusResult = await this.getWorkspaceStatus(name, {
+        timeoutMs: Math.min(remainingMs(), 10_000),
+        signal: options?.signal,
+      });
+
+      if (statusResult.kind === "ok") {
+        sawWorkspaceExist = true;
+
+        if (statusResult.status === "deleted" || statusResult.status === "deleting") {
+          return Ok(undefined);
+        }
+
+        // If a build is transitioning (starting/stopping/etc), deletion may fail temporarily.
+        // We'll keep polling + retrying the delete command.
+        if (unstableStates.has(statusResult.status)) {
+          log.debug("Coder workspace in transitional state; will retry delete", {
+            name,
+            status: statusResult.status,
+          });
+        }
+      }
+
+      if (statusResult.kind === "not_found") {
+        if (options?.waitForExistence !== true) {
+          return Ok(undefined);
+        }
+
+        // For cancel-init, avoid treating an initial not_found as success: `coder create` may still
+        // complete server-side after we abort the local CLI. We only treat not_found as success
+        // after we've observed the workspace exist, or after a short grace window.
+        if (sawWorkspaceExist || Date.now() - startTime > existenceGraceMs) {
+          return Ok(undefined);
+        }
+      }
+
+      if (statusResult.kind === "error") {
+        // If status checks fail (auth/network), still attempt delete best-effort.
+        lastError = statusResult.error;
+      }
+
+      const deleteAttempt = await this.runCoderCommand(["delete", name, "--yes"], {
+        timeoutMs: Math.min(remainingMs(), 20_000),
+        signal: options?.signal,
+      });
+
+      const interpreted = interpretCoderResult(deleteAttempt);
+      if (!interpreted.ok) {
+        lastError = interpreted.error;
+      }
+
+      attempt++;
+      const backoffMs = Math.min(2_000, 250 + attempt * 150);
+      await this.sleep(backoffMs, options?.signal);
+    }
+
+    return Err(lastError ?? "Timed out deleting Coder workspace");
+  }
+
   /**
    * Delete a Coder workspace.
    *
@@ -1289,13 +1423,14 @@ export class CoderService {
    * deleting user workspaces that weren't created by mux.
    */
   async deleteWorkspace(name: string): Promise<void> {
-    if (!name.startsWith("mux-")) {
-      log.warn("Refusing to delete Coder workspace without mux- prefix", { name });
-      return;
+    const result = await this.deleteWorkspaceEventually(name, {
+      timeoutMs: 30_000,
+      waitForExistence: false,
+    });
+
+    if (!result.success) {
+      throw new Error(result.error);
     }
-    log.debug("Deleting Coder workspace", { name });
-    using proc = execAsync(`coder delete ${shescape.quote(name)} --yes`);
-    await proc.result;
   }
 
   /**

@@ -1304,33 +1304,116 @@ describe("non-string parameter defaults", () => {
 });
 
 describe("deleteWorkspace", () => {
-  const service = new CoderService();
-  let mockExec: ReturnType<typeof spyOn<typeof disposableExec, "execAsync">> | null = null;
+  let service: CoderService;
+  let spawnSpy: ReturnType<typeof spyOn<typeof childProcess, "spawn">> | null = null;
 
   beforeEach(() => {
+    service = new CoderService();
     vi.clearAllMocks();
-    mockExec = spyOn(disposableExec, "execAsync");
+    spawnSpy = spyOn(childProcess, "spawn");
   });
 
   afterEach(() => {
-    mockExec?.mockRestore();
-    mockExec = null;
+    service.clearCache();
+    spawnSpy?.mockRestore();
+    spawnSpy = null;
   });
 
   it("refuses to delete workspace without mux- prefix", async () => {
     await service.deleteWorkspace("my-workspace");
 
-    // Should not call execAsync at all
-    expect(mockExec).not.toHaveBeenCalled();
+    // Should not call spawn at all
+    expect(spawnSpy).not.toHaveBeenCalled();
   });
 
   it("deletes workspace with mux- prefix", async () => {
-    mockExec?.mockReturnValue(createMockExecResult(Promise.resolve({ stdout: "", stderr: "" })));
+    mockCoderCommandResult({ exitCode: 0 });
 
     await service.deleteWorkspace("mux-my-workspace");
 
-    expect(mockExec).toHaveBeenCalledWith(expect.stringContaining("coder delete"));
-    expect(mockExec).toHaveBeenCalledWith(expect.stringContaining("mux-my-workspace"));
+    expect(spawnSpy).toHaveBeenCalled();
+    const [cmd, args] = spawnSpy!.mock.calls[0] ?? [];
+    expect(cmd).toBe("coder");
+    expect(args).toEqual(["delete", "mux-my-workspace", "--yes"]);
+  });
+});
+
+describe("deleteWorkspaceEventually", () => {
+  it("polls past initial not_found when waitForExistence=true", async () => {
+    const service = new CoderService();
+
+    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus");
+    const statuses = [
+      { kind: "not_found" as const },
+      { kind: "ok" as const, status: "pending" as const },
+      { kind: "ok" as const, status: "deleting" as const },
+    ];
+    getWorkspaceStatusSpy.mockImplementation(() =>
+      Promise.resolve(statuses.shift() ?? { kind: "ok" as const, status: "deleting" as const })
+    );
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn(() => Promise.resolve());
+
+    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+      timeoutMs: 1_000,
+      waitForExistence: true,
+      existenceGraceMs: 10_000,
+    });
+
+    expect(result.success).toBe(true);
+    expect(getWorkspaceStatusSpy.mock.calls.length).toBeGreaterThan(1);
+    expect(serviceHack.runCoderCommand).toHaveBeenCalled();
+  });
+
+  it("treats not_found as success after existenceGraceMs", async () => {
+    const service = new CoderService();
+
+    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus").mockImplementation(() =>
+      Promise.resolve({ kind: "not_found" as const })
+    );
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn(() => Promise.resolve());
+
+    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+      timeoutMs: 1_000,
+      waitForExistence: true,
+      existenceGraceMs: 0,
+    });
+
+    expect(result.success).toBe(true);
+    expect(getWorkspaceStatusSpy).toHaveBeenCalled();
   });
 });
 

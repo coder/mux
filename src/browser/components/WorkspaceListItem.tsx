@@ -18,7 +18,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, X } from "lucide-react";
+import { Pencil, Trash2, Ellipsis } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -241,7 +241,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { id: workspaceId, namedWorkspacePath } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const isInitializing = metadata.isInitializing === true;
-  const isDisabled = isInitializing || isArchiving;
+  const isSelectionDisabled = isInitializing || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
@@ -321,7 +321,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
 
-  const showUnreadBar = !isInitializing && !isEditing && isUnread && !(isSelected && !isDisabled);
+  const showUnreadBar =
+    !isInitializing && !isEditing && isUnread && !(isSelected && !isSelectionDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -340,9 +341,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
       }),
-      canDrag: !isDisabled,
+      canDrag: !isSelectionDisabled,
     }),
-    [workspaceId, projectPath, sectionId, isDisabled, displayTitle, metadata.runtimeConfig]
+    [workspaceId, projectPath, sectionId, isSelectionDisabled, displayTitle, metadata.runtimeConfig]
   );
 
   // Hide native drag preview; we render a custom preview via WorkspaceDragLayer
@@ -357,15 +358,16 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           isDragging && "opacity-50",
-          isDisabled
-            ? "cursor-default opacity-70"
-            : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
-          isSelected && !isDisabled && "bg-hover",
-          isArchiving && "pointer-events-none"
+          // Keep hover styles enabled for initializing workspaces so the row feels interactive
+          // (the click selection is disabled, but the cancel action remains accessible).
+          !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
+          isArchiving && "pointer-events-none opacity-70",
+          isSelectionDisabled ? "cursor-default" : "cursor-pointer",
+          isSelected && !isSelectionDisabled && "bg-hover"
         )}
         style={{ paddingLeft }}
         onClick={() => {
-          if (isDisabled) return;
+          if (isSelectionDisabled) return;
           onSelectWorkspace({
             projectPath,
             projectName,
@@ -374,7 +376,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           });
         }}
         onKeyDown={(e) => {
-          if (isDisabled || isEditing) return;
+          if (isSelectionDisabled || isEditing) return;
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             onSelectWorkspace({
@@ -386,7 +388,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           }
         }}
         onContextMenu={(e) => {
-          if (isDisabled || isEditing) return;
+          if (isSelectionDisabled || isEditing) return;
 
           e.preventDefault();
           e.stopPropagation();
@@ -394,22 +396,22 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           setIsTitleMenuOpen(true);
         }}
         role="button"
-        tabIndex={isDisabled ? -1 : 0}
+        tabIndex={isSelectionDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
         aria-label={
           isInitializing
-            ? `Creating workspace ${displayTitle}`
+            ? `Initializing workspace ${displayTitle}`
             : isArchiving
               ? `Archiving workspace ${displayTitle}`
               : `Select workspace ${displayTitle}`
         }
-        aria-disabled={isDisabled}
+        aria-disabled={isSelectionDisabled}
         data-workspace-path={namedWorkspacePath}
         data-workspace-id={workspaceId}
         data-section-id={sectionId ?? ""}
         data-git-status={gitStatus ? JSON.stringify(gitStatus) : undefined}
       >
-        <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
+        <SelectionBar isSelected={isSelected && !isSelectionDisabled} showUnread={showUnreadBar} />
 
         {/* Action button - centered when status text visible, top-aligned otherwise */}
         {!isMuxHelpChat && !isEditing && (
@@ -419,7 +421,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="text-muted hover:text-destructive inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-100 transition-colors duration-200"
+                    className="text-muted hover:text-destructive inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
                     onKeyDown={stopKeyboardPropagation}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -428,7 +430,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     aria-label={`Cancel workspace creation ${displayTitle}`}
                     data-workspace-id={workspaceId}
                   >
-                    <X className="h-3 w-3" />
+                    <Trash2 className="h-3 w-3" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent align="start">Cancel creation</TooltipContent>
@@ -483,10 +485,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span
                     className={cn(
                       "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer"
+                      !isSelectionDisabled && "cursor-pointer"
                     )}
                     onDoubleClick={(e) => {
-                      if (isDisabled) return;
+                      if (isSelectionDisabled) return;
                       e.stopPropagation();
                       startEditing();
                     }}
@@ -535,7 +537,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   isWorking={isWorking}
                 />
 
-                {!isDisabled && (
+                {!isSelectionDisabled && (
                   <Popover
                     open={isTitleMenuOpen}
                     onOpenChange={(open) => {

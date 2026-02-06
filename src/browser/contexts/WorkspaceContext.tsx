@@ -1066,6 +1066,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Clean up workspace-specific localStorage keys
           deleteWorkspaceStorage(workspaceId);
 
+          // Optimistically remove from the local metadata map so the sidebar updates immediately.
+          // Relying on the metadata subscription can leave the item visible until the next refresh.
+          setWorkspaceMetadata((prev) => {
+            const updated = new Map(prev);
+            updated.delete(workspaceId);
+            return updated;
+          });
+
           // Backend has already updated the config - reload projects to get updated state
           await refreshProjects();
 
@@ -1090,7 +1098,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [currentWorkspaceId, navigateToProject, refreshProjects, selectedWorkspace, api]
+    [
+      currentWorkspaceId,
+      navigateToProject,
+      refreshProjects,
+      selectedWorkspace,
+      api,
+      setWorkspaceMetadata,
+    ]
   );
 
   /**
