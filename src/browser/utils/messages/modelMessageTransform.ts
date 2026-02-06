@@ -55,7 +55,7 @@ export function filterEmptyAssistantMessages(
     // non-empty content...") and can brick a workspace after a crash.
     const hasContent = msg.parts.some((part) => {
       if (part.type === "text") {
-        return part.text.length > 0;
+        return part.text.trim().length > 0;
       }
 
       // Reasoning-only messages are handled below (provider-dependent).
@@ -929,15 +929,21 @@ function stripUnsignedAnthropicReasoning(messages: ModelMessage[]): ModelMessage
     return result;
   });
 
-  // Filter out messages that became empty after stripping reasoning
+  // Filter out messages that became empty after stripping reasoning.
+  //
+  // Important: Anthropic rejects whitespace-only text content blocks (e.g. "\n\n").
+  // If we strip unsigned reasoning from an interrupted message, we can be left with
+  // only whitespace text, which would otherwise survive a simple `content.length > 0` check.
   return stripped.filter((msg) => {
     if (msg.role !== "assistant") {
       return true;
     }
+
     if (typeof msg.content === "string") {
-      return msg.content.length > 0;
+      return msg.content.trim().length > 0;
     }
-    return msg.content.length > 0;
+
+    return msg.content.some((part) => part.type !== "text" || part.text.trim().length > 0);
   });
 }
 

@@ -1689,23 +1689,27 @@ describe("filterEmptyAssistantMessages", () => {
     const result = filterEmptyAssistantMessages(messages, false);
     expect(result.map((m) => m.id)).toEqual(["user-1", "assistant-1"]);
   });
-  it("should filter out assistant messages with only empty text regardless of preserveReasoningOnly", () => {
-    const messages: MuxMessage[] = [
-      {
-        id: "assistant-1",
-        role: "assistant",
-        parts: [{ type: "text", text: "" }],
-        metadata: { timestamp: 2000 },
-      },
-    ];
+  it("should filter out assistant messages with only empty/whitespace text regardless of preserveReasoningOnly", () => {
+    const emptyTexts = ["", "\n\n", "   "];
 
-    // With preserveReasoningOnly=false
-    const result1 = filterEmptyAssistantMessages(messages, false);
-    expect(result1.length).toBe(0);
+    for (const text of emptyTexts) {
+      const messages: MuxMessage[] = [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text }],
+          metadata: { timestamp: 2000 },
+        },
+      ];
 
-    // With preserveReasoningOnly=true
-    const result2 = filterEmptyAssistantMessages(messages, true);
-    expect(result2.length).toBe(0);
+      // With preserveReasoningOnly=false
+      const result1 = filterEmptyAssistantMessages(messages, false);
+      expect(result1.length).toBe(0);
+
+      // With preserveReasoningOnly=true
+      const result2 = filterEmptyAssistantMessages(messages, true);
+      expect(result2.length).toBe(0);
+    }
   });
 
   it("should preserve messages interrupted during thinking phase when preserveReasoningOnly=true", () => {
