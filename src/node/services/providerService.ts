@@ -16,13 +16,14 @@ import type { PolicyService } from "@/node/services/policyService";
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
 
 export class ProviderService {
-  private policyService: PolicyService | null = null;
+  private policyService: PolicyService | null;
   private readonly emitter = new EventEmitter();
 
-  setPolicyService(service: PolicyService): void {
-    this.policyService = service;
-  }
-  constructor(private readonly config: Config) {
+  constructor(
+    private readonly config: Config,
+    policyService?: PolicyService
+  ) {
+    this.policyService = policyService ?? null;
     // The provider config subscription may have many concurrent listeners (e.g. multiple windows).
     // Avoid noisy MaxListenersExceededWarning for normal usage.
     this.emitter.setMaxListeners(50);

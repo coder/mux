@@ -663,24 +663,28 @@ export class WorkspaceService extends EventEmitter {
     private readonly initStateManager: InitStateManager,
     private readonly extensionMetadata: ExtensionMetadataService,
     private readonly backgroundProcessManager: BackgroundProcessManager,
-    private readonly sessionUsageService?: SessionUsageService
+    private readonly sessionUsageService?: SessionUsageService,
+    policyService?: PolicyService,
+    telemetryService?: TelemetryService,
+    experimentsService?: ExperimentsService,
+    sessionTimingService?: SessionTimingService
   ) {
     super();
+    this.policyService = policyService;
+    this.telemetryService = telemetryService;
+    this.experimentsService = experimentsService;
+    this.sessionTimingService = sessionTimingService;
     this.setupMetadataListeners();
   }
 
-  private telemetryService?: TelemetryService;
   private policyService?: PolicyService;
+  private telemetryService?: TelemetryService;
   private experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
   private sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
-
-  setPolicyService(service: PolicyService): void {
-    this.policyService = service;
-  }
 
   /**
    * Set the MCP server manager for tool access.
@@ -690,27 +694,11 @@ export class WorkspaceService extends EventEmitter {
     this.mcpServerManager = manager;
   }
 
-  setTelemetryService(telemetryService: TelemetryService): void {
-    this.telemetryService = telemetryService;
-  }
-
-  setExperimentsService(experimentsService: ExperimentsService): void {
-    this.experimentsService = experimentsService;
-  }
-
   /**
    * Set the terminal service for cleanup on workspace removal.
    */
   setTerminalService(terminalService: TerminalService): void {
     this.terminalService = terminalService;
-  }
-
-  /**
-   * Set session timing service for roll-up during workspace removal.
-   * Called after construction due to initialization ordering.
-   */
-  setSessionTimingService(sessionTimingService: SessionTimingService): void {
-    this.sessionTimingService = sessionTimingService;
   }
 
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {

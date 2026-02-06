@@ -118,6 +118,16 @@ export class ServiceContainer {
   constructor(config: Config) {
     this.config = config;
 
+    // Cross-cutting services: created first so they can be passed to core
+    // services via constructor params (no setter injection needed).
+    this.policyService = new PolicyService(config);
+    this.telemetryService = new TelemetryService(config.rootDir);
+    this.experimentsService = new ExperimentsService({
+      telemetryService: this.telemetryService,
+      muxHome: config.rootDir,
+    });
+    this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
+
     // Desktop passes WorkspaceMcpOverridesService explicitly so AIService uses
     // the persistent config rather than creating a default with an ephemeral one.
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
@@ -126,6 +136,10 @@ export class ServiceContainer {
       config,
       extensionMetadataPath: path.join(config.rootDir, "extensionMetadata.json"),
       workspaceMcpOverridesService: this.workspaceMcpOverridesService,
+      policyService: this.policyService,
+      telemetryService: this.telemetryService,
+      experimentsService: this.experimentsService,
+      sessionTimingService: this.sessionTimingService,
     });
 
     // Spread core services into class fields
@@ -150,10 +164,14 @@ export class ServiceContainer {
       (workspaceId) => this.workspaceService.emitIdleCompactionNeeded(workspaceId)
     );
     this.windowService = new WindowService();
-    this.mcpOauthService = new McpOauthService(config, this.mcpConfigService, this.windowService);
+    this.mcpOauthService = new McpOauthService(
+      config,
+      this.mcpConfigService,
+      this.windowService,
+      this.telemetryService
+    );
     this.mcpServerManager.setMcpOauthService(this.mcpOauthService);
 
-    this.policyService = new PolicyService(config);
     this.muxGatewayOauthService = new MuxGatewayOauthService(
       this.providerService,
       this.windowService
@@ -182,17 +200,7 @@ export class ServiceContainer {
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
     this.voiceService = new VoiceService(config);
-    this.telemetryService = new TelemetryService(config.rootDir);
-    this.mcpOauthService.setTelemetryService(this.telemetryService);
-    this.aiService.setTelemetryService(this.telemetryService);
-    this.workspaceService.setTelemetryService(this.telemetryService);
-    this.experimentsService = new ExperimentsService({
-      telemetryService: this.telemetryService,
-      muxHome: config.rootDir,
-    });
     this.featureFlagService = new FeatureFlagService(config, this.telemetryService);
-    this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
-    this.workspaceService.setSessionTimingService(this.sessionTimingService);
     this.signingService = getSigningService();
     this.coderService = coderService;
 
@@ -212,13 +220,6 @@ export class ServiceContainer {
       })
     );
     this.workspaceService.setWorkspaceLifecycleHooks(workspaceLifecycleHooks);
-
-    // PolicyService is a cross-cutting dependency; use setter injection to avoid
-    // constructor cycles between services.
-    this.providerService.setPolicyService(this.policyService);
-    this.mcpServerManager.setPolicyService(this.policyService);
-    this.aiService.setPolicyService(this.policyService);
-    this.workspaceService.setPolicyService(this.policyService);
 
     // Register globally so all createRuntime calls can create CoderSSHRuntime
     setGlobalCoderService(this.coderService);
@@ -248,7 +249,6 @@ export class ServiceContainer {
     this.aiService.on("stream-abort", (data: StreamAbortEvent) =>
       this.sessionTimingService.handleStreamAbort(data)
     );
-    this.workspaceService.setExperimentsService(this.experimentsService);
   }
 
   async initialize(): Promise<void> {

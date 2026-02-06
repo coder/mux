@@ -24,6 +24,10 @@ import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataServi
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { TaskService } from "@/node/services/taskService";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
+import type { PolicyService } from "@/node/services/policyService";
+import type { TelemetryService } from "@/node/services/telemetryService";
+import type { ExperimentsService } from "@/node/services/experimentsService";
+import type { SessionTimingService } from "@/node/services/sessionTimingService";
 
 // ---------------------------------------------------------------------------
 // Options & return types
@@ -51,6 +55,15 @@ export interface CoreServicesOptions {
    * when omitted, AIService creates a default internally.
    */
   workspaceMcpOverridesService?: WorkspaceMcpOverridesService;
+
+  /**
+   * Optional cross-cutting services. Desktop creates these before core services
+   * so they can be wired via constructors instead of setters.
+   */
+  policyService?: PolicyService;
+  telemetryService?: TelemetryService;
+  experimentsService?: ExperimentsService;
+  sessionTimingService?: SessionTimingService;
 }
 
 export interface CoreServices {
@@ -83,7 +96,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const historyService = new HistoryService(config);
   const partialService = new PartialService(config, historyService);
   const initStateManager = new InitStateManager(config);
-  const providerService = new ProviderService(config);
+  const providerService = new ProviderService(config, opts.policyService);
   const backgroundProcessManager = new BackgroundProcessManager(
     path.join(os.tmpdir(), "mux-bashes")
   );
@@ -97,12 +110,18 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     providerService,
     backgroundProcessManager,
     sessionUsageService,
-    opts.workspaceMcpOverridesService
+    opts.workspaceMcpOverridesService,
+    opts.policyService,
+    opts.telemetryService
   );
 
   // MCP: allow callers to override which Config provides server definitions
   const mcpConfigService = new MCPConfigService(opts.mcpConfig ?? config);
-  const mcpServerManager = new MCPServerManager(mcpConfigService, opts.mcpServerManagerOptions);
+  const mcpServerManager = new MCPServerManager(
+    mcpConfigService,
+    opts.mcpServerManagerOptions,
+    opts.policyService
+  );
   aiService.setMCPServerManager(mcpServerManager);
 
   const extensionMetadata = new ExtensionMetadataService(extensionMetadataPath);
@@ -115,7 +134,11 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     initStateManager,
     extensionMetadata,
     backgroundProcessManager,
-    sessionUsageService
+    sessionUsageService,
+    opts.policyService,
+    opts.telemetryService,
+    opts.experimentsService,
+    opts.sessionTimingService
   );
   workspaceService.setMCPServerManager(mcpServerManager);
 

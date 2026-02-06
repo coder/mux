@@ -626,7 +626,9 @@ export class AIService extends EventEmitter {
     providerService: ProviderService,
     backgroundProcessManager?: BackgroundProcessManager,
     sessionUsageService?: SessionUsageService,
-    workspaceMcpOverridesService?: WorkspaceMcpOverridesService
+    workspaceMcpOverridesService?: WorkspaceMcpOverridesService,
+    policyService?: PolicyService,
+    telemetryService?: TelemetryService
   ) {
     super();
     // Increase max listeners to accommodate multiple concurrent workspace listeners
@@ -641,6 +643,8 @@ export class AIService extends EventEmitter {
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
     this.sessionUsageService = sessionUsageService;
+    this.policyService = policyService;
+    this.telemetryService = telemetryService;
     this.streamManager = new StreamManager(historyService, partialService, sessionUsageService);
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -652,12 +656,6 @@ export class AIService extends EventEmitter {
     }
   }
 
-  setPolicyService(service: PolicyService): void {
-    this.policyService = service;
-  }
-  setTelemetryService(service: TelemetryService): void {
-    this.telemetryService = service;
-  }
   setCodexOauthService(service: CodexOauthService): void {
     this.codexOauthService = service;
   }

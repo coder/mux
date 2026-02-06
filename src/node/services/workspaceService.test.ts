@@ -596,16 +596,6 @@ describe("WorkspaceService remove timing rollup", () => {
         findWorkspace: mock(() => null),
       };
 
-      const workspaceService = new WorkspaceService(
-        mockConfig as Config,
-        mockHistoryService as HistoryService,
-        mockPartialService as PartialService,
-        aiService,
-        mockInitStateManager as InitStateManager,
-        mockExtensionMetadataService as ExtensionMetadataService,
-        mockBackgroundProcessManager as BackgroundProcessManager
-      );
-
       const timingService: Partial<SessionTimingService> = {
         waitForIdle: mock(() => Promise.resolve()),
         rollUpTimingIntoParent: mock(() => {
@@ -614,7 +604,20 @@ describe("WorkspaceService remove timing rollup", () => {
         }),
       };
 
-      workspaceService.setSessionTimingService(timingService as SessionTimingService);
+      const workspaceService = new WorkspaceService(
+        mockConfig as Config,
+        mockHistoryService as HistoryService,
+        mockPartialService as PartialService,
+        aiService,
+        mockInitStateManager as InitStateManager,
+        mockExtensionMetadataService as ExtensionMetadataService,
+        mockBackgroundProcessManager as BackgroundProcessManager,
+        undefined, // sessionUsageService
+        undefined, // policyService
+        undefined, // telemetryService
+        undefined, // experimentsService
+        timingService as SessionTimingService
+      );
 
       const removeResult = await workspaceService.remove(workspaceId, true);
       expect(removeResult.success).toBe(true);
