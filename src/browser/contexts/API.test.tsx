@@ -1,4 +1,5 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
+import type { APIClient } from "@/browser/contexts/API";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 
@@ -139,7 +140,7 @@ describe("API connection (fetch transport)", () => {
   test("uses pre-created client and skips connection flow", async () => {
     const mockClient = {
       general: { ping: () => Promise.resolve("pong") },
-    } as unknown as ReturnType<typeof import("@/common/orpc/client").createClient>;
+    } as unknown as APIClient;
 
     const states: string[] = [];
 

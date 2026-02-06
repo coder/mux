@@ -90,6 +90,7 @@ function createBrowserClient(authToken: string | null): {
   return {
     client: createClient(link),
     // HTTP/fetch transport has no persistent connection to close.
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
     cleanup: () => {},
   };
 }
