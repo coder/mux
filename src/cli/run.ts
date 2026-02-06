@@ -512,6 +512,10 @@ async function main(): Promise<number> {
     initStateManager,
     backgroundProcessManager,
   });
+  // Register with WorkspaceService so TaskService operations that target the parent
+  // workspace (e.g. resumeStream after sub-agent completion) reuse this session
+  // instead of creating a duplicate.
+  workspaceService.registerSession(workspaceId, session);
 
   // For Docker runtime, create and initialize the container first
   let workspacePath = projectDir;
