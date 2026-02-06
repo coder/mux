@@ -943,6 +943,19 @@ async function main(): Promise<number> {
       for (const usage of Object.values(payload.byModelDelta)) {
         usageHistory.push(usage);
       }
+
+      // Enforce budget after rolling up sub-agent costs
+      if (budget !== undefined && !budgetExceeded) {
+        const totalUsage = sumUsageHistory(usageHistory);
+        const cost = getTotalCost(totalUsage);
+        if (cost !== undefined && cost > budget) {
+          budgetExceeded = true;
+          const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
+          emitJsonLine({ type: "budget-exceeded", spent: cost, budget });
+          writeHumanLineClosed(`\n${chalk.yellow(msg)}`);
+          void session.interruptStream({ abandonPartial: false });
+        }
+      }
       return;
     }
 
