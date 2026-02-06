@@ -226,6 +226,12 @@ export function ProvidersSection() {
 
   const isDesktop = !!window.api;
 
+  // The "Connect (Browser)" OAuth flow requires a redirect back to this origin,
+  // which only works when the host is the user's local machine. On a remote mux
+  // server the redirect would land on the server, not the user's browser.
+  const isRemoteServer =
+    !isDesktop && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+
   const [codexOauthStatus, setCodexOauthStatus] = useState<CodexOauthFlowStatus>("idle");
   const [codexOauthError, setCodexOauthError] = useState<string | null>(null);
 
@@ -1202,15 +1208,17 @@ export function ProvidersSection() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          void startCodexOauthBrowserConnect();
-                        }}
-                        disabled={!api || codexOauthLoginInProgress}
-                      >
-                        Connect (Browser)
-                      </Button>
+                      {!isRemoteServer && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            void startCodexOauthBrowserConnect();
+                          }}
+                          disabled={!api || codexOauthLoginInProgress}
+                        >
+                          Connect (Browser)
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="secondary"
