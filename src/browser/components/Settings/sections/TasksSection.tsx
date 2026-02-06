@@ -15,8 +15,8 @@ import {
 } from "@/browser/components/ui/select";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { getDefaultModel, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
+import { updatePersistedState, usePersistedState } from "@/browser/hooks/usePersistedState";
+import { AGENT_AI_DEFAULTS_KEY, getModelKey } from "@/common/constants/storage";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
@@ -267,6 +267,21 @@ export function TasksSection() {
   } | null>(null);
 
   const { models, hiddenModels } = useModelsFromSettings();
+
+  // Resolve the workspace's active model so that when a sub-agent's model is
+  // "Inherit", we show thinking levels for the workspace model (falling back to
+  // the global default). This mirrors the resolution chain in System1Section.
+  const selectedWorkspaceId = selectedWorkspace?.workspaceId ?? null;
+  const defaultModel = getDefaultModel();
+  const workspaceModelStorageKey = selectedWorkspaceId
+    ? getModelKey(selectedWorkspaceId)
+    : "__tasks_workspace_model_fallback__";
+  const [workspaceModelRaw] = usePersistedState<unknown>(workspaceModelStorageKey, defaultModel, {
+    listener: true,
+  });
+  const inheritedEffectiveModel =
+    (typeof workspaceModelRaw === "string" ? workspaceModelRaw.trim() : "") || defaultModel;
+
   const lastSyncedTaskSettingsRef = useRef<TaskSettings | null>(null);
   const lastSyncedAgentAiDefaultsRef = useRef<AgentAiDefaults | null>(null);
 
@@ -601,7 +616,7 @@ export function TasksSection() {
         : null;
     // When model is "Inherit", resolve the effective model so the dropdown
     // shows the correct thinking levels (e.g. "max" for Opus 4.6, not "xhigh").
-    const effectiveModel = modelValue !== INHERIT ? modelValue : getDefaultModel();
+    const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
     const allowedThinkingLevels = getThinkingPolicyForModel(effectiveModel);
 
     const agentDefinitionPath = getAgentDefinitionPath(agent);
@@ -750,7 +765,7 @@ export function TasksSection() {
     const entry = agentAiDefaults[agentId];
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
-    const effectiveModel = modelValue !== INHERIT ? modelValue : getDefaultModel();
+    const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
     const allowedThinkingLevels = getThinkingPolicyForModel(effectiveModel);
 
     return (
