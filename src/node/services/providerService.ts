@@ -16,7 +16,7 @@ import type { PolicyService } from "@/node/services/policyService";
 export type { AWSCredentialStatus, ProviderConfigInfo, ProvidersConfigMap };
 
 export class ProviderService {
-  private policyService: PolicyService | null;
+  private readonly policyService: PolicyService | null;
   private readonly emitter = new EventEmitter();
 
   constructor(

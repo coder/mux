@@ -418,7 +418,7 @@ export class McpOauthService {
 
   private readonly desktopFlows = new Map<string, DesktopFlow>();
   private readonly serverFlows = new Map<string, ServerFlow>();
-  private telemetryService?: TelemetryService;
+  private readonly telemetryService?: TelemetryService;
 
   constructor(
     private readonly config: Config,

@@ -456,7 +456,7 @@ export class MCPServerManager {
   private readonly workspaceLeases = new Map<string, number>();
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
   private inlineServers: Record<string, string> = {};
-  private policyService: PolicyService | null;
+  private readonly policyService: PolicyService | null;
   private mcpOauthService: McpOauthService | null = null;
   private ignoreConfigFile = false;
 

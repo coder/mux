@@ -677,13 +677,13 @@ export class WorkspaceService extends EventEmitter {
     this.setupMetadataListeners();
   }
 
-  private policyService?: PolicyService;
-  private telemetryService?: TelemetryService;
-  private experimentsService?: ExperimentsService;
+  private readonly policyService?: PolicyService;
+  private readonly telemetryService?: TelemetryService;
+  private readonly experimentsService?: ExperimentsService;
   private mcpServerManager?: MCPServerManager;
   // Optional terminal service for cleanup on workspace removal
   private terminalService?: TerminalService;
-  private sessionTimingService?: SessionTimingService;
+  private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
 
   /**

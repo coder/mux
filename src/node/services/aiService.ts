@@ -290,8 +290,8 @@ export class AIService extends EventEmitter {
   private readonly config: Config;
   private readonly workspaceMcpOverridesService: WorkspaceMcpOverridesService;
   private mcpServerManager?: MCPServerManager;
-  private policyService?: PolicyService;
-  private telemetryService?: TelemetryService;
+  private readonly policyService?: PolicyService;
+  private readonly telemetryService?: TelemetryService;
   private readonly initStateManager: InitStateManager;
   private mockModeEnabled: boolean;
   private mockAiStreamPlayer?: MockAiStreamPlayer;
