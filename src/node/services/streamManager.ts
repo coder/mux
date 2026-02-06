@@ -50,6 +50,7 @@ import {
 import type { SessionUsageService } from "./sessionUsageService";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
+import { getAnthropicThinkingDisableReason } from "@/browser/utils/messages/modelMessageTransform";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats } from "@/common/utils/tokens/modelStats";
@@ -109,6 +110,24 @@ enum StreamState {
   STOPPING = "stopping",
   COMPLETED = "completed", // Stream finished successfully (before cleanup)
   ERROR = "error",
+}
+
+/**
+ * Check whether Anthropic thinking/reasoning is enabled in providerOptions.
+ * Returns true for `{ type: "enabled" }` or `{ type: "adaptive" }`, false otherwise.
+ * Used to gate the more expensive `getAnthropicThinkingDisableReason` check.
+ */
+function hasAnthropicThinkingEnabled(
+  providerOptions: Record<string, unknown> | undefined
+): boolean {
+  if (!providerOptions || typeof providerOptions !== "object") return false;
+  const anthropic = (providerOptions as { anthropic?: unknown }).anthropic;
+  if (!anthropic || typeof anthropic !== "object") return false;
+  const thinking = (anthropic as { thinking?: unknown }).thinking;
+  if (!thinking || typeof thinking !== "object") return false;
+  const thinkingType = (thinking as { type?: unknown }).type;
+  // "enabled" and "adaptive" both require signed reasoning blocks before tool calls
+  return thinkingType === "enabled" || thinkingType === "adaptive";
 }
 
 /**
@@ -957,6 +976,33 @@ export class StreamManager extends EventEmitter {
         if (stepTracker) {
           stepTracker.latestMessages = effectiveMessages;
         }
+
+        // Anthropic adaptive thinking (Opus 4.6) can skip reasoning and go straight to
+        // tool calls. When this happens, the AI SDK's internal multi-step messages contain
+        // assistant messages with tool-call parts but no signed thinking block. Anthropic's
+        // API rejects these with "Expected thinking or redacted_thinking, but found tool_use."
+        // Detect this condition and disable thinking for the affected step to prevent the
+        // stream from dying silently.
+        const thinkingDisableReason = hasAnthropicThinkingEnabled(request.providerOptions)
+          ? getAnthropicThinkingDisableReason(effectiveMessages)
+          : undefined;
+        if (thinkingDisableReason) {
+          log.debug("[streamManager] Disabling thinking for step:", thinkingDisableReason);
+          const anthropicOpts =
+            (request.providerOptions as { anthropic?: Record<string, unknown> } | undefined)
+              ?.anthropic ?? {};
+          return {
+            messages: effectiveMessages,
+            providerOptions: {
+              ...request.providerOptions,
+              anthropic: {
+                ...anthropicOpts,
+                thinking: { type: "disabled" },
+              },
+            },
+          };
+        }
+
         if (rewritten === stepMessages) return undefined;
         return { messages: rewritten };
       },
@@ -1620,6 +1666,32 @@ export class StreamManager extends EventEmitter {
 
           // No need to save remaining text - text-delta handler already maintains parts array
           // (Removed duplicate push that was causing double text parts)
+
+          // Detect orphaned server tool calls — tools that received a tool-call event but
+          // never got a tool-result/tool-error before the stream ended. This happens when
+          // server-side tools (e.g., web_search) fail silently or the SSE connection drops.
+          // Mark them as errored so the UI shows a clear failure instead of an indefinite
+          // "executing" spinner.
+          for (const part of streamInfo.parts) {
+            if (part.type === "dynamic-tool" && part.state === "input-available") {
+              log.error(
+                `[streamManager] Orphaned tool call: '${part.toolName}' (${part.toolCallId}) ` +
+                  "never received a result before the stream ended"
+              );
+              await this.completeToolCall(
+                workspaceId,
+                streamInfo,
+                toolCalls,
+                part.toolCallId,
+                part.toolName,
+                {
+                  success: false,
+                  error:
+                    "Tool execution was interrupted — the stream ended before results arrived.",
+                }
+              );
+            }
+          }
 
           // Flush final state to partial.json for crash resilience
           // This happens regardless of abort status to ensure the final state is persisted to disk
