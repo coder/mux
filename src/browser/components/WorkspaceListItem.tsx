@@ -484,7 +484,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 align={contextMenuPosition ? "start" : "end"}
                 side={contextMenuPosition ? "right" : "bottom"}
                 sideOffset={contextMenuPosition ? 0 : 6}
-                className="w-[200px] !min-w-0 p-1"
+                className="w-[240px] !min-w-0 p-1"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
