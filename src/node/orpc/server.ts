@@ -24,6 +24,24 @@ import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
+import { validateRedirectUri } from "@/common/utils/urlSecurity";
+
+// Helper to safely build redirect_uri from request headers.
+// Rejects URLs with userinfo (@-credentials) and non-http(s) schemes.
+function buildRedirectUriFromRequest(req: express.Request, callbackPath: string): string {
+  const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
+  const host = hostHeader?.split(",")[0]?.trim();
+  if (!host) throw new Error("Missing Host header");
+
+  const protoHeader = req.get("x-forwarded-proto");
+  const forwardedProto = protoHeader?.split(",")[0]?.trim();
+  const proto = forwardedProto?.length ? forwardedProto : req.protocol;
+
+  const uri = `${proto}://${host}${callbackPath}`;
+  // Validates: rejects userinfo, non-http(s) schemes
+  validateRedirectUri(uri);
+  return uri;
+}
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -206,21 +224,15 @@ export async function createOrpcServer({
       }
     }
 
-    const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
-    const host = hostHeader?.split(",")[0]?.trim();
-    if (!host) {
-      res.status(400).json({ error: "Missing Host header" });
+    let redirectUri: string;
+    try {
+      redirectUri = buildRedirectUriFromRequest(req, "/auth/mux-gateway/callback");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
       return;
     }
 
-    // When mux is running behind a reverse proxy, the terminating proxy may set
-    // X-Forwarded-Proto / X-Forwarded-Host, while the direct connection to mux
-    // is plain HTTP.
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-gateway/callback`;
     const { authorizeUrl, state } = context.muxGatewayOauthService.startServerFlow({ redirectUri });
     res.json({ authorizeUrl, state });
   });
@@ -364,18 +376,15 @@ export async function createOrpcServer({
       return;
     }
 
-    const hostHeader = req.get("x-forwarded-host") ?? req.get("host");
-    const host = hostHeader?.split(",")[0]?.trim();
-    if (!host) {
-      res.status(400).json({ error: "Missing Host header" });
+    let redirectUri: string;
+    try {
+      redirectUri = buildRedirectUriFromRequest(req, "/auth/mux-governor/callback");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: message });
       return;
     }
 
-    const protoHeader = req.get("x-forwarded-proto");
-    const forwardedProto = protoHeader?.split(",")[0]?.trim();
-    const proto = forwardedProto?.length ? forwardedProto : req.protocol;
-
-    const redirectUri = `${proto}://${host}/auth/mux-governor/callback`;
     const result = context.muxGovernorOauthService.startServerFlow({
       governorOrigin: governorUrl,
       redirectUri,
