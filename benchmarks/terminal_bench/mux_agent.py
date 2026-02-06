@@ -58,6 +58,7 @@ class MuxAgent(BaseInstalledAgent):
         "GOOGLE_GENERATIVE_AI_API_KEY",
         "GOOGLE_API_KEY",
         "GOOGLE_BASE_URL",
+        "OPENROUTER_API_KEY",
     )
 
     _CONFIG_ENV_KEYS: Sequence[str] = (
@@ -141,14 +142,20 @@ class MuxAgent(BaseInstalledAgent):
             provider, model_name = model_value.split("/", 1)
             model_value = f"{provider}:{model_name}"
 
-        # Fail fast for Google models if credentials weren't forwarded into the
-        # sandbox env. Otherwise Harbor/mux will fail later with a less actionable
+        # Fail fast if provider credentials weren't forwarded into the sandbox
+        # env. Otherwise Harbor/mux will fail later with a less actionable
         # "api_key_not_found" error.
         if model_value.startswith("google:") and not (
             env.get("GOOGLE_GENERATIVE_AI_API_KEY") or env.get("GOOGLE_API_KEY")
         ):
             raise ValueError(
                 "Google models require GOOGLE_GENERATIVE_AI_API_KEY (preferred) or GOOGLE_API_KEY"
+            )
+        if model_value.startswith("openrouter:") and not env.get(
+            "OPENROUTER_API_KEY"
+        ):
+            raise ValueError(
+                "OpenRouter models require OPENROUTER_API_KEY"
             )
         env["MUX_MODEL"] = model_value
 
