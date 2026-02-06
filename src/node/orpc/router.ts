@@ -512,6 +512,22 @@ export const router = (authToken?: string) => {
         .input(schemas.remoteServers.remove.input)
         .output(schemas.remoteServers.remove.output)
         .handler(async ({ context, input }) => {
+          // Guard: refuse removal when the server still has project mappings.
+          // Project mappings cause remote workspaces to appear in the UI via
+          // onMetadata subscriptions. If removed, subsequent operations on those
+          // remote-encoded workspace IDs would hit the assert(server, ...) in
+          // the federation middleware and crash.
+          const servers = context.remoteServersService.list();
+          const targetServer = servers.find((s) => s.config.id === input.id.trim());
+          if (targetServer && targetServer.config.projectMappings.length > 0) {
+            const label = targetServer.config.label || targetServer.config.id;
+            const count = targetServer.config.projectMappings.length;
+            return Err(
+              `Cannot remove server "${label}": it has ${count} project mapping(s) ` +
+                `that may reference active workspaces. Remove all project mappings first.`
+            );
+          }
+
           try {
             await context.remoteServersService.remove({ id: input.id });
             return Ok(undefined);
