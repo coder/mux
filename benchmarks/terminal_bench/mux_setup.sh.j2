@@ -50,8 +50,15 @@ fi
 
 cd "${MUX_APP_ROOT}"
 
-log "installing mux dependencies via bun"
-bun install --frozen-lockfile
+# The archive ships node_modules pre-installed to avoid OOM during `bun install`
+# in memory-constrained Daytona sandboxes (2GB). Fall back to bun install when
+# node_modules is missing (e.g., git-clone path with MUX_AGENT_VERSION).
+if [[ -d "node_modules" ]]; then
+  log "node_modules present in archive, skipping bun install"
+else
+  log "installing mux dependencies via bun"
+  bun install --frozen-lockfile
+fi
 
 mkdir -p "${MUX_CONFIG_ROOT}"
 

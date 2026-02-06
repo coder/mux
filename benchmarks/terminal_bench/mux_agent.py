@@ -32,8 +32,10 @@ class MuxAgent(BaseInstalledAgent):
         "tsconfig.main.json",
         "src",
         "dist",
-        # bun install runs package.json#postinstall; include the script so
-        # benchmark sandboxes don't fail with "cannot open scripts/postinstall.sh".
+        # Ship node_modules in the archive so the sandbox doesn't need to run
+        # `bun install` (which OOM-kills in 2GB Daytona sandboxes since the
+        # AI SDK v2→v3 upgrade pushed peak install memory past 2GB).
+        "node_modules",
         "scripts/postinstall.sh",
     )
 
