@@ -22,7 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/pop
 import { Pencil, Trash2, Ellipsis, Link2 } from "lucide-react";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { ShareTranscriptPopover } from "./ShareTranscriptPopover";
+import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -534,21 +534,16 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 )}
               </PopoverContent>
             </Popover>
-            {/* Share transcript popover – rendered as a sibling to the overflow menu
-                so it doesn't nest inside another Popover. Triggered by the menu item
-                above or the Ctrl+Shift+L keybind. Uses a hidden span as the anchor. */}
+            {/* Share transcript dialog – rendered as a sibling to the overflow menu.
+                Triggered by the menu item above or the Ctrl+Shift+L keybind.
+                Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
             {linkSharingEnabled === true && (
-              <ShareTranscriptPopover
+              <ShareTranscriptDialog
                 workspaceId={workspaceId}
                 workspaceName={metadata.name}
                 open={shareTranscriptOpen}
                 onOpenChange={setShareTranscriptOpen}
-              >
-                <span
-                  className="pointer-events-none absolute h-0 w-0 overflow-hidden"
-                  aria-hidden="true"
-                />
-              </ShareTranscriptPopover>
+              />
             )}
           </ActionButtonWrapper>
         )}
