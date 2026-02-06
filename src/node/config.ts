@@ -26,6 +26,7 @@ import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
 import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { isRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
@@ -247,6 +248,7 @@ export class Config {
   private readonly configFile: string;
   private readonly providersFile: string;
   private readonly secretsFile: string;
+  private readonly editMutex = new AsyncMutex();
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getMuxHome();
@@ -531,6 +533,7 @@ export class Config {
    * @param fn Function that takes current config and returns modified config
    */
   async editConfig(fn: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
+    await using _lock = await this.editMutex.acquire();
     const config = this.loadConfigOrDefault();
     const newConfig = fn(config);
     await this.saveConfig(newConfig);
