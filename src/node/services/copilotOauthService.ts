@@ -54,9 +54,9 @@ export class CopilotOauthService {
         method: "POST",
         headers: {
           Accept: "application/json",
-          "Content-Type": "application/json",
+          "Content-Type": "application/x-www-form-urlencoded",
         },
-        body: JSON.stringify({
+        body: new URLSearchParams({
           client_id: GITHUB_COPILOT_CLIENT_ID,
           scope: SCOPE,
         }),
@@ -181,9 +181,9 @@ export class CopilotOauthService {
           method: "POST",
           headers: {
             Accept: "application/json",
-            "Content-Type": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
           },
-          body: JSON.stringify({
+          body: new URLSearchParams({
             client_id: GITHUB_COPILOT_CLIENT_ID,
             device_code: flow.deviceCode,
             grant_type: "urn:ietf:params:oauth:grant-type:device_code",
