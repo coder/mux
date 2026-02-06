@@ -934,6 +934,36 @@ export class WorkspaceService extends EventEmitter {
     return session;
   }
 
+  /**
+   * Register an externally-created AgentSession so that WorkspaceService
+   * operations (sendMessage, resumeStream, remove, etc.) reuse it instead of
+   * creating a duplicate. Used by `mux run` CLI to keep a single session
+   * instance for the parent workspace.
+   */
+  public registerSession(workspaceId: string, session: AgentSession): void {
+    workspaceId = workspaceId.trim();
+    assert(workspaceId.length > 0, "workspaceId must not be empty");
+    assert(!this.sessions.has(workspaceId), `session already registered for ${workspaceId}`);
+
+    this.sessions.set(workspaceId, session);
+
+    const chatUnsubscribe = session.onChatEvent((event) => {
+      this.emit("chat", { workspaceId: event.workspaceId, message: event.message });
+    });
+
+    const metadataUnsubscribe = session.onMetadataEvent((event) => {
+      this.emit("metadata", {
+        workspaceId: event.workspaceId,
+        metadata: event.metadata!,
+      });
+    });
+
+    this.sessionSubscriptions.set(workspaceId, {
+      chat: chatUnsubscribe,
+      metadata: metadataUnsubscribe,
+    });
+  }
+
   public disposeSession(workspaceId: string): void {
     const trimmed = workspaceId.trim();
     const session = this.sessions.get(trimmed);

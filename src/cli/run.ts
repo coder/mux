@@ -26,6 +26,10 @@ import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentS
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
+import { WorkspaceService } from "@/node/services/workspaceService";
+import { TaskService } from "@/node/services/taskService";
+import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { SessionUsageService } from "@/node/services/sessionUsageService";
 import {
   isCaughtUpMessage,
   isReasoningDelta,
@@ -410,13 +414,17 @@ async function main(): Promise<number> {
   const backgroundProcessManager = new BackgroundProcessManager(
     path.join(os.tmpdir(), "mux-bashes")
   );
+  // SessionUsageService tracks per-model usage and rolls up sub-agent costs into the
+  // parent workspace so that --budget enforcement and the cost summary include all work.
+  const sessionUsageService = new SessionUsageService(config, historyService);
   const aiService = new AIService(
     config,
     historyService,
     partialService,
     initStateManager,
     providerService,
-    backgroundProcessManager
+    backgroundProcessManager,
+    sessionUsageService
   );
 
   // CLI-only exit code control: allows agent to set the process exit code
@@ -468,6 +476,33 @@ async function main(): Promise<number> {
   });
   aiService.setMCPServerManager(mcpServerManager);
 
+  // Wire up sub-agent support: TaskService needs WorkspaceService, which needs
+  // ExtensionMetadataService. For CLI mode the extension metadata is ephemeral.
+  const extensionMetadata = new ExtensionMetadataService(
+    path.join(tempDir.path, "extensionMetadata.json")
+  );
+  const workspaceService = new WorkspaceService(
+    config,
+    historyService,
+    partialService,
+    aiService,
+    initStateManager,
+    extensionMetadata,
+    backgroundProcessManager,
+    sessionUsageService
+  );
+  const taskService = new TaskService(
+    config,
+    historyService,
+    partialService,
+    aiService,
+    workspaceService,
+    initStateManager
+  );
+  aiService.setTaskService(taskService);
+  // Ensure sub-agent workspaces clean up MCP server processes on removal
+  workspaceService.setMCPServerManager(mcpServerManager);
+
   const session = new AgentSession({
     workspaceId,
     config,
@@ -477,6 +512,10 @@ async function main(): Promise<number> {
     initStateManager,
     backgroundProcessManager,
   });
+  // Register with WorkspaceService so TaskService operations that target the parent
+  // workspace (e.g. resumeStream after sub-agent completion) reuse this session
+  // instead of creating a duplicate.
+  workspaceService.registerSession(workspaceId, session);
 
   // For Docker runtime, create and initialize the container first
   let workspacePath = projectDir;
@@ -546,6 +585,11 @@ async function main(): Promise<number> {
     projectName: path.basename(projectDir),
     runtimeConfig,
   });
+
+  // Note: taskService.initialize() is intentionally NOT called. It resumes tasks from a
+  // previous session, but mux run uses an ephemeral Config (temp dir) with no prior state.
+  // Calling initialize() on a fresh config is a no-op, but skipping it makes the intent
+  // clear and avoids any risk of cross-workspace side effects if config were ever shared.
 
   const experiments = buildExperimentsObject(opts.experiment);
 
@@ -894,6 +938,39 @@ async function main(): Promise<number> {
       return;
     }
 
+    // When a sub-agent workspace is cleaned up, its usage is rolled up into the parent
+    // and emitted as a session-usage-delta event. Add to usageHistory so budget checks
+    // and the final cost summary include sub-agent costs.
+    if (payload.type === "session-usage-delta") {
+      for (const usage of Object.values(payload.byModelDelta)) {
+        usageHistory.push(usage);
+      }
+
+      // Enforce budget after rolling up sub-agent costs (mirrors the stream-end budget check).
+      // sumUsageHistory sets hasUnknownCosts when any component has cost_usd===undefined,
+      // which catches models with unknown pricing regardless of how entries were merged.
+      if (budget !== undefined && !budgetExceeded) {
+        const totalUsage = sumUsageHistory(usageHistory);
+        const cost = getTotalCost(totalUsage);
+
+        if (totalUsage?.hasUnknownCosts) {
+          const errMsg = `Cannot enforce budget: sub-agent used a model with unknown pricing`;
+          emitJsonLine({ type: "budget-error", error: errMsg });
+          rejectStream(new Error(errMsg));
+          return;
+        }
+
+        if (cost !== undefined && cost > budget) {
+          budgetExceeded = true;
+          const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
+          emitJsonLine({ type: "budget-exceeded", spent: cost, budget });
+          writeHumanLineClosed(`\n${chalk.yellow(msg)}`);
+          void session.interruptStream({ abandonPartial: false });
+        }
+      }
+      return;
+    }
+
     // Capture usage-delta events as fallback when stream-end lacks usage metadata
     // Also check budget limits if --budget is specified
     if (isUsageDelta(payload)) {
@@ -985,7 +1062,8 @@ async function main(): Promise<number> {
       }
     }
 
-    // Compute final usage/cost summary
+    // Compute final usage/cost summary. usageHistory includes both parent stream usage
+    // (from stream-end events) and rolled-up sub-agent costs (from session-usage-delta events).
     const totalUsage = sumUsageHistory(usageHistory);
     const totalCost = getTotalCost(totalUsage);
 
@@ -1019,6 +1097,7 @@ async function main(): Promise<number> {
     unsubscribe();
     session.dispose();
     mcpServerManager.dispose();
+    await backgroundProcessManager.terminateAll();
   }
 
   // Exit codes: 2 for budget exceeded, agent-specified exit code, or 0 for success
