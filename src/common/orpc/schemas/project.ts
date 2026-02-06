@@ -3,7 +3,7 @@ import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceMCPOverridesSchema } from "./mcp";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
 
-const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 /**
  * Section schema for organizing workspaces within a project.

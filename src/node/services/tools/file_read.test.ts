@@ -5,11 +5,11 @@ import * as path from "path";
 import * as os from "os";
 import { createFileReadTool } from "./file_read";
 import type { FileReadToolArgs, FileReadToolResult } from "@/common/types/tools";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
 
 // Mock ToolCallOptions for testing
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

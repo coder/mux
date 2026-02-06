@@ -77,7 +77,7 @@ export function getModelProvider(modelString: string): string {
 
 /**
  * Check if a model supports the 1M context window.
- * The 1M context window is only available for Claude Sonnet 4 and Sonnet 4.5.
+ * The 1M context window is available for Claude Sonnet 4/4.5 and Opus 4.6.
  * @param modelString - Full model string in format "provider:model-name"
  * @returns True if the model supports 1M context window
  */
@@ -87,8 +87,9 @@ export function supports1MContext(modelString: string): boolean {
   if (provider !== "anthropic") {
     return false;
   }
-  // Check for Sonnet 4 and Sonnet 4.5 models
+  // Sonnet 4, Sonnet 4.5, and Opus 4.6 support 1M context (beta)
   return (
-    modelName?.includes("claude-sonnet-4") && !modelName.includes("claude-sonnet-3") // Exclude Sonnet 3.x models
+    (modelName?.includes("claude-sonnet-4") && !modelName.includes("claude-sonnet-3")) ||
+    modelName?.includes("claude-opus-4-6") === true
   );
 }

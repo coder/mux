@@ -43,7 +43,7 @@ import {
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import { resolveDevcontainerSelection } from "@/browser/utils/devcontainerSelection";
 
 export type CreationSendResult = { success: true } | { success: false; error?: SendMessageError };
@@ -373,8 +373,11 @@ export function useCreationWorkspace({
         // race conditions with React state updates (requestAnimationFrame batching
         // in usePersistedState can delay state updates after model selection)
         const sendMessageOptions = getSendOptionsFromStorage(projectScopeId);
-        const effectiveModel = optionsOverride?.model ?? sendMessageOptions.model;
-        const baseModel = normalizeGatewayModel(effectiveModel);
+        // Use normalized override if provided, otherwise fall back to already-normalized storage model
+        const normalizedOverride = optionsOverride?.model
+          ? normalizeModelInput(optionsOverride.model)
+          : null;
+        const baseModel = normalizedOverride?.model ?? sendMessageOptions.model;
 
         // Preflight: if the first message includes PDFs, ensure the selected model can accept them.
         // This prevents creating an empty workspace when the initial send is rejected.

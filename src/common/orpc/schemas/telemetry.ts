@@ -30,7 +30,7 @@ const FrontendPlatformInfoSchema = z.object({
 });
 
 // Thinking level enum (matches payload.ts TelemetryThinkingLevel)
-const TelemetryThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+const TelemetryThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 // Command type enum (matches payload.ts TelemetryCommandType)
 const TelemetryCommandTypeSchema = z.enum([

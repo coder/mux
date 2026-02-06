@@ -1,11 +1,11 @@
 import { describe, it, expect, mock } from "bun:test";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 import { createTaskListTool } from "./task_list";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { TaskService } from "@/node/services/taskService";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

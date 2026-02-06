@@ -53,6 +53,15 @@ describe("commandParser", () => {
       expectModelSet("/model anthropic:claude-sonnet-4-5", KNOWN_MODELS.SONNET.id);
     });
 
+    it("should parse /compact -m with alias", () => {
+      expectParse("/compact -m sonnet", {
+        type: "compact",
+        maxOutputTokens: undefined,
+        continueMessage: undefined,
+        model: KNOWN_MODELS.SONNET.id,
+      });
+    });
+
     it("should parse /model help when no args", () => {
       expectParse("/model", { type: "model-help" });
     });

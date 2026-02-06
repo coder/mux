@@ -105,8 +105,8 @@ test.describe("slash command flows", () => {
     await ui.projects.openFirstWorkspace();
 
     const modeToggles = page.locator('[data-component="ChatModeToggles"]');
-    // Default model is now Opus - displayed as formatted name
-    await expect(modeToggles.getByText("Opus 4.5", { exact: true })).toBeVisible();
+    // Default model is now Opus 4.6 - displayed as formatted name
+    await expect(modeToggles.getByText("Opus 4.6", { exact: true })).toBeVisible();
 
     await ui.chat.sendMessage("/model sonnet");
     await ui.chat.expectStatusMessageContains("Model changed to anthropic:claude-sonnet-4-5");

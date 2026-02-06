@@ -34,10 +34,8 @@ import {
   getFollowUpContentText,
 } from "@/browser/utils/compaction/format";
 import { applyCompactionOverrides } from "@/browser/utils/messages/compactionOptions";
-import {
-  resolveCompactionModel,
-  isValidModelFormat,
-} from "@/browser/utils/messages/compactionModelPreference";
+import { resolveCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
+import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 import type { ChatAttachment } from "../components/ChatAttachments";
 import { dispatchWorkspaceSwitch } from "./workspaceEvents";
 import { getRuntimeKey, copyWorkspaceStorage } from "@/common/constants/storage";
@@ -46,7 +44,6 @@ import {
   WORDS_TO_TOKENS_RATIO,
   buildCompactionPrompt,
 } from "@/common/constants/ui";
-import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { openInEditor } from "@/browser/utils/openInEditor";
 
 // ============================================================================
@@ -182,9 +179,9 @@ export async function processSlashCommand(
     const modelString = parsed.modelString;
 
     const activeClient = client;
+    const normalized = normalizeModelInput(modelString);
 
-    // Validate provider:model format
-    if (!modelString.includes(":")) {
+    if (!normalized.model) {
       setToast({
         id: Date.now().toString(),
         type: "error",
@@ -193,38 +190,10 @@ export async function processSlashCommand(
       return { clearInput: false, toastShown: true };
     }
 
-    const separatorIndex = modelString.indexOf(":");
-    if (separatorIndex <= 0 || separatorIndex === modelString.length - 1) {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: `Invalid model format: expected "provider:model"`,
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    const canonicalModel = migrateGatewayModel(modelString).trim();
-    const canonicalSeparatorIndex = canonicalModel.indexOf(":");
-    if (canonicalSeparatorIndex <= 0 || canonicalSeparatorIndex === canonicalModel.length - 1) {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: `Invalid model format: expected "provider:model"`,
-      });
-      return { clearInput: false, toastShown: true };
-    }
-
-    const provider = canonicalModel.slice(0, canonicalSeparatorIndex);
-    const modelId = canonicalModel.slice(canonicalSeparatorIndex + 1);
-
-    if (modelId.startsWith(":")) {
-      setToast({
-        id: Date.now().toString(),
-        type: "error",
-        message: `Invalid model format: expected "provider:model"`,
-      });
-      return { clearInput: false, toastShown: true };
-    }
+    const canonicalModel = normalized.model;
+    const separatorIndex = canonicalModel.indexOf(":");
+    const provider = canonicalModel.slice(0, separatorIndex);
+    const modelId = canonicalModel.slice(separatorIndex + 1);
 
     try {
       // Validate provider is supported
@@ -256,12 +225,12 @@ export async function processSlashCommand(
       }
 
       setInput("");
-      setPreferredModel(modelString);
+      setPreferredModel(canonicalModel);
       trackCommandUsed("model");
       setToast({
         id: Date.now().toString(),
         type: "success",
-        message: `Model changed to ${modelString}`,
+        message: `Model changed to ${canonicalModel}`,
       });
       return { clearInput: true, toastShown: true };
     } catch (error) {
@@ -868,19 +837,21 @@ export function prepareCompactionMessage(options: CompactionOptions): {
     followUpContent: fc,
   };
 
+  // Apply compaction overrides
+  const sendOptions = applyCompactionOverrides(options.sendMessageOptions, compactData);
+
   const metadata: MuxFrontendMetadata = {
     type: "compaction-request",
     rawCommand: fullRawCommand,
     commandPrefix: commandLine,
     parsed: compactData,
+    // requestedModel keeps the "starting" banner aligned with compaction overrides.
+    requestedModel: sendOptions.model,
     ...(options.source === "idle-compaction" && {
       source: options.source,
       displayStatus: { emoji: "💤", message: "Compacting idle workspace..." },
     }),
   };
-
-  // Apply compaction overrides
-  const sendOptions = applyCompactionOverrides(options.sendMessageOptions, compactData);
 
   return { messageText, metadata, sendOptions };
 }
@@ -1062,8 +1033,11 @@ export async function handleCompactCommand(
     onCancelEdit,
   } = context;
 
+  // normalizeModelInput handles null/empty — returns { model: null } for empty input
+  const normalizedModel = normalizeModelInput(parsed.model);
+
   // Validate model format early - fail fast before sending to backend
-  if (parsed.model && !isValidModelFormat(parsed.model)) {
+  if (parsed.model && !normalizedModel.model) {
     setToast(createInvalidCompactModelToast(parsed.model));
     return { clearInput: false, toastShown: true };
   }
@@ -1084,12 +1058,14 @@ export async function handleCompactCommand(
         }
       : undefined;
 
+    const resolvedModel = normalizedModel.model ?? undefined;
+
     const result = await executeCompaction({
       api,
       workspaceId,
       maxOutputTokens: parsed.maxOutputTokens,
       followUpContent,
-      model: parsed.model,
+      model: resolvedModel,
       sendMessageOptions,
       editMessageId,
     });

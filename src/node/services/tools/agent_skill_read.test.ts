@@ -2,14 +2,14 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { describe, it, expect } from "bun:test";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 import { AgentSkillReadToolResultSchema } from "@/common/utils/tools/toolDefinitions";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { createAgentSkillReadTool } from "./agent_skill_read";
 import { createTestToolConfig, TestTempDir } from "./testHelpers";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

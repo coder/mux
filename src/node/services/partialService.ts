@@ -155,13 +155,13 @@ export class PartialService {
 
       const hasCommitWorthyParts = (partial.parts ?? []).some((part) => {
         if (part.type === "text") {
-          return part.text.length > 0;
+          return part.text.trim().length > 0;
         }
 
         if (part.type === "reasoning") {
           // Reasoning may be needed for provider-specific replay (e.g., Extended Thinking).
           // It is real content and safe to persist.
-          return part.text.length > 0;
+          return part.text.trim().length > 0;
         }
 
         if (part.type === "file") {

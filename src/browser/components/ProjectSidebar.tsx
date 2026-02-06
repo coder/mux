@@ -7,10 +7,12 @@ import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useDebouncedValue } from "@/browser/hooks/useDebouncedValue";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import {
+  DEFAULT_MODEL_KEY,
   EXPANDED_PROJECTS_KEY,
   getDraftScopeId,
   getInputKey,
@@ -309,11 +311,29 @@ const ProjectDragLayer: React.FC = () => {
 };
 
 function MuxChatStatusIndicator() {
-  const [fallbackModel] = usePersistedState<string>(
-    getModelKey(MUX_HELP_CHAT_WORKSPACE_ID),
-    getDefaultModel(),
+  // Subscribe to the global default model preference so backend-seeded values apply immediately
+  // on fresh origins (e.g., when switching ports).
+  const [defaultModelPref] = usePersistedState<string>(
+    DEFAULT_MODEL_KEY,
+    WORKSPACE_DEFAULTS.model,
     { listener: true }
   );
+  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
+
+  // Workspace-scoped model preference. If unset, fall back to the global default model.
+  // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
+  // initialValue is sticky and would lock in the fallback before startup seeding.
+  const [preferredModel] = usePersistedState<string | null>(
+    getModelKey(MUX_HELP_CHAT_WORKSPACE_ID),
+    null,
+    { listener: true }
+  );
+
+  const fallbackModel =
+    typeof preferredModel === "string" && preferredModel.trim().length > 0
+      ? migrateGatewayModel(preferredModel.trim())
+      : defaultModel;
+
   return (
     <WorkspaceStatusIndicator
       workspaceId={MUX_HELP_CHAT_WORKSPACE_ID}

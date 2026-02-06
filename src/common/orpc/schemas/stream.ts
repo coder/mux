@@ -54,6 +54,9 @@ export const DeleteMessageSchema = z.object({
   historySequences: z.array(z.number()),
 });
 
+// Matches THINKING_LEVELS from src/common/types/thinking.ts
+const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
+
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
   workspaceId: z.string(),
@@ -75,6 +78,9 @@ export const StreamStartEventSchema = z.object({
   }),
   agentId: AgentIdSchema.optional().catch(undefined).meta({
     description: "Agent id for this stream",
+  }),
+  thinkingLevel: ThinkingLevelSchema.optional().meta({
+    description: "Effective thinking level after model policy clamping",
   }),
 });
 
@@ -132,6 +138,7 @@ export const StreamEndEventSchema = z.object({
   metadata: z
     .object({
       model: z.string(),
+      thinkingLevel: ThinkingLevelSchema.optional(),
       routedThroughGateway: z.boolean().optional(),
       // Total usage across all steps (for cost calculation)
       usage: LanguageModelV2UsageSchema.optional(),
@@ -466,9 +473,9 @@ export const ExperimentsSchema = z.object({
 // SendMessage options
 export const SendMessageOptionsSchema = z.object({
   editMessageId: z.string().optional(),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
   model: z.string("No model specified"),
-  system1ThinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+  system1ThinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
   system1Model: z.string().optional(),
   toolPolicy: ToolPolicySchema.optional(),
   additionalSystemInstructions: z.string().optional(),

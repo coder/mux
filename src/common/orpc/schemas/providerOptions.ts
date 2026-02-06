@@ -3,8 +3,14 @@ import { z } from "zod";
 export const MuxProviderOptionsSchema = z.object({
   anthropic: z
     .object({
+      // Deprecated: prefer use1MContextModels for per-model control.
+      // Kept for backward compat with agentSession auto-retry which sets it directly.
       use1MContext: z.boolean().optional().meta({
-        description: "Enable 1M context window (requires beta header)",
+        description: "Enable 1M context window globally (deprecated: use use1MContextModels)",
+      }),
+      use1MContextModels: z.array(z.string()).optional().meta({
+        description:
+          "Model IDs with 1M context enabled (e.g. ['anthropic:claude-sonnet-4-20250514'])",
       }),
     })
     .optional(),

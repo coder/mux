@@ -1,4 +1,4 @@
-import { experimental_createMCPClient, type OAuthClientProvider } from "@ai-sdk/mcp";
+import { createMCPClient, type OAuthClientProvider } from "@ai-sdk/mcp";
 import type { Tool } from "ai";
 import { log } from "@/node/services/log";
 import { MCPStdioTransport } from "@/node/services/mcpStdioTransport";
@@ -299,7 +299,7 @@ async function runServerTest(
 
   const testPromise = (async (): Promise<MCPTestResult> => {
     let stdioTransport: MCPStdioTransport | null = null;
-    let client: Awaited<ReturnType<typeof experimental_createMCPClient>> | null = null;
+    let client: Awaited<ReturnType<typeof createMCPClient>> | null = null;
 
     try {
       if (server.transport === "stdio") {
@@ -313,7 +313,7 @@ async function runServerTest(
 
         stdioTransport = new MCPStdioTransport(execStream);
         await stdioTransport.start();
-        client = await experimental_createMCPClient({ transport: stdioTransport });
+        client = await createMCPClient({ transport: stdioTransport });
       } else {
         log.debug(`[MCP] Testing ${logContext}`, { transport: server.transport });
 
@@ -324,7 +324,7 @@ async function runServerTest(
         };
 
         const tryHttp = async () =>
-          experimental_createMCPClient({
+          createMCPClient({
             transport: {
               type: "http",
               ...transportBase,
@@ -332,7 +332,7 @@ async function runServerTest(
           });
 
         const trySse = async () =>
-          experimental_createMCPClient({
+          createMCPClient({
             transport: {
               type: "sse",
               ...transportBase,
@@ -1207,7 +1207,7 @@ export class MCPServerManager {
       };
 
       await transport.start();
-      const client = await experimental_createMCPClient({ transport });
+      const client = await createMCPClient({ transport });
       const rawTools = await client.tools();
       const tools = wrapMCPTools(rawTools as unknown as Record<string, Tool>, onActivity);
 
@@ -1262,7 +1262,7 @@ export class MCPServerManager {
     };
 
     const tryHttp = async () =>
-      experimental_createMCPClient({
+      createMCPClient({
         transport: {
           type: "http",
           ...transportBase,
@@ -1270,14 +1270,14 @@ export class MCPServerManager {
       });
 
     const trySse = async () =>
-      experimental_createMCPClient({
+      createMCPClient({
         transport: {
           type: "sse",
           ...transportBase,
         },
       });
 
-    let client: Awaited<ReturnType<typeof experimental_createMCPClient>>;
+    let client: Awaited<ReturnType<typeof createMCPClient>>;
     let resolvedTransport: ResolvedTransport;
     let autoFallbackUsed = false;
 

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
+import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ProviderName } from "@/common/constants/providers";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
@@ -36,6 +37,7 @@ import {
   SelectValue,
 } from "@/browser/components/ui/select";
 import { Switch } from "@/browser/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/browser/components/ui/toggle-group";
 import {
   HelpIndicator,
   Tooltip,
@@ -45,6 +47,13 @@ import {
 } from "@/browser/components/ui/tooltip";
 
 type MuxGatewayLoginStatus = "idle" | "starting" | "waiting" | "success" | "error";
+type CodexOauthFlowStatus = "idle" | "starting" | "waiting" | "error";
+
+interface CodexOauthDeviceFlow {
+  flowId: string;
+  userCode: string;
+  verifyUrl: string;
+}
 
 interface OAuthMessage {
   type?: unknown;
@@ -56,11 +65,6 @@ interface OAuthMessage {
 function getServerAuthToken(): string | null {
   const urlToken = new URLSearchParams(window.location.search).get("token")?.trim();
   return urlToken?.length ? urlToken : getStoredAuthToken();
-}
-function getBackendBaseUrl(): string {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
-  // @ts-ignore - import.meta is available in Vite
-  return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
 }
 const GATEWAY_MODELS_KEY = "gateway-models";
 
@@ -154,7 +158,7 @@ export function ProvidersSection() {
   const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
 
   const { api } = useAPI();
-  const { config, updateOptimistically } = useProvidersConfig();
+  const { config, refresh, updateOptimistically } = useProvidersConfig();
   const {
     data: muxGatewayAccountStatus,
     error: muxGatewayAccountError,
@@ -211,7 +215,7 @@ export function ProvidersSection() {
     applyGatewayModels(eligibleGatewayModels);
   }, [applyGatewayModels, canEnableGatewayForAllModels, eligibleGatewayModels]);
 
-  const backendBaseUrl = getBackendBaseUrl();
+  const backendBaseUrl = getBrowserBackendBaseUrl();
   const backendOrigin = (() => {
     try {
       return new URL(backendBaseUrl).origin;
@@ -222,7 +226,297 @@ export function ProvidersSection() {
 
   const isDesktop = !!window.api;
 
+  const [codexOauthStatus, setCodexOauthStatus] = useState<CodexOauthFlowStatus>("idle");
+  const [codexOauthError, setCodexOauthError] = useState<string | null>(null);
+
+  const codexOauthAttemptRef = useRef(0);
+  const [codexOauthDesktopFlowId, setCodexOauthDesktopFlowId] = useState<string | null>(null);
+  const [codexOauthDeviceFlow, setCodexOauthDeviceFlow] = useState<CodexOauthDeviceFlow | null>(
+    null
+  );
+
+  const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
+  const openaiApiKeySet = config?.openai?.apiKeySet === true;
+  const codexOauthDefaultAuth =
+    config?.openai?.codexOauthDefaultAuth === "apiKey" ? "apiKey" : "oauth";
+  const codexOauthDefaultAuthIsEditable = codexOauthIsConnected && openaiApiKeySet;
+
+  const codexOauthLoginInProgress =
+    codexOauthStatus === "starting" || codexOauthStatus === "waiting";
+
+  const startCodexOauthBrowserConnect = async () => {
+    const attempt = ++codexOauthAttemptRef.current;
+
+    if (!api) {
+      setCodexOauthStatus("error");
+      setCodexOauthError("Mux API not connected.");
+      return;
+    }
+
+    // Best-effort: cancel any in-progress flow before starting a new one.
+    if (codexOauthDesktopFlowId) {
+      void api.codexOauth.cancelDesktopFlow({ flowId: codexOauthDesktopFlowId });
+    }
+    if (codexOauthDeviceFlow) {
+      void api.codexOauth.cancelDeviceFlow({ flowId: codexOauthDeviceFlow.flowId });
+    }
+
+    setCodexOauthError(null);
+    setCodexOauthDesktopFlowId(null);
+    setCodexOauthDeviceFlow(null);
+
+    let popup: Window | null = null;
+
+    try {
+      if (!isDesktop) {
+        // Open popup synchronously to preserve user gesture context (avoids popup blockers).
+        popup = window.open("about:blank", "_blank");
+        if (!popup) {
+          throw new Error("Popup blocked - please allow popups and try again.");
+        }
+      }
+
+      setCodexOauthStatus("starting");
+
+      if (!isDesktop) {
+        const startResult = await api.codexOauth.startDeviceFlow();
+
+        if (attempt !== codexOauthAttemptRef.current) {
+          if (startResult.success) {
+            void api.codexOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
+          }
+          popup?.close();
+          return;
+        }
+
+        if (!startResult.success) {
+          popup?.close();
+          setCodexOauthStatus("error");
+          setCodexOauthError(startResult.error);
+          return;
+        }
+
+        setCodexOauthDeviceFlow({
+          flowId: startResult.data.flowId,
+          userCode: startResult.data.userCode,
+          verifyUrl: startResult.data.verifyUrl,
+        });
+        setCodexOauthStatus("waiting");
+
+        if (popup) {
+          popup.location.href = startResult.data.verifyUrl;
+        }
+
+        const waitResult = await api.codexOauth.waitForDeviceFlow({
+          flowId: startResult.data.flowId,
+        });
+
+        if (attempt !== codexOauthAttemptRef.current) {
+          return;
+        }
+
+        if (!waitResult.success) {
+          setCodexOauthStatus("error");
+          setCodexOauthError(waitResult.error);
+          return;
+        }
+
+        setCodexOauthStatus("idle");
+        setCodexOauthDeviceFlow(null);
+        await refresh();
+        return;
+      }
+
+      const startResult = await api.codexOauth.startDesktopFlow();
+
+      if (attempt !== codexOauthAttemptRef.current) {
+        if (startResult.success) {
+          void api.codexOauth.cancelDesktopFlow({ flowId: startResult.data.flowId });
+        }
+        popup?.close();
+        return;
+      }
+
+      if (!startResult.success) {
+        popup?.close();
+        setCodexOauthStatus("error");
+        setCodexOauthError(startResult.error);
+        return;
+      }
+
+      const { flowId, authorizeUrl } = startResult.data;
+      setCodexOauthDesktopFlowId(flowId);
+      setCodexOauthStatus("waiting");
+
+      // Desktop main process intercepts external window.open() calls and routes them via shell.openExternal.
+      window.open(authorizeUrl, "_blank", "noopener");
+
+      const waitResult = await api.codexOauth.waitForDesktopFlow({ flowId });
+
+      if (attempt !== codexOauthAttemptRef.current) {
+        return;
+      }
+
+      if (!waitResult.success) {
+        setCodexOauthStatus("error");
+        setCodexOauthError(waitResult.error);
+        return;
+      }
+
+      setCodexOauthStatus("idle");
+      setCodexOauthDesktopFlowId(null);
+      await refresh();
+    } catch (err) {
+      popup?.close();
+
+      if (attempt !== codexOauthAttemptRef.current) {
+        return;
+      }
+
+      setCodexOauthStatus("error");
+      setCodexOauthError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const startCodexOauthDeviceConnect = async () => {
+    const attempt = ++codexOauthAttemptRef.current;
+
+    if (!api) {
+      setCodexOauthStatus("error");
+      setCodexOauthError("Mux API not connected.");
+      return;
+    }
+
+    // Best-effort: cancel any in-progress flow before starting a new one.
+    if (codexOauthDesktopFlowId) {
+      void api.codexOauth.cancelDesktopFlow({ flowId: codexOauthDesktopFlowId });
+    }
+    if (codexOauthDeviceFlow) {
+      void api.codexOauth.cancelDeviceFlow({ flowId: codexOauthDeviceFlow.flowId });
+    }
+
+    setCodexOauthError(null);
+    setCodexOauthDesktopFlowId(null);
+    setCodexOauthDeviceFlow(null);
+
+    try {
+      setCodexOauthStatus("starting");
+      const startResult = await api.codexOauth.startDeviceFlow();
+
+      if (attempt !== codexOauthAttemptRef.current) {
+        if (startResult.success) {
+          void api.codexOauth.cancelDeviceFlow({ flowId: startResult.data.flowId });
+        }
+        return;
+      }
+
+      if (!startResult.success) {
+        setCodexOauthStatus("error");
+        setCodexOauthError(startResult.error);
+        return;
+      }
+
+      setCodexOauthDeviceFlow({
+        flowId: startResult.data.flowId,
+        userCode: startResult.data.userCode,
+        verifyUrl: startResult.data.verifyUrl,
+      });
+      setCodexOauthStatus("waiting");
+
+      const waitResult = await api.codexOauth.waitForDeviceFlow({
+        flowId: startResult.data.flowId,
+      });
+
+      if (attempt !== codexOauthAttemptRef.current) {
+        return;
+      }
+
+      if (!waitResult.success) {
+        setCodexOauthStatus("error");
+        setCodexOauthError(waitResult.error);
+        return;
+      }
+
+      setCodexOauthStatus("idle");
+      setCodexOauthDeviceFlow(null);
+      await refresh();
+    } catch (err) {
+      if (attempt !== codexOauthAttemptRef.current) {
+        return;
+      }
+
+      setCodexOauthStatus("error");
+      setCodexOauthError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const disconnectCodexOauth = async () => {
+    const attempt = ++codexOauthAttemptRef.current;
+
+    if (!api) {
+      setCodexOauthStatus("error");
+      setCodexOauthError("Mux API not connected.");
+      return;
+    }
+
+    // Best-effort: cancel any in-progress flow.
+    if (codexOauthDesktopFlowId) {
+      void api.codexOauth.cancelDesktopFlow({ flowId: codexOauthDesktopFlowId });
+    }
+    if (codexOauthDeviceFlow) {
+      void api.codexOauth.cancelDeviceFlow({ flowId: codexOauthDeviceFlow.flowId });
+    }
+
+    setCodexOauthError(null);
+    setCodexOauthDesktopFlowId(null);
+    setCodexOauthDeviceFlow(null);
+
+    try {
+      setCodexOauthStatus("starting");
+      const result = await api.codexOauth.disconnect();
+
+      if (attempt !== codexOauthAttemptRef.current) {
+        return;
+      }
+
+      if (!result.success) {
+        setCodexOauthStatus("error");
+        setCodexOauthError(result.error);
+        return;
+      }
+
+      updateOptimistically("openai", { codexOauthSet: false });
+      setCodexOauthStatus("idle");
+      await refresh();
+    } catch (err) {
+      if (attempt !== codexOauthAttemptRef.current) {
+        return;
+      }
+
+      setCodexOauthStatus("error");
+      setCodexOauthError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const [muxGatewayLoginStatus, setMuxGatewayLoginStatus] = useState<MuxGatewayLoginStatus>("idle");
+  const cancelCodexOauth = () => {
+    codexOauthAttemptRef.current++;
+
+    if (api) {
+      if (codexOauthDesktopFlowId) {
+        void api.codexOauth.cancelDesktopFlow({ flowId: codexOauthDesktopFlowId });
+      }
+      if (codexOauthDeviceFlow) {
+        void api.codexOauth.cancelDeviceFlow({ flowId: codexOauthDeviceFlow.flowId });
+      }
+    }
+
+    setCodexOauthDesktopFlowId(null);
+    setCodexOauthDeviceFlow(null);
+    setCodexOauthStatus("idle");
+    setCodexOauthError(null);
+  };
+
   const [muxGatewayLoginError, setMuxGatewayLoginError] = useState<string | null>(null);
 
   const muxGatewayApplyDefaultModelsOnSuccessRef = useRef(false);
@@ -353,7 +647,7 @@ export function ProvidersSection() {
 
       setMuxGatewayLoginStatus("starting");
 
-      const startUrl = new URL("/auth/mux-gateway/start", backendBaseUrl);
+      const startUrl = new URL(`${backendBaseUrl}/auth/mux-gateway/start`);
       const authToken = getServerAuthToken();
 
       let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };
@@ -889,66 +1183,203 @@ export function ProvidersSection() {
                   );
                 })}
 
-                {/* OpenAI service tier dropdown */}
+                {/* OpenAI: ChatGPT OAuth + service tier */}
                 {provider === "openai" && (
-                  <div className="border-border-light border-t pt-3">
-                    <div className="mb-1 flex items-center gap-1">
-                      <label className="text-muted block text-xs">Service tier</label>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <HelpIndicator aria-label="OpenAI service tier help">?</HelpIndicator>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <div className="max-w-[260px]">
-                              <div className="font-semibold">OpenAI service tier</div>
-                              <div className="mt-1">
-                                <span className="font-semibold">auto</span>: standard behavior.
-                              </div>
-                              <div>
-                                <span className="font-semibold">priority</span>: lower latency,
-                                higher cost.
-                              </div>
-                              <div>
-                                <span className="font-semibold">flex</span>: lower cost, higher
-                                latency.
-                              </div>
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                  <div className="border-border-light space-y-3 border-t pt-3">
+                    <div>
+                      <label className="text-foreground block text-xs font-medium">
+                        ChatGPT (Codex) OAuth
+                      </label>
+                      <span className="text-muted text-xs">
+                        {codexOauthStatus === "starting"
+                          ? "Starting..."
+                          : codexOauthStatus === "waiting"
+                            ? "Waiting for login..."
+                            : codexOauthIsConnected
+                              ? "Connected"
+                              : "Not connected"}
+                      </span>
                     </div>
-                    <Select
-                      value={config?.openai?.serviceTier ?? "auto"}
-                      onValueChange={(next) => {
-                        if (!api) return;
-                        if (
-                          next !== "auto" &&
-                          next !== "default" &&
-                          next !== "flex" &&
-                          next !== "priority"
-                        ) {
-                          return;
-                        }
 
-                        updateOptimistically("openai", { serviceTier: next });
-                        void api.providers.setProviderConfig({
-                          provider: "openai",
-                          keyPath: ["serviceTier"],
-                          value: next,
-                        });
-                      }}
-                    >
-                      <SelectTrigger className="w-40">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="auto">auto</SelectItem>
-                        <SelectItem value="default">default</SelectItem>
-                        <SelectItem value="flex">flex</SelectItem>
-                        <SelectItem value="priority">priority</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          void startCodexOauthBrowserConnect();
+                        }}
+                        disabled={!api || codexOauthLoginInProgress}
+                      >
+                        Connect (Browser)
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          void startCodexOauthDeviceConnect();
+                        }}
+                        disabled={!api || codexOauthLoginInProgress}
+                      >
+                        Connect (Device)
+                      </Button>
+
+                      {codexOauthLoginInProgress && (
+                        <Button variant="secondary" size="sm" onClick={cancelCodexOauth}>
+                          Cancel
+                        </Button>
+                      )}
+
+                      {codexOauthIsConnected && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            void disconnectCodexOauth();
+                          }}
+                          disabled={!api || codexOauthLoginInProgress}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                    </div>
+
+                    {codexOauthDeviceFlow && (
+                      <div className="space-y-1">
+                        <div className="text-muted text-xs">User code</div>
+                        <div className="text-foreground font-mono text-xs">
+                          {codexOauthDeviceFlow.userCode}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            window.open(codexOauthDeviceFlow.verifyUrl, "_blank", "noopener");
+                          }}
+                        >
+                          Open verification page
+                        </Button>
+                      </div>
+                    )}
+
+                    {codexOauthStatus === "waiting" && !codexOauthDeviceFlow && (
+                      <p className="text-muted text-xs">
+                        Finish the login flow in your browser, then return here.
+                      </p>
+                    )}
+
+                    {codexOauthStatus === "error" && codexOauthError && (
+                      <p className="text-destructive text-xs">{codexOauthError}</p>
+                    )}
+
+                    <div className="border-border-light space-y-2 border-t pt-3">
+                      <div>
+                        <label className="text-muted block text-xs">
+                          Default auth (when both are set)
+                        </label>
+                        <p className="text-muted text-xs">
+                          Applies to models that support both ChatGPT OAuth and API keys (e.g.{" "}
+                          <code className="text-accent">gpt-5.2</code>).
+                        </p>
+                      </div>
+
+                      <ToggleGroup
+                        type="single"
+                        value={codexOauthDefaultAuth}
+                        onValueChange={(next) => {
+                          if (!api) return;
+                          if (next !== "oauth" && next !== "apiKey") {
+                            return;
+                          }
+
+                          updateOptimistically("openai", { codexOauthDefaultAuth: next });
+                          void api.providers.setProviderConfig({
+                            provider: "openai",
+                            keyPath: ["codexOauthDefaultAuth"],
+                            value: next,
+                          });
+                        }}
+                        size="sm"
+                        className="h-9"
+                        disabled={!api || !codexOauthDefaultAuthIsEditable}
+                      >
+                        <ToggleGroupItem value="oauth" size="sm" className="h-7 px-3 text-[13px]">
+                          Use ChatGPT OAuth by default
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="apiKey" size="sm" className="h-7 px-3 text-[13px]">
+                          Use OpenAI API key by default
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+
+                      <p className="text-muted text-xs">
+                        ChatGPT OAuth uses subscription billing (costs included). API key uses
+                        OpenAI platform billing.
+                      </p>
+
+                      {!codexOauthDefaultAuthIsEditable && (
+                        <p className="text-muted text-xs">
+                          Connect ChatGPT OAuth and set an OpenAI API key to change this setting.
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="border-border-light border-t pt-3">
+                      <div className="mb-1 flex items-center gap-1">
+                        <label className="text-muted block text-xs">Service tier</label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <HelpIndicator aria-label="OpenAI service tier help">?</HelpIndicator>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div className="max-w-[260px]">
+                                <div className="font-semibold">OpenAI service tier</div>
+                                <div className="mt-1">
+                                  <span className="font-semibold">auto</span>: standard behavior.
+                                </div>
+                                <div>
+                                  <span className="font-semibold">priority</span>: lower latency,
+                                  higher cost.
+                                </div>
+                                <div>
+                                  <span className="font-semibold">flex</span>: lower cost, higher
+                                  latency.
+                                </div>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <Select
+                        value={config?.openai?.serviceTier ?? "auto"}
+                        onValueChange={(next) => {
+                          if (!api) return;
+                          if (
+                            next !== "auto" &&
+                            next !== "default" &&
+                            next !== "flex" &&
+                            next !== "priority"
+                          ) {
+                            return;
+                          }
+
+                          updateOptimistically("openai", { serviceTier: next });
+                          void api.providers.setProviderConfig({
+                            provider: "openai",
+                            keyPath: ["serviceTier"],
+                            value: next,
+                          });
+                        }}
+                      >
+                        <SelectTrigger className="w-40">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">auto</SelectItem>
+                          <SelectItem value="default">default</SelectItem>
+                          <SelectItem value="flex">flex</SelectItem>
+                          <SelectItem value="priority">priority</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
                 {/* Gateway toggles - only for mux-gateway when configured */}

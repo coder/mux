@@ -24,6 +24,24 @@ Vim mode is always enabled. Press **ESC** to enter normal mode from insert mode.
 - Pending commands are shown (e.g., "NORMAL d" when delete is pending)
 - Press **i**, **a**, **I**, **A**, **o**, or **O** to return to insert mode
 
+### Visual Mode
+
+- Visual selection mode for operating on highlighted text
+- Enter with **v** (characterwise) or **V** (linewise)
+- Motions extend the selection (e.g. **h/j/k/l**, **w/b/e**, **0/$**)
+- Press **Esc** to exit visual mode back to normal mode (cursor returns to the start of the selection)
+
+Supported operators in visual mode:
+
+- **d** - Delete selection
+- **c** - Change selection (delete and enter insert mode)
+- **y** - Yank (copy) selection
+
+Notes:
+
+- Counts apply to motions (e.g. `v3w`)
+- Operators act on the current selection (no extra motion required)
+
 ## Navigation
 
 ### Basic Movement
@@ -49,6 +67,21 @@ Vim mode is always enabled. Press **ESC** to enter normal mode from insert mode.
 - **$** - Move to end of line
 - **Home** - Same as **0**
 - **End** - Same as **$**
+- **gg** - Go to first line
+- **{count}gg** - Go to line {count} (1-indexed)
+- **G** - Go to last line
+- **{count}G** - Go to line {count} (1-indexed)
+
+### Find/Till (Current Line)
+
+- **f{char}** - Find next {char} on the current line
+- **F{char}** - Find previous {char} on the current line
+- **t{char}** - Move till before next {char} on the current line
+- **T{char}** - Move till after previous {char} on the current line
+- **;** - Repeat last **f**/**F**/**t**/**T** in the same direction
+- **,** - Repeat last **f**/**F**/**t**/**T** in the opposite direction
+
+Counts apply (e.g. **3fx** finds the third `x` on the line).
 
 ### Column Preservation
 
@@ -76,6 +109,20 @@ When moving up/down with **j**/**k**, the cursor attempts to stay in the same co
 - **u** - Undo last change
 - **Ctrl-r** - Redo
 
+Notes:
+
+- Insert-mode typing is grouped: `i ... Esc` becomes a single undo step.
+- Undo/redo does not affect the yank register.
+
+### Dot Repeat
+
+- **.** - Repeat the last _structural_ edit at the current cursor position.
+
+Limitations:
+
+- Dot repeat does not replay arbitrary insert-mode typed text.
+- Not every command is repeatable yet (for example, find/till-based edits like `dfx`).
+
 ### Line Operations
 
 - **dd** - Delete line (yank to clipboard)
@@ -97,17 +144,31 @@ Vim's power comes from combining operators with motions. All operators work with
 - **w** - To next word
 - **b** - To previous word
 - **e** - To end of word
+- **W** - To next WORD (whitespace-separated)
+- **B** - To previous WORD
+- **E** - To end of WORD
 - **$** - To end of line
 - **0** - To beginning of line
 - **\_** - To first non-whitespace character
+- **f{char}** - Find next {char} on the current line
+- **F{char}** - Find previous {char} on the current line
+- **t{char}** - Move till before next {char} on the current line
+- **T{char}** - Move till after previous {char} on the current line
+- **;** - Repeat last **f**/**F**/**t**/**T** in the same direction
+- **,** - Repeat last **f**/**F**/**t**/**T** in the opposite direction
 
 ### Examples
 
 - **dw** - Delete to next word
+- **dW** - Delete to next WORD
 - **de** - Delete to end of word
 - **d$** - Delete to end of line
-- **cw** - Change to next word
+- **dfx** - Delete through next `x` on the line
+- **ctx** - Change till before next `x` on the line
+- **cw** - Change to end of word (like **ce**)
 - **ce** - Change to end of word
+- **cW** - Change to end of WORD (like **cE**)
+- **cE** - Change to end of WORD
 - **c0** - Change to beginning of line
 - **y$** - Yank to end of line
 - **ye** - Yank to end of word
@@ -118,21 +179,73 @@ Vim's power comes from combining operators with motions. All operators work with
 - **D** - Same as **d$** (delete to end of line)
 - **C** - Same as **c$** (change to end of line)
 
+## Count Prefixes
+
+Many motions and commands support numeric count prefixes:
+
+- **3w** - Move forward three words
+- **20l** - Move right 20 characters
+- **2dd** - Delete two lines
+- **d3w** - Delete three words
+
+### Parsing rules
+
+- Digits **1–9** start a count.
+- **0** appends only if a count is already in progress; otherwise it remains the **0** motion.
+- Counts are capped at **10,000**.
+
+### Supported commands (MVP)
+
+Counts currently apply to:
+
+- Motions: **h/j/k/l**, **w/W**, **b/B**, **e/E**, **0**, **$**, **\_**, **gg**, **G**, **f/F**, **t/T**, **;**, **,**
+- Edits: **x**, **~**
+- Operator + motion combos, including **dd/yy/cc**
+
+### Limitations
+
+Counts are not yet supported for every command (e.g. repeating paste, undo/redo, or insert-mode entry).
+
 ## Text Objects
 
-Text objects let you operate on semantic units:
+Text objects let you operate on semantic units.
 
-### Inner Word (iw)
+### Words
 
-- **diw** - Delete inner word (word under cursor)
-- **ciw** - Change inner word
-- **yiw** - Yank inner word
+- **iw** - Inner word (word under cursor)
+  - **diw** - Delete inner word
+  - **ciw** - Change inner word
+  - **yiw** - Yank inner word
 
-Text objects work from anywhere within the word - you don't need to be at the start.
+- **aw** - A word (includes surrounding whitespace)
+  - **daw** - Delete word + whitespace
+  - **caw** - Change word + whitespace
+  - **yaw** - Yank word + whitespace
+
+Text objects work from anywhere within the word — you don't need to be at the start.
+
+### Delimiters (current line only)
+
+Quotes:
+
+- **i"** / **a"** - Inside / around double quotes
+- **i'** / **a'** - Inside / around single quotes
+
+Brackets:
+
+- **i(** / **a(** - Inside / around parentheses
+- **i[** / **a[** - Inside / around square brackets
+- **i\{** / **a\{** - Inside / around curly braces
+
+Notes:
+
+- These are currently **line-local** (they don’t search across lines).
+- Escaping and complex nesting behavior is not yet supported.
 
 ## Visual Feedback
 
-- **Cursor**: Thin blinking cursor in insert mode, solid block in normal mode
+- **Cursor**: Thin blinking cursor in insert mode, solid block in normal/visual modes
+- **Selection**: Visual mode uses the textarea selection highlight
 - **Mode Indicator**: Shows current mode and pending commands (e.g., "NORMAL d" when waiting for motion)
 
 ## Keybind Conflicts
@@ -167,9 +280,7 @@ In Vim mode, **Ctrl+C always interrupts streams** (similar to terminal interrupt
 Features that may be added in the future:
 
 - **ge** - Backward end of word motion
-- **f\{char\}**, **t\{char\}** - Find character motions
-- **i"**, **i'**, **i(**, **i[**, **i\{** - More text objects
-- **2w**, **3dd**, **5x** - Count prefixes
-- **Visual mode** - Character, line, and block selection
+- **More text objects** - Multi-line delimiters, escaping, and additional objects
+- **Visual block mode (Ctrl-v)** - Blockwise selection
 - **Macros** - Recording and replaying command sequences
 - **Marks** - Named cursor positions

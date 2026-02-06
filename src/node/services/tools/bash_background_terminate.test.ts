@@ -8,10 +8,10 @@ import type {
   BashBackgroundTerminateResult,
 } from "@/common/types/tools";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 import * as fs from "fs/promises";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

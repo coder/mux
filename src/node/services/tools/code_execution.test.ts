@@ -6,11 +6,11 @@ import { describe, it, expect, mock } from "bun:test";
 import { createCodeExecutionTool, clearTypeCaches } from "./code_execution";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ToolBridge } from "@/node/services/ptc/toolBridge";
-import type { Tool, ToolCallOptions } from "ai";
+import type { Tool, ToolExecutionOptions } from "ai";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 import { z } from "zod";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

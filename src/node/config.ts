@@ -23,6 +23,7 @@ import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { getMuxHome } from "@/common/constants/paths";
 import { PlatformPaths } from "@/common/utils/paths";
+import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getContainerName as getDockerContainerName } from "@/node/runtime/DockerRuntime";
 
@@ -77,6 +78,48 @@ function parseOptionalStringArray(value: unknown): string[] | undefined {
 
   return value.filter((item): item is string => typeof item === "string");
 }
+function normalizeOptionalModelString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  // Reject malformed mux-gateway strings ("mux-gateway:provider" without "/model").
+  if (trimmed.startsWith("mux-gateway:") && !trimmed.includes("/")) {
+    return undefined;
+  }
+
+  const normalized = normalizeGatewayModel(trimmed);
+  if (!isValidModelFormat(normalized)) {
+    return undefined;
+  }
+
+  return normalized;
+}
+
+function normalizeOptionalModelStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of value) {
+    const normalized = normalizeOptionalModelString(item);
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(normalized);
+  }
+
+  return out;
+}
+
 function parseOptionalPort(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
     return undefined;
@@ -131,6 +174,9 @@ export class Config {
           taskSettings?: unknown;
           muxGatewayEnabled?: unknown;
           muxGatewayModels?: unknown;
+          defaultModel?: unknown;
+          hiddenModels?: unknown;
+          preferredCompactionModel?: unknown;
           agentAiDefaults?: unknown;
           subagentAiDefaults?: unknown;
           useSSH2Transport?: unknown;
@@ -162,6 +208,12 @@ export class Config {
 
           const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
           const muxGatewayModels = parseOptionalStringArray(parsed.muxGatewayModels);
+
+          const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
+          const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
+          const preferredCompactionModel = normalizeOptionalModelString(
+            parsed.preferredCompactionModel
+          );
           const legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
 
           // Default ON: store `false` only so config.json stays minimal.
@@ -193,6 +245,9 @@ export class Config {
             taskSettings,
             muxGatewayEnabled,
             muxGatewayModels,
+            defaultModel,
+            hiddenModels,
+            preferredCompactionModel,
             agentAiDefaults,
             // Legacy fields are still parsed and returned for downgrade compatibility.
             subagentAiDefaults: legacySubagentAiDefaults,
@@ -237,6 +292,9 @@ export class Config {
         taskSettings?: ProjectsConfig["taskSettings"];
         muxGatewayEnabled?: ProjectsConfig["muxGatewayEnabled"];
         muxGatewayModels?: ProjectsConfig["muxGatewayModels"];
+        defaultModel?: ProjectsConfig["defaultModel"];
+        hiddenModels?: ProjectsConfig["hiddenModels"];
+        preferredCompactionModel?: ProjectsConfig["preferredCompactionModel"];
         agentAiDefaults?: ProjectsConfig["agentAiDefaults"];
         subagentAiDefaults?: ProjectsConfig["subagentAiDefaults"];
         useSSH2Transport?: boolean;
@@ -256,6 +314,23 @@ export class Config {
       const muxGatewayModels = parseOptionalStringArray(config.muxGatewayModels);
       if (muxGatewayModels !== undefined) {
         data.muxGatewayModels = muxGatewayModels;
+      }
+
+      const defaultModel = normalizeOptionalModelString(config.defaultModel);
+      if (defaultModel !== undefined) {
+        data.defaultModel = defaultModel;
+      }
+
+      const hiddenModels = normalizeOptionalModelStringArray(config.hiddenModels);
+      if (hiddenModels !== undefined) {
+        data.hiddenModels = hiddenModels;
+      }
+
+      const preferredCompactionModel = normalizeOptionalModelString(
+        config.preferredCompactionModel
+      );
+      if (preferredCompactionModel !== undefined) {
+        data.preferredCompactionModel = preferredCompactionModel;
       }
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);
       if (apiServerBindHost) {

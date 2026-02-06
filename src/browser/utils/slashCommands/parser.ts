@@ -5,7 +5,7 @@
 import type { ParsedCommand, SlashCommandDefinition } from "./types";
 import { SLASH_COMMAND_DEFINITION_MAP } from "./registry";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
-import { resolveModelAlias } from "@/common/utils/ai/models";
+import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
 
 export { SLASH_COMMAND_DEFINITIONS } from "./registry";
 
@@ -47,9 +47,11 @@ export function parseCommand(input: string): ParsedCommand {
         return { type: "model-help" };
       }
 
+      const normalized = normalizeModelInput(commandKey);
+
       return {
         type: "model-oneshot",
-        modelString: resolveModelAlias(commandKey),
+        modelString: normalized.model ?? MODEL_ABBREVIATIONS[commandKey],
         message,
       };
     }

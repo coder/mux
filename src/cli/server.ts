@@ -110,6 +110,7 @@ const mockWindow: BrowserWindow = {
     taskService: serviceContainer.taskService,
     muxGatewayOauthService: serviceContainer.muxGatewayOauthService,
     muxGovernorOauthService: serviceContainer.muxGovernorOauthService,
+    codexOauthService: serviceContainer.codexOauthService,
     providerService: serviceContainer.providerService,
     terminalService: serviceContainer.terminalService,
     editorService: serviceContainer.editorService,

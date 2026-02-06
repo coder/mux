@@ -16,12 +16,12 @@ import { createFileReadTool } from "./file_read";
 import { createBashTool } from "./bash";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ToolBridge } from "@/node/services/ptc/toolBridge";
-import type { Tool, ToolCallOptions } from "ai";
+import type { Tool, ToolExecutionOptions } from "ai";
 import type { PTCEvent, PTCExecutionResult, PTCToolCallEndEvent } from "@/node/services/ptc/types";
 import { createTestToolConfig, TestTempDir, getTestDeps } from "./testHelpers";
 import { z } from "zod";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "integration-test-call",
   messages: [],
 };

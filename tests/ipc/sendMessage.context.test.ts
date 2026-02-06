@@ -31,7 +31,7 @@ if (shouldRunIntegrationTests()) {
 
 // Test both providers
 const PROVIDER_CONFIGS: Array<[string, string]> = [
-  ["openai", KNOWN_MODELS.GPT_MINI.providerModelId],
+  ["openai", KNOWN_MODELS.GPT.providerModelId],
   ["anthropic", KNOWN_MODELS.HAIKU.providerModelId],
 ];
 
@@ -109,7 +109,7 @@ describeIntegration("sendMessage context handling tests", () => {
             env,
             workspaceId,
             "Say 'original'",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
           expect(result1.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);
@@ -141,24 +141,36 @@ describeIntegration("sendMessage context handling tests", () => {
           const result = await sendMessageWithModel(
             env,
             workspaceId,
-            "What is the secret word?",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId),
+            "What is 2+2?",
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId),
             {
+              // Disable tools so the model returns assistant text deterministically in CI.
+              toolPolicy: [{ regex_match: ".*", action: "disable" }],
               additionalSystemInstructions:
-                "The secret word is 'BANANA'. Always mention the secret word in your response.",
+                "Answer the user's question. Include the word BANANA in your response.",
             }
           );
 
           expect(result.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);
 
-          // Check response contains the secret word
-          const deltas = collector.getDeltas();
-          const responseText = deltas
-            .map((d) => ("delta" in d ? (d as { delta?: string }).delta || "" : ""))
+          // Check response contains BANANA (case-insensitive).
+          // Some provider/model combinations may emit no stream-delta events, and return
+          // assistant text only in the final stream-end payload.
+          const finalMessage = collector.getFinalMessage() as
+            | { content?: unknown; parts?: Array<{ type?: unknown; text?: unknown }> }
+            | undefined;
+
+          const textFromContent =
+            typeof finalMessage?.content === "string" ? finalMessage.content : "";
+          const textFromParts = (finalMessage?.parts ?? [])
+            .filter((part) => part.type === "text" && typeof part.text === "string")
+            .map((part) => part.text)
             .join("");
 
-          expect(responseText.toUpperCase()).toContain("BANANA");
+          const responseText = textFromContent || textFromParts || collector.getStreamContent();
+
+          expect(responseText).toMatch(/banana/i);
         });
       },
       20000
@@ -260,7 +272,7 @@ describeIntegration("sendMessage context handling tests", () => {
               env,
               workspaceId,
               `Message ${i + 1}`,
-              modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+              modelString("openai", KNOWN_MODELS.GPT.providerModelId)
             );
             await collector.waitForEvent("stream-end", 15000);
             collector.clear();
@@ -295,7 +307,7 @@ describeIntegration("sendMessage context handling tests", () => {
             env,
             workspaceId,
             "After truncation",
-            modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+            modelString("openai", KNOWN_MODELS.GPT.providerModelId)
           );
           expect(result.success).toBe(true);
           await collector.waitForEvent("stream-end", 15000);

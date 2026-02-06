@@ -118,6 +118,8 @@ export interface ModelRowProps {
   hasActiveEdit?: boolean;
   /** Whether gateway mode is enabled for this model */
   isGatewayEnabled?: boolean;
+  /** Whether 1M context is enabled for this model */
+  is1MContextEnabled?: boolean;
   /** Whether this model is hidden from the selector */
   isHiddenFromSelector?: boolean;
   onSetDefault: () => void;
@@ -128,6 +130,8 @@ export interface ModelRowProps {
   onRemove?: () => void;
   /** Toggle gateway mode for this model */
   onToggleGateway?: () => void;
+  /** Toggle 1M context for this model (only shown when defined, i.e. model supports it) */
+  onToggle1MContext?: () => void;
   /** Toggle visibility in model selector */
   onToggleVisibility?: () => void;
 }
@@ -215,7 +219,9 @@ export function ModelRow(props: ModelRowProps) {
       {/* Context Window */}
       <td className="w-16 py-1.5 pr-2 text-right md:w-20">
         <span className="text-muted text-xs">
-          {stats ? formatTokenCount(stats.max_input_tokens) : "—"}
+          {/* When 1M context is enabled the effective window is 1M tokens,
+              regardless of the model's default max_input_tokens. */}
+          {props.is1MContextEnabled ? "1M" : stats ? formatTokenCount(stats.max_input_tokens) : "—"}
         </span>
       </td>
 
@@ -270,6 +276,38 @@ export function ModelRow(props: ModelRowProps) {
               active={props.isGatewayEnabled ?? false}
               onToggle={() => props.onToggleGateway?.()}
             />
+          )}
+          {/* 1M context toggle button — only rendered when model supports it */}
+          {props.onToggle1MContext && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onToggle1MContext?.();
+                  }}
+                  className={cn(
+                    "p-0.5 transition-colors",
+                    props.is1MContextEnabled
+                      ? "text-accent"
+                      : "text-muted hover:text-foreground opacity-40"
+                  )}
+                  aria-label={props.is1MContextEnabled ? "Disable 1M context" : "Enable 1M context"}
+                >
+                  {/* Size the inner span to h-3.5 to match the Lucide icon dimensions used
+                      by neighboring action buttons, ensuring consistent vertical alignment. */}
+                  <span className="flex h-3.5 w-3.5 items-center justify-center font-mono text-[10px] leading-none font-bold">
+                    1M
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {props.is1MContextEnabled
+                  ? "1M context enabled (beta)"
+                  : "Enable 1M context (beta)"}
+              </TooltipContent>
+            </Tooltip>
           )}
           {/* Favorite/default button */}
           <button

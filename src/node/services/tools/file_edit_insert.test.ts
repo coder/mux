@@ -4,11 +4,11 @@ import * as path from "path";
 import * as os from "os";
 import { createFileEditInsertTool } from "./file_edit_insert";
 import type { FileEditInsertToolArgs, FileEditInsertToolResult } from "@/common/types/tools";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getTestDeps } from "./testHelpers";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

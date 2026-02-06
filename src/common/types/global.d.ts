@@ -16,6 +16,8 @@ declare global {
       chrome?: string;
       electron?: string;
     };
+    // Optional mux.md base URL override (passed through Electron preload).
+    muxMdUrlOverride?: string;
     // Debug flags (dev-only, passed through preload)
     debugLlmRequest?: boolean;
     // Allow maintainers to opt into telemetry while running the dev server.
@@ -56,6 +58,14 @@ declare global {
       env?: Record<string, string | undefined>;
     };
   }
+
+  /**
+   * Optional mux.md base URL override injected by Vite (`define`) in dev-server browser mode.
+   *
+   * This intentionally lives on `globalThis` so shared code (compiled for Node as CJS) doesn't need
+   * to rely on `import.meta.env`.
+   */
+  var __MUX_MD_URL_OVERRIDE__: string | undefined;
 }
 
 export {};

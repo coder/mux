@@ -120,11 +120,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   const shouldShowQueuedAgentTaskPrompt =
     Boolean(queuedAgentTaskPrompt) && (workspaceState?.messages.length ?? 0) === 0;
 
-  const { options } = useProviderOptions();
-  const use1M = options.anthropic?.use1MContext ?? false;
-  // Get pending model for auto-compaction settings (threshold is per-model)
+  const { has1MContext } = useProviderOptions();
+  // Resolve 1M context per-model (uses the pending model for the current workspace)
   const pendingSendOptions = useSendMessageOptions(workspaceId);
   const pendingModel = pendingSendOptions.model;
+  const use1M = has1MContext(pendingModel);
 
   const { threshold: autoCompactionThreshold } = useAutoCompactionSettings(
     workspaceId,

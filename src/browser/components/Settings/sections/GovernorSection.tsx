@@ -12,6 +12,7 @@ import { useAPI } from "@/browser/contexts/API";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
 import { JsonHighlight } from "@/browser/components/tools/shared/HighlightedCode";
 import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
+import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 
 /** Get server auth token from URL query param or localStorage. */
 function getServerAuthToken(): string | null {
@@ -192,12 +193,16 @@ export function GovernorSection() {
 
       setEnrollStatus("waiting");
 
+      const backendBaseUrl = getBrowserBackendBaseUrl();
+
       // Fetch the authorize URL from the start endpoint
-      const startUrl = `/auth/mux-governor/start?governorUrl=${encodeURIComponent(governorOrigin)}`;
+      const startUrl = new URL(`${backendBaseUrl}/auth/mux-governor/start`);
+      startUrl.searchParams.set("governorUrl", governorOrigin);
+
       const authToken = getServerAuthToken();
       let json: { authorizeUrl?: unknown; state?: unknown; error?: unknown };
       try {
-        const res = await fetch(startUrl, {
+        const res = await fetch(startUrl.toString(), {
           headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
         });
         const contentType = res.headers.get("content-type") ?? "";
@@ -234,8 +239,8 @@ export function GovernorSection() {
       }
 
       const oauthState = json.state;
-      // Origin for callback validation (same origin as current page)
-      const backendOrigin = window.location.origin;
+      // Origin for callback validation (respects VITE_BACKEND_URL overrides)
+      const backendOrigin = new URL(backendBaseUrl).origin;
 
       // Navigate popup to the authorize URL
       popup.location.href = json.authorizeUrl;

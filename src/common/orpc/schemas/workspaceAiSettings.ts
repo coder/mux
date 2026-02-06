@@ -10,7 +10,7 @@ import { z } from "zod";
 
 export const WorkspaceAISettingsSchema = z.object({
   model: z.string().meta({ description: 'Canonical model id in the form "provider:model"' }),
-  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).meta({
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).meta({
     description: "Thinking/reasoning effort level",
   }),
 });

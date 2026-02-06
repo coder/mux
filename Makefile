@@ -296,7 +296,7 @@ lint-zizmor: ## Run zizmor security analysis on GitHub Actions workflows
 	@./scripts/zizmor.sh --min-confidence high .
 
 # Shell files to lint (excludes node_modules, build artifacts, .git)
-SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
+SHELL_SRC_FILES := $(shell find . -not \( -path '*/.git/*' -o -path './node_modules/*' -o -path './build/*' -o -path './dist/*' -o -path './release/*' -o -path './benchmarks/terminal_bench/.leaderboard_cache/*' \) -type f -name '*.sh' 2>/dev/null)
 
 lint-shellcheck: ## Run shellcheck on shell scripts
 	shellcheck --external-sources $(SHELL_SRC_FILES)

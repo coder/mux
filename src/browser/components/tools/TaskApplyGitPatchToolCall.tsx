@@ -72,6 +72,26 @@ function unwrapJsonContainer(value: unknown): unknown {
   return current;
 }
 
+const MAX_CONFLICT_PATHS_SHOWN = 6;
+
+function readNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const items: string[] = [];
+  for (const item of value) {
+    const str = readNonEmptyString(item);
+    if (str) items.push(str);
+  }
+
+  return items.length > 0 ? items : undefined;
+}
+
 function readAppliedCommits(result: unknown): AppliedCommit[] | undefined {
   if (!isRecord(result)) return undefined;
 
@@ -158,7 +178,12 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
       : undefined;
   const taskId = taskIdFromResult ?? args.task_id;
 
-  const isDryRun = Boolean(successResult?.dryRun) || args.dry_run === true;
+  const dryRunFromResult =
+    isRecord(unwrappedResult) && typeof unwrappedResult.dryRun === "boolean"
+      ? unwrappedResult.dryRun
+      : undefined;
+
+  const isDryRun = dryRunFromResult === true || args.dry_run === true;
 
   // Result schema guarantees appliedCommits, but older persisted history might only have
   // appliedCommitCount. Be defensive and support both.
@@ -181,6 +206,24 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
   const effectiveThreeWay = args.three_way !== false;
 
   const errorNote = errorResult && "note" in errorResult ? errorResult.note : undefined;
+
+  // Optional structured diagnostics (added to the tool output over time).
+  const errorDiagnostics: Record<string, unknown> | null =
+    errorResult && isRecord(unwrappedResult) ? unwrappedResult : null;
+
+  const failedPatchSubject = errorDiagnostics
+    ? readNonEmptyString(errorDiagnostics.failedPatchSubject)
+    : undefined;
+
+  const conflictPaths = errorDiagnostics
+    ? readStringArray(errorDiagnostics.conflictPaths)
+    : undefined;
+
+  const shownConflictPaths = conflictPaths?.slice(0, MAX_CONFLICT_PATHS_SHOWN);
+  const remainingConflictPaths =
+    conflictPaths && shownConflictPaths
+      ? Math.max(0, conflictPaths.length - shownConflictPaths.length)
+      : 0;
 
   return (
     <ToolContainer expanded={expanded} className="@container">
@@ -329,6 +372,29 @@ export const TaskApplyGitPatchToolCall: React.FC<TaskApplyGitPatchToolCallProps>
                     {copiedError ? "Copied" : "Copy"}
                   </HeaderButton>
                 </DetailLabel>
+
+                {(failedPatchSubject ?? (shownConflictPaths && shownConflictPaths.length > 0)) && (
+                  <div className="bg-code-bg mb-2 flex flex-col gap-1 rounded px-2 py-1.5 text-[11px] leading-[1.4]">
+                    {failedPatchSubject && (
+                      <div className="flex min-w-0 items-start gap-1.5">
+                        <span className="text-secondary shrink-0 font-medium">Failed patch:</span>
+                        <span className="text-text min-w-0 break-words">{failedPatchSubject}</span>
+                      </div>
+                    )}
+                    {shownConflictPaths && shownConflictPaths.length > 0 && (
+                      <div className="flex min-w-0 items-start gap-1.5">
+                        <span className="text-secondary shrink-0 font-medium">Conflicts:</span>
+                        <span className="text-text min-w-0 font-mono break-words">
+                          {shownConflictPaths.join(", ")}
+                          {remainingConflictPaths > 0 && (
+                            <span className="text-secondary"> +{remainingConflictPaths} more</span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <ErrorOutput error={errorResult.error} />
               </DetailSection>
 

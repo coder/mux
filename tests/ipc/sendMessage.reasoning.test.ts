@@ -3,7 +3,7 @@
  *
  * Verifies:
  * - Sonnet 4.5 uses thinking.budgetTokens parameter
- * - Opus 4.5 uses effort parameter
+ * - Opus 4.6 uses effort parameter + adaptive thinking
  * - Reasoning events are properly streamed
  */
 
@@ -52,7 +52,7 @@ describeIntegration("Anthropic reasoning parameter tests", () => {
   );
 
   test.concurrent(
-    "Opus 4.5 with thinking (effort)",
+    "Opus 4.6 with thinking (effort + adaptive)",
     async () => {
       await withSharedWorkspace("anthropic", async ({ env, workspaceId, collector }) => {
         const result = await sendMessage(env, workspaceId, "What is 4+4? Answer in one word.", {

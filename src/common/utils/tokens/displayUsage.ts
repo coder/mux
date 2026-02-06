@@ -8,7 +8,6 @@
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { getModelStats } from "./modelStats";
 import type { ChatUsageDisplay } from "./usageAggregator";
-import { normalizeGatewayModel } from "../ai/models";
 
 /**
  * Create a display-friendly usage object from AI SDK usage
@@ -23,30 +22,24 @@ export function createDisplayUsage(
 ): ChatUsageDisplay | undefined {
   if (!usage) return undefined;
 
-  // Provider-specific token handling:
-  // - OpenAI: inputTokens is INCLUSIVE of cachedInputTokens
-  // - Anthropic: inputTokens EXCLUDES cachedInputTokens
+  // AI SDK v6 unified semantics: ALL providers now report inputTokens INCLUSIVE
+  // of cached tokens. Previously Anthropic excluded cached tokens from inputTokens
+  // but v6 changed this to match OpenAI/Google (inputTokens = total input including
+  // cache_read + cache_write). We always subtract both cachedInputTokens and
+  // cacheCreateTokens to get the true non-cached input count.
   const cachedTokens = usage.cachedInputTokens ?? 0;
   const rawInputTokens = usage.inputTokens ?? 0;
 
-  // Normalize gateway models (e.g., "mux-gateway:openai/gpt-5.2" → "openai:gpt-5.2")
-  // before detecting provider, so gateway-routed requests get correct handling
-  const normalizedModel = normalizeGatewayModel(model);
-
-  // Detect provider from normalized model string
-  const isOpenAI = normalizedModel.startsWith("openai:");
-  const isGoogle = normalizedModel.startsWith("google:");
-
-  // OpenAI and Google report inputTokens INCLUSIVE of cachedInputTokens
-  // Anthropic reports them separately (inputTokens EXCLUDES cached)
-  // Subtract cached tokens for providers that include them to avoid double-counting
-  const inputTokens =
-    isOpenAI || isGoogle ? Math.max(0, rawInputTokens - cachedTokens) : rawInputTokens;
-
   // Extract cache creation tokens from provider metadata (Anthropic-specific)
+  // Needed before computing inputTokens since we subtract it from the total.
   const cacheCreateTokens =
     (providerMetadata?.anthropic as { cacheCreationInputTokens?: number } | undefined)
       ?.cacheCreationInputTokens ?? 0;
+
+  // Subtract both cache-read and cache-create tokens to isolate non-cached input.
+  // Math.max guards against pre-v6 historical data where inputTokens already excluded
+  // cache tokens (subtraction would go negative).
+  const inputTokens = Math.max(0, rawInputTokens - cachedTokens - cacheCreateTokens);
 
   // Extract reasoning tokens with fallback to provider metadata (OpenAI-specific)
   const reasoningTokens =
@@ -59,6 +52,9 @@ export function createDisplayUsage(
 
   // Get model stats for cost calculation
   const modelStats = getModelStats(model);
+
+  const costsIncluded =
+    (providerMetadata?.mux as { costsIncluded?: boolean } | undefined)?.costsIncluded === true;
 
   // Calculate costs based on model stats (undefined if model unknown)
   let inputCost: number | undefined;
@@ -75,6 +71,13 @@ export function createDisplayUsage(
     reasoningCost = reasoningTokens * modelStats.output_cost_per_token;
   }
 
+  if (costsIncluded) {
+    inputCost = 0;
+    cachedCost = 0;
+    cacheCreateCost = 0;
+    outputCost = 0;
+    reasoningCost = 0;
+  }
   return {
     input: {
       tokens: inputTokens,

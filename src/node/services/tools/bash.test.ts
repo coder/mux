@@ -9,7 +9,7 @@ import * as fs from "fs";
 import { TestTempDir, createTestToolConfig, getTestDeps } from "./testHelpers";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 // Type guard to narrow foreground success result (has note, no backgroundProcessId)
 function isForegroundSuccess(
@@ -21,7 +21,7 @@ function isForegroundSuccess(
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 
 // Mock ToolCallOptions for testing
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

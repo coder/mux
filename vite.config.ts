@@ -115,7 +115,10 @@ export default defineConfig(({ mode }) => {
     resolve: {
       alias: aliasMap,
     },
-    ...(isProfiling ? { define: { __PROFILE__: "true" } } : {}),
+    define: {
+      "globalThis.__MUX_MD_URL_OVERRIDE__": JSON.stringify(process.env.MUX_MD_URL_OVERRIDE ?? ""),
+      ...(isProfiling ? { __PROFILE__: "true" } : {}),
+    },
     base: "./",
     build: {
       outDir: "dist",

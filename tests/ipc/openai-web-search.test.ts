@@ -38,7 +38,7 @@ describeIntegration("OpenAI web_search integration tests", () => {
           workspaceId,
           "Use web search to find the current weather in San Francisco. " +
             "Then tell me if it's a good day for a picnic.",
-          modelString("openai", "gpt-5.1-codex-mini"),
+          modelString("openai", "gpt-5.2"),
           {
             thinkingLevel: "medium", // Ensure reasoning without excessive deliberation
           }

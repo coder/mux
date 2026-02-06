@@ -31,13 +31,10 @@ void mock.module("@/browser/stores/WorkspaceStore", () => ({
   },
 }));
 
-// Mock buildSendMessageOptions
-void mock.module("@/browser/hooks/useSendMessageOptions", () => ({
-  buildSendMessageOptions: () => ({
-    model: "test-model",
-    gateway: "anthropic",
-  }),
-}));
+const mockGetSendOptionsFromStorage = () => ({
+  model: "test-model",
+  agentId: "exec",
+});
 
 // Mock executeCompaction via dependency injection (not mock.module)
 let executeCompactionCalls: Array<{
@@ -106,7 +103,11 @@ describe("useIdleCompactionHandler", () => {
 
   test("subscribes to onIdleCompactionNeeded on mount", () => {
     renderHook(() =>
-      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+      useIdleCompactionHandler({
+        api: mockApi as never,
+        _executeCompaction: mockExecuteCompaction,
+        _getSendOptionsFromStorage: mockGetSendOptionsFromStorage,
+      })
     );
 
     expect(onIdleCompactionNeededCallCount).toBe(1);
@@ -115,7 +116,11 @@ describe("useIdleCompactionHandler", () => {
 
   test("unsubscribes on unmount", () => {
     const { unmount } = renderHook(() =>
-      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+      useIdleCompactionHandler({
+        api: mockApi as never,
+        _executeCompaction: mockExecuteCompaction,
+        _getSendOptionsFromStorage: mockGetSendOptionsFromStorage,
+      })
     );
 
     expect(unsubscribeCalled).toBe(false);
@@ -131,7 +136,11 @@ describe("useIdleCompactionHandler", () => {
 
   test("calls executeCompaction when event received", async () => {
     renderHook(() =>
-      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+      useIdleCompactionHandler({
+        api: mockApi as never,
+        _executeCompaction: mockExecuteCompaction,
+        _getSendOptionsFromStorage: mockGetSendOptionsFromStorage,
+      })
     );
 
     expect(capturedCallback).not.toBeNull();
@@ -144,7 +153,7 @@ describe("useIdleCompactionHandler", () => {
     expect(executeCompactionCalls[0]).toEqual({
       api: mockApi,
       workspaceId: "workspace-123",
-      sendMessageOptions: { model: "test-model", gateway: "anthropic" },
+      sendMessageOptions: { model: "test-model", agentId: "exec" },
       source: "idle-compaction",
     });
   });
@@ -155,7 +164,11 @@ describe("useIdleCompactionHandler", () => {
     executeCompactionResolver = () => {};
 
     renderHook(() =>
-      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+      useIdleCompactionHandler({
+        api: mockApi as never,
+        _executeCompaction: mockExecuteCompaction,
+        _getSendOptionsFromStorage: mockGetSendOptionsFromStorage,
+      })
     );
 
     // Trigger first event
@@ -183,7 +196,11 @@ describe("useIdleCompactionHandler", () => {
     executeCompactionResolver = () => {};
 
     renderHook(() =>
-      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+      useIdleCompactionHandler({
+        api: mockApi as never,
+        _executeCompaction: mockExecuteCompaction,
+        _getSendOptionsFromStorage: mockGetSendOptionsFromStorage,
+      })
     );
 
     // Trigger two events for different workspaces
@@ -211,7 +228,11 @@ describe("useIdleCompactionHandler", () => {
 
   test("clears workspace from triggered set after success", async () => {
     renderHook(() =>
-      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+      useIdleCompactionHandler({
+        api: mockApi as never,
+        _executeCompaction: mockExecuteCompaction,
+        _getSendOptionsFromStorage: mockGetSendOptionsFromStorage,
+      })
     );
 
     // First trigger
@@ -240,7 +261,11 @@ describe("useIdleCompactionHandler", () => {
     console.error = mock(() => undefined);
 
     renderHook(() =>
-      useIdleCompactionHandler({ api: mockApi as never, _executeCompaction: mockExecuteCompaction })
+      useIdleCompactionHandler({
+        api: mockApi as never,
+        _executeCompaction: mockExecuteCompaction,
+        _getSendOptionsFromStorage: mockGetSendOptionsFromStorage,
+      })
     );
 
     // First trigger (will fail)

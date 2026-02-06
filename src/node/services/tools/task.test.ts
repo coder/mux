@@ -1,5 +1,5 @@
 import { describe, it, expect, mock } from "bun:test";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 import type { TaskCreatedEvent } from "@/common/types/stream";
 
 import { createTaskTool } from "./task";
@@ -8,7 +8,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { TaskService } from "@/node/services/taskService";
 
 // Mock ToolCallOptions for testing
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

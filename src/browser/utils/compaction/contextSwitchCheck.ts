@@ -6,10 +6,9 @@
  * to a lower-context model (e.g., GPT 272K) when their current context is too large.
  */
 
-import { readPersistedString } from "@/browser/hooks/usePersistedState";
-import { PREFERRED_COMPACTION_MODEL_KEY } from "@/common/constants/storage";
 import type { EffectivePolicy, ProvidersConfigMap } from "@/common/orpc/types";
 import type { DisplayedMessage } from "@/common/types/message";
+import { getPreferredCompactionModel } from "@/browser/utils/messages/compactionModelPreference";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
 import { getEffectiveContextLimit } from "./contextLimit";
 import { getExplicitCompactionSuggestion } from "./suggestion";
@@ -54,7 +53,7 @@ function resolveCompactionModel(
   use1M: boolean,
   options: ContextSwitchOptions
 ): string | null {
-  const preferred = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
+  const preferred = getPreferredCompactionModel();
   if (preferred) {
     // Validate accessibility via getExplicitCompactionSuggestion (checks provider config + policy)
     const accessible = getExplicitCompactionSuggestion({

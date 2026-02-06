@@ -510,6 +510,12 @@ function enhanceInputSchema(schema: unknown): unknown {
       ...originalZod,
       def: enhancedDef, // toJSONSchema reads shape from _zod.def
     };
+    // Remove processJSONSchema: this method is a closure bound to the original
+    // schema's internal state and traverses the original shape, ignoring our
+    // enhanced def. Deleting it causes toJSONSchema to fall through to the
+    // generic processor path which reads from _zod.def.shape — our patched one.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-member-access
+    delete (enhanced as any)._zod.processJSONSchema;
   }
   return enhanced;
 }

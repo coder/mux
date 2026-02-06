@@ -111,6 +111,9 @@ interface StreamingContext {
 
   /** Mode (plan/exec) */
   mode?: string;
+
+  /** Effective thinking level after model policy clamping */
+  thinkingLevel?: string;
 }
 
 /**
@@ -318,7 +321,7 @@ export class StreamingMessageAggregator {
   private runtimeStatus: RuntimeStatusEvent | null = null;
 
   // Pending compaction request metadata for the next stream (set when user message arrives).
-  // This is used for UI before we receive stream-start (e.g., show compaction model while "starting").
+  // Used to infer compaction state before stream-start arrives.
   private pendingCompactionRequest: CompactionRequestData | null = null;
 
   // Model used for the pending send (set on user message) so the "starting" UI
@@ -884,20 +887,6 @@ export class StreamingMessageAggregator {
     }
   }
 
-  /**
-   * Get the model override for a pending compaction request (before stream-start).
-   *
-   * Returns null if there's no pending stream or the pending request is not a compaction.
-   *
-   * Note: This returns the *override* model from the /compact command. If the user didn't
-   * specify a model, compaction uses the workspace default model and we intentionally return null.
-   */
-
-  getPendingCompactionModel(): string | null {
-    if (this.pendingStreamStartTime === null) return null;
-    return this.pendingCompactionRequest?.model ?? null;
-  }
-
   getPendingStreamModel(): string | null {
     if (this.pendingStreamStartTime === null) return null;
     return this.pendingStreamModel;
@@ -1169,6 +1158,32 @@ export class StreamingMessageAggregator {
     return undefined;
   }
 
+  /**
+   * Returns the effective thinking level for the current or most recent stream.
+   * This reflects the actual level used after model policy clamping, not the
+   * user-configured level.
+   */
+  getCurrentThinkingLevel(): string | undefined {
+    // If there's an active stream, return its thinking level
+    for (const context of this.activeStreams.values()) {
+      return context.thinkingLevel;
+    }
+
+    // Only check the most recent assistant message to avoid returning
+    // stale values from older turns where settings may have differed.
+    // If it lacks thinkingLevel (e.g. error/abort), return undefined so
+    // callers fall back to localStorage.
+    const messages = this.getAllMessages();
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role === "assistant") {
+        return message.metadata?.thinkingLevel;
+      }
+    }
+
+    return undefined;
+  }
+
   clearActiveStreams(): void {
     const activeMessageIds = Array.from(this.activeStreams.keys());
     this.activeStreams.clear();
@@ -1248,6 +1263,7 @@ export class StreamingMessageAggregator {
       toolExecutionMs: 0,
       pendingToolStarts: new Map(),
       mode: data.mode,
+      thinkingLevel: data.thinkingLevel,
     };
 
     // Use messageId as key - ensures only ONE stream per message
@@ -1261,6 +1277,7 @@ export class StreamingMessageAggregator {
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
       mode: data.mode,
+      thinkingLevel: data.thinkingLevel,
     });
 
     this.messages.set(data.messageId, streamingMessage);
@@ -1541,8 +1558,7 @@ export class StreamingMessageAggregator {
   private trackLoadedSkill(skill: LoadedSkill): void {
     const existing = this.loadedSkills.get(skill.name);
     if (
-      existing &&
-      existing.name === skill.name &&
+      existing?.name === skill.name &&
       existing.description === skill.description &&
       existing.scope === skill.scope
     ) {
@@ -2097,10 +2113,12 @@ export class StreamingMessageAggregator {
           });
         } else if (isDynamicToolPart(part)) {
           // Determine status based on part state and result
-          let status: "pending" | "executing" | "completed" | "failed" | "interrupted";
+          let status: "pending" | "executing" | "completed" | "failed" | "interrupted" | "redacted";
           if (part.state === "output-available") {
             // Check if result indicates failure (for tools that return { success: boolean })
             status = hasFailureResult(part.output) ? "failed" : "completed";
+          } else if (part.state === "output-redacted") {
+            status = "redacted";
           } else if (part.state === "input-available") {
             // Most unfinished tool calls in partial messages represent an interruption.
             // ask_user_question is different: it's intentionally waiting on user input,

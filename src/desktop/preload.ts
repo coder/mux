@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld("api", {
   // Note: When debugging LLM requests, we also want to see synthetic/request-only
   // messages in the chat history so the UI matches what was sent to the provider.
   debugLlmRequest: process.env.MUX_DEBUG_LLM_REQUEST === "1",
+  // Allow testing against a mux.md staging/local deployment without rebuilding the renderer.
+  muxMdUrlOverride: process.env.MUX_MD_URL_OVERRIDE,
   // NOTE: This is intentionally async so the preload script does not rely on Node builtins
   // like `child_process` (which can break in hardened/sandboxed environments).
   getIsRosetta: () => ipcRenderer.invoke("mux:get-is-rosetta"),

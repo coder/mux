@@ -1,14 +1,14 @@
 import * as fs from "fs";
 
 import { describe, it, expect, mock } from "bun:test";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 import { createTaskAwaitTool } from "./task_await";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import { getSubagentGitPatchArtifactsFilePath } from "@/node/services/subagentGitPatchArtifacts";
 import type { TaskService } from "@/node/services/taskService";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

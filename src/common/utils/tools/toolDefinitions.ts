@@ -386,6 +386,9 @@ export const TaskApplyGitPatchToolResultSchema = z.union([
       success: z.literal(false),
       taskId: z.string(),
       error: z.string(),
+      dryRun: z.boolean().optional(),
+      conflictPaths: z.array(z.string()).optional(),
+      failedPatchSubject: z.string().optional(),
       note: z.string().optional(),
     })
     .strict(),
@@ -455,7 +458,7 @@ export const TaskTerminateToolResultSchema = z
 // -----------------------------------------------------------------------------
 
 const TaskListStatusSchema = z.enum(["queued", "running", "awaiting_report", "reported"]);
-const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh"]);
+const TaskListThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
 
 export const TaskListToolArgsSchema = z
   .object({

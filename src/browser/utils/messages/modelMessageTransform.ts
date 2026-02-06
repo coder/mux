@@ -55,7 +55,7 @@ export function filterEmptyAssistantMessages(
     // non-empty content...") and can brick a workspace after a crash.
     const hasContent = msg.parts.some((part) => {
       if (part.type === "text") {
-        return part.text.length > 0;
+        return part.text.trim().length > 0;
       }
 
       // Reasoning-only messages are handled below (provider-dependent).
@@ -929,15 +929,21 @@ function stripUnsignedAnthropicReasoning(messages: ModelMessage[]): ModelMessage
     return result;
   });
 
-  // Filter out messages that became empty after stripping reasoning
+  // Filter out messages that became empty after stripping reasoning.
+  //
+  // Important: Anthropic rejects whitespace-only text content blocks (e.g. "\n\n").
+  // If we strip unsigned reasoning from an interrupted message, we can be left with
+  // only whitespace text, which would otherwise survive a simple `content.length > 0` check.
   return stripped.filter((msg) => {
     if (msg.role !== "assistant") {
       return true;
     }
+
     if (typeof msg.content === "string") {
-      return msg.content.length > 0;
+      return msg.content.trim().length > 0;
     }
-    return msg.content.length > 0;
+
+    return msg.content.some((part) => part.type !== "text" || part.text.trim().length > 0);
   });
 }
 
@@ -1183,7 +1189,15 @@ function ensureAnthropicThinkingBeforeToolCalls(messages: ModelMessage[]): Model
 export function transformModelMessages(
   messages: ModelMessage[],
   provider: string,
-  options?: { anthropicThinkingEnabled?: boolean }
+  options?: {
+    anthropicThinkingEnabled?: boolean;
+    /**
+     * Append [CONTINUE] user message if conversation ends with an assistant message.
+     * Required for models that don't support prefill (e.g., Opus 4.6).
+     * Uses a sentinel instead of stripping to avoid silent context loss.
+     */
+    noPrefill?: boolean;
+  }
 ): ModelMessage[] {
   // Pass 0: Coalesce consecutive parts to reduce JSON overhead from streaming (applies to all providers)
   const coalesced = coalesceConsecutiveParts(messages);
@@ -1220,6 +1234,16 @@ export function transformModelMessages(
 
   // Pass 5: Merge consecutive user messages (applies to all providers)
   const merged = mergeConsecutiveUserMessages(reasoningHandled);
+
+  // Pass 6: Ensure conversation doesn't end with an assistant message (prefill).
+  // Some models (e.g., Opus 4.6) reject prefilled assistant messages with a 400 error.
+  // Earlier transforms (stripOrphanedToolCalls, filterReasoningOnlyMessages, etc.) can
+  // remove messages and re-expose a trailing assistant after addInterruptedSentinel ran.
+  // Appending a [CONTINUE] user sentinel preserves the assistant context while ensuring
+  // the conversation ends with a user message.
+  if (options?.noPrefill && merged.length > 0 && merged[merged.length - 1].role === "assistant") {
+    merged.push({ role: "user", content: [{ type: "text", text: "[CONTINUE]" }] });
+  }
 
   return merged;
 }

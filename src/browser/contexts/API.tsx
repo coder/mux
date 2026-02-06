@@ -15,6 +15,7 @@ import {
   setStoredAuthToken,
   clearStoredAuthToken,
 } from "@/browser/components/AuthTokenModal";
+import { getBrowserBackendBaseUrl } from "@/browser/utils/backendBaseUrl";
 
 type APIClient = ReturnType<typeof createClient>;
 
@@ -67,12 +68,6 @@ interface APIProviderProps {
   createWebSocket?: (url: string) => WebSocket;
 }
 
-function getApiBase(): string {
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment, @typescript-eslint/prefer-ts-expect-error
-  // @ts-ignore - import.meta is available in Vite
-  return import.meta.env.VITE_BACKEND_URL ?? window.location.origin;
-}
-
 function closeWebSocketSafely(ws: WebSocket) {
   try {
     // readyState: 0 = CONNECTING, 1 = OPEN, 2 = CLOSING, 3 = CLOSED
@@ -105,14 +100,15 @@ function createBrowserClient(
   cleanup: () => void;
   ws: WebSocket;
 } {
-  const API_BASE = getApiBase();
-  const WS_BASE = API_BASE.replace("http://", "ws://").replace("https://", "wss://");
+  const apiBaseUrl = getBrowserBackendBaseUrl();
 
-  const wsUrl = authToken
-    ? `${WS_BASE}/orpc/ws?token=${encodeURIComponent(authToken)}`
-    : `${WS_BASE}/orpc/ws`;
+  const wsUrl = new URL(`${apiBaseUrl}/orpc/ws`);
+  wsUrl.protocol = wsUrl.protocol === "https:" ? "wss:" : "ws:";
+  if (authToken) {
+    wsUrl.searchParams.set("token", authToken);
+  }
 
-  const ws = createWebSocket(wsUrl);
+  const ws = createWebSocket(wsUrl.toString());
   const link = new WebSocketLink({ websocket: ws });
 
   return {

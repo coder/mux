@@ -1,10 +1,11 @@
 import React from "react";
-import { AlertTriangle, Bug } from "lucide-react";
+import { AlertTriangle, Bug, ExternalLink } from "lucide-react";
 import { Button } from "@/browser/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useCompactAndRetry } from "@/browser/hooks/useCompactAndRetry";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
+import { getModelProvider } from "@/common/utils/ai/models";
 import type { DisplayedMessage } from "@/common/types/message";
 import { formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
 import { useOptionalMessageListContext } from "./MessageListContext";
@@ -73,15 +74,37 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
     );
   }
 
+  const provider = message.model ? getModelProvider(message.model) : "";
+  const isAnthropicOverloaded =
+    provider === "anthropic" &&
+    message.errorType === "server_error" &&
+    /\bHTTP\s*529\b|overloaded/i.test(message.error);
+
+  const title = isAnthropicOverloaded ? "Service overloaded" : "Stream Error";
+  const pill = isAnthropicOverloaded ? "overloaded" : message.errorType;
+
+  const statusAction = isAnthropicOverloaded ? (
+    <Button
+      asChild
+      variant="ghost"
+      size="sm"
+      className="text-error/80 hover:text-error h-6 px-2 text-[10px]"
+    >
+      <a href="https://status.anthropic.com" target="_blank" rel="noopener noreferrer">
+        Status <ExternalLink className="ml-1 h-3 w-3" />
+      </a>
+    </Button>
+  ) : null;
+
   const showCount = message.errorCount !== undefined && message.errorCount > 1;
 
   return (
     <div className={cn("bg-error-bg border border-error rounded px-5 py-4 my-3", className)}>
       <div className="font-primary text-error mb-3 flex items-center gap-2.5 text-[13px] font-semibold tracking-wide">
         <span className="text-base leading-none">●</span>
-        <span>Stream Error</span>
+        <span>{title}</span>
         <code className="bg-foreground/5 text-foreground/80 border-foreground/10 rounded-sm border px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase">
-          {message.errorType}
+          {pill}
         </code>
         <div className="ml-auto flex items-center gap-2">
           {showCount && (
@@ -89,6 +112,7 @@ const StreamErrorMessageBase: React.FC<StreamErrorMessageBaseProps> = (props) =>
               ×{message.errorCount}
             </span>
           )}
+          {statusAction}
           {debugAction}
         </div>
       </div>

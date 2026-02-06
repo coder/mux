@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { readPersistedState, usePersistedState } from "./usePersistedState";
 import { useThinkingLevel } from "./useThinkingLevel";
-import { getDefaultModel } from "./useModelsFromSettings";
+import { migrateGatewayModel } from "./useGatewayModels";
 import {
   type RuntimeMode,
   type ParsedRuntime,
@@ -13,6 +13,7 @@ import {
 } from "@/common/types/runtime";
 import type { RuntimeChoice } from "@/browser/utils/runtimeUi";
 import {
+  DEFAULT_MODEL_KEY,
   getAgentIdKey,
   getModelKey,
   getRuntimeKey,
@@ -132,10 +133,25 @@ export function useDraftWorkspaceSettings(
     { listener: true }
   );
 
-  // Project-scoped model preference (persisted per project)
-  const [model] = usePersistedState<string>(getModelKey(projectScopeId), getDefaultModel(), {
+  // Subscribe to the global default model preference so backend-seeded values apply
+  // immediately on fresh origins (e.g., when switching ports).
+  const [defaultModelPref] = usePersistedState<string>(
+    DEFAULT_MODEL_KEY,
+    WORKSPACE_DEFAULTS.model,
+    { listener: true }
+  );
+  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
+
+  // Project-scoped model preference (persisted per project). If unset, fall back to the global
+  // default model preference.
+  const [modelOverride] = usePersistedState<string | null>(getModelKey(projectScopeId), null, {
     listener: true,
   });
+  const model = migrateGatewayModel(
+    typeof modelOverride === "string" && modelOverride.trim().length > 0
+      ? modelOverride.trim()
+      : defaultModel
+  );
 
   // Project-scoped default runtime (worktree by default, only changed via checkbox)
   const [defaultRuntimeString, setDefaultRuntimeString] = usePersistedState<string | undefined>(

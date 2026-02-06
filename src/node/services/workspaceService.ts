@@ -2,6 +2,7 @@ import { EventEmitter } from "events";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import assert from "@/common/utils/assert";
+import { isWorkspaceArchived } from "@/common/utils/archive";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { getMuxHelpChatProjectPath } from "@/node/constants/muxChat";
 import type { Config } from "@/node/config";
@@ -27,7 +28,6 @@ import {
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
@@ -122,6 +122,12 @@ interface FileCompletionsCacheEntry {
   index: FileCompletionsIndex;
   fetchedAt: number;
   refreshing?: Promise<void>;
+}
+
+interface ArchiveMergedInProjectResult {
+  archivedWorkspaceIds: string[];
+  skippedWorkspaceIds: string[];
+  errors: Array<{ workspaceId: string; error: string }>;
 }
 
 /**
@@ -582,6 +588,29 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+async function forEachWithConcurrencyLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  assert(Number.isInteger(limit) && limit > 0, "Concurrency limit must be a positive integer");
+
+  let nextIndex = 0;
+  const workerCount = Math.min(limit, items.length);
+
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) {
+        return;
+      }
+      await fn(items[index]);
+    }
+  });
+
+  await Promise.all(workers);
 }
 
 export interface WorkspaceServiceEvents {
@@ -1926,6 +1955,124 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to unarchive workspace: ${message}`);
+    }
+  }
+
+  /**
+   * Archive all non-archived workspaces within a project whose GitHub PR is merged.
+   *
+   * This is intended for a single command-palette action (one backend call), to avoid
+   * O(n) frontend→backend loops.
+   */
+  async archiveMergedInProject(projectPath: string): Promise<Result<ArchiveMergedInProjectResult>> {
+    const targetProjectPath = projectPath.trim();
+    if (!targetProjectPath) {
+      return Err("projectPath is required");
+    }
+
+    const archivedWorkspaceIds: string[] = [];
+    const skippedWorkspaceIds: string[] = [];
+    const errors: Array<{ workspaceId: string; error: string }> = [];
+
+    try {
+      const allMetadata = await this.config.getAllWorkspaceMetadata();
+
+      const candidates = allMetadata.filter((metadata) => {
+        if (metadata.id === MUX_HELP_CHAT_WORKSPACE_ID) {
+          return false;
+        }
+        if (metadata.projectPath !== targetProjectPath) {
+          return false;
+        }
+        return !isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt);
+      });
+
+      const mergedWorkspaceIds: string[] = [];
+
+      const GH_CONCURRENCY_LIMIT = 4;
+      const GH_TIMEOUT_SECS = 15;
+
+      await forEachWithConcurrencyLimit(candidates, GH_CONCURRENCY_LIMIT, async (metadata) => {
+        const workspaceId = metadata.id;
+
+        try {
+          const result = await this.executeBash(
+            workspaceId,
+            `gh pr view --json state 2>/dev/null || echo '{"no_pr":true}'`,
+            { timeout_secs: GH_TIMEOUT_SECS }
+          );
+
+          if (!result.success) {
+            errors.push({ workspaceId, error: result.error });
+            return;
+          }
+
+          if (!result.data.success) {
+            errors.push({ workspaceId, error: result.data.error });
+            return;
+          }
+
+          const output = result.data.output;
+          if (!output || output.trim().length === 0) {
+            errors.push({ workspaceId, error: "gh pr view returned empty output" });
+            return;
+          }
+
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(output);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            errors.push({ workspaceId, error: `Failed to parse gh output: ${message}` });
+            return;
+          }
+
+          if (typeof parsed !== "object" || parsed === null) {
+            errors.push({ workspaceId, error: "Unexpected gh output: not a JSON object" });
+            return;
+          }
+
+          const record = parsed as Record<string, unknown>;
+
+          if ("no_pr" in record) {
+            skippedWorkspaceIds.push(workspaceId);
+            return;
+          }
+
+          if (record.state === "MERGED") {
+            mergedWorkspaceIds.push(workspaceId);
+            return;
+          }
+
+          skippedWorkspaceIds.push(workspaceId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          errors.push({ workspaceId, error: message });
+        }
+      });
+
+      // Archive sequentially: config.editConfig is not mutex-protected.
+      for (const workspaceId of mergedWorkspaceIds) {
+        const result = await this.archive(workspaceId);
+        if (!result.success) {
+          errors.push({ workspaceId, error: result.error });
+          continue;
+        }
+        archivedWorkspaceIds.push(workspaceId);
+      }
+
+      archivedWorkspaceIds.sort();
+      skippedWorkspaceIds.sort();
+      errors.sort((a, b) => a.workspaceId.localeCompare(b.workspaceId));
+
+      return Ok({
+        archivedWorkspaceIds,
+        skippedWorkspaceIds,
+        errors,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to archive merged workspaces: ${message}`);
     }
   }
 

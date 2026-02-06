@@ -261,6 +261,7 @@ program
   .option("--no-mcp-config", "ignore global + repo MCP config files (use only --mcp servers)")
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
+  .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority", "auto")
   .addHelpText(
     "after",
     `
@@ -294,6 +295,7 @@ interface CLIOptions {
   mcpConfig: boolean;
   experiment: string[];
   budget?: number;
+  serviceTier: "auto" | "default" | "flex" | "priority";
 }
 
 const opts = program.opts<CLIOptions>();
@@ -552,6 +554,9 @@ async function main(): Promise<number> {
     thinkingLevel,
     agentId: cliMode,
     experiments,
+    providerOptions: {
+      openai: { serviceTier: opts.serviceTier },
+    },
     // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
     // Plan agent instructions are handled by the backend (has access to plan file path)
   });

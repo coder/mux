@@ -31,6 +31,7 @@ describe("extractToolMediaAsUserMessagesFromModelMessages", () => {
     expect(rewrittenTool.role).toBe("tool");
 
     const toolResultPart = (rewrittenTool as Extract<ModelMessage, { role: "tool" }>).content[0];
+    if (toolResultPart.type !== "tool-result") throw new Error("Expected tool-result part");
     const outputText = JSON.stringify(toolResultPart.output);
     expect(outputText).toContain("[Image attached:");
     expect(outputText).not.toMatch(/[A]{1000,}/);

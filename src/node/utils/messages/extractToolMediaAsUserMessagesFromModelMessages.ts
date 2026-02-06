@@ -1,5 +1,7 @@
-import type { ModelMessage } from "ai";
-import type { JSONValue, LanguageModelV2ToolResultOutput } from "@ai-sdk/provider";
+import type { JSONValue, ModelMessage, ToolResultPart } from "ai";
+
+// Extract the output type from ToolResultPart to ensure type compatibility with ai@6
+type ToolResultOutput = ToolResultPart["output"];
 
 /**
  * Request-only rewrite for *internal* streamText steps.
@@ -30,8 +32,11 @@ export function extractToolMediaAsUserMessagesFromModelMessages(
     let changedMessage = false;
 
     if (msg.role === "tool") {
-      // Tool messages contain an array of tool-result parts.
+      // Tool messages contain an array of tool-result parts (and potentially tool-approval-responses).
       const newContent = msg.content.map((part) => {
+        // Skip non-result parts (e.g., ToolApprovalResponse)
+        if (part.type !== "tool-result") return part;
+
         const extracted = extractImagesFromToolOutput(part.output);
         if (!extracted) return part;
 
@@ -117,7 +122,8 @@ interface AISDKTextPart {
   text: string;
 }
 
-type AISDKContent = AISDKMediaPart | AISDKTextPart;
+// SDK v6 content parts include more types (file-data, reasoning, etc.) - use flexible union
+type AISDKContent = AISDKMediaPart | AISDKTextPart | { type: string; [key: string]: unknown };
 
 interface AISDKContentContainer {
   type: "content";
@@ -157,8 +163,8 @@ function isMediaPart(v: unknown): v is AISDKMediaPart {
   );
 }
 
-function extractImagesFromToolOutput(output: LanguageModelV2ToolResultOutput): {
-  newOutput: LanguageModelV2ToolResultOutput;
+function extractImagesFromToolOutput(output: ToolResultOutput): {
+  newOutput: ToolResultOutput;
   images: Array<{ data: string; mediaType: string }>;
 } | null {
   if (output.type === "json") {
@@ -178,10 +184,10 @@ function extractImagesFromToolOutput(output: LanguageModelV2ToolResultOutput): {
   const extracted = extractImagesFromContentItems(output.value);
   if (!extracted) return null;
 
-  return {
-    newOutput: { type: "content", value: extracted.newValue },
-    images: extracted.images,
-  };
+  // Cast needed because we're constructing a partial content array (media → text placeholders)
+  // SDK v6 content parts include more types than our AISDKContent union
+  const newOutput: ToolResultOutput = { type: "content", value: extracted.newValue as never };
+  return { newOutput, images: extracted.images };
 }
 
 function extractImagesFromJsonValue(

@@ -822,6 +822,28 @@ describe("StreamingMessageAggregator", () => {
       expect(aggregator.getPendingStreamModel()).toBe("anthropic:claude-sonnet-4-5");
     });
 
+    test("tracks requestedModel for compaction requests", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      aggregator.handleMessage({
+        type: "message",
+        id: "msg1",
+        role: "user",
+        parts: [{ type: "text", text: "/compact" }],
+        metadata: {
+          historySequence: 1,
+          timestamp: Date.now(),
+          muxMetadata: {
+            type: "compaction-request",
+            requestedModel: "anthropic:claude-sonnet-4-5",
+            parsed: { model: "anthropic:claude-sonnet-4-5" },
+          },
+        },
+      });
+
+      expect(aggregator.getPendingStreamModel()).toBe("anthropic:claude-sonnet-4-5");
+    });
+
     test("clears pending stream model on stream-start", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 

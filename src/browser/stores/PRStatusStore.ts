@@ -437,8 +437,7 @@ export function useWorkspacePR(workspaceId: string): GitHubPRLinkWithStatus | nu
 
       // Return same reference if nothing meaningful changed
       if (
-        existing &&
-        existing.url === cached.prLink.url &&
+        existing?.url === cached.prLink.url &&
         existing.status === cached.status &&
         existing.loading === cached.loading &&
         existing.error === cached.error

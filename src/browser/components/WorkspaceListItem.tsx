@@ -5,8 +5,9 @@ import { useGitStatus } from "@/browser/stores/GitStatusStore";
 import { useWorkspaceUnread } from "@/browser/hooks/useWorkspaceUnread";
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { getModelKey } from "@/common/constants/storage";
+import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import { DEFAULT_MODEL_KEY, getModelKey } from "@/common/constants/storage";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import React, { useState, useEffect } from "react";
@@ -36,7 +37,6 @@ import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
 import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -140,12 +140,8 @@ function SelectionBar(props: { isSelected: boolean; showUnread?: boolean; isDraf
 /** Action button wrapper (archive/delete) with consistent sizing and alignment */
 function ActionButtonWrapper(props: { hasSubtitle: boolean; children: React.ReactNode }) {
   return (
-    <div
-      className={cn(
-        "relative inline-flex h-4 w-4 shrink-0 items-center",
-        props.hasSubtitle ? "self-center" : "self-start mt-0.5"
-      )}
-    >
+    <div className={cn("relative inline-flex h-4 w-4 shrink-0 items-center self-center")}>
+      {/* Keep the hamburger vertically centered even for single-row items. */}
       {props.children}
     </div>
   );
@@ -308,9 +304,26 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { canInterrupt, awaitingUserQuestion, isStarting, agentStatus } =
     useWorkspaceSidebarState(workspaceId);
 
-  const [fallbackModel] = usePersistedState<string>(getModelKey(workspaceId), getDefaultModel(), {
+  // Subscribe to the global default model preference so backend-seeded values apply immediately
+  // on fresh origins (e.g., when switching ports).
+  const [defaultModelPref] = usePersistedState<string>(
+    DEFAULT_MODEL_KEY,
+    WORKSPACE_DEFAULTS.model,
+    { listener: true }
+  );
+  const defaultModel = migrateGatewayModel(defaultModelPref).trim() || WORKSPACE_DEFAULTS.model;
+
+  // Workspace-scoped model preference. If unset, fall back to the global default model.
+  // Note: we intentionally *don't* pass defaultModel as the usePersistedState initialValue;
+  // initialValue is sticky and would lock in the fallback before startup seeding.
+  const [preferredModel] = usePersistedState<string | null>(getModelKey(workspaceId), null, {
     listener: true,
   });
+
+  const fallbackModel =
+    typeof preferredModel === "string" && preferredModel.trim().length > 0
+      ? migrateGatewayModel(preferredModel.trim())
+      : defaultModel;
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
   // Note: we intentionally render the secondary row even while the workspace is still
@@ -407,29 +420,86 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       >
         <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
 
-        {/* Archive button - centered when status text visible, top-aligned otherwise */}
-        {!isMuxHelpChat && !isCreating && !isEditing && (
+        {!isCreating && !isEditing && !isDisabled && (
           <ActionButtonWrapper hasSubtitle={hasStatusText}>
-            <Tooltip>
-              <TooltipTrigger asChild>
+            {/* Keep the overflow menu in the left action slot to avoid duplicate affordances. */}
+            <Popover
+              open={isTitleMenuOpen}
+              onOpenChange={(open) => {
+                setIsTitleMenuOpen(open);
+                if (!open) setContextMenuPosition(null);
+              }}
+            >
+              {/* When opened via right-click, anchor at click position */}
+              {contextMenuPosition && (
+                <PopoverAnchor asChild>
+                  <span
+                    style={{
+                      position: "fixed",
+                      left: contextMenuPosition.x,
+                      top: contextMenuPosition.y,
+                      width: 0,
+                      height: 0,
+                    }}
+                  />
+                </PopoverAnchor>
+              )}
+              <PopoverTrigger asChild>
                 <button
-                  className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onArchiveWorkspace(workspaceId, e.currentTarget);
-                  }}
-                  aria-label={`Archive chat ${displayTitle}`}
+                  className={cn(
+                    "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                    // Hidden until row hover, but remain visible while open.
+                    isTitleMenuOpen ? "opacity-100" : "opacity-0"
+                  )}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={`Workspace actions for ${displayTitle}`}
                   data-workspace-id={workspaceId}
                 >
-                  <ArchiveIcon className="h-3 w-3" />
+                  <Ellipsis className="h-3 w-3" />
                 </button>
-              </TooltipTrigger>
-              <TooltipContent align="start">
-                Archive chat ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-              </TooltipContent>
-            </Tooltip>
+              </PopoverTrigger>
+
+              <PopoverContent
+                align={contextMenuPosition ? "start" : "end"}
+                side={contextMenuPosition ? "right" : "bottom"}
+                sideOffset={contextMenuPosition ? 0 : 6}
+                className="w-[150px] !min-w-0 p-1"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button
+                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsTitleMenuOpen(false);
+                    startEditing();
+                  }}
+                >
+                  <span className="flex items-center gap-2">
+                    <Pencil className="h-3 w-3" />
+                    Edit chat title
+                  </span>
+                </button>
+                {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
+                {!isMuxHelpChat && (
+                  <button
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsTitleMenuOpen(false);
+                      void onArchiveWorkspace(workspaceId, e.currentTarget);
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <ArchiveIcon className="h-3 w-3" />
+                      Archive chat
+                    </span>
+                  </button>
+                )}
+              </PopoverContent>
+            </Popover>
           </ActionButtonWrapper>
         )}
+
         {/* Split row spacing when there's no secondary line to keep titles centered. */}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div
@@ -504,82 +574,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   tooltipPosition="right"
                   isWorking={isWorking}
                 />
-
-                {!isDisabled && (
-                  <Popover
-                    open={isTitleMenuOpen}
-                    onOpenChange={(open) => {
-                      setIsTitleMenuOpen(open);
-                      if (!open) setContextMenuPosition(null);
-                    }}
-                  >
-                    {/* When opened via right-click, anchor at click position */}
-                    {contextMenuPosition && (
-                      <PopoverAnchor asChild>
-                        <span
-                          style={{
-                            position: "fixed",
-                            left: contextMenuPosition.x,
-                            top: contextMenuPosition.y,
-                            width: 0,
-                            height: 0,
-                          }}
-                        />
-                      </PopoverAnchor>
-                    )}
-                    <PopoverTrigger asChild>
-                      <button
-                        className={cn(
-                          "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
-                          // Hidden until row hover, but remain visible while open.
-                          isTitleMenuOpen ? "opacity-100" : "opacity-0"
-                        )}
-                        onClick={(e) => e.stopPropagation()}
-                        aria-label={`Workspace actions for ${displayTitle}`}
-                        data-workspace-id={workspaceId}
-                      >
-                        <Ellipsis className="h-3 w-3" />
-                      </button>
-                    </PopoverTrigger>
-
-                    <PopoverContent
-                      align={contextMenuPosition ? "start" : "end"}
-                      side={contextMenuPosition ? "right" : "bottom"}
-                      sideOffset={contextMenuPosition ? 0 : 6}
-                      className="w-[150px] !min-w-0 p-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <button
-                        className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setIsTitleMenuOpen(false);
-                          startEditing();
-                        }}
-                      >
-                        <span className="flex items-center gap-2">
-                          <Pencil className="h-3 w-3" />
-                          Edit chat title
-                        </span>
-                      </button>
-                      {!isMuxHelpChat && (
-                        <button
-                          className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setIsTitleMenuOpen(false);
-                            void onArchiveWorkspace(workspaceId, e.currentTarget);
-                          }}
-                        >
-                          <span className="flex items-center gap-2">
-                            <ArchiveIcon className="h-3 w-3" />
-                            Archive chat
-                          </span>
-                        </button>
-                      )}
-                    </PopoverContent>
-                  </Popover>
-                )}
               </div>
             )}
           </div>

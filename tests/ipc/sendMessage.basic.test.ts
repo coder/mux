@@ -28,7 +28,7 @@ if (shouldRunIntegrationTests()) {
 
 // Test both providers with their respective models
 const PROVIDER_CONFIGS: Array<[string, string]> = [
-  ["openai", KNOWN_MODELS.GPT_MINI.providerModelId],
+  ["openai", KNOWN_MODELS.GPT.providerModelId],
   ["anthropic", KNOWN_MODELS.HAIKU.providerModelId],
 ];
 
@@ -184,7 +184,7 @@ describeIntegration("sendMessage basic integration tests", () => {
           env,
           workspaceId,
           "Say 'openai'",
-          modelString("openai", KNOWN_MODELS.GPT_MINI.providerModelId)
+          modelString("openai", KNOWN_MODELS.GPT.providerModelId)
         );
         expect(openaiResult.success).toBe(true);
         await collector.waitForEvent("stream-end", 15000);

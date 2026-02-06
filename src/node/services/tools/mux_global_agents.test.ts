@@ -1,7 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 import {
   MUX_HELP_CHAT_WORKSPACE_ID,
@@ -14,7 +14,7 @@ import { createMuxGlobalAgentsReadTool } from "./mux_global_agents_read";
 import { createMuxGlobalAgentsWriteTool } from "./mux_global_agents_write";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

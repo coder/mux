@@ -101,6 +101,13 @@ export const GenericToolCall: React.FC<GenericToolCallProps> = ({
               </DetailContent>
             </DetailSection>
           )}
+          {status === "redacted" && (
+            <DetailSection>
+              <DetailContent className="text-muted italic">
+                Output excluded from shared transcript
+              </DetailContent>
+            </DetailSection>
+          )}
         </ToolDetails>
       )}
     </ToolContainer>

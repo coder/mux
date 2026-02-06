@@ -10,12 +10,12 @@ import type {
   FileEditReplaceLinesToolArgs,
   FileEditReplaceLinesToolResult,
 } from "@/common/types/tools";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getTestDeps } from "./testHelpers";
 
 // Mock ToolCallOptions for testing
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };

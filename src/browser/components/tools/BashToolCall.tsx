@@ -335,7 +335,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                       isFilteringLiveOutput && "opacity-60 blur-[1px]"
                     )}
                   >
-                    {combinedLiveOutput.length > 0 ? combinedLiveOutput : "No output yet"}
+                    {combinedLiveOutput.length > 0
+                      ? combinedLiveOutput
+                      : status === "redacted"
+                        ? "Output excluded from shared transcript"
+                        : "No output yet"}
                   </DetailContent>
                   {isFilteringLiveOutput && (
                     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

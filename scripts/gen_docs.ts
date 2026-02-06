@@ -711,21 +711,21 @@ async function syncToolHookEnvVars(): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-label workflow sync
+// Auto-cleanup workflow sync
 // ---------------------------------------------------------------------------
 
-function generateAutoLabelWorkflowBlock(): string {
-  const workflowPath = path.join(import.meta.dir, "..", ".github", "workflows", "auto-label.yml");
+function generateAutoCleanupWorkflowBlock(): string {
+  const workflowPath = path.join(import.meta.dir, "..", ".github", "workflows", "auto-cleanup.yml");
   const content = fs.readFileSync(workflowPath, "utf-8");
   return "```yaml\n" + content.trim() + "\n```";
 }
 
-async function syncAutoLabelWorkflow(): Promise<boolean> {
+async function syncAutoCleanupWorkflow(): Promise<boolean> {
   return syncDoc({
     docsFile: "guides/github-actions.mdx",
-    sourceLabel: ".github/workflows/auto-label.yml",
-    markerName: "AUTO_LABEL_WORKFLOW",
-    generateBlock: generateAutoLabelWorkflowBlock,
+    sourceLabel: ".github/workflows/auto-cleanup.yml",
+    markerName: "AUTO_CLEANUP_WORKFLOW",
+    generateBlock: generateAutoCleanupWorkflowBlock,
   });
 }
 
@@ -762,7 +762,7 @@ async function main(): Promise<void> {
     syncNotifyDocs(),
     syncProviderEnvVars(),
     syncToolHookEnvVars(),
-    syncAutoLabelWorkflow(),
+    syncAutoCleanupWorkflow(),
     syncDeepReviewSkill(),
   ]);
 

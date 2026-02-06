@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { Loader2, Plus, ShieldCheck } from "lucide-react";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { Button } from "@/browser/components/ui/button";
 import { ProviderWithIcon } from "@/browser/components/ProviderIcon";
 import {
@@ -11,12 +12,13 @@ import {
 } from "@/browser/components/ui/select";
 import { useAPI } from "@/browser/contexts/API";
 import { getSuggestedModels, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { migrateGatewayModel, useGateway } from "@/browser/hooks/useGatewayModels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { supports1MContext } from "@/common/utils/ai/models";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
@@ -72,12 +74,29 @@ export function ModelsSection() {
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const gateway = useGateway();
+  const { has1MContext, toggle1MContext } = useProviderOptions();
 
   // Compaction model preference
   const [compactionModel, setCompactionModel] = usePersistedState<string>(
     PREFERRED_COMPACTION_MODEL_KEY,
     "",
     { listener: true }
+  );
+
+  const setCompactionModelAndPersist = useCallback(
+    (value: string) => {
+      const canonical = migrateGatewayModel(value).trim();
+      setCompactionModel(canonical);
+
+      if (!api?.config?.updateModelPreferences) {
+        return;
+      }
+
+      api.config.updateModelPreferences({ preferredCompactionModel: canonical }).catch(() => {
+        // Best-effort only.
+      });
+    },
+    [api, setCompactionModel]
   );
 
   // All models (including hidden) for the settings dropdowns.
@@ -261,7 +280,7 @@ export function ModelsSection() {
             <div className="min-w-0 flex-1">
               <SearchableModelSelect
                 value={compactionModel}
-                onChange={setCompactionModel}
+                onChange={setCompactionModelAndPersist}
                 models={selectableModels}
                 emptyOption={{ value: "", label: "Use workspace model" }}
               />
@@ -339,6 +358,7 @@ export function ModelsSection() {
                       saving={false}
                       hasActiveEdit={editing !== null}
                       isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                      is1MContextEnabled={has1MContext(model.fullId)}
                       onSetDefault={() => setDefaultModel(model.fullId)}
                       onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
                       onSaveEdit={handleSaveEdit}
@@ -356,6 +376,11 @@ export function ModelsSection() {
                       onToggleGateway={
                         gateway.canToggleModel(model.fullId)
                           ? () => gateway.toggleModelGateway(model.fullId)
+                          : undefined
+                      }
+                      onToggle1MContext={
+                        supports1MContext(model.fullId)
+                          ? () => toggle1MContext(model.fullId)
                           : undefined
                       }
                     />
@@ -387,6 +412,7 @@ export function ModelsSection() {
                   isDefault={defaultModel === model.fullId}
                   isEditing={false}
                   isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                  is1MContextEnabled={has1MContext(model.fullId)}
                   onSetDefault={() => setDefaultModel(model.fullId)}
                   isHiddenFromSelector={hiddenModels.includes(model.fullId)}
                   onToggleVisibility={() =>
@@ -397,6 +423,11 @@ export function ModelsSection() {
                   onToggleGateway={
                     gateway.canToggleModel(model.fullId)
                       ? () => gateway.toggleModelGateway(model.fullId)
+                      : undefined
+                  }
+                  onToggle1MContext={
+                    supports1MContext(model.fullId)
+                      ? () => toggle1MContext(model.fullId)
                       : undefined
                   }
                 />

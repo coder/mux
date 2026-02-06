@@ -30,7 +30,7 @@ import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "../PopoverError";
 import { getAgentIdKey, getPlanContentKey } from "@/common/constants/storage";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
   Clipboard,
   ClipboardCheck,
@@ -387,7 +387,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       // Switch to orchestrator before sending so send options (agentId/mode) match.
       updatePersistedState(getAgentIdKey(workspaceId), "orchestrator");
 
-      const sendMessageOptions = buildSendMessageOptions(workspaceId);
+      const sendMessageOptions = getSendOptionsFromStorage(workspaceId);
 
       await api.workspace.sendMessage({
         workspaceId,
@@ -458,7 +458,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       await api.workspace.sendMessage({
         workspaceId,
         message: "Implement the plan",
-        options: buildSendMessageOptions(workspaceId),
+        options: getSendOptionsFromStorage(workspaceId),
       });
     } catch {
       // Best-effort: user can retry manually if sending fails.

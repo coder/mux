@@ -7,12 +7,12 @@ import { isMuxMdUrl, parseMuxMdUrl, uploadToMuxMd, deleteFromMuxMd } from "@/com
 import * as fs from "fs/promises";
 import * as path from "path";
 
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 // ToolCallOptions stub for testing
 
 const itIntegration = process.env.TEST_INTEGRATION === "1" ? it : it.skip;
-const toolCallOptions: ToolCallOptions = {
+const toolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };
@@ -187,6 +187,36 @@ describe("web_fetch tool", () => {
       expect(result.content).toContain("Test Heading");
       expect(result.content).toContain("**bold**");
       expect(result.content).toContain("_italic_");
+    }
+  });
+
+  it("should not treat non-mux.md URLs with fragments as mux.md shares", async () => {
+    using testEnv = createTestWebFetchTool();
+
+    const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head><title>Fragment Page</title></head>
+<body>
+  <article>
+    <h1>Hello</h1>
+    <p>This is a fragment test.</p>
+  </article>
+</body>
+</html>`;
+    const htmlPath = path.join(testEnv.tempDir.path, "fragment.html");
+    await fs.writeFile(htmlPath, htmlContent);
+
+    const args: WebFetchToolArgs = {
+      url: `file://${htmlPath}#section1`,
+    };
+
+    const result = (await testEnv.tool.execute!(args, toolCallOptions)) as WebFetchToolResult;
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.title).toBe("Fragment Page");
+      expect(result.content).toContain("This is a fragment test.");
     }
   });
 
