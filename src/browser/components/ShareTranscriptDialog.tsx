@@ -1,17 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ExternalLink, Link2, Loader2 } from "lucide-react";
+import { Check, ExternalLink, Loader2 } from "lucide-react";
 
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { Button } from "@/browser/components/ui/button";
 import { Checkbox } from "@/browser/components/ui/checkbox";
-import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
-import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
-import { useAPI } from "@/browser/contexts/API";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { copyToClipboard } from "@/browser/utils/clipboard";
-import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
-import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -19,22 +12,40 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/ui/select";
-import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { SHARE_EXPIRATION_KEY } from "@/common/constants/storage";
-import { uploadToMuxMd, updateMuxMdExpiration, type FileInfo } from "@/common/lib/muxMd";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { copyToClipboard } from "@/browser/utils/clipboard";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
+import {
+  readPersistedState,
+  updatePersistedState,
+  usePersistedState,
+} from "@/browser/hooks/usePersistedState";
+import { SHARE_EXPIRATION_KEY, SHARE_SIGNING_KEY } from "@/common/constants/storage";
+import {
+  uploadToMuxMd,
+  updateMuxMdExpiration,
+  type FileInfo,
+  type SignatureEnvelope,
+} from "@/common/lib/muxMd";
 import {
   EXPIRATION_OPTIONS,
   type ExpirationValue,
   expirationToMs,
   timestampToExpiration,
 } from "@/common/lib/shareExpiration";
-import { cn } from "@/common/lib/utils";
 import type { MuxMessage } from "@/common/types/message";
 import { buildChatJsonlForSharing } from "@/common/utils/messages/transcriptShare";
+import type { SigningCapabilities } from "@/common/orpc/schemas";
+import { EncryptionBadge, SigningBadge } from "./ShareSigningBadges";
 
-interface ShareTranscriptPopoverProps {
+interface ShareTranscriptDialogProps {
   workspaceId: string;
   workspaceName: string;
+  /** Human-readable workspace title shown in the dialog header */
+  workspaceTitle?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -67,7 +78,7 @@ function transcriptContainsProposePlanToolCall(messages: MuxMessage[]): boolean 
   );
 }
 
-export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
+export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   const store = useWorkspaceStoreRaw();
   const { api } = useAPI();
   const { workspaceMetadata } = useWorkspaceContext();
@@ -82,10 +93,15 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
   const [isUpdatingExpiration, setIsUpdatingExpiration] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Signing capabilities and enabled state (matching per-message sharing)
+  const [signingCapabilities, setSigningCapabilities] = useState<SigningCapabilities | null>(null);
+  const [signingCapabilitiesLoaded, setSigningCapabilitiesLoaded] = useState(false);
+  const [signingEnabled, setSigningEnabled] = usePersistedState(SHARE_SIGNING_KEY, true);
+  const [signed, setSigned] = useState(false);
+
   const urlInputRef = useRef<HTMLInputElement>(null);
 
   // Guards against cross-workspace leakage when users switch workspaces mid-upload.
-  // (WorkspaceHeader can be reused across workspace changes.)
   const uploadSeqRef = useRef(0);
 
   useEffect(() => {
@@ -98,7 +114,23 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
     setCopied(false);
     setIsUploading(false);
     setIsUpdatingExpiration(false);
+    setSigned(false);
   }, [props.workspaceId]);
+
+  // Load signing capabilities when the dialog first opens
+  useEffect(() => {
+    if (props.open && !signingCapabilitiesLoaded && api) {
+      void api.signing
+        .capabilities({})
+        .then(setSigningCapabilities)
+        .catch(() => {
+          // Signing unavailable – leave capabilities null
+        })
+        .finally(() => {
+          setSigningCapabilitiesLoaded(true);
+        });
+    }
+  }, [props.open, api, signingCapabilitiesLoaded]);
 
   useEffect(() => {
     if (!props.open || !shareUrl) {
@@ -108,6 +140,18 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
     urlInputRef.current?.focus();
     urlInputRef.current?.select();
   }, [props.open, shareUrl]);
+
+  // Retry key detection (user may have created a key after app launch)
+  const handleRetryKeyDetection = async () => {
+    if (!api) return;
+    try {
+      await api.signing.clearIdentityCache({});
+      const caps = await api.signing.capabilities({});
+      setSigningCapabilities(caps);
+    } catch {
+      // Silently fail – capabilities stay as-is
+    }
+  };
 
   const handleGenerateLink = useCallback(async () => {
     if (isUploading) {
@@ -152,6 +196,17 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
         return;
       }
 
+      // Request a signing envelope when signing is enabled
+      let signature: SignatureEnvelope | undefined;
+      if (signingEnabled && signingCapabilities?.publicKey && api) {
+        try {
+          signature = await api.signing.signMessage({ content: chatJsonl });
+        } catch (signErr) {
+          console.warn("Failed to sign transcript, uploading without signature:", signErr);
+          // Continue without signature – don't fail the upload
+        }
+      }
+
       const sendOptions = getSendOptionsFromStorage(workspaceId);
 
       // Use human-readable workspace title for the filename when available
@@ -170,12 +225,14 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
           const expMs = expirationToMs(preferred);
           return expMs ? new Date(Date.now() + expMs) : undefined;
         })(),
+        signature,
       });
       if (uploadSeqRef.current === uploadSeq) {
         setShareUrl(result.url);
         setShareId(result.id);
         setShareMutateKey(result.mutateKey);
         setShareExpiresAt(result.expiresAt);
+        setSigned(Boolean(signature));
       }
     } catch (err) {
       console.error("Failed to share transcript:", err);
@@ -193,6 +250,8 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
     isUploading,
     props.workspaceId,
     props.workspaceName,
+    signingCapabilities,
+    signingEnabled,
     store,
     workspaceMetadata,
   ]);
@@ -251,34 +310,26 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
   };
 
   return (
-    <Popover open={props.open} onOpenChange={handleOpenChange}>
-      <Tooltip {...(props.open ? { open: false } : {})}>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Share transcript"
-              className={cn(
-                "h-6 w-6 shrink-0 [&_svg]:h-3.5 [&_svg]:w-3.5",
-                shareUrl ? "text-blue-400" : "text-muted hover:text-foreground"
-              )}
-            >
-              <Link2 />
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center">
-          Share transcript ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
-        </TooltipContent>
-      </Tooltip>
+    <Dialog open={props.open} onOpenChange={handleOpenChange}>
+      <DialogContent maxWidth="380px" showCloseButton>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm">
+            Share transcript
+            <EncryptionBadge />
+            <SigningBadge
+              signed={signed}
+              capabilities={signingCapabilities}
+              signingEnabled={signingEnabled}
+              onToggleSigning={() => setSigningEnabled(!signingEnabled)}
+              onRetryKeyDetection={() => void handleRetryKeyDetection()}
+            />
+          </DialogTitle>
+          {props.workspaceTitle && (
+            <p className="text-muted truncate text-xs">{props.workspaceTitle}</p>
+          )}
+        </DialogHeader>
 
-      <PopoverContent side="bottom" align="end" collisionPadding={16} className="w-[320px] p-3">
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-foreground text-xs font-medium">Share transcript</span>
-          </div>
-
           <label className="flex cursor-pointer items-center gap-2">
             <Checkbox
               checked={includeToolOutput}
@@ -384,7 +435,7 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
             </div>
           )}
         </div>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }
