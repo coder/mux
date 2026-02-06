@@ -261,12 +261,11 @@ describe("cacheStrategy", () => {
     });
 
     it("should handle provider-defined tools without recreating them", () => {
-      // AI SDK uses type: "provider" for provider-native tools (e.g., Anthropic's webSearch_20250305).
-      // These cannot be recreated with createTool() - they have special internal properties
-      // like id, args, supportsDeferredResults that must be preserved.
+      // Provider-defined tools (like Anthropic's webSearch) have type: "provider-defined"
+      // and cannot be recreated with createTool() - they have special internal properties
       const providerDefinedTool = {
-        type: "provider" as const,
-        id: "anthropic.web_search_20250305",
+        type: "provider-defined" as const,
+        id: "web_search",
         name: "web_search_20250305",
         args: { maxUses: 1000 },
         // Note: no description or execute - these are handled internally by the SDK
@@ -298,7 +297,7 @@ describe("cacheStrategy", () => {
         type: string;
         providerOptions: unknown;
       };
-      expect(cachedWebSearch.type).toBe("provider");
+      expect(cachedWebSearch.type).toBe("provider-defined");
       expect(cachedWebSearch.providerOptions).toEqual({
         anthropic: { cacheControl: { type: "ephemeral" } },
       });

@@ -357,14 +357,11 @@ export const GitStatusVariations: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     // Wait for git status to render (fetched async via GitStatusStore polling)
-    await waitFor(
-      () => {
-        const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]');
-        if (!row) throw new Error("ws-diverged row not found");
-        within(row).getByText("+12.3k");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]');
+      if (!row) throw new Error("ws-diverged row not found");
+      within(row).getByText("+12.3k");
+    });
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-diverged"]')!;
     const plus = within(row).getByText("+12.3k");
@@ -377,30 +374,24 @@ export const GitStatusVariations: AppStory = {
       document.body.querySelector<HTMLElement>('.bg-modal-bg[data-state="open"]');
 
     // Wait for tooltip (portaled) and toggle to commits mode
-    await waitFor(
-      () => {
-        const tooltip = getVisibleTooltip();
-        if (!tooltip) throw new Error("git status tooltip not visible");
-        within(tooltip).getByText("Commits");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const tooltip = getVisibleTooltip();
+      if (!tooltip) throw new Error("git status tooltip not visible");
+      within(tooltip).getByText("Commits");
+    });
 
     const tooltip = getVisibleTooltip()!;
     await userEvent.click(within(tooltip).getByText("Commits"));
 
     // Verify indicator switches to divergence view for the same workspace row
-    await waitFor(
-      () => {
-        const updatedRow = canvasElement.querySelector<HTMLElement>(
-          '[data-workspace-id="ws-diverged"]'
-        );
-        if (!updatedRow) throw new Error("ws-diverged row not found");
-        within(updatedRow).getByText("↑3");
-        within(updatedRow).getByText("↓2");
-      },
-      { timeout: 2000 }
-    );
+    await waitFor(() => {
+      const updatedRow = canvasElement.querySelector<HTMLElement>(
+        '[data-workspace-id="ws-diverged"]'
+      );
+      if (!updatedRow) throw new Error("ws-diverged row not found");
+      within(updatedRow).getByText("↑3");
+      within(updatedRow).getByText("↓2");
+    });
   },
 };
 
@@ -549,13 +540,10 @@ export const WorkspaceTitleHoverCard: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     // Wait for the workspace row to appear
-    await waitFor(
-      () => {
-        const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-ssh-hover"]');
-        if (!row) throw new Error("ws-ssh-hover row not found");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-ssh-hover"]');
+      if (!row) throw new Error("ws-ssh-hover row not found");
+    });
 
     const row = canvasElement.querySelector<HTMLElement>('[data-workspace-id="ws-ssh-hover"]')!;
 
@@ -564,17 +552,14 @@ export const WorkspaceTitleHoverCard: AppStory = {
     await userEvent.hover(titleSpan);
 
     // Wait for HoverCard to appear (portaled to body)
-    await waitFor(
-      () => {
-        const hoverCard = document.body.querySelector<HTMLElement>(
-          "[data-radix-popper-content-wrapper] .bg-modal-bg"
-        );
-        if (!hoverCard) throw new Error("HoverCard not visible");
-        // Verify it contains the project name (WorkspaceHoverPreview content)
-        within(hoverCard).getByText("hover-demo");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const hoverCard = document.body.querySelector<HTMLElement>(
+        "[data-radix-popper-content-wrapper] .bg-modal-bg"
+      );
+      if (!hoverCard) throw new Error("HoverCard not visible");
+      // Verify it contains the project name (WorkspaceHoverPreview content)
+      within(hoverCard).getByText("hover-demo");
+    });
   },
 };
 
@@ -672,13 +657,10 @@ export const WorkspaceDraftSelected: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     // Wait for the draft row to appear
-    await waitFor(
-      () => {
-        const row = canvasElement.querySelector<HTMLElement>('[data-draft-id="selected-draft"]');
-        if (!row) throw new Error("selected-draft row not found");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const row = canvasElement.querySelector<HTMLElement>('[data-draft-id="selected-draft"]');
+      if (!row) throw new Error("selected-draft row not found");
+    });
 
     const row = canvasElement.querySelector<HTMLElement>('[data-draft-id="selected-draft"]')!;
     await userEvent.click(row);

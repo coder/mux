@@ -490,12 +490,12 @@ export const AskUserQuestionPending: AppStory = {
 
     // Selecting a single-select option should auto-advance.
     await userEvent.click(canvas.getByText("Approach A"));
-    await canvas.findByText("Which platforms do we need to support?", {}, { timeout: 2000 });
+    await canvas.findByText("Which platforms do we need to support?");
 
     // Regression: you must be able to jump back to a previous section after answering it.
     await userEvent.click(getSectionButton("Approach"));
 
-    await canvas.findByText("Which approach should we take?", {}, { timeout: 2000 });
+    await canvas.findByText("Which approach should we take?");
 
     // Give React a tick to run any pending effects; we should still be on question 1.
     await new Promise((resolve) => setTimeout(resolve, 250));
@@ -505,7 +505,7 @@ export const AskUserQuestionPending: AppStory = {
 
     // Changing the answer should still auto-advance.
     await userEvent.click(canvas.getByText("Approach B"));
-    await canvas.findByText("Which platforms do we need to support?", {}, { timeout: 2000 });
+    await canvas.findByText("Which platforms do we need to support?");
   },
 };
 
@@ -861,7 +861,7 @@ export const ModeHelpTooltip: AppStory = {
         const tooltip = document.querySelector('[role="tooltip"]');
         if (!tooltip) throw new Error("Tooltip not visible");
       },
-      { timeout: 2000, interval: 50 }
+      { interval: 50 }
     );
   },
   parameters: {
@@ -928,7 +928,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
         if (!el) throw new Error("Gateway indicator not found");
         return el;
       },
-      { timeout: 2000, interval: 50 }
+      { interval: 50 }
     );
 
     // Hover to prove the gateway tooltip is wired up (and keep it visible for snapshot).
@@ -941,7 +941,7 @@ export const ModelSelectorPrettyWithGateway: AppStory = {
           throw new Error("Gateway tooltip not visible");
         }
       },
-      { timeout: 2000, interval: 50 }
+      { interval: 50 }
     );
   },
   parameters: {
@@ -986,21 +986,18 @@ export const ModelSelectorDropdownOpen: AppStory = {
     await canvas.findAllByText("Exec", {}, { timeout: 10000 });
 
     // Wait for model selector to be clickable (shows pretty name "GPT-4o")
-    const modelSelector = await waitFor(
-      () => {
-        const el = canvas.getByText("GPT-4o");
-        if (!el) throw new Error("Model selector not found");
-        return el;
-      },
-      { timeout: 5000 }
-    );
+    const modelSelector = await waitFor(() => {
+      const el = canvas.getByText("GPT-4o");
+      if (!el) throw new Error("Model selector not found");
+      return el;
+    });
 
     // Click to open the selector (enters editing mode, shows dropdown)
     await userEvent.click(modelSelector);
 
     // Wait for the dropdown to appear. The dropdown is rendered inline (not via Radix Portal),
     // so the search input is a reliable signal that it opened.
-    await canvas.findByPlaceholderText(/Search \[provider:model-name\]/i, {}, { timeout: 3000 });
+    await canvas.findByPlaceholderText(/Search \[provider:model-name\]/i);
 
     // Double RAF for visual stability after dropdown renders
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -1080,22 +1077,15 @@ export const EditingMessage: AppStory = {
     await userEvent.click(editButtons[0]);
 
     // Wait for the editing state to be applied
-    await waitFor(
-      () => {
-        const textarea = canvas.getByLabelText("Edit your last message");
-        if (!textarea.className.includes("border-editing-mode")) {
-          throw new Error("Textarea not in editing state");
-        }
-      },
-      { timeout: 2000 }
-    );
+    await waitFor(() => {
+      const textarea = canvas.getByLabelText("Edit your last message");
+      if (!textarea.className.includes("border-editing-mode")) {
+        throw new Error("Textarea not in editing state");
+      }
+    });
 
     // Verify the edit cutoff barrier appears
-    await canvas.findByText(
-      "Messages below will be removed when you submit",
-      {},
-      { timeout: 2000 }
-    );
+    await canvas.findByText("Messages below will be removed when you submit");
   },
   parameters: {
     docs: {
@@ -1489,13 +1479,10 @@ export const ContextMeterWithIdleCompaction: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     // Wait for the context meter to appear (it shows token usage)
-    await waitFor(
-      () => {
-        // Look for the context meter button which shows token counts
-        canvas.getByRole("button", { name: /context/i });
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      // Look for the context meter button which shows token counts
+      canvas.getByRole("button", { name: /context/i });
+    });
   },
   parameters: {
     docs: {
@@ -1739,15 +1726,12 @@ export const TodoWriteWithLongTodos: AppStory = {
     }
 
     // Verify that todo content rows are using truncation.
-    await waitFor(
-      () => {
-        const firstTodo = canvas.getByText(/Create British-themed layout \(HTML\)/);
-        if (!firstTodo.classList.contains("truncate")) {
-          throw new Error("Expected todo row to have Tailwind 'truncate' class");
-        }
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const firstTodo = canvas.getByText(/Create British-themed layout \(HTML\)/);
+      if (!firstTodo.classList.contains("truncate")) {
+        throw new Error("Expected todo row to have Tailwind 'truncate' class");
+      }
+    });
 
     // Verify chat pane doesn't gain horizontal overflow.
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -1822,26 +1806,23 @@ export const SigningBadgePassphraseWarning: AppStory = {
     const canvas = within(storyRoot);
 
     // Wait for the assistant message to appear
-    await canvas.findByText(SIGNING_WARNING_MESSAGE_CONTENT, {}, { timeout: 5000 });
+    await canvas.findByText(SIGNING_WARNING_MESSAGE_CONTENT);
 
     // Wait for React to finish any pending updates after rendering
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
     // Find and click the Share button (should show "Already shared" due to loader)
-    const shareButton = await canvas.findByLabelText("Already shared", {}, { timeout: 3000 });
+    const shareButton = await canvas.findByLabelText("Already shared");
 
     // Wait a bit for button to be fully interactive
     await new Promise((r) => setTimeout(r, 100));
     await userEvent.click(shareButton);
 
     // Wait for the popover to open (renders in a portal, so search document)
-    await waitFor(
-      () => {
-        const popover = document.querySelector('[role="dialog"]');
-        if (!popover) throw new Error("Share popover not found");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const popover = document.querySelector('[role="dialog"]');
+      if (!popover) throw new Error("Share popover not found");
+    });
 
     // Allow the signing badge to render with its warning state
     await new Promise((r) => setTimeout(r, 200));
@@ -1975,17 +1956,17 @@ export const ToolHooksOutputExpanded: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for the tool to render
-    await canvas.findByText("npx prettier --write .", {}, { timeout: 5000 });
+    await canvas.findByText("npx prettier --write .");
 
     // Wait for rendering to complete
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
     // Find and click the hook output button to expand it
-    const hookButton = await canvas.findByText("hook output", {}, { timeout: 3000 });
+    const hookButton = await canvas.findByText("hook output");
     await userEvent.click(hookButton);
 
     // Wait for the expanded content to be visible
-    await canvas.findByText(/post-hook: git status check/, {}, { timeout: 3000 });
+    await canvas.findByText(/post-hook: git status check/);
   },
   parameters: {
     docs: {

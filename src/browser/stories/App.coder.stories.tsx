@@ -160,7 +160,7 @@ export const SSHWithCoderAvailable: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Coder button should appear when Coder CLI is available
-    await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    await canvas.findByRole("button", { name: /Coder/i });
   },
 };
 
@@ -197,14 +197,14 @@ export const CoderNewWorkspace: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.click(coderButton);
 
     // Wait for Coder controls to appear
-    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-controls-inner");
 
     // The template dropdown should be visible with templates loaded
-    await canvas.findByTestId("coder-template-select", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-template-select");
   },
 };
 
@@ -241,18 +241,18 @@ export const CoderExistingWorkspace: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.click(coderButton);
 
     // Wait for Coder controls
-    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-controls-inner");
 
     // Click "Existing" button
     const existingButton = canvas.getByRole("button", { name: "Existing" });
     await userEvent.click(existingButton);
 
     // Wait for workspace dropdown to appear
-    await canvas.findByTestId("coder-workspace-select", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-workspace-select");
   },
 };
 
@@ -290,18 +290,18 @@ export const CoderExistingWorkspaceParseError: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.click(coderButton);
 
     // Wait for Coder controls
-    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-controls-inner");
 
     // Click "Existing" button
     const existingButton = canvas.getByRole("button", { name: "Existing" });
     await userEvent.click(existingButton);
 
     // Error message should appear for workspace listing
-    await canvas.findByText(mockParseError, {}, { timeout: 5000 });
+    await canvas.findByText(mockParseError);
   },
 };
 
@@ -333,19 +333,15 @@ export const CoderTemplatesParseError: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.click(coderButton);
 
     // Wait for Coder controls
-    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-controls-inner");
 
-    await canvas.findByText(mockParseError, {}, { timeout: 5000 });
+    await canvas.findByText(mockParseError);
 
-    const templateSelect = await canvas.findByTestId(
-      "coder-template-select",
-      {},
-      { timeout: 5000 }
-    );
+    const templateSelect = await canvas.findByTestId("coder-template-select");
     await waitFor(() => {
       if (!templateSelect.hasAttribute("data-disabled")) {
         throw new Error("Template dropdown should be disabled when templates fail to load");
@@ -388,14 +384,14 @@ export const CoderPresetsParseError: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.click(coderButton);
 
     // Wait for Coder controls and template select
-    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
-    await canvas.findByTestId("coder-template-select", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-controls-inner");
+    await canvas.findByTestId("coder-template-select");
 
-    await canvas.findByText(mockParseError, {}, { timeout: 5000 });
+    await canvas.findByText(mockParseError);
   },
 };
 
@@ -425,7 +421,7 @@ export const CoderNotAvailable: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // SSH button should be present
-    await canvas.findByRole("button", { name: /SSH/i }, { timeout: 5000 });
+    await canvas.findByRole("button", { name: /SSH/i });
 
     // Coder button should NOT appear when Coder CLI is unavailable
     const coderButton = canvas.queryByRole("button", { name: /Coder/i });
@@ -472,19 +468,16 @@ export const CoderOutdated: AppStory = {
     await userEvent.hover(coderButton);
 
     // Wait for tooltip to appear with version info
-    await waitFor(
-      () => {
-        const tooltip = document.querySelector('[role="tooltip"]');
-        if (!tooltip) throw new Error("Tooltip not found");
-        if (!tooltip.textContent?.includes("2.20.0")) {
-          throw new Error("Tooltip should mention the current CLI version");
-        }
-        if (!tooltip.textContent?.includes("2.25.0")) {
-          throw new Error("Tooltip should mention the minimum required version");
-        }
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const tooltip = document.querySelector('[role="tooltip"]');
+      if (!tooltip) throw new Error("Tooltip not found");
+      if (!tooltip.textContent?.includes("2.20.0")) {
+        throw new Error("Tooltip should mention the current CLI version");
+      }
+      if (!tooltip.textContent?.includes("2.25.0")) {
+        throw new Error("Tooltip should mention the minimum required version");
+      }
+    });
   },
 };
 
@@ -519,17 +512,17 @@ export const CoderNoPresets: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.click(coderButton);
 
     // Wait for Coder controls
-    await canvas.findByTestId("coder-controls-inner", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-controls-inner");
 
     // Template dropdown should be visible
-    await canvas.findByTestId("coder-template-select", {}, { timeout: 5000 });
+    await canvas.findByTestId("coder-template-select");
 
     // Preset dropdown should be visible but disabled (shows "No presets" placeholder)
-    const presetSelect = await canvas.findByTestId("coder-preset-select", {}, { timeout: 5000 });
+    const presetSelect = await canvas.findByTestId("coder-preset-select");
     await waitFor(() => {
       // Radix UI Select sets data-disabled="" (empty string) when disabled
       if (!presetSelect.hasAttribute("data-disabled")) {
@@ -571,25 +564,17 @@ export const CoderNoRunningWorkspaces: AppStory = {
     await canvas.findByRole("group", { name: "Runtime type" }, { timeout: 10000 });
 
     // Click Coder runtime button directly
-    const coderButton = await canvas.findByRole("button", { name: /Coder/i }, { timeout: 5000 });
+    const coderButton = await canvas.findByRole("button", { name: /Coder/i });
     await userEvent.click(coderButton);
 
     // Click "Existing" button
-    const existingButton = await canvas.findByRole(
-      "button",
-      { name: "Existing" },
-      { timeout: 5000 }
-    );
+    const existingButton = await canvas.findByRole("button", { name: "Existing" });
     await userEvent.click(existingButton);
 
     // Workspace dropdown should show "No workspaces found" placeholder
     // Note: Radix UI Select doesn't render native <option> elements - the placeholder
     // text appears directly in the SelectTrigger element
-    const workspaceSelect = await canvas.findByTestId(
-      "coder-workspace-select",
-      {},
-      { timeout: 5000 }
-    );
+    const workspaceSelect = await canvas.findByTestId("coder-workspace-select");
     await waitFor(() => {
       const triggerText = workspaceSelect.textContent;
       if (!triggerText?.includes("No workspaces found")) {

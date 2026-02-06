@@ -278,15 +278,12 @@ export const DebugLlmRequestModal: AppStory = {
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
-    await waitFor(
-      () => {
-        const debugButton = canvasElement.querySelector(
-          'button[aria-label="Open last LLM request debug modal"]'
-        );
-        if (!debugButton) throw new Error("Debug button not found");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const debugButton = canvasElement.querySelector(
+        'button[aria-label="Open last LLM request debug modal"]'
+      );
+      if (!debugButton) throw new Error("Debug button not found");
+    });
 
     const debugButton = canvasElement.querySelector(
       'button[aria-label="Open last LLM request debug modal"]'
@@ -296,15 +293,12 @@ export const DebugLlmRequestModal: AppStory = {
     }
     await userEvent.click(debugButton);
 
-    await waitFor(
-      () => {
-        const dialog = document.querySelector('[role="dialog"]');
-        if (!dialog?.textContent?.includes("Last LLM request")) {
-          throw new Error("Debug modal did not open");
-        }
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (!dialog?.textContent?.includes("Last LLM request")) {
+        throw new Error("Debug modal did not open");
+      }
+    });
   },
 };
 export const StreamError: AppStory = {
@@ -529,15 +523,12 @@ export const ProjectRemovalError: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     // Wait for the remove button to exist in DOM
-    await waitFor(
-      () => {
-        const removeButton = canvasElement.querySelector(
-          'button[aria-label="Remove project my-app"]'
-        );
-        if (!removeButton) throw new Error("Remove button not found");
-      },
-      { timeout: 5000 }
-    );
+    await waitFor(() => {
+      const removeButton = canvasElement.querySelector(
+        'button[aria-label="Remove project my-app"]'
+      );
+      if (!removeButton) throw new Error("Remove button not found");
+    });
 
     // Get the project row container and hover to reveal the button
     const removeButton = canvasElement.querySelector('button[aria-label="Remove project my-app"]')!;
@@ -551,12 +542,9 @@ export const ProjectRemovalError: AppStory = {
     await userEvent.click(removeButton);
 
     // Wait for the error popover to appear
-    await waitFor(
-      () => {
-        const errorPopover = document.querySelector('[role="alert"]');
-        if (!errorPopover) throw new Error("Error popover not found");
-      },
-      { timeout: 2000 }
-    );
+    await waitFor(() => {
+      const errorPopover = document.querySelector('[role="alert"]');
+      if (!errorPopover) throw new Error("Error popover not found");
+    });
   },
 };

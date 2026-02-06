@@ -79,9 +79,7 @@ export const WithTitles: AppStory = {
     const canvas = within(canvasElement);
 
     // Wait for app to render
-    await expect(
-      canvas.findByText("Fix login button styling issue", {}, { timeout: 5000 })
-    ).resolves.toBeTruthy();
+    await expect(canvas.findByText("Fix login button styling issue")).resolves.toBeTruthy();
 
     // Open command palette with keyboard shortcut
     await userEvent.keyboard("{Control>}{Shift>}p{/Shift}{/Control}");

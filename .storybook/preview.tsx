@@ -10,6 +10,14 @@ import {
 } from "../src/common/constants/storage";
 import { NOW } from "../src/browser/stories/mockFactory";
 import { updatePersistedState } from "../src/browser/hooks/usePersistedState";
+import { configure } from "@storybook/test";
+
+// Raise the default async-util timeout from 1 000 ms → 5 000 ms.
+// waitFor / findBy* calls inherit this, so individual stories don't need
+// explicit `{ timeout }` unless they intentionally want a longer budget.
+// Prevents flakes on CPU-constrained CI runners where React re-renders
+// after userEvent.click can exceed the 1 s default.
+configure({ asyncUtilTimeout: 5000 });
 
 const STORYBOOK_FONTS_READY_TIMEOUT_MS = 2500;
 
