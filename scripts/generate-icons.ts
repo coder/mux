@@ -86,8 +86,13 @@ const LOGO_TARGETS = {
   //
   // Rationale: Runtime will pick the correct variant based on OS theme
   // (light/dark) and macOS treats these as template images.
-  "public/tray-icon-black.png": { size: 32, ...MONO_ICON },
-  "public/tray-icon-white.png": { size: 32, source: SOURCE_WHITE, bg: false },
+  //
+  // Naming convention: macOS expects "@2x" suffix for Retina assets. The 1x
+  // icon is 16x16 (menu bar point size) and 2x is 32x32 pixels.
+  "public/tray-icon-black.png": { size: 16, ...MONO_ICON },
+  "public/tray-icon-black@2x.png": { size: 32, ...MONO_ICON },
+  "public/tray-icon-white.png": { size: 16, source: SOURCE_WHITE, bg: false },
+  "public/tray-icon-white@2x.png": { size: 32, source: SOURCE_WHITE, bg: false },
 } satisfies Record<string, LogoTargetConfig>;
 
 const APP_ICON_PADDING_RATIO = 0.2;

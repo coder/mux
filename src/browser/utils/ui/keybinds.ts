@@ -283,6 +283,10 @@ export const KEYBINDS = {
   // macOS: Cmd+Shift+E, Win/Linux: Ctrl+Shift+E
   OPEN_IN_EDITOR: { key: "E", ctrl: true, shift: true },
 
+  /** Share transcript for current workspace */
+  // macOS: Cmd+Shift+L, Win/Linux: Ctrl+Shift+L
+  SHARE_TRANSCRIPT: { key: "L", ctrl: true, shift: true },
+
   /** Open Command Palette */
   // VS Code-style palette
   // macOS: Cmd+Shift+P, Win/Linux: Ctrl+Shift+P

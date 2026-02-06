@@ -38,6 +38,13 @@ export class PowerModeEngine {
 
   private resizeListenerActive = false;
 
+  // Particle cap (reference: 500 max) and spawn throttle (reference: 25ms).
+  private static readonly MAX_PARTICLES = 500;
+  private lastBurstTimeMs = 0;
+
+  // Golden-ratio hue walk for well-distributed bright colors (reference "bright random" mode).
+  private colorSeed = Math.random();
+
   setCanvas(canvas: HTMLCanvasElement | null): void {
     if (this.canvas === canvas) return;
 
@@ -72,29 +79,45 @@ export class PowerModeEngine {
       return;
     }
 
-    const count = 8 + normalizedIntensity * 6;
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = (70 + Math.random() * 140) * (0.6 + normalizedIntensity * 0.12);
+    // Spawn throttle: max ~40 bursts/second per the reference (25ms cooldown).
+    const now = performance.now();
+    if (now - this.lastBurstTimeMs < 25) return;
+    this.lastBurstTimeMs = now;
 
-      const vx = Math.cos(angle) * speed;
-      const verticalKick = 60 + Math.random() * 80;
+    // Reference spawns 5–15 particles per keystroke.
+    const count = 5 + Math.floor(Math.random() * 11);
+
+    // Enforce particle cap (reference: 500 max). Evict oldest in one bulk
+    // splice instead of per-particle shift() which is O(n) each.
+    const overflow = this.particles.length + count - PowerModeEngine.MAX_PARTICLES;
+    if (overflow > 0) {
+      this.particles.splice(0, overflow);
+    }
+
+    for (let i = 0; i < count; i++) {
+      // Reference: horizontal spread [-1, +1] mapped to px/s, mostly upward vertical.
+      const vx = (-1 + Math.random() * 2) * 60;
       const vy =
         kind === "delete"
-          ? Math.sin(angle) * speed + verticalKick
-          : Math.sin(angle) * speed - verticalKick;
+          ? 150 + Math.random() * 100 // downward for deletes
+          : -(150 + Math.random() * 100); // upward for inserts (reference default)
+
+      // Golden-ratio hue walk for well-distributed bright colors.
+      this.colorSeed = (this.colorSeed + 0.618033988749895) % 1;
+      const hue =
+        kind === "delete"
+          ? Math.floor(10 + Math.random() * 40) // orange/red for deletes
+          : Math.floor(this.colorSeed * 360);
+      const lightness = kind === "delete" ? 60 : 65;
 
       const ttlMs = 240 + Math.random() * 260;
-      const hue =
-        kind === "delete" ? Math.floor(10 + Math.random() * 40) : Math.floor(Math.random() * 360);
-      const lightness = kind === "delete" ? 60 : 70;
-
       this.particles.push({
         x,
         y,
         vx,
         vy,
-        size: 2 + Math.random() * 2.5,
+        // Reference: size 2–4 px (square).
+        size: 2 + Math.random() * 2,
         ttlMs,
         lifeMs: ttlMs,
         color: `hsl(${hue}, 100%, ${lightness}%)`,
@@ -157,7 +180,7 @@ export class PowerModeEngine {
 
   private step(dtMs: number): void {
     const dt = dtMs / 1000;
-    const gravity = 1100;
+    const gravity = 300;
 
     // Update particles in-place, compacting the array.
     let write = 0;

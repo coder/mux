@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
 import type { AIService } from "./aiService";
 import { log } from "./log";
@@ -87,10 +87,9 @@ export async function generateWorkspaceIdentity(
     }
 
     try {
-      const result = await generateObject({
+      const result = await generateText({
         model: modelResult.data,
-        schema: workspaceIdentitySchema,
-        mode: "json",
+        output: Output.object({ schema: workspaceIdentitySchema }),
         prompt: `Generate a workspace name and title for this development task:
 
 "${message}"
@@ -101,12 +100,12 @@ Requirements:
       });
 
       const suffix = generateNameSuffix();
-      const sanitizedName = sanitizeBranchName(result.object.name, 20);
+      const sanitizedName = sanitizeBranchName(result.output.name, 20);
       const nameWithSuffix = `${sanitizedName}-${suffix}`;
 
       return Ok({
         name: nameWithSuffix,
-        title: result.object.title.trim(),
+        title: result.output.title.trim(),
         modelUsed: modelString,
       });
     } catch (error) {

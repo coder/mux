@@ -38,14 +38,14 @@ export const ModelSettings: React.FC<ModelSettingsProps> = (props) => {
     </div>
   );
 
-  // 1M context is only available for specific Anthropic models (Sonnet 4/4.5)
+  // 1M context is only available for specific Anthropic models (Sonnet 4/4.5, Opus 4.6)
   if (supports1MContext(props.model)) {
     return renderOption(
       "anthropic-1m",
       "1M",
       options.anthropic?.use1MContext ?? false,
       (checked) => setAnthropicOptions({ ...options.anthropic, use1MContext: checked }),
-      "Enable 1M token context window (beta feature for Claude Sonnet 4/4.5)"
+      "Enable 1M token context window (beta feature for Claude Sonnet 4/4.5 and Opus 4.6)"
     );
   }
 

@@ -344,6 +344,52 @@ export const StreamError: AppStory = {
   ),
 };
 
+export const AnthropicOverloaded: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const workspaceId = "ws-anthropic-overloaded";
+        // Disable auto-retry to show deterministic "Retry" button instead of countdown timer
+        disableAutoRetryPreference(workspaceId);
+
+        return setupCustomChatStory({
+          workspaceId,
+          chatHandler: (callback: (event: WorkspaceChatMessage) => void) => {
+            setTimeout(() => {
+              callback(
+                createUserMessage("msg-1", "Why did my request fail?", {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 100000,
+                })
+              );
+              callback({ type: "caught-up" });
+
+              callback({
+                type: "stream-start",
+                workspaceId,
+                messageId: "assistant-1",
+                model: "anthropic:claude-3-5-sonnet-20241022",
+                historySequence: 2,
+                startTime: STABLE_TIMESTAMP - 90000,
+                mode: "exec",
+              });
+
+              callback({
+                type: "stream-error",
+                messageId: "assistant-1",
+                error: "Anthropic is temporarily overloaded (HTTP 529). Please try again later.",
+                errorType: "server_error",
+              });
+            }, 50);
+            // eslint-disable-next-line @typescript-eslint/no-empty-function
+            return () => {};
+          },
+        });
+      }}
+    />
+  ),
+};
+
 /** Chat with truncated/hidden history indicator */
 export const HiddenHistory: AppStory = {
   render: () => (

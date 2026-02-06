@@ -11,7 +11,7 @@ import {
 } from "@/browser/components/ui/select";
 import { useAPI } from "@/browser/contexts/API";
 import { getSuggestedModels, useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
-import { useGateway } from "@/browser/hooks/useGatewayModels";
+import { migrateGatewayModel, useGateway } from "@/browser/hooks/useGatewayModels";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
@@ -78,6 +78,22 @@ export function ModelsSection() {
     PREFERRED_COMPACTION_MODEL_KEY,
     "",
     { listener: true }
+  );
+
+  const setCompactionModelAndPersist = useCallback(
+    (value: string) => {
+      const canonical = migrateGatewayModel(value).trim();
+      setCompactionModel(canonical);
+
+      if (!api?.config?.updateModelPreferences) {
+        return;
+      }
+
+      api.config.updateModelPreferences({ preferredCompactionModel: canonical }).catch(() => {
+        // Best-effort only.
+      });
+    },
+    [api, setCompactionModel]
   );
 
   // All models (including hidden) for the settings dropdowns.
@@ -261,7 +277,7 @@ export function ModelsSection() {
             <div className="min-w-0 flex-1">
               <SearchableModelSelect
                 value={compactionModel}
-                onChange={setCompactionModel}
+                onChange={setCompactionModelAndPersist}
                 models={selectableModels}
                 emptyOption={{ value: "", label: "Use workspace model" }}
               />

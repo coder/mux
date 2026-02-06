@@ -137,14 +137,31 @@ describeIntegration("Workspace Archive (UI)", () => {
           { timeout: 5_000 }
         );
 
-        // Find and click the archive button in sidebar
-        const archiveButton = await waitFor(
+        // Open the workspace actions menu (hamburger) and click archive
+        const menuButton = await waitFor(
           () => {
             const btn = view.container.querySelector(
-              `[aria-label="Archive chat ${displayTitle}"]`
+              `[aria-label="Workspace actions for ${displayTitle}"]`
             ) as HTMLElement;
-            if (!btn) throw new Error("Archive button not found");
+            if (!btn) throw new Error("Workspace actions menu button not found");
             return btn;
+          },
+          { timeout: 5_000 }
+        );
+        fireEvent.click(menuButton);
+
+        // Find and click the archive button inside the menu
+        const archiveButton = await waitFor(
+          () => {
+            // The archive button is inside a popover, search the whole document
+            const btn = document
+              .querySelector(`button:has(.flex > svg) span:has(svg)`)
+              ?.closest("button") as HTMLElement | null;
+            // Look for the button containing "Archive chat" text
+            const buttons = Array.from(document.querySelectorAll("button"));
+            const archiveBtn = buttons.find((b) => b.textContent?.includes("Archive chat"));
+            if (!archiveBtn) throw new Error("Archive button not found in menu");
+            return archiveBtn as HTMLElement;
           },
           { timeout: 5_000 }
         );
@@ -246,15 +263,27 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
         { timeout: 5_000 }
       );
 
-      // Now archive the second workspace via sidebar button (user action)
+      // Now archive the second workspace via sidebar menu (user action)
       // This should navigate us to project page AND the workspace should appear in archive list
-      const archiveButton = await waitFor(
+      const menuButton = await waitFor(
         () => {
           const btn = view.container.querySelector(
-            `[aria-label="Archive chat ${secondDisplayTitle}"]`
+            `[aria-label="Workspace actions for ${secondDisplayTitle}"]`
           ) as HTMLElement;
-          if (!btn) throw new Error("Archive button not found for second workspace");
+          if (!btn) throw new Error("Workspace actions menu button not found for second workspace");
           return btn;
+        },
+        { timeout: 5_000 }
+      );
+      fireEvent.click(menuButton);
+
+      // Find and click the archive button inside the menu
+      const archiveButton = await waitFor(
+        () => {
+          const buttons = Array.from(document.querySelectorAll("button"));
+          const archiveBtn = buttons.find((b) => b.textContent?.includes("Archive chat"));
+          if (!archiveBtn) throw new Error("Archive button not found in menu");
+          return archiveBtn as HTMLElement;
         },
         { timeout: 5_000 }
       );

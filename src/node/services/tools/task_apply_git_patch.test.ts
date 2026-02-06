@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { execSync } from "node:child_process";
 
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import {
@@ -15,7 +15,7 @@ import {
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getTestDeps } from "@/node/services/tools/testHelpers";
 
-const mockToolCallOptions: ToolCallOptions = {
+const mockToolCallOptions: ToolExecutionOptions = {
   toolCallId: "test-call-id",
   messages: [],
 };
@@ -120,6 +120,114 @@ describe("task_apply_git_patch tool", () => {
 
     const artifact = await readSubagentGitPatchArtifact(sessionDir, childTaskId);
     expect(artifact?.appliedAtMs ?? 0).toBeGreaterThan(0);
+  }, 20_000);
+
+  it("replays patch artifacts from an ancestor session dir without mutating metadata", async () => {
+    initGitRepo(childRepo);
+    initGitRepo(targetRepo);
+
+    // Both repos start from the same base content so the patch applies cleanly.
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    await commitFile(childRepo, "README.md", "hello\nworld", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const childTaskId = "child-task-1";
+
+    const ancestorWorkspaceId = "ancestor-workspace";
+    const currentWorkspaceId = "current-workspace";
+
+    const muxSessionsDir = path.join(rootDir, "sessions");
+    const ancestorSessionDir = path.join(muxSessionsDir, ancestorWorkspaceId);
+    const currentSessionDir = path.join(muxSessionsDir, currentWorkspaceId);
+
+    await fsPromises.mkdir(ancestorSessionDir, { recursive: true });
+    await fsPromises.mkdir(currentSessionDir, { recursive: true });
+
+    const patchPath = getSubagentGitPatchMboxPath(ancestorSessionDir, childTaskId);
+    const patch = execSync(`git format-patch --stdout --binary ${baseSha}..${headSha}`, {
+      cwd: childRepo,
+      encoding: "buffer",
+    });
+
+    await fsPromises.mkdir(path.dirname(patchPath), { recursive: true });
+    await fsPromises.writeFile(patchPath, patch);
+
+    const appliedAtMs = Date.now();
+
+    await upsertSubagentGitPatchArtifact({
+      workspaceId: ancestorWorkspaceId,
+      workspaceSessionDir: ancestorSessionDir,
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId: ancestorWorkspaceId,
+        createdAtMs: Date.now(),
+        status: "ready",
+        baseCommitSha: baseSha,
+        headCommitSha: headSha,
+        commitCount: 1,
+        mboxPath: patchPath,
+        appliedAtMs,
+      }),
+    });
+
+    // Minimal config.json to allow parentWorkspaceId traversal for ancestor lookup.
+    await fsPromises.writeFile(
+      path.join(rootDir, "config.json"),
+      JSON.stringify(
+        {
+          projects: [
+            [
+              "/tmp/test-project",
+              {
+                workspaces: [
+                  { path: "/tmp/ancestor", id: ancestorWorkspaceId, name: "ancestor" },
+                  {
+                    path: "/tmp/current",
+                    id: currentWorkspaceId,
+                    name: "current",
+                    parentWorkspaceId: ancestorWorkspaceId,
+                  },
+                ],
+              },
+            ],
+          ],
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      workspaceId: currentWorkspaceId,
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: currentSessionDir,
+    });
+
+    const result = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
+      success: boolean;
+      error?: string;
+    };
+
+    expect(result.success).toBe(true);
+    expect(execSync("git log -1 --pretty=%s", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      "child change"
+    );
+
+    // The replay path must never mutate the ancestor patch metadata.
+    const artifact = await readSubagentGitPatchArtifact(ancestorSessionDir, childTaskId);
+    expect(artifact?.appliedAtMs).toBe(appliedAtMs);
+
+    const replayArtifact = await readSubagentGitPatchArtifact(currentSessionDir, childTaskId);
+    expect(replayArtifact).toBeNull();
   }, 20_000);
 
   it("supports dry_run without changing the repo or marking applied", async () => {
@@ -239,13 +347,98 @@ describe("task_apply_git_patch tool", () => {
 
     const result = (await tool.execute!({ task_id: childTaskId }, mockToolCallOptions)) as {
       success: boolean;
+      dryRun?: boolean;
+      conflictPaths?: string[];
+      failedPatchSubject?: string;
       error?: string;
       note?: string;
     };
 
     expect(result.success).toBe(false);
+    expect(result.dryRun).toBe(false);
+    expect(result.failedPatchSubject).toBe("child change");
+    expect(result.conflictPaths ?? []).toContain("README.md");
     expect(result.error).toBeTruthy();
     expect(result.note).toContain("git am --continue");
+
+    const artifact = await readSubagentGitPatchArtifact(sessionDir, childTaskId);
+    expect(artifact?.appliedAtMs).toBeUndefined();
+  }, 20_000);
+
+  it("returns structured conflict diagnostics on dry_run failure", async () => {
+    initGitRepo(childRepo);
+    initGitRepo(targetRepo);
+
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    await commitFile(childRepo, "README.md", "hello world", "child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    // Create a conflicting change in the target repo.
+    await commitFile(targetRepo, "README.md", "hello there", "target change");
+
+    const childTaskId = "child-task-1";
+    const workspaceId = getTestDeps().workspaceId;
+
+    const patchPath = getSubagentGitPatchMboxPath(sessionDir, childTaskId);
+    const patch = execSync(`git format-patch --stdout --binary ${baseSha}..${headSha}`, {
+      cwd: childRepo,
+      encoding: "buffer",
+    });
+
+    await fsPromises.mkdir(path.dirname(patchPath), { recursive: true });
+    await fsPromises.writeFile(patchPath, patch);
+
+    await upsertSubagentGitPatchArtifact({
+      workspaceId,
+      workspaceSessionDir: sessionDir,
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId: workspaceId,
+        createdAtMs: Date.now(),
+        status: "ready",
+        baseCommitSha: baseSha,
+        headCommitSha: headSha,
+        commitCount: 1,
+        mboxPath: patchPath,
+      }),
+    });
+
+    const tool = createTaskApplyGitPatchTool({
+      ...getTestDeps(),
+      cwd: targetRepo,
+      runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+      runtimeTempDir: "/tmp",
+      workspaceSessionDir: sessionDir,
+    });
+
+    const result = (await tool.execute!(
+      { task_id: childTaskId, dry_run: true },
+      mockToolCallOptions
+    )) as {
+      success: boolean;
+      dryRun?: boolean;
+      conflictPaths?: string[];
+      failedPatchSubject?: string;
+      error?: string;
+      note?: string;
+    };
+
+    expect(result.success).toBe(false);
+    expect(result.dryRun).toBe(true);
+    expect(result.failedPatchSubject).toBe("child change");
+    expect(result.conflictPaths ?? []).toContain("README.md");
+    expect(result.error).toBeTruthy();
+    expect(result.note).toContain("Dry run failed");
+
+    // Dry run should not affect the original worktree.
+    expect(execSync("git log -1 --pretty=%s", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      "target change"
+    );
 
     const artifact = await readSubagentGitPatchArtifact(sessionDir, childTaskId);
     expect(artifact?.appliedAtMs).toBeUndefined();

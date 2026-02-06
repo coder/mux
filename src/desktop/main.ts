@@ -358,11 +358,25 @@ function getTrayIconPath(): string {
 
 function loadTrayIconImage() {
   const iconPath = getTrayIconPath();
+  const icon2xPath = iconPath.replace(/\.png$/, "@2x.png");
+
+  // Try to create an image with both 1x and 2x representations for Retina support.
+  // Electron's nativeImage.createFromPath handles @2x naming conventions on macOS
+  // but only if both files exist. Fall back to single-resolution if 2x is missing.
   const image = nativeImage.createFromPath(iconPath);
 
   if (image.isEmpty()) {
     console.warn(`[${timestamp()}] [tray] Tray icon missing or unreadable: ${iconPath}`);
     return null;
+  }
+
+  // Add @2x representation if available (for Retina displays)
+  const image2x = nativeImage.createFromPath(icon2xPath);
+  if (!image2x.isEmpty()) {
+    image.addRepresentation({
+      scaleFactor: 2,
+      buffer: image2x.toPNG(),
+    });
   }
 
   if (process.platform === "darwin") {

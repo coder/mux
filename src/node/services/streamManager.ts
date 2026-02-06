@@ -155,6 +155,12 @@ interface WorkspaceStreamInfo {
   messageId: string;
   token: StreamToken;
   startTime: number;
+
+  // Used to ensure part timestamps are strictly monotonic, even when multiple deltas land in the
+  // same millisecond. This avoids collisions in reconnect replay dedupe logic which keys off of
+  // (messageId, timestamp, delta).
+  lastPartTimestamp: number;
+
   model: string;
   initialMetadata?: Partial<MuxMetadata>;
   request: StreamRequestConfig;
@@ -192,6 +198,18 @@ interface WorkspaceStreamInfo {
   lastStepUsage?: LanguageModelV2Usage;
   // Last step's provider metadata (for context window cache display)
   lastStepProviderMetadata?: Record<string, unknown>;
+}
+
+// Ensure per-stream part timestamps are strictly monotonic.
+//
+// Date.now() is millisecond-granularity, so two distinct chunks with identical text emitted in the
+// same millisecond can otherwise collide on (timestamp, delta) during reconnect replay buffering.
+function nextPartTimestamp(streamInfo: WorkspaceStreamInfo): number {
+  const now = Date.now();
+  const last = streamInfo.lastPartTimestamp;
+  const timestamp = now <= last ? last + 1 : now;
+  streamInfo.lastPartTimestamp = timestamp;
+  return timestamp;
 }
 
 /**
@@ -466,7 +484,7 @@ export class StreamManager extends EventEmitter {
   }> {
     // Helper: wrap promise with independent timeout + error handling
     // Each promise resolves independently - one failure doesn't mask others
-    const withTimeout = <T>(promise: Promise<T>): Promise<T | undefined> =>
+    const withTimeout = <T>(promise: PromiseLike<T>): Promise<T | undefined> =>
       Promise.race([
         promise,
         new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), timeoutMs)),
@@ -654,10 +672,19 @@ export class StreamManager extends EventEmitter {
     part: CompletedMessagePart,
     schedulePartialWrite = false
   ): Promise<void> {
-    streamInfo.parts.push(part);
-    await this.emitPartAsEvent(workspaceId, streamInfo.messageId, part);
-    if (schedulePartialWrite) {
-      void this.schedulePartialWrite(workspaceId, streamInfo);
+    // Emit BEFORE adding to streamInfo.parts.
+    //
+    // On reconnect, we call replayStream() which snapshots streamInfo.parts. If we push a part to
+    // streamInfo.parts and then await tokenization/emit, replay can include the "in-flight" part
+    // and then the live emit still happens, causing duplicate deltas in the renderer.
+    try {
+      await this.emitPartAsEvent(workspaceId, streamInfo.messageId, part);
+    } finally {
+      // Always persist the part in-memory (and to partial.json, if enabled), even if emit fails.
+      streamInfo.parts.push(part);
+      if (schedulePartialWrite) {
+        void this.schedulePartialWrite(workspaceId, streamInfo);
+      }
     }
   }
 
@@ -976,6 +1003,7 @@ export class StreamManager extends EventEmitter {
       throw error;
     }
 
+    const startTime = Date.now();
     const streamInfo: WorkspaceStreamInfo = {
       state: StreamState.STARTING,
       streamResult,
@@ -983,7 +1011,8 @@ export class StreamManager extends EventEmitter {
       abortController,
       messageId,
       token: streamToken,
-      startTime: Date.now(),
+      startTime,
+      lastPartTimestamp: startTime,
       model: modelString,
       initialMetadata,
       didRetryPreviousResponseIdAtStep: false,
@@ -1066,7 +1095,7 @@ export class StreamManager extends EventEmitter {
       toolCallId,
       toolName,
       result: output,
-      timestamp: Date.now(),
+      timestamp: nextPartTimestamp(streamInfo),
     } as ToolCallEndEvent);
   }
 
@@ -1305,7 +1334,7 @@ export class StreamManager extends EventEmitter {
                 const textPart = {
                   type: "text" as const,
                   text: deltaText,
-                  timestamp: Date.now(),
+                  timestamp: nextPartTimestamp(streamInfo),
                 };
                 await this.appendPartAndEmit(workspaceId, streamInfo, textPart, true);
                 break;
@@ -1338,7 +1367,7 @@ export class StreamManager extends EventEmitter {
                       messageId: streamInfo.messageId,
                       delta: "",
                       tokens: 0,
-                      timestamp: Date.now(),
+                      timestamp: nextPartTimestamp(streamInfo),
                       signature,
                     });
                     void this.schedulePartialWrite(workspaceId, streamInfo);
@@ -1351,7 +1380,7 @@ export class StreamManager extends EventEmitter {
                 const newPart = {
                   type: "reasoning" as const,
                   text: delta,
-                  timestamp: Date.now(),
+                  timestamp: nextPartTimestamp(streamInfo),
                   signature, // May be undefined, will be filled by subsequent signature delta
                   providerOptions: signature ? { anthropic: { signature } } : undefined,
                 };
@@ -1390,7 +1419,7 @@ export class StreamManager extends EventEmitter {
                   state: "input-available" as const,
                   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                   input: part.input,
-                  timestamp: Date.now(),
+                  timestamp: nextPartTimestamp(streamInfo),
                 };
 
                 // Emit using shared logic (ensures replay consistency)
@@ -1765,6 +1794,42 @@ export class StreamManager extends EventEmitter {
       // Extract model name from model string (e.g., "anthropic:sonnet-1m" -> "sonnet-1m")
       const [, modelName] = streamInfo.model.split(":");
       errorMessage = `Model '${modelName || streamInfo.model}' does not exist or is not available. Please check your model selection.`;
+    }
+
+    // Normalize Anthropic overload errors (HTTP 529 / overloaded_error) into a stable,
+    // user-friendly message. Keep errorType = server_error so the frontend's auto-retry
+    // behavior remains unchanged.
+    const canonicalModel = normalizeGatewayModel(streamInfo.model);
+    const isAnthropic = canonicalModel.startsWith("anthropic:");
+
+    const hasErrorProperty = (data: unknown): data is { error: { type?: string } } => {
+      return (
+        typeof data === "object" &&
+        data !== null &&
+        "error" in data &&
+        typeof data.error === "object" &&
+        data.error !== null
+      );
+    };
+
+    const isOverloadedApiCallError = (apiError: APICallError): boolean => {
+      return (
+        apiError.statusCode === 529 ||
+        (hasErrorProperty(apiError.data) && apiError.data.error.type === "overloaded_error")
+      );
+    };
+
+    const isAnthropicOverloaded =
+      isAnthropic &&
+      ((APICallError.isInstance(actualError) && isOverloadedApiCallError(actualError)) ||
+        (RetryError.isInstance(actualError) &&
+          actualError.lastError &&
+          APICallError.isInstance(actualError.lastError) &&
+          isOverloadedApiCallError(actualError.lastError)));
+
+    if (isAnthropicOverloaded) {
+      errorMessage = "Anthropic is temporarily overloaded (HTTP 529). Please try again later.";
+      errorType = "server_error";
     }
 
     const muxGatewayUnauthorized =

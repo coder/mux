@@ -1333,7 +1333,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         low: "Low — adds light reasoning",
         medium: "Medium — balanced reasoning",
         high: "High — maximum reasoning depth",
-        xhigh: "Extra High — extended deep thinking",
+        xhigh: "Max — highest reasoning depth",
+        max: "Max — deepest possible reasoning",
       };
 
       pushToast({

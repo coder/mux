@@ -12,6 +12,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
   ANTHROPIC_EFFORT,
+  ANTHROPIC_EFFORT_MAX,
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   OPENAI_REASONING_EFFORT,
@@ -91,44 +92,42 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (provider === "anthropic") {
-    // Check if this is Opus 4.5 (supports effort parameter)
-    // Opus 4.5 uses the new "effort" parameter for reasoning control
-    // All other Anthropic models use the "thinking" parameter with budgetTokens
+    // Opus 4.5+ use the effort parameter for reasoning control.
+    // Opus 4.6 uses adaptive thinking (model decides when/how much to think).
+    // Opus 4.5 uses enabled thinking with a budgetTokens ceiling.
     const isOpus45 = modelName?.includes("opus-4-5") ?? false;
+    const isOpus46 = modelName?.includes("opus-4-6") ?? false;
 
-    if (isOpus45) {
-      // Opus 4.5: Use effort parameter AND optionally thinking for visible reasoning
-      // - "off" or "low" → effort: "low", no thinking (fast, no visible reasoning for off)
-      // - "low" → effort: "low", thinking enabled (visible reasoning)
-      // - "medium" → effort: "medium", thinking enabled
-      // - "high" → effort: "high", thinking enabled
-      const effortLevel = ANTHROPIC_EFFORT[effectiveThinking];
+    if (isOpus45 || isOpus46) {
+      // Opus 4.6 supports "max" effort (via ANTHROPIC_EFFORT_MAX), Opus 4.5 caps at "high"
+      const effortLevel = isOpus46
+        ? ANTHROPIC_EFFORT_MAX[effectiveThinking]
+        : ANTHROPIC_EFFORT[effectiveThinking];
       const budgetTokens = ANTHROPIC_THINKING_BUDGETS[effectiveThinking];
-      log.debug("buildProviderOptions: Anthropic Opus 4.5 config", {
+      // Opus 4.6: adaptive thinking when on, disabled when off
+      // Opus 4.5: enabled thinking with budgetTokens ceiling (only when not "off")
+      const thinking: AnthropicProviderOptions["thinking"] = isOpus46
+        ? effectiveThinking === "off"
+          ? { type: "disabled" }
+          : { type: "adaptive" }
+        : budgetTokens > 0
+          ? { type: "enabled", budgetTokens }
+          : undefined;
+
+      log.debug("buildProviderOptions: Anthropic effort model config", {
         effort: effortLevel,
-        budgetTokens,
+        thinking,
         thinkingLevel: effectiveThinking,
       });
 
-      const options: ProviderOptions = {
+      return {
         anthropic: {
-          disableParallelToolUse: false, // Always enable concurrent tool execution
-          sendReasoning: true, // Include reasoning traces in requests sent to the model
-          // Enable thinking to get visible reasoning traces (only when not "off")
-          // budgetTokens sets the ceiling; effort controls how eagerly tokens are spent
-          ...(budgetTokens > 0 && {
-            thinking: {
-              type: "enabled",
-              budgetTokens,
-            },
-          }),
-          // Use effort parameter (Opus 4.5 only) to control token spend
-          // SDK auto-adds beta header "effort-2025-11-24" when effort is set
+          disableParallelToolUse: false,
+          sendReasoning: true,
+          ...(thinking && { thinking }),
           effort: effortLevel,
         },
       };
-      log.debug("buildProviderOptions: Returning Anthropic Opus 4.5 options", options);
-      return options;
     }
 
     // Other Anthropic models: Use thinking parameter with budgetTokens
@@ -270,11 +269,17 @@ export function buildProviderOptions(
         if (isFlash) {
           // Flash supports: minimal (maps to off), low, medium, high
           // When off, we don't set thinkingConfig at all (API defaults to minimal)
-          thinkingConfig.thinkingLevel = effectiveThinking === "xhigh" ? "high" : effectiveThinking;
-        } else {
-          // Pro only supports: low, high - map medium/xhigh to high
+          // "xhigh" and "max" map to "high" (Flash's maximum)
           thinkingConfig.thinkingLevel =
-            effectiveThinking === "medium" || effectiveThinking === "xhigh"
+            effectiveThinking === "xhigh" || effectiveThinking === "max"
+              ? "high"
+              : effectiveThinking;
+        } else {
+          // Pro only supports: low, high - map medium/xhigh/max to high
+          thinkingConfig.thinkingLevel =
+            effectiveThinking === "medium" ||
+            effectiveThinking === "xhigh" ||
+            effectiveThinking === "max"
               ? "high"
               : effectiveThinking;
         }

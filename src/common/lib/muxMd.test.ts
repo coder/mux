@@ -1,15 +1,125 @@
 import { describe, it, expect } from "bun:test";
 import {
+  MUX_MD_BASE_URL,
+  deleteFromMuxMd,
+  downloadFromMuxMd,
+  getMuxMdBaseUrl,
   isMuxMdUrl,
   parseMuxMdUrl,
   uploadToMuxMd,
-  downloadFromMuxMd,
-  deleteFromMuxMd,
 } from "./muxMd";
 
 const itIntegration = process.env.TEST_INTEGRATION === "1" ? it : it.skip;
 
 describe("muxMd", () => {
+  describe("getMuxMdBaseUrl", () => {
+    it("should default to the production mux.md origin", () => {
+      const originalOverride = process.env.MUX_MD_URL_OVERRIDE;
+
+      try {
+        delete process.env.MUX_MD_URL_OVERRIDE;
+        expect(getMuxMdBaseUrl()).toBe(MUX_MD_BASE_URL);
+      } finally {
+        if (originalOverride === undefined) {
+          delete process.env.MUX_MD_URL_OVERRIDE;
+        } else {
+          process.env.MUX_MD_URL_OVERRIDE = originalOverride;
+        }
+      }
+    });
+
+    it("should normalize and accept a MUX_MD_URL_OVERRIDE host", () => {
+      const originalOverride = process.env.MUX_MD_URL_OVERRIDE;
+      process.env.MUX_MD_URL_OVERRIDE = "https://mux-md-staging.test/some/path";
+
+      try {
+        expect(getMuxMdBaseUrl()).toBe("https://mux-md-staging.test");
+
+        // Override host should be allowed.
+        expect(isMuxMdUrl("https://mux-md-staging.test/abc123#key456")).toBe(true);
+
+        // Production links should still be recognized while an override is set.
+        expect(isMuxMdUrl("https://mux.md/abc123#key456")).toBe(true);
+
+        expect(isMuxMdUrl("https://not-mux-md.test/abc123#key456")).toBe(false);
+      } finally {
+        if (originalOverride === undefined) {
+          delete process.env.MUX_MD_URL_OVERRIDE;
+        } else {
+          process.env.MUX_MD_URL_OVERRIDE = originalOverride;
+        }
+      }
+    });
+
+    it("should prefer window.api.muxMdUrlOverride over process.env", () => {
+      const originalOverride = process.env.MUX_MD_URL_OVERRIDE;
+      const globalWithWindow = globalThis as unknown as {
+        window?: {
+          api?: {
+            muxMdUrlOverride?: string;
+          };
+        };
+      };
+      const originalWindow = globalWithWindow.window;
+
+      process.env.MUX_MD_URL_OVERRIDE = "https://mux-md-staging.test";
+      globalWithWindow.window = {
+        api: {
+          muxMdUrlOverride: "http://localhost:8787/foo",
+        },
+      };
+
+      try {
+        expect(getMuxMdBaseUrl()).toBe("http://localhost:8787");
+      } finally {
+        if (originalOverride === undefined) {
+          delete process.env.MUX_MD_URL_OVERRIDE;
+        } else {
+          process.env.MUX_MD_URL_OVERRIDE = originalOverride;
+        }
+
+        if (originalWindow === undefined) {
+          delete globalWithWindow.window;
+        } else {
+          globalWithWindow.window = originalWindow;
+        }
+      }
+    });
+
+    it("should use globalThis.__MUX_MD_URL_OVERRIDE__ in browser mode without preload", () => {
+      const originalOverride = process.env.MUX_MD_URL_OVERRIDE;
+      const originalDefineOverride = globalThis.__MUX_MD_URL_OVERRIDE__;
+      const globalWithWindow = globalThis as unknown as {
+        window?: Record<string, unknown>;
+      };
+      const originalWindow = globalWithWindow.window;
+
+      // When running `make dev-server`, the renderer runs in a normal browser where `window.api`
+      // is not available, so we rely on the Vite-injected define.
+      process.env.MUX_MD_URL_OVERRIDE = "https://should-not-be-used.test";
+      globalThis.__MUX_MD_URL_OVERRIDE__ = "https://mux-md-staging.test/some/path";
+      globalWithWindow.window = {};
+
+      try {
+        expect(getMuxMdBaseUrl()).toBe("https://mux-md-staging.test");
+      } finally {
+        if (originalOverride === undefined) {
+          delete process.env.MUX_MD_URL_OVERRIDE;
+        } else {
+          process.env.MUX_MD_URL_OVERRIDE = originalOverride;
+        }
+
+        globalThis.__MUX_MD_URL_OVERRIDE__ = originalDefineOverride;
+
+        if (originalWindow === undefined) {
+          delete globalWithWindow.window;
+        } else {
+          globalWithWindow.window = originalWindow;
+        }
+      }
+    });
+  });
+
   describe("isMuxMdUrl", () => {
     it("should detect valid mux.md URLs", () => {
       expect(isMuxMdUrl("https://mux.md/abc123#key456")).toBe(true);
@@ -56,7 +166,7 @@ describe("muxMd", () => {
       expiresAt: new Date(Date.now() + 60000), // Expire in 1 minute
     });
 
-    expect(uploadResult.url).toContain("https://mux.md/");
+    expect(uploadResult.url).toContain(`${getMuxMdBaseUrl()}/`);
     expect(uploadResult.url).toContain("#");
     expect(uploadResult.id).toBeTruthy();
     expect(uploadResult.key).toBeTruthy();

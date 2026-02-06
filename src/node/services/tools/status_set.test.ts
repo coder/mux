@@ -2,7 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { createStatusSetTool } from "./status_set";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import type { ToolCallOptions } from "ai";
+import type { ToolExecutionOptions } from "ai";
 import { STATUS_MESSAGE_MAX_LENGTH } from "@/common/constants/toolLimits";
 
 describe("status_set tool validation", () => {
@@ -13,7 +13,7 @@ describe("status_set tool validation", () => {
     workspaceId: "test-workspace",
   };
 
-  const mockToolCallOptions: ToolCallOptions = {
+  const mockToolCallOptions: ToolExecutionOptions = {
     toolCallId: "test-call-id",
     messages: [],
   };

@@ -5,12 +5,14 @@
  * different AI providers (Anthropic, OpenAI, etc.)
  */
 
-export const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh"] as const;
+export const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**
- * User-facing display labels for thinking levels
- * Used in UI and CLI help text for cleaner presentation
+ * User-facing display labels for thinking levels.
+ * Used in CLI help text and contexts without model info.
+ * For UI with model context, prefer getThinkingDisplayLabel() which shows
+ * "MAX" instead of "XHIGH" for models that use the max effort level.
  */
 export const THINKING_DISPLAY_LABELS: Record<ThinkingLevel, string> = {
   off: "OFF",
@@ -18,7 +20,20 @@ export const THINKING_DISPLAY_LABELS: Record<ThinkingLevel, string> = {
   medium: "MED",
   high: "HIGH",
   xhigh: "XHIGH",
+  max: "MAX",
 };
+
+/**
+ * Model-aware display label for thinking levels.
+ * Opus 4.6 maps xhigh to "max" effort, so show "MAX" instead of "XHIGH".
+ * Falls back to the static THINKING_DISPLAY_LABELS for all other cases.
+ */
+export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: string): string {
+  if (level === "xhigh" && modelString?.toLowerCase().includes("opus-4-6")) {
+    return "MAX";
+  }
+  return THINKING_DISPLAY_LABELS[level];
+}
 
 /**
  * Reverse mapping from display labels to internal values
@@ -31,9 +46,9 @@ const DISPLAY_LABEL_TO_LEVEL: Record<string, ThinkingLevel> = {
   med: "medium",
   high: "high",
   xhigh: "xhigh",
+  max: "max",
   // Legacy values for backward compatibility
   medium: "medium",
-  max: "xhigh",
 };
 
 /**
@@ -77,24 +92,45 @@ export const ANTHROPIC_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   medium: 10000,
   high: 20000,
   xhigh: 20000, // Same as high - Anthropic doesn't support xhigh
+  max: 20000, // Same as high - budget ceiling; effort: "max" controls depth
 };
 
 /**
- * Anthropic Opus 4.5 effort parameter mapping
- *
- * The effort parameter is a new feature ONLY available for Claude Opus 4.5.
- * It controls how much computational work the model applies to each task.
- *
- * Other Anthropic models must use the thinking.budgetTokens approach instead.
- *
- * @see https://www.anthropic.com/news/claude-opus-4-5
+ * Anthropic effort type - matches SDK's AnthropicProviderOptions["effort"]
  */
-export const ANTHROPIC_EFFORT: Record<ThinkingLevel, "low" | "medium" | "high"> = {
+export type AnthropicEffortLevel = "low" | "medium" | "high" | "max";
+
+/**
+ * Anthropic effort parameter mapping (Opus 4.5+)
+ *
+ * The effort parameter controls how much computational work the model applies.
+ * Available on Opus 4.5 and Opus 4.6.
+ *
+ * - Opus 4.5 supports: low, medium, high
+ * - Opus 4.6 supports: low, medium, high, max
+ *
+ * This base mapping uses "high" as the ceiling for xhigh. The providerOptions
+ * builder upgrades to "max" specifically for Opus 4.6.
+ */
+export const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {
   off: "low",
   low: "low",
   medium: "medium",
   high: "high",
-  xhigh: "high", // Fallback to high - Anthropic doesn't support xhigh
+  xhigh: "high", // Opus 4.6 overrides this to "max" in providerOptions.ts
+  max: "max", // Claude Opus 4.6 only; policy.ts gates access per model
+};
+
+/**
+ * Anthropic effort mapping specifically for Opus 4.6+ that supports "max" effort
+ */
+export const ANTHROPIC_EFFORT_MAX: Record<ThinkingLevel, AnthropicEffortLevel> = {
+  off: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "max",
+  max: "max",
 };
 
 /**
@@ -115,6 +151,7 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
   medium: "medium",
   high: "high",
   xhigh: "xhigh", // Extra High - supported by models that expose xhigh (e.g., gpt-5.1-codex-max, gpt-5.2)
+  max: "xhigh", // Map to OpenAI's highest reasoning effort
 };
 
 /**
@@ -133,6 +170,7 @@ export const GEMINI_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   medium: 8192,
   high: 16384, // Conservative max (some models go to 32k)
   xhigh: 16384, // Same as high - Gemini doesn't support xhigh
+  max: 16384, // Same as high - Gemini doesn't support max
 } as const;
 export const OPENROUTER_REASONING_EFFORT: Record<
   ThinkingLevel,
@@ -143,4 +181,5 @@ export const OPENROUTER_REASONING_EFFORT: Record<
   medium: "medium",
   high: "high",
   xhigh: "high", // Fallback to high - OpenRouter doesn't support xhigh
+  max: "high", // Fallback to high - OpenRouter doesn't support max
 };

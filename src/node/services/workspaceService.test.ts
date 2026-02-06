@@ -1,22 +1,23 @@
-import { describe, expect, test, mock, beforeEach, spyOn } from "bun:test";
+import { describe, expect, test, mock, beforeEach } from "bun:test";
 import { WorkspaceService } from "./workspaceService";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
-import * as runtimeFactory from "@/node/runtime/runtimeFactory";
 import { EventEmitter } from "events";
 import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { Err, Ok } from "@/common/types/result";
+import { Err, Ok, type Result } from "@/common/types/result";
 import type { ProjectsConfig } from "@/common/types/project";
 import type { Config } from "@/node/config";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import type { SessionTimingService } from "./sessionTimingService";
 import type { AIService } from "./aiService";
-import type { InitStateManager, InitStatus } from "./initStateManager";
+import type { InitStateManager } from "./initStateManager";
 import type { ExtensionMetadataService } from "./ExtensionMetadataService";
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessManager } from "./backgroundProcessManager";
+import type { BashToolResult } from "@/common/types/tools";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 
 // Helper to access private renamingWorkspaces set
 function addToRenamingWorkspaces(service: WorkspaceService, workspaceId: string): void {
@@ -92,10 +93,7 @@ describe("WorkspaceService rename lock", () => {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
-    const mockInitStateManager: Partial<InitStateManager> = {
-      // WorkspaceService subscribes to init-end events on construction.
-      on: mock(() => undefined as unknown as InitStateManager),
-    };
+    const mockInitStateManager: Partial<InitStateManager> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -208,8 +206,6 @@ describe("WorkspaceService executeBash archive guards", () => {
     };
 
     const mockInitStateManager: Partial<InitStateManager> = {
-      // WorkspaceService subscribes to init-end events on construction.
-      on: mock(() => undefined as unknown as InitStateManager),
       waitForInit: waitForInitMock,
     };
 
@@ -304,10 +300,7 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
-    const mockInitStateManager: Partial<InitStateManager> = {
-      // WorkspaceService subscribes to init-end events on construction.
-      on: mock(() => undefined as unknown as InitStateManager),
-    };
+    const mockInitStateManager: Partial<InitStateManager> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -448,10 +441,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       commitToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
-    const mockInitStateManager: Partial<InitStateManager> = {
-      // WorkspaceService subscribes to init-end events on construction.
-      on: mock(() => undefined as unknown as InitStateManager),
-    };
+    const mockInitStateManager: Partial<InitStateManager> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -575,8 +565,6 @@ describe("WorkspaceService remove timing rollup", () => {
       const mockHistoryService: Partial<HistoryService> = {};
       const mockPartialService: Partial<PartialService> = {};
       const mockInitStateManager: Partial<InitStateManager> = {
-        // WorkspaceService subscribes to init-end events on construction.
-        on: mock(() => undefined as unknown as InitStateManager),
         clearInMemoryState: mock(() => undefined),
       };
       const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {
@@ -695,20 +683,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
 
     const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
-    const mockInitStateManager: Partial<InitStateManager> = {
-      // WorkspaceService subscribes to init-end events on construction.
-      on: mock(() => undefined as unknown as InitStateManager),
-      getInitState: mock(
-        (): InitStatus => ({
-          status: "success",
-          hookPath: projectPath,
-          startTime: 0,
-          lines: [],
-          exitCode: 0,
-          endTime: 0,
-        })
-      ),
-    };
+    const mockInitStateManager: Partial<InitStateManager> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -844,10 +819,7 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
 
     const mockHistoryService: Partial<HistoryService> = {};
     const mockPartialService: Partial<PartialService> = {};
-    const mockInitStateManager: Partial<InitStateManager> = {
-      // WorkspaceService subscribes to init-end events on construction.
-      on: mock(() => undefined as unknown as InitStateManager),
-    };
+    const mockInitStateManager: Partial<InitStateManager> = {};
     const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
     const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
       cleanup: mock(() => Promise.resolve()),
@@ -911,6 +883,345 @@ describe("WorkspaceService unarchive lifecycle hooks", () => {
 
     expect(result.success).toBe(true);
     expect(afterHook).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe("WorkspaceService archiveMergedInProject", () => {
+  const TARGET_PROJECT_PATH = "/tmp/project";
+
+  function createMetadata(
+    id: string,
+    options?: { projectPath?: string; archivedAt?: string; unarchivedAt?: string }
+  ): FrontendWorkspaceMetadata {
+    const projectPath = options?.projectPath ?? TARGET_PROJECT_PATH;
+
+    return {
+      id,
+      name: id,
+      projectName: "test-project",
+      projectPath,
+      runtimeConfig: { type: "local" },
+      namedWorkspacePath: path.join(projectPath, id),
+      archivedAt: options?.archivedAt,
+      unarchivedAt: options?.unarchivedAt,
+    };
+  }
+
+  function bashOk(output: string): Result<BashToolResult> {
+    return {
+      success: true,
+      data: {
+        success: true,
+        output,
+        exitCode: 0,
+        wall_duration_ms: 0,
+      },
+    };
+  }
+
+  function bashToolFailure(error: string): Result<BashToolResult> {
+    return {
+      success: true,
+      data: {
+        success: false,
+        error,
+        exitCode: 1,
+        wall_duration_ms: 0,
+      },
+    };
+  }
+
+  function executeBashFailure(error: string): Result<BashToolResult> {
+    return { success: false, error };
+  }
+
+  type ExecuteBashFn = (
+    workspaceId: string,
+    script: string,
+    options?: { timeout_secs?: number }
+  ) => Promise<Result<BashToolResult>>;
+
+  type ArchiveFn = (workspaceId: string) => Promise<Result<void>>;
+
+  function createServiceHarness(
+    allMetadata: FrontendWorkspaceMetadata[],
+    executeBashImpl: ExecuteBashFn,
+    archiveImpl: ArchiveFn
+  ): {
+    workspaceService: WorkspaceService;
+    executeBashMock: ReturnType<typeof mock>;
+    archiveMock: ReturnType<typeof mock>;
+  } {
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/test",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock(() => null),
+      getAllWorkspaceMetadata: mock(() => Promise.resolve(allMetadata)),
+    };
+
+    const aiService: AIService = {
+      on(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+      off(_eventName: string | symbol, _listener: (...args: unknown[]) => void) {
+        return this;
+      },
+    } as unknown as AIService;
+
+    const mockHistoryService: Partial<HistoryService> = {};
+    const mockPartialService: Partial<PartialService> = {};
+    const mockInitStateManager: Partial<InitStateManager> = {};
+    const mockExtensionMetadataService: Partial<ExtensionMetadataService> = {};
+    const mockBackgroundProcessManager: Partial<BackgroundProcessManager> = {
+      cleanup: mock(() => Promise.resolve()),
+    };
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      mockHistoryService as HistoryService,
+      mockPartialService as PartialService,
+      aiService,
+      mockInitStateManager as InitStateManager,
+      mockExtensionMetadataService as ExtensionMetadataService,
+      mockBackgroundProcessManager as BackgroundProcessManager
+    );
+
+    const executeBashMock = mock(executeBashImpl);
+    const archiveMock = mock(archiveImpl);
+
+    interface WorkspaceServiceTestAccess {
+      executeBash: typeof executeBashMock;
+      archive: typeof archiveMock;
+    }
+
+    const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
+    svc.executeBash = executeBashMock;
+    svc.archive = archiveMock;
+
+    return { workspaceService, executeBashMock, archiveMock };
+  }
+
+  test("excludes MUX_HELP_CHAT_WORKSPACE_ID workspaces", async () => {
+    const allMetadata: FrontendWorkspaceMetadata[] = [
+      createMetadata(MUX_HELP_CHAT_WORKSPACE_ID),
+      createMetadata("ws-merged"),
+    ];
+
+    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
+      "ws-merged": bashOk('{"state":"MERGED"}'),
+    };
+
+    const { workspaceService, executeBashMock, archiveMock } = createServiceHarness(
+      allMetadata,
+      (workspaceId) => {
+        const result = ghResultsByWorkspaceId[workspaceId];
+        if (!result) {
+          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
+        }
+        return Promise.resolve(result);
+      },
+      () => Promise.resolve({ success: true, data: undefined })
+    );
+
+    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.archivedWorkspaceIds).toEqual(["ws-merged"]);
+    expect(result.data.skippedWorkspaceIds).toEqual([]);
+    expect(result.data.errors).toEqual([]);
+
+    expect(archiveMock).toHaveBeenCalledTimes(1);
+    expect(archiveMock).toHaveBeenCalledWith("ws-merged");
+
+    // Should only query GitHub for the eligible non-mux-chat workspace.
+    expect(executeBashMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("treats workspaces with later unarchivedAt as eligible", async () => {
+    const allMetadata: FrontendWorkspaceMetadata[] = [
+      createMetadata("ws-merged-unarchived", {
+        archivedAt: "2025-01-01T00:00:00.000Z",
+        unarchivedAt: "2025-02-01T00:00:00.000Z",
+      }),
+      createMetadata("ws-still-archived", {
+        archivedAt: "2025-03-01T00:00:00.000Z",
+        unarchivedAt: "2025-02-01T00:00:00.000Z",
+      }),
+    ];
+
+    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
+      "ws-merged-unarchived": bashOk('{"state":"MERGED"}'),
+    };
+
+    const { workspaceService, executeBashMock, archiveMock } = createServiceHarness(
+      allMetadata,
+      (workspaceId) => {
+        const result = ghResultsByWorkspaceId[workspaceId];
+        if (!result) {
+          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
+        }
+        return Promise.resolve(result);
+      },
+      () => Promise.resolve({ success: true, data: undefined })
+    );
+
+    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.archivedWorkspaceIds).toEqual(["ws-merged-unarchived"]);
+    expect(result.data.skippedWorkspaceIds).toEqual([]);
+    expect(result.data.errors).toEqual([]);
+
+    expect(archiveMock).toHaveBeenCalledTimes(1);
+    expect(archiveMock).toHaveBeenCalledWith("ws-merged-unarchived");
+
+    // Should only query GitHub for the workspace that is considered unarchived.
+    expect(executeBashMock).toHaveBeenCalledTimes(1);
+  });
+  test("archives only MERGED workspaces", async () => {
+    const allMetadata: FrontendWorkspaceMetadata[] = [
+      createMetadata("ws-open"),
+      createMetadata("ws-merged"),
+      createMetadata("ws-no-pr"),
+      createMetadata("ws-other-project", { projectPath: "/tmp/other" }),
+      createMetadata("ws-already-archived", { archivedAt: "2025-01-01T00:00:00.000Z" }),
+    ];
+
+    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
+      "ws-open": bashOk('{"state":"OPEN"}'),
+      "ws-merged": bashOk('{"state":"MERGED"}'),
+      "ws-no-pr": bashOk('{"no_pr":true}'),
+    };
+
+    const { workspaceService, executeBashMock, archiveMock } = createServiceHarness(
+      allMetadata,
+      (workspaceId, script, options) => {
+        expect(script).toContain("gh pr view --json state");
+        expect(options?.timeout_secs).toBe(15);
+
+        const result = ghResultsByWorkspaceId[workspaceId];
+        if (!result) {
+          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
+        }
+        return Promise.resolve(result);
+      },
+      () => Promise.resolve({ success: true, data: undefined })
+    );
+
+    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.archivedWorkspaceIds).toEqual(["ws-merged"]);
+    expect(result.data.skippedWorkspaceIds).toEqual(["ws-no-pr", "ws-open"]);
+    expect(result.data.errors).toEqual([]);
+
+    expect(archiveMock).toHaveBeenCalledTimes(1);
+    expect(archiveMock).toHaveBeenCalledWith("ws-merged");
+
+    expect(executeBashMock).toHaveBeenCalledTimes(3);
+  });
+
+  test("skips no_pr and non-merged states", async () => {
+    const allMetadata: FrontendWorkspaceMetadata[] = [
+      createMetadata("ws-open"),
+      createMetadata("ws-closed"),
+      createMetadata("ws-no-pr"),
+    ];
+
+    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
+      "ws-open": bashOk('{"state":"OPEN"}'),
+      "ws-closed": bashOk('{"state":"CLOSED"}'),
+      "ws-no-pr": bashOk('{"no_pr":true}'),
+    };
+
+    const { workspaceService, archiveMock } = createServiceHarness(
+      allMetadata,
+      (workspaceId) => {
+        const result = ghResultsByWorkspaceId[workspaceId];
+        if (!result) {
+          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
+        }
+        return Promise.resolve(result);
+      },
+      () => Promise.resolve({ success: true, data: undefined })
+    );
+
+    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.archivedWorkspaceIds).toEqual([]);
+    expect(result.data.skippedWorkspaceIds).toEqual(["ws-closed", "ws-no-pr", "ws-open"]);
+    expect(result.data.errors).toEqual([]);
+
+    expect(archiveMock).toHaveBeenCalledTimes(0);
+  });
+
+  test("records errors for malformed JSON and executeBash failures", async () => {
+    const allMetadata: FrontendWorkspaceMetadata[] = [
+      createMetadata("ws-bad-json"),
+      createMetadata("ws-exec-failed"),
+      createMetadata("ws-bash-failed"),
+    ];
+
+    const ghResultsByWorkspaceId: Record<string, Result<BashToolResult>> = {
+      "ws-bad-json": bashOk("not-json"),
+      "ws-exec-failed": executeBashFailure("executeBash failed"),
+      "ws-bash-failed": bashToolFailure("gh failed"),
+    };
+
+    const { workspaceService, archiveMock } = createServiceHarness(
+      allMetadata,
+      (workspaceId) => {
+        const result = ghResultsByWorkspaceId[workspaceId];
+        if (!result) {
+          throw new Error(`Unexpected executeBash call for workspaceId: ${workspaceId}`);
+        }
+        return Promise.resolve(result);
+      },
+      () => Promise.resolve({ success: true, data: undefined })
+    );
+
+    const result = await workspaceService.archiveMergedInProject(TARGET_PROJECT_PATH);
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.data.archivedWorkspaceIds).toEqual([]);
+    expect(result.data.skippedWorkspaceIds).toEqual([]);
+    expect(result.data.errors).toHaveLength(3);
+
+    const badJsonError = result.data.errors.find((e) => e.workspaceId === "ws-bad-json");
+    expect(badJsonError).toBeDefined();
+    expect(badJsonError?.error).toContain("Failed to parse gh output");
+
+    const execFailedError = result.data.errors.find((e) => e.workspaceId === "ws-exec-failed");
+    expect(execFailedError).toBeDefined();
+    expect(execFailedError?.error).toBe("executeBash failed");
+
+    const bashFailedError = result.data.errors.find((e) => e.workspaceId === "ws-bash-failed");
+    expect(bashFailedError).toBeDefined();
+    expect(bashFailedError?.error).toBe("gh failed");
+
+    expect(archiveMock).toHaveBeenCalledTimes(0);
   });
 });
 

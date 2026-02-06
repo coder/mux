@@ -40,7 +40,6 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
     awaitingUserQuestion,
     currentModel,
     pendingStreamStartTime,
-    pendingCompactionModel,
     pendingStreamModel,
     runtimeStatus,
   } = workspaceState;
@@ -69,13 +68,11 @@ export const StreamingBarrier: React.FC<StreamingBarrierProps> = ({ workspaceId,
   if (!phase) return null;
 
   // Model to display:
-  // - "starting" phase with pending compaction: use the compaction model from the request
-  // - "starting" phase without compaction: read chat model from localStorage
+  // - "starting" phase: prefer pendingStreamModel (from muxMetadata), then localStorage
   // - Otherwise: use currentModel from active stream
   const model =
     phase === "starting"
-      ? (pendingCompactionModel ??
-        pendingStreamModel ??
+      ? (pendingStreamModel ??
         readPersistedState<string | null>(getModelKey(workspaceId), null) ??
         getDefaultModel())
       : currentModel;

@@ -67,8 +67,6 @@ export interface WorkspaceState {
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   lastAbortReason: StreamAbortReasonSnapshot | null;
   pendingStreamStartTime: number | null;
-  // Model override from pending compaction request (used during "starting" phase)
-  pendingCompactionModel: string | null;
   // Model used for the pending send (used during "starting" phase)
   pendingStreamModel: string | null;
   // Runtime status from ensureReady (for Coder workspace starting UX)
@@ -1035,7 +1033,6 @@ export class WorkspaceStore {
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime,
-        pendingCompactionModel: aggregator.getPendingCompactionModel(),
         pendingStreamModel: aggregator.getPendingStreamModel(),
         runtimeStatus: aggregator.getRuntimeStatus(),
         streamingTokenCount,

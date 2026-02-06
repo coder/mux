@@ -2,7 +2,7 @@ import React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   THINKING_LEVELS,
-  THINKING_DISPLAY_LABELS,
+  getThinkingDisplayLabel,
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import { useThinkingLevel } from "@/browser/hooks/useThinkingLevel";
@@ -14,7 +14,7 @@ import { cn } from "@/common/lib/utils";
 // Uses CSS variable --color-thinking-mode for theme compatibility
 const BASE_THINKING_LEVELS: ThinkingLevel[] = THINKING_LEVELS.filter((level) => level !== "xhigh");
 
-// Text styling based on level (n: 0-3)
+// Text styling based on level (n: 0-4, mapping off/low/medium/high/max)
 // Uses CSS variables for theme compatibility
 const getTextStyle = (n: number): React.CSSProperties => {
   if (n === 0) {
@@ -70,14 +70,14 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
     }
   };
 
-  const displayLabel = THINKING_DISPLAY_LABELS[effectiveThinkingLevel];
+  const displayLabel = getThinkingDisplayLabel(effectiveThinkingLevel, modelString);
 
   // Single-option policy: render non-interactive badge
   if (allowed.length <= 1) {
     const fixedLevel = allowed[0] || "off";
     const standardIndex = BASE_THINKING_LEVELS.indexOf(fixedLevel);
     const value = standardIndex === -1 ? 0 : standardIndex;
-    const tooltipMessage = `Model ${modelString} locks thinking at ${THINKING_DISPLAY_LABELS[fixedLevel]} to match its capabilities.`;
+    const tooltipMessage = `Model ${modelString} locks thinking at ${getThinkingDisplayLabel(fixedLevel, modelString)} to match its capabilities.`;
 
     return (
       <Tooltip>
@@ -88,7 +88,7 @@ export const ThinkingSliderComponent: React.FC<ThinkingControlProps> = ({ modelS
               style={getTextStyle(value)}
               aria-label={`Thinking level fixed to ${fixedLevel}`}
             >
-              {THINKING_DISPLAY_LABELS[fixedLevel]}
+              {getThinkingDisplayLabel(fixedLevel, modelString)}
             </span>
           </div>
         </TooltipTrigger>

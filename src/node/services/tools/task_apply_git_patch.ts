@@ -17,6 +17,7 @@ import {
   readSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
 import { log } from "@/node/services/log";
+import { Config } from "@/node/config";
 
 import { parseToolResult, requireWorkspaceId } from "./toolUtils";
 
@@ -156,6 +157,188 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
     return [];
   }
 
+  const MAX_PARENT_WORKSPACE_DEPTH = 32;
+
+  function inferMuxRootFromWorkspaceSessionDir(workspaceSessionDir: string): string | undefined {
+    assert(
+      workspaceSessionDir.length > 0,
+      "inferMuxRootFromWorkspaceSessionDir: workspaceSessionDir must be non-empty"
+    );
+
+    const sessionsDir = path.dirname(workspaceSessionDir);
+    if (path.basename(sessionsDir) !== "sessions") {
+      return undefined;
+    }
+
+    return path.dirname(sessionsDir);
+  }
+
+  function parseFailedPatchSubjectFromGitAmOutput(output: string): string | undefined {
+    const normalized = output.replace(/\r/g, "");
+
+    const patchFailedMatch = /^Patch failed at \d+ (.+)$/m.exec(normalized);
+    if (patchFailedMatch) {
+      const subject = patchFailedMatch[1].trim();
+      return subject.length > 0 ? subject : undefined;
+    }
+
+    const applyingMatches = Array.from(normalized.matchAll(/^Applying: (.+)$/gm));
+    const subject = applyingMatches.at(-1)?.[1]?.trim();
+    return subject && subject.length > 0 ? subject : undefined;
+  }
+
+  async function tryGetConflictPaths(params: { cwd: string }): Promise<string[]> {
+    assert(params.cwd.length > 0, "tryGetConflictPaths: cwd must be non-empty");
+
+    try {
+      const diffResult = await execBuffered(
+        config.runtime,
+        "git diff --name-only --diff-filter=U",
+        {
+          cwd: params.cwd,
+          timeout: 30,
+        }
+      );
+
+      if (diffResult.exitCode !== 0) {
+        log.debug("task_apply_git_patch: git diff --name-only --diff-filter=U failed", {
+          cwd: params.cwd,
+          exitCode: diffResult.exitCode,
+          stderr: diffResult.stderr.trim(),
+          stdout: diffResult.stdout.trim(),
+        });
+        return [];
+      }
+
+      const paths = diffResult.stdout
+        .split("\n")
+        .map((line) => line.replace(/\r$/, "").trim())
+        .filter((line) => line.length > 0);
+
+      return Array.from(new Set(paths));
+    } catch (error) {
+      log.debug("task_apply_git_patch: git diff --name-only --diff-filter=U threw", {
+        cwd: params.cwd,
+        error,
+      });
+      return [];
+    }
+  }
+
+  async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
+    workspaceId: string;
+    workspaceSessionDir: string;
+    childTaskId: string;
+  }): Promise<{
+    artifact: NonNullable<Awaited<ReturnType<typeof readSubagentGitPatchArtifact>>>;
+    artifactWorkspaceId: string;
+    artifactSessionDir: string;
+    note?: string;
+  } | null> {
+    assert(
+      params.workspaceId.length > 0,
+      "findGitPatchArtifactInWorkspaceOrAncestors: workspaceId must be non-empty"
+    );
+    assert(
+      params.workspaceSessionDir.length > 0,
+      "findGitPatchArtifactInWorkspaceOrAncestors: workspaceSessionDir must be non-empty"
+    );
+    assert(
+      params.childTaskId.length > 0,
+      "findGitPatchArtifactInWorkspaceOrAncestors: childTaskId must be non-empty"
+    );
+
+    const direct = await readSubagentGitPatchArtifact(
+      params.workspaceSessionDir,
+      params.childTaskId
+    );
+    if (direct) {
+      return {
+        artifact: direct,
+        artifactWorkspaceId: params.workspaceId,
+        artifactSessionDir: params.workspaceSessionDir,
+      };
+    }
+
+    const muxRootDir = inferMuxRootFromWorkspaceSessionDir(params.workspaceSessionDir);
+    if (!muxRootDir) {
+      log.debug(
+        "task_apply_git_patch: workspaceSessionDir not under sessions/; skipping ancestor lookup",
+        {
+          workspaceId: params.workspaceId,
+          workspaceSessionDir: params.workspaceSessionDir,
+          childTaskId: params.childTaskId,
+        }
+      );
+      return null;
+    }
+
+    const configService = new Config(muxRootDir);
+
+    let cfg: ReturnType<Config["loadConfigOrDefault"]>;
+    try {
+      cfg = configService.loadConfigOrDefault();
+    } catch (error) {
+      log.debug("task_apply_git_patch: failed to load mux config for ancestor lookup", {
+        workspaceId: params.workspaceId,
+        muxRootDir,
+        error,
+      });
+      return null;
+    }
+
+    const parentById = new Map<string, string | undefined>();
+    for (const project of cfg.projects.values()) {
+      for (const workspace of project.workspaces) {
+        if (!workspace.id) continue;
+        parentById.set(workspace.id, workspace.parentWorkspaceId);
+      }
+    }
+
+    const visited = new Set<string>();
+    visited.add(params.workspaceId);
+
+    let current = params.workspaceId;
+    for (let i = 0; i < MAX_PARENT_WORKSPACE_DEPTH; i++) {
+      const parent = parentById.get(current);
+      if (!parent) {
+        return null;
+      }
+
+      if (visited.has(parent)) {
+        log.warn("task_apply_git_patch: possible parentWorkspaceId cycle during ancestor lookup", {
+          workspaceId: params.workspaceId,
+          childTaskId: params.childTaskId,
+          current,
+          parent,
+        });
+        return null;
+      }
+
+      visited.add(parent);
+
+      const parentSessionDir = configService.getSessionDir(parent);
+      const artifact = await readSubagentGitPatchArtifact(parentSessionDir, params.childTaskId);
+      if (artifact) {
+        return {
+          artifact,
+          artifactWorkspaceId: parent,
+          artifactSessionDir: parentSessionDir,
+          note: `Patch artifact loaded from ancestor workspace ${parent}.`,
+        };
+      }
+
+      current = parent;
+    }
+
+    log.warn("task_apply_git_patch: exceeded parentWorkspaceId depth during ancestor lookup", {
+      workspaceId: params.workspaceId,
+      childTaskId: params.childTaskId,
+    });
+
+    return null;
+  }
+
   return tool({
     description: TOOL_DEFINITIONS.task_apply_git_patch.description,
     inputSchema: TOOL_DEFINITIONS.task_apply_git_patch.schema,
@@ -171,27 +354,43 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
       const threeWay = args.three_way !== false;
       const force = args.force === true;
 
-      const artifact = await readSubagentGitPatchArtifact(workspaceSessionDir, taskId);
-      if (!artifact) {
+      const artifactLookup = await findGitPatchArtifactInWorkspaceOrAncestors({
+        workspaceId,
+        workspaceSessionDir,
+        childTaskId: taskId,
+      });
+
+      if (!artifactLookup) {
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
             success: false as const,
             taskId,
+            dryRun,
             error: "No git patch artifact found for this taskId.",
           },
           "task_apply_git_patch"
         );
       }
 
-      if (artifact.parentWorkspaceId !== workspaceId) {
+      const artifact = artifactLookup.artifact;
+      const artifactWorkspaceId = artifactLookup.artifactWorkspaceId;
+      const artifactSessionDir = artifactLookup.artifactSessionDir;
+      const isReplay = artifactWorkspaceId !== workspaceId;
+      const artifactLookupNote = artifactLookup.note;
+
+      if (artifact.parentWorkspaceId !== artifactWorkspaceId) {
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
             success: false as const,
             taskId,
+            dryRun,
             error: "This patch artifact belongs to a different parent workspace.",
-            note: "Run task_apply_git_patch from the task's parent workspace.",
+            note: mergeNotes(
+              artifactLookupNote,
+              `Expected parent workspace ${artifactWorkspaceId} but artifact metadata says ${artifact.parentWorkspaceId}.`
+            ),
           },
           "task_apply_git_patch"
         );
@@ -233,7 +432,7 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         );
       }
 
-      if (artifact.appliedAtMs && !force && !dryRun) {
+      if (!isReplay && artifact.appliedAtMs && !force && !dryRun) {
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
@@ -246,10 +445,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         );
       }
 
-      const expectedPatchPath = getSubagentGitPatchMboxPath(workspaceSessionDir, taskId);
+      const expectedPatchPath = getSubagentGitPatchMboxPath(artifactSessionDir, taskId);
 
       // Defensive: `task_id` is user-controlled input; reject path traversal.
-      if (!isPathInsideDir(workspaceSessionDir, expectedPatchPath)) {
+      if (!isPathInsideDir(artifactSessionDir, expectedPatchPath)) {
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
@@ -264,15 +463,17 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
 
       const safeMboxPath =
         typeof artifact.mboxPath === "string" && artifact.mboxPath.length > 0
-          ? isPathInsideDir(workspaceSessionDir, artifact.mboxPath)
+          ? isPathInsideDir(artifactSessionDir, artifact.mboxPath)
             ? artifact.mboxPath
             : undefined
           : undefined;
 
-      let patchPathNote =
+      let patchPathNote = mergeNotes(
+        artifactLookupNote,
         artifact.mboxPath && !safeMboxPath
           ? "Ignoring unsafe mboxPath in patch artifact metadata; using canonical patch location."
-          : undefined;
+          : undefined
+      );
 
       const patchCandidates = [safeMboxPath, expectedPatchPath].filter(
         (candidate): candidate is string => typeof candidate === "string"
@@ -294,8 +495,8 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
       if (!patchPath) {
         const checkedPaths = Array.from(new Set(patchCandidates))
           .map((candidate) =>
-            isPathInsideDir(workspaceSessionDir, candidate)
-              ? path.relative(workspaceSessionDir, candidate) || path.basename(candidate)
+            isPathInsideDir(artifactSessionDir, candidate)
+              ? path.relative(artifactSessionDir, candidate) || path.basename(candidate)
               : candidate
           )
           .join(", ");
@@ -425,11 +626,18 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
               .filter((s) => s.length > 0)
               .join("\n")
               .trim();
+
+            const conflictPaths = await tryGetConflictPaths({ cwd: dryRunWorktreePath });
+            const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
+
             return parseToolResult(
               TaskApplyGitPatchToolResultSchema,
               {
                 success: false as const,
                 taskId,
+                dryRun: true,
+                conflictPaths,
+                failedPatchSubject,
                 error:
                   errorOutput.length > 0
                     ? errorOutput
@@ -554,11 +762,18 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
           .filter((s) => s.length > 0)
           .join("\n")
           .trim();
+
+        const conflictPaths = await tryGetConflictPaths({ cwd: config.cwd });
+        const failedPatchSubject = parseFailedPatchSubjectFromGitAmOutput(errorOutput);
+
         return parseToolResult(
           TaskApplyGitPatchToolResultSchema,
           {
             success: false as const,
             taskId,
+            dryRun: false,
+            conflictPaths,
+            failedPatchSubject,
             error:
               errorOutput.length > 0
                 ? errorOutput
@@ -581,10 +796,10 @@ export const createTaskApplyGitPatchTool: ToolFactory = (config: ToolConfigurati
         includeSha: true,
       });
 
-      if (!dryRun) {
+      if (!dryRun && !isReplay) {
         await markSubagentGitPatchArtifactApplied({
-          workspaceId,
-          workspaceSessionDir,
+          workspaceId: artifactWorkspaceId,
+          workspaceSessionDir: artifactSessionDir,
           childTaskId: taskId,
           appliedAtMs: Date.now(),
         });

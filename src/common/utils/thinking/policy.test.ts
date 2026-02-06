@@ -169,6 +169,31 @@ describe("getThinkingPolicyForModel", () => {
     ]);
   });
 
+  test("returns 5 levels including max for Opus 4.6", () => {
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-6")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    expect(getThinkingPolicyForModel("anthropic:claude-opus-4-6-20260201")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    // Behind gateway
+    expect(getThinkingPolicyForModel("mux-gateway:anthropic/claude-opus-4-6")).toEqual([
+      "off",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+  });
+
   test("returns low/high for Gemini 3 Pro", () => {
     expect(getThinkingPolicyForModel("google:gemini-3-pro-preview")).toEqual(["low", "high"]);
   });
@@ -268,6 +293,16 @@ describe("enforceThinkingPolicy", () => {
     });
   });
 
+  describe("Opus 4.6 (5 levels including max)", () => {
+    test("allows all 5 levels including max", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "off")).toBe("off");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "low")).toBe("low");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "medium")).toBe("medium");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "high")).toBe("high");
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "max")).toBe("max");
+    });
+  });
+
   describe("xhigh fallback for non-codex-max models", () => {
     test("clamps to highest allowed when xhigh requested on standard model", () => {
       // Standard models don't support xhigh, so clamp to the highest allowed level.
@@ -277,6 +312,28 @@ describe("enforceThinkingPolicy", () => {
     test("falls back to high when xhigh requested on gpt-5-pro", () => {
       // gpt-5-pro only supports high, so xhigh falls back to high
       expect(enforceThinkingPolicy("openai:gpt-5-pro", "xhigh")).toBe("high");
+    });
+  });
+
+  describe("max level enforcement", () => {
+    test("preserves max for Opus 4.6", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-6", "max")).toBe("max");
+    });
+
+    test("preserves max for gateway Opus 4.6", () => {
+      expect(enforceThinkingPolicy("mux-gateway:anthropic/claude-opus-4-6", "max")).toBe("max");
+    });
+
+    test("clamps max to high for Opus 4.5 (does not support max)", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-opus-4-5", "max")).toBe("high");
+    });
+
+    test("clamps max to xhigh for OpenAI models with xhigh support", () => {
+      expect(enforceThinkingPolicy("openai:gpt-5.2", "max")).toBe("xhigh");
+    });
+
+    test("clamps max to high for standard Anthropic models", () => {
+      expect(enforceThinkingPolicy("anthropic:claude-sonnet-4-5", "max")).toBe("high");
     });
   });
 });

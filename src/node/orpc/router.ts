@@ -18,6 +18,7 @@ import type {
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { createAuthMiddleware } from "./authMiddleware";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
+import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMessageRelay";
 
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
@@ -31,6 +32,7 @@ import {
   normalizeLayoutPresetsConfig,
 } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeSubagentAiDefaults,
@@ -499,6 +501,9 @@ export const router = (authToken?: string) => {
             taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
             muxGatewayEnabled: config.muxGatewayEnabled,
             muxGatewayModels: config.muxGatewayModels,
+            defaultModel: config.defaultModel,
+            hiddenModels: config.hiddenModels,
+            preferredCompactionModel: config.preferredCompactionModel,
             stopCoderWorkspaceOnArchive: config.stopCoderWorkspaceOnArchive !== false,
             agentAiDefaults: config.agentAiDefaults ?? {},
             // Legacy fields (downgrade compatibility)
@@ -547,6 +552,58 @@ export const router = (authToken?: string) => {
               muxGatewayEnabled: input.muxGatewayEnabled ? undefined : false,
               muxGatewayModels: nextModels.length > 0 ? nextModels : undefined,
             };
+          });
+        }),
+      updateModelPreferences: t
+        .input(schemas.config.updateModelPreferences.input)
+        .output(schemas.config.updateModelPreferences.output)
+        .handler(async ({ context, input }) => {
+          const normalizeModelString = (value: string): string | undefined => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+              return undefined;
+            }
+
+            // Reject malformed mux-gateway strings ("mux-gateway:provider" without "/model").
+            if (trimmed.startsWith("mux-gateway:") && !trimmed.includes("/")) {
+              return undefined;
+            }
+
+            const normalized = normalizeGatewayModel(trimmed);
+            if (!isValidModelFormat(normalized)) {
+              return undefined;
+            }
+
+            return normalized;
+          };
+
+          await context.config.editConfig((config) => {
+            const next = { ...config };
+
+            if (input.defaultModel !== undefined) {
+              next.defaultModel = normalizeModelString(input.defaultModel);
+            }
+
+            if (input.hiddenModels !== undefined) {
+              const seen = new Set<string>();
+              const normalizedHidden: string[] = [];
+
+              for (const modelString of input.hiddenModels) {
+                const normalized = normalizeModelString(modelString);
+                if (!normalized) continue;
+                if (seen.has(normalized)) continue;
+                seen.add(normalized);
+                normalizedHidden.push(normalized);
+              }
+
+              next.hiddenModels = normalizedHidden;
+            }
+
+            if (input.preferredCompactionModel !== undefined) {
+              next.preferredCompactionModel = normalizeModelString(input.preferredCompactionModel);
+            }
+
+            return next;
           });
         }),
       updateCoderPrefs: t
@@ -2215,6 +2272,12 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           return context.workspaceService.unarchive(input.workspaceId);
         }),
+      archiveMergedInProject: t
+        .input(schemas.workspace.archiveMergedInProject.input)
+        .output(schemas.workspace.archiveMergedInProject.output)
+        .handler(async ({ context, input }) => {
+          return context.workspaceService.archiveMergedInProject(input.projectPath);
+        }),
       fork: t
         .input(schemas.workspace.fork.input)
         .output(schemas.workspace.fork.output)
@@ -2575,14 +2638,25 @@ export const router = (authToken?: string) => {
           }
 
           // 1. Subscribe to new events (including those triggered by replay)
+          //
+          // IMPORTANT: We subscribe before replay so we can receive stream replay (`replayStream()`)
+          // and init replay events (which do not set `replay: true`).
+          //
+          // Live stream deltas can overlap with replayed deltas on reconnect. Buffer live stream
+          // events during replay and flush after `caught-up`, skipping any deltas already delivered
+          // by replay.
+          const replayRelay = createReplayBufferedStreamMessageRelay(push);
+
           const unsubscribe = session.onChatEvent(({ message }) => {
-            push(message);
+            replayRelay.handleSessionMessage(message);
           });
 
           // 2. Replay history (sends caught-up at the end)
           await session.replayHistory(({ message }) => {
             push(message);
           });
+
+          replayRelay.finishReplay();
 
           // 3. Heartbeat to keep the connection alive during long operations (tool calls, subagents).
           // Client uses this to detect stalled connections vs. intentionally idle streams.

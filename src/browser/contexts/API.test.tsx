@@ -103,8 +103,11 @@ const createMockWebSocket = (url: string) => new MockWebSocket(url) as unknown a
 
 describe("API reconnection", () => {
   beforeEach(() => {
-    // Minimal DOM setup required by @testing-library/react
-    const happyWindow = new GlobalWindow();
+    // Minimal DOM setup required by @testing-library/react.
+    //
+    // Happy DOM can default to an opaque origin ("null") in some modes (e.g. coverage).
+    // That breaks URL construction in createBrowserClient(). Give it a stable http(s) origin.
+    const happyWindow = new GlobalWindow({ url: "https://mux.example.com/" });
     globalThis.window = happyWindow as unknown as Window & typeof globalThis;
     globalThis.document = happyWindow.document as unknown as Document;
     MockWebSocket.reset();
@@ -115,6 +118,20 @@ describe("API reconnection", () => {
     MockWebSocket.reset();
     globalThis.window = undefined as unknown as Window & typeof globalThis;
     globalThis.document = undefined as unknown as Document;
+  });
+
+  test("constructs WebSocket URL with app proxy prefix", () => {
+    window.location.href = "https://coder.example.com/@u/ws/apps/mux/?token=abc";
+
+    render(
+      <APIProvider createWebSocket={createMockWebSocket}>
+        <APIStateObserver onState={() => undefined} />
+      </APIProvider>
+    );
+
+    const ws1 = MockWebSocket.lastInstance();
+    expect(ws1).toBeDefined();
+    expect(ws1!.url).toBe("wss://coder.example.com/@u/ws/apps/mux/orpc/ws?token=abc");
   });
 
   test("reconnects on close without showing auth_required when previously connected", async () => {

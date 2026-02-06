@@ -728,6 +728,22 @@ export const workspace = {
     input: z.object({ workspaceId: z.string() }),
     output: ResultSchema(z.void(), z.string()),
   },
+  archiveMergedInProject: {
+    input: z.object({ projectPath: z.string() }),
+    output: ResultSchema(
+      z.object({
+        archivedWorkspaceIds: z.array(z.string()),
+        skippedWorkspaceIds: z.array(z.string()),
+        errors: z.array(
+          z.object({
+            workspaceId: z.string(),
+            error: z.string(),
+          })
+        ),
+      }),
+      z.string()
+    ),
+  },
   fork: {
     input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
     output: z.discriminatedUnion("success", [
@@ -837,7 +853,7 @@ export const workspace = {
       /** Task-level model string used when running the sub-agent (optional for legacy entries). */
       model: z.string().optional(),
       /** Task-level thinking/reasoning level used when running the sub-agent (optional for legacy entries). */
-      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+      thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
     }),
   },
   executeBash: {
@@ -1266,7 +1282,7 @@ export const server = {
 const SubagentAiDefaultsEntrySchema = z
   .object({
     modelString: z.string().min(1).optional(),
-    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh"]).optional(),
+    thinkingLevel: z.enum(["off", "low", "medium", "high", "xhigh", "max"]).optional(),
     enabled: z.boolean().optional(),
   })
   .strict();
@@ -1290,6 +1306,9 @@ export const config = {
       }),
       muxGatewayEnabled: z.boolean().optional(),
       muxGatewayModels: z.array(z.string()).optional(),
+      defaultModel: z.string().optional(),
+      hiddenModels: z.array(z.string()).optional(),
+      preferredCompactionModel: z.string().optional(),
       stopCoderWorkspaceOnArchive: z.boolean(),
       agentAiDefaults: AgentAiDefaultsSchema,
       // Legacy fields (downgrade compatibility)
@@ -1327,6 +1346,14 @@ export const config = {
     input: z.object({
       muxGatewayEnabled: z.boolean(),
       muxGatewayModels: z.array(z.string()),
+    }),
+    output: z.void(),
+  },
+  updateModelPreferences: {
+    input: z.object({
+      defaultModel: z.string().optional(),
+      hiddenModels: z.array(z.string()).optional(),
+      preferredCompactionModel: z.string().optional(),
     }),
     output: z.void(),
   },

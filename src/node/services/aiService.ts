@@ -5,7 +5,7 @@ import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
-import { convertToModelMessages, type LanguageModel, type Tool } from "ai";
+import { convertToModelMessages, type LanguageModel, type ModelMessage, type Tool } from "ai";
 import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
 import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
 import {
@@ -1874,7 +1874,7 @@ export class AIService extends EventEmitter {
       // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
       // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const rawModelMessages = convertToModelMessages(messagesWithToolMediaExtracted as any, {
+      const rawModelMessages = await convertToModelMessages(messagesWithToolMediaExtracted as any, {
         // Drop unfinished tool calls (input-streaming/input-available) so downstream
         // transforms only see tool calls that actually produced outputs.
         ignoreIncompleteToolCalls: true,
@@ -1884,22 +1884,60 @@ export class AIService extends EventEmitter {
       // The SDK's ignoreIncompleteToolCalls can drop all parts from a message, leaving
       // an assistant with empty content array. The API rejects these with "all messages
       // must have non-empty content except for the optional final assistant message".
-      const modelMessages = rawModelMessages.filter((msg) => {
-        if (msg.role !== "assistant") return true;
-        if (typeof msg.content === "string") return msg.content.length > 0;
-        return Array.isArray(msg.content) && msg.content.length > 0;
-      });
-      if (modelMessages.length < rawModelMessages.length) {
+      // Self-healing: sanitize assistant message content blocks.
+      //
+      // Anthropic rejects text content blocks that contain only whitespace (e.g. "\n\n").
+      // This can happen after an interrupted stream where we persisted a whitespace-only
+      // text delta (often the first text after thinking).
+      //
+      // Keep this provider-agnostic and request-only (does not mutate persisted history).
+      const sanitizedModelMessages = rawModelMessages.flatMap<ModelMessage>(
+        (msg): ModelMessage[] => {
+          if (msg.role !== "assistant") {
+            return [msg];
+          }
+
+          if (typeof msg.content === "string") {
+            return msg.content.trim().length > 0 ? [msg] : [];
+          }
+
+          if (!Array.isArray(msg.content)) {
+            return [];
+          }
+
+          const filteredContent = msg.content.filter(
+            (part) => part.type !== "text" || part.text.trim().length > 0
+          );
+
+          if (filteredContent.length === 0) {
+            return [];
+          }
+
+          // Avoid mutating the original message (which can be reused in debug logging).
+          if (filteredContent.length === msg.content.length) {
+            return [msg];
+          }
+
+          return [{ ...msg, content: filteredContent }];
+        }
+      );
+
+      if (sanitizedModelMessages.length < rawModelMessages.length) {
         log.debug(
-          `Self-healing: Filtered ${rawModelMessages.length - modelMessages.length} empty ModelMessage(s)`
+          `Self-healing: Filtered ${rawModelMessages.length - sanitizedModelMessages.length} empty ModelMessage(s)`
         );
       }
-      log.debug_obj(`${workspaceId}/2_model_messages.json`, modelMessages);
+      log.debug_obj(`${workspaceId}/2_model_messages.json`, sanitizedModelMessages);
+
+      const modelMessages = sanitizedModelMessages;
 
       // Apply ModelMessage transforms based on provider requirements
       const transformedMessages = transformModelMessages(modelMessages, providerForMessages, {
         anthropicThinkingEnabled:
           providerForMessages === "anthropic" && effectiveThinkingLevel !== "off",
+        // Opus 4.6 doesn't support assistant message prefill (returns 400 error).
+        // Append a [CONTINUE] user sentinel if conversation ends with assistant.
+        noPrefill: canonicalModelId?.includes("opus-4-6") ?? false,
       });
 
       // Apply cache control for Anthropic models AFTER transformation

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAPI } from "@/browser/contexts/API";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
-import { buildSendMessageOptions } from "@/browser/hooks/useSendMessageOptions";
+import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { useWorkspaceState } from "@/browser/stores/WorkspaceStore";
 import {
@@ -211,7 +211,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       setIsRetryingWithCompaction(true);
     }
     try {
-      const sendMessageOptions = buildSendMessageOptions(props.workspaceId);
+      const sendMessageOptions = getSendOptionsFromStorage(props.workspaceId);
       const source = triggerUserMessage;
 
       if (!source) {
@@ -295,7 +295,7 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
     }
 
     try {
-      const sendMessageOptions = buildSendMessageOptions(props.workspaceId);
+      const sendMessageOptions = getSendOptionsFromStorage(props.workspaceId);
       const followUpContent = buildFollowUpFromSource(triggerUserMessage);
 
       const result = await executeCompaction({

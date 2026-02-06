@@ -25,6 +25,7 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   CYCLE_MODEL: "Cycle model",
   OPEN_TERMINAL: "New terminal",
   OPEN_IN_EDITOR: "Open in editor",
+  SHARE_TRANSCRIPT: "Share transcript",
   OPEN_COMMAND_PALETTE: "Command palette",
   TOGGLE_THINKING: "Toggle thinking",
   FOCUS_CHAT: "Focus chat input",
@@ -68,6 +69,7 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
       "CYCLE_MODEL",
       "TOGGLE_THINKING",
       "TOGGLE_NOTIFICATIONS",
+      "SHARE_TRANSCRIPT",
     ],
   },
   {
