@@ -61,6 +61,7 @@ export interface WorkspaceState {
   loading: boolean;
   muxMessages: MuxMessage[];
   currentModel: string | null;
+  currentThinkingLevel: string | null;
   recencyTimestamp: number | null;
   todos: TodoItem[];
   loadedSkills: LoadedSkill[];
@@ -1027,6 +1028,7 @@ export class WorkspaceStore {
         loading: !hasMessages && !transient.caughtUp,
         muxMessages: messages,
         currentModel: aggregator.getCurrentModel() ?? null,
+        currentThinkingLevel: aggregator.getCurrentThinkingLevel() ?? null,
         recencyTimestamp: aggregator.getRecencyTimestamp(),
         todos: aggregator.getCurrentTodos(),
         loadedSkills: aggregator.getLoadedSkills(),

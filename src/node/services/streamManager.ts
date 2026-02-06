@@ -1642,6 +1642,7 @@ export class StreamManager extends EventEmitter {
                 ...streamInfo.initialMetadata, // AIService-provided metadata (systemMessageTokens, etc)
                 model: canonicalModel,
                 routedThroughGateway,
+                ...(streamInfo.thinkingLevel && { thinkingLevel: streamInfo.thinkingLevel }),
                 usage: totalUsage, // Total across all steps (for cost calculation)
                 contextUsage, // Last step only (for context window display)
                 providerMetadata, // Aggregated (for cost calculation)

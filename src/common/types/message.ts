@@ -7,6 +7,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 import type { z } from "zod";
 import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
+import type { ThinkingLevel } from "./thinking";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
 
 /**
@@ -354,6 +355,8 @@ export interface MuxMetadata {
   mode?: AgentMode;
   timestamp?: number;
   model?: string;
+  /** Effective thinking/reasoning level used for this response (after model policy clamping). */
+  thinkingLevel?: ThinkingLevel;
   /** True when this response was routed through Mux Gateway (model stays canonical). */
   routedThroughGateway?: boolean;
   // Total usage across all steps (for cost calculation)

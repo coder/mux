@@ -1169,6 +1169,15 @@ export class StreamingMessageAggregator {
       return context.thinkingLevel;
     }
 
+    // Otherwise, return the thinking level from the most recent assistant message
+    const messages = this.getAllMessages();
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      if (message.role === "assistant" && message.metadata?.thinkingLevel) {
+        return message.metadata.thinkingLevel;
+      }
+    }
+
     return undefined;
   }
 

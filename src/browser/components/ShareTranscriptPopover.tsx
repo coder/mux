@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/browser/components/ui
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { useAPI } from "@/browser/contexts/API";
+import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
@@ -69,6 +70,7 @@ function transcriptContainsProposePlanToolCall(messages: MuxMessage[]): boolean 
 export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
   const store = useWorkspaceStoreRaw();
   const { api } = useAPI();
+  const { workspaceMetadata } = useWorkspaceContext();
 
   const [includeToolOutput, setIncludeToolOutput] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -152,12 +154,14 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
 
       const sendOptions = getSendOptionsFromStorage(workspaceId);
 
+      // Use human-readable workspace title for the filename when available
+      const workspaceTitle = workspaceMetadata.get(props.workspaceId)?.title;
       const fileInfo: FileInfo = {
-        name: getTranscriptFileName(props.workspaceName),
+        name: getTranscriptFileName(workspaceTitle ?? props.workspaceName),
         type: "application/x-ndjson",
         size: new TextEncoder().encode(chatJsonl).length,
         model: workspaceState.currentModel ?? sendOptions.model,
-        thinking: sendOptions.thinkingLevel,
+        thinking: workspaceState.currentThinkingLevel ?? sendOptions.thinkingLevel,
       };
 
       const result = await uploadToMuxMd(chatJsonl, fileInfo, {
@@ -183,7 +187,15 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
         setIsUploading(false);
       }
     }
-  }, [api, includeToolOutput, isUploading, props.workspaceId, props.workspaceName, store]);
+  }, [
+    api,
+    includeToolOutput,
+    isUploading,
+    props.workspaceId,
+    props.workspaceName,
+    store,
+    workspaceMetadata,
+  ]);
 
   const handleUpdateExpiration = async (value: ExpirationValue) => {
     if (!shareId || !shareMutateKey) return;
