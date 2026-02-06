@@ -315,43 +315,11 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
             <DetailContent className="px-2 py-1.5">{args.script}</DetailContent>
           </DetailSection>
 
-          {showLiveOutput && (
-            <>
-              {liveOutputView.truncated && (
-                <div className="text-muted px-2 text-[10px] italic">
-                  Live output truncated (showing last ~1MB)
-                </div>
-              )}
-
-              <DetailSection>
-                <DetailLabel>Output</DetailLabel>
-                <div className="relative">
-                  <DetailContent
-                    ref={outputRef}
-                    onScroll={(e) => updatePinned(e.currentTarget)}
-                    className={cn(
-                      "px-2 py-1.5",
-                      combinedLiveOutput.length === 0 && "text-muted italic",
-                      isFilteringLiveOutput && "opacity-60 blur-[1px]"
-                    )}
-                  >
-                    {combinedLiveOutput.length > 0
-                      ? combinedLiveOutput
-                      : status === "redacted"
-                        ? "Output excluded from shared transcript"
-                        : "No output yet"}
-                  </DetailContent>
-                  {isFilteringLiveOutput && (
-                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                      <div className="text-muted flex items-center gap-1 rounded border border-white/10 bg-[var(--color-bg-tertiary)]/80 px-2 py-1 text-[10px] backdrop-blur-sm">
-                        <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
-                        Compacting output…
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </DetailSection>
-            </>
+          {/* Truncation notices */}
+          {showLiveOutput && liveOutputView.truncated && (
+            <div className="text-muted px-2 text-[10px] italic">
+              Live output truncated (showing last ~1MB)
+            </div>
           )}
 
           {result && (
@@ -369,48 +337,75 @@ export const BashToolCall: React.FC<BashToolCallProps> = ({
                   {truncatedInfo.totalLines}
                 </div>
               )}
-
-              {"backgroundProcessId" in result ? (
-                // Background process: show process ID inline with icon (compact, no section wrapper)
-                <div className="flex items-center gap-2 text-[11px]">
-                  <Layers size={12} className="text-muted shrink-0" />
-                  <span className="text-muted">Background process</span>
-                  <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
-                    {result.backgroundProcessId}
-                  </code>
-                </div>
-              ) : (
-                // Normal process: show output (and any notice via tooltip)
-                showCompletedOutputSection && (
-                  <DetailSection>
-                    <DetailLabel className="flex items-center gap-1">
-                      <span>Output</span>
-                      {note && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              aria-label="View notice"
-                              className="text-muted hover:text-secondary translate-y-[-1px] rounded p-0.5 transition-colors"
-                            >
-                              <Info size={12} />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-                    </DetailLabel>
-                    <DetailContent
-                      className={cn("px-2 py-1.5", !completedHasOutput && "text-muted italic")}
-                    >
-                      {completedHasOutput ? completedOutput : "No output"}
-                    </DetailContent>
-                  </DetailSection>
-                )
-              )}
             </>
+          )}
+
+          {/* Unified output section — single DOM tree for streaming + completed output
+              so React reconciles the same elements instead of unmounting/remounting,
+              which preserves scroll position and prevents layout flash. */}
+          {(showLiveOutput || showCompletedOutputSection) && (
+            <DetailSection>
+              <DetailLabel className="flex items-center gap-1">
+                <span>Output</span>
+                {note && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label="View notice"
+                        className="text-muted hover:text-secondary translate-y-[-1px] rounded p-0.5 transition-colors"
+                      >
+                        <Info size={12} />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="max-w-xs break-words whitespace-pre-wrap">{note}</div>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </DetailLabel>
+              <div className="relative">
+                <DetailContent
+                  ref={outputRef}
+                  onScroll={showLiveOutput ? (e) => updatePinned(e.currentTarget) : undefined}
+                  className={cn(
+                    "px-2 py-1.5",
+                    (showLiveOutput ? combinedLiveOutput.length === 0 : !completedHasOutput) &&
+                      "text-muted italic",
+                    isFilteringLiveOutput && "opacity-60 blur-[1px]"
+                  )}
+                >
+                  {showLiveOutput
+                    ? combinedLiveOutput.length > 0
+                      ? combinedLiveOutput
+                      : status === "redacted"
+                        ? "Output excluded from shared transcript"
+                        : "No output yet"
+                    : completedHasOutput
+                      ? completedOutput
+                      : "No output"}
+                </DetailContent>
+                {isFilteringLiveOutput && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <div className="text-muted flex items-center gap-1 rounded border border-white/10 bg-[var(--color-bg-tertiary)]/80 px-2 py-1 text-[10px] backdrop-blur-sm">
+                      <Loader2 aria-hidden="true" className="h-3 w-3 animate-spin" />
+                      Compacting output…
+                    </div>
+                  </div>
+                )}
+              </div>
+            </DetailSection>
+          )}
+
+          {/* Background process info */}
+          {result && "backgroundProcessId" in result && (
+            <div className="flex items-center gap-2 text-[11px]">
+              <Layers size={12} className="text-muted shrink-0" />
+              <span className="text-muted">Background process</span>
+              <code className="rounded bg-[var(--color-bg-tertiary)] px-1.5 py-0.5 font-mono text-[10px]">
+                {result.backgroundProcessId}
+              </code>
+            </div>
           )}
         </ToolDetails>
       )}
