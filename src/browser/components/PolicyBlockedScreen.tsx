@@ -1,4 +1,3 @@
-
 export function PolicyBlockedScreen(props: { reason?: string }) {
   return (
     <div className="bg-bg-dark flex h-full items-center justify-center p-6">

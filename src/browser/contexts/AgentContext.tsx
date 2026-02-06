@@ -1,5 +1,4 @@
-import type { Dispatch, ReactNode, SetStateAction } from "react";
-import React, {
+import {
   createContext,
   useCallback,
   useContext,
@@ -7,6 +6,9 @@ import React, {
   useMemo,
   useRef,
   useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
 } from "react";
 
 import { useAPI } from "@/browser/contexts/API";

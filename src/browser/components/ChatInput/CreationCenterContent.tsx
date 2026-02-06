@@ -1,4 +1,3 @@
-
 interface CreationCenterContentProps {
   projectName: string;
   isSending: boolean;
