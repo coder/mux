@@ -17,6 +17,9 @@ import {
   createAssistantMessage,
   createProposePlanTool,
   createStatusTool,
+  createFileReadTool,
+  createFileEditTool,
+  createBashTool,
   createStaticChatHandler,
   type GitStatusFixture,
 } from "./mockFactory";
@@ -400,16 +403,60 @@ export const ProductHero: AppStory = {
           [
             workspaceId,
             createStaticChatHandler([
-              createUserMessage("msg-1", "Make the README screenshots reproducible in Storybook.", {
-                historySequence: 1,
-                timestamp: STABLE_TIMESTAMP - 300_000,
+              createUserMessage(
+                "msg-1",
+                "Add a right sidebar split layout showing both the review diff and terminal output.",
+                {
+                  historySequence: 1,
+                  timestamp: STABLE_TIMESTAMP - 50_000,
+                }
+              ),
+              createAssistantMessage("msg-2", "Let me check the current layout implementation.", {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 40_000,
+                toolCalls: [
+                  createFileReadTool(
+                    "call-read-1",
+                    "src/browser/utils/rightSidebarLayout.ts",
+                    'export type SplitDirection = "horizontal" | "vertical";\nexport interface RightSidebarLayoutState {\n  version: number;\n  root: LayoutNode;\n}'
+                  ),
+                ],
               }),
               createAssistantMessage(
-                "msg-2",
-                "I'll add a dedicated story module with one story per README image. I'll also seed the right sidebar with a split Review + Terminal layout so the hero state looks lived-in.",
+                "msg-3",
+                "I've updated the layout to support vertical splits. Running tests now.",
                 {
-                  historySequence: 2,
-                  timestamp: STABLE_TIMESTAMP - 290_000,
+                  historySequence: 3,
+                  timestamp: STABLE_TIMESTAMP - 30_000,
+                  toolCalls: [
+                    createFileEditTool(
+                      "call-edit-1",
+                      "src/browser/utils/rightSidebarLayout.ts",
+                      '@@ -12,6 +12,8 @@\n+  sizes: [0.62, 0.38],\n+  children: [{ type: "tabset", tabs: ["review"] }, { type: "tabset", tabs: ["terminal"] }]'
+                    ),
+                    createBashTool(
+                      "call-bash-1",
+                      "bun test -- rightSidebarLayout",
+                      "✓ 4 tests passed"
+                    ),
+                  ],
+                }
+              ),
+              createUserMessage(
+                "msg-4",
+                "Looks good, now make sure the terminal shows the test output.",
+                {
+                  historySequence: 4,
+                  timestamp: STABLE_TIMESTAMP - 20_000,
+                }
+              ),
+              createAssistantMessage(
+                "msg-5",
+                "Done! The terminal now shows test results by default when the split layout is active.",
+                {
+                  historySequence: 5,
+                  timestamp: STABLE_TIMESTAMP - 10_000,
+                  toolCalls: [createStatusTool("call-status-1", "✅", "Tests passing")],
                 }
               ),
             ]),
@@ -510,16 +557,42 @@ export const CodeReview: AppStory = {
               [
                 workspaceId,
                 createStaticChatHandler([
-                  createUserMessage("msg-1", "Summarize the PR and highlight risky changes.", {
-                    historySequence: 1,
-                    timestamp: STABLE_TIMESTAMP - 120_000,
+                  createUserMessage(
+                    "msg-1",
+                    "Review this PR — focus on the layout changes and flag anything risky.",
+                    {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 40_000,
+                    }
+                  ),
+                  createAssistantMessage("msg-2", "Let me read through the changed files.", {
+                    historySequence: 2,
+                    timestamp: STABLE_TIMESTAMP - 30_000,
+                    toolCalls: [
+                      createFileReadTool(
+                        "call-read-1",
+                        "src/browser/components/WorkspaceShell.tsx",
+                        'export function WorkspaceShell(props: WorkspaceShellProps) {\n  const layout = useRightSidebarLayout(props.workspaceId);\n  return <div className="workspace-shell">...</div>;\n}'
+                      ),
+                    ],
                   }),
                   createAssistantMessage(
-                    "msg-2",
-                    "PR summary: Adds layout helpers and improves WorkspaceShell composition. Risk: layout helpers affect sizing; verify they don't break small viewports.",
+                    "msg-3",
+                    "I ran the type checker to make sure there are no regressions.",
                     {
-                      historySequence: 2,
-                      timestamp: STABLE_TIMESTAMP - 110_000,
+                      historySequence: 3,
+                      timestamp: STABLE_TIMESTAMP - 20_000,
+                      toolCalls: [
+                        createBashTool("call-bash-1", "bun run typecheck", "No errors found."),
+                      ],
+                    }
+                  ),
+                  createAssistantMessage(
+                    "msg-4",
+                    "**PR Summary**: This PR adds layout utilities and restructures WorkspaceShell. Two concerns:\n1. The `clamp()` utility doesn't guard against NaN\n2. The shell header has no `aria-label` for accessibility\n\nOverall low-risk — the changes are additive.",
+                    {
+                      historySequence: 4,
+                      timestamp: STABLE_TIMESTAMP - 10_000,
                     }
                   ),
                 ]),
@@ -848,16 +921,31 @@ export const PlanMermaidWithCosts: AppStory = {
               [
                 workspaceId,
                 createStaticChatHandler([
-                  createUserMessage("msg-1", "Draft a plan and include a diagram.", {
-                    historySequence: 1,
-                    timestamp: STABLE_TIMESTAMP - 200_000,
+                  createUserMessage(
+                    "msg-1",
+                    "Plan out the storybook screenshot work — I need a diagram showing the order.",
+                    {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 40_000,
+                    }
+                  ),
+                  createAssistantMessage("msg-2", "Let me explore what we have first.", {
+                    historySequence: 2,
+                    timestamp: STABLE_TIMESTAMP - 30_000,
+                    toolCalls: [
+                      createBashTool(
+                        "call-bash-1",
+                        "ls src/browser/stories/*.stories.tsx",
+                        "src/browser/stories/App.readmeScreenshots.stories.tsx\nsrc/browser/stories/ChatPane.stories.tsx\nsrc/browser/stories/Sidebar.stories.tsx"
+                      ),
+                    ],
                   }),
                   createAssistantMessage(
-                    "msg-2",
+                    "msg-3",
                     "Here's a plan with an implementation order diagram.",
                     {
-                      historySequence: 2,
-                      timestamp: STABLE_TIMESTAMP - 190_000,
+                      historySequence: 3,
+                      timestamp: STABLE_TIMESTAMP - 20_000,
                       toolCalls: [
                         createProposePlanTool(
                           "call-plan-1",
@@ -889,6 +977,17 @@ graph TD
                       ],
                     }
                   ),
+                  createUserMessage("msg-4", "Accepted. Start with the hero screenshot.", {
+                    historySequence: 4,
+                    timestamp: STABLE_TIMESTAMP - 10_000,
+                  }),
+                  createAssistantMessage("msg-5", "Starting implementation now.", {
+                    historySequence: 5,
+                    timestamp: STABLE_TIMESTAMP - 5_000,
+                    toolCalls: [
+                      createStatusTool("call-status-1", "📝", "Building ProductHero story"),
+                    ],
+                  }),
                 ]),
               ],
             ])
@@ -1007,25 +1106,67 @@ export const CostsTabRich: AppStory = {
               [
                 workspaceId,
                 createStaticChatHandler([
-                  createUserMessage("msg-1", "Show me where the money is going.", {
-                    historySequence: 1,
-                    timestamp: STABLE_TIMESTAMP - 60_000,
-                  }),
+                  createUserMessage(
+                    "msg-1",
+                    "Refactor the session tracking to break down costs by model.",
+                    {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 50_000,
+                    }
+                  ),
                   createAssistantMessage(
                     "msg-2",
-                    "Costs are tracked per session and per model. This run used a cached-heavy call (cache create) plus a smaller follow-up request.",
+                    "Reading the current cost tracking implementation.",
                     {
                       historySequence: 2,
-                      timestamp: STABLE_TIMESTAMP - 55_000,
+                      timestamp: STABLE_TIMESTAMP - 40_000,
                       toolCalls: [
-                        createStatusTool(
-                          "call-1",
-                          "📦",
-                          "Costs tab updated with multi-model breakdown"
+                        createFileReadTool(
+                          "call-read-1",
+                          "src/common/types/costs.ts",
+                          "export interface SessionUsage {\n  totalCost: number;\n  breakdown: UsageLine[];\n}"
                         ),
                       ],
                     }
                   ),
+                  createAssistantMessage(
+                    "msg-3",
+                    "Updated the type to include per-model breakdown.",
+                    {
+                      historySequence: 3,
+                      timestamp: STABLE_TIMESTAMP - 30_000,
+                      toolCalls: [
+                        createFileEditTool(
+                          "call-edit-1",
+                          "src/common/types/costs.ts",
+                          "@@ -5,3 +5,5 @@\n+  modelId: string;\n+  modelCost: number;"
+                        ),
+                      ],
+                    }
+                  ),
+                  createAssistantMessage("msg-4", "Tests pass.", {
+                    historySequence: 4,
+                    timestamp: STABLE_TIMESTAMP - 20_000,
+                    toolCalls: [
+                      createBashTool("call-bash-1", "make test", "✓ 12 tests passed (2.1s)"),
+                    ],
+                  }),
+                  createUserMessage("msg-5", "Ship it.", {
+                    historySequence: 5,
+                    timestamp: STABLE_TIMESTAMP - 10_000,
+                  }),
+                  createAssistantMessage("msg-6", "Done — PR opened.", {
+                    historySequence: 6,
+                    timestamp: STABLE_TIMESTAMP - 5_000,
+                    toolCalls: [
+                      createStatusTool(
+                        "call-status-1",
+                        "🚀",
+                        "PR #427 opened",
+                        "https://github.com/mux/mux/pull/427"
+                      ),
+                    ],
+                  }),
                 ]),
               ],
             ])
@@ -1081,24 +1222,54 @@ export const OpportunisticCompactionTooltip: AppStory = {
               [
                 workspaceId,
                 createStaticChatHandler([
-                  createUserMessage("msg-1", "We’re near the context limit; compact if it helps.", {
-                    historySequence: 1,
-                    timestamp: STABLE_TIMESTAMP - 80_000,
+                  createUserMessage(
+                    "msg-1",
+                    "We’ve been working for a while, can you clean up the context?",
+                    {
+                      historySequence: 1,
+                      timestamp: STABLE_TIMESTAMP - 60_000,
+                    }
+                  ),
+                  createAssistantMessage("msg-2", "Let me check the workspace state first.", {
+                    historySequence: 2,
+                    timestamp: STABLE_TIMESTAMP - 50_000,
+                    toolCalls: [
+                      createBashTool(
+                        "call-bash-1",
+                        "git status --short",
+                        " M src/browser/stories/App.readmeScreenshots.stories.tsx\n M src/browser/stories/mockFactory.ts\n?? src/browser/stories/fixtures/"
+                      ),
+                    ],
+                  }),
+                  createAssistantMessage("msg-3", "I’ve committed the in-progress work.", {
+                    historySequence: 3,
+                    timestamp: STABLE_TIMESTAMP - 40_000,
+                    toolCalls: [
+                      createFileEditTool(
+                        "call-edit-1",
+                        "src/browser/stories/App.readmeScreenshots.stories.tsx",
+                        "@@ -1,4 +1,6 @@\n+// Committed checkpoint: story fixtures seeded"
+                      ),
+                    ],
+                  }),
+                  createUserMessage("msg-4", "Good. Now compact — keep what matters.", {
+                    historySequence: 4,
+                    timestamp: STABLE_TIMESTAMP - 30_000,
                   }),
                   createAssistantMessage(
-                    "msg-2",
-                    "I can opportunistically compact now and keep a clean starting point for the rest of the work.",
+                    "msg-5",
+                    "I’ll compact and preserve the key context: the storybook fixture patterns, the capture pipeline design, and the current PR state.",
                     {
-                      historySequence: 2,
-                      timestamp: STABLE_TIMESTAMP - 70_000,
+                      historySequence: 5,
+                      timestamp: STABLE_TIMESTAMP - 20_000,
                     }
                   ),
                   createAssistantMessage(
-                    "msg-3",
+                    "msg-6",
                     "Replace all chat history with this message\n\n- Keep: README screenshot mapping + terminal mock plan\n- Drop: exploratory discussion\n- Next: run make storybook-build + test-storybook",
                     {
-                      historySequence: 3,
-                      timestamp: STABLE_TIMESTAMP - 60_000,
+                      historySequence: 6,
+                      timestamp: STABLE_TIMESTAMP - 10_000,
                     }
                   ),
                 ]),
