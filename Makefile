@@ -6,8 +6,8 @@
 #   make help          - Show all available targets
 #   make dev           - Start development server with hot reload
 #   make build         - Build all targets (parallel when possible)
-#   make static-check  - Run fast static checks (<5s: typecheck + shellcheck + imports)
-#   make static-check-ci - Run all static checks (adds lint + fmt-check + docs links)
+#   make static-check  - Run local static checks (typecheck + lint + shellcheck)
+#   make static-check-ci - Run all static checks (adds fmt-check + docs links)
 #   make test          - Run tests
 #
 # Parallelism:
@@ -277,11 +277,11 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-# Fast local checks (<5s) — typecheck includes noUnusedLocals/noUnusedParameters
-static-check: typecheck check-eager-imports check-code-docs-links lint-shellcheck ## Run fast static checks (<5s: typecheck + unused vars + shellcheck)
+# Local checks — typecheck includes noUnusedLocals/noUnusedParameters; lint uses .eslintcache
+static-check: typecheck lint check-eager-imports check-code-docs-links lint-shellcheck ## Run local static checks (typecheck + lint + shellcheck)
 
-# Full CI checks — everything above plus slow lint, formatting, and docs link checking
-static-check-ci: static-check lint fmt-check check-bench-agent check-docs-links ## Run all static checks (CI)
+# Full CI checks — everything above plus formatting and docs link checking
+static-check-ci: static-check fmt-check check-bench-agent check-docs-links ## Run all static checks (CI)
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
