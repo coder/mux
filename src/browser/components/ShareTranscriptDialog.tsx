@@ -4,13 +4,7 @@ import { Check, ExternalLink, Loader2 } from "lucide-react";
 import { CopyIcon } from "@/browser/components/icons/CopyIcon";
 import { Button } from "@/browser/components/ui/button";
 import { Checkbox } from "@/browser/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  VisuallyHidden,
-} from "@/browser/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/browser/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -50,6 +44,8 @@ import { EncryptionBadge, SigningBadge } from "./ShareSigningBadges";
 interface ShareTranscriptDialogProps {
   workspaceId: string;
   workspaceName: string;
+  /** Human-readable workspace title shown in the dialog header */
+  workspaceTitle?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -328,9 +324,9 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
               onRetryKeyDetection={() => void handleRetryKeyDetection()}
             />
           </DialogTitle>
-          <VisuallyHidden>
-            <p>Share this workspace transcript as an encrypted link</p>
-          </VisuallyHidden>
+          {props.workspaceTitle && (
+            <p className="text-muted truncate text-xs">{props.workspaceTitle}</p>
+          )}
         </DialogHeader>
 
         <div className="space-y-3">

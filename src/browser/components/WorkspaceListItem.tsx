@@ -488,7 +488,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
-                  className="text-foreground bg-background hover:bg-hover w-full whitespace-nowrap rounded-sm px-2 py-1.5 text-left text-xs"
+                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
                   onClick={(e) => {
                     e.stopPropagation();
                     setIsTitleMenuOpen(false);
@@ -503,7 +503,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
                 {linkSharingEnabled === true && !isMuxHelpChat && (
                   <button
-                    className="text-foreground bg-background hover:bg-hover w-full whitespace-nowrap rounded-sm px-2 py-1.5 text-left text-xs"
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsTitleMenuOpen(false);
@@ -522,7 +522,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
                 {!isMuxHelpChat && (
                   <button
-                    className="text-foreground bg-background hover:bg-hover w-full whitespace-nowrap rounded-sm px-2 py-1.5 text-left text-xs"
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsTitleMenuOpen(false);
@@ -547,6 +547,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               <ShareTranscriptDialog
                 workspaceId={workspaceId}
                 workspaceName={metadata.name}
+                workspaceTitle={displayTitle}
                 open={shareTranscriptOpen}
                 onOpenChange={setShareTranscriptOpen}
               />
