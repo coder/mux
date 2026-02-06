@@ -167,7 +167,7 @@ export class CopilotOauthService {
     this.finishFlow(flowId, Err("Device flow cancelled"));
   }
 
-  async dispose(): Promise<void> {
+  dispose(): void {
     for (const flow of this.flows.values()) {
       clearTimeout(flow.timeout);
       if (flow.cleanupTimeout !== null) clearTimeout(flow.cleanupTimeout);
