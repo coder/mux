@@ -484,11 +484,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 align={contextMenuPosition ? "start" : "end"}
                 side={contextMenuPosition ? "right" : "bottom"}
                 sideOffset={contextMenuPosition ? 0 : 6}
-                className="w-[240px] !min-w-0 p-1"
+                className="w-[250px] !min-w-0 p-1"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
-                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                  className="text-foreground bg-background hover:bg-hover w-full whitespace-nowrap rounded-sm px-2 py-1.5 text-left text-xs"
                   onClick={(e) => {
                     e.stopPropagation();
                     setIsTitleMenuOpen(false);
@@ -496,14 +496,14 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   }}
                 >
                   <span className="flex items-center gap-2">
-                    <Pencil className="h-3 w-3" />
+                    <Pencil className="h-3 w-3 shrink-0" />
                     Edit chat title
                   </span>
                 </button>
                 {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
                 {linkSharingEnabled === true && !isMuxHelpChat && (
                   <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                    className="text-foreground bg-background hover:bg-hover w-full whitespace-nowrap rounded-sm px-2 py-1.5 text-left text-xs"
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsTitleMenuOpen(false);
@@ -511,12 +511,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     }}
                   >
                     <span className="flex items-center gap-2">
-                      <Link2 className="h-3 w-3" />
-                      <span>
-                        Share transcript{" "}
-                        <span className="text-muted text-[10px]">
-                          ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
-                        </span>
+                      <Link2 className="h-3 w-3 shrink-0" />
+                      Share transcript{" "}
+                      <span className="text-muted text-[10px]">
+                        ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
                       </span>
                     </span>
                   </button>
@@ -524,7 +522,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
                 {!isMuxHelpChat && (
                   <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                    className="text-foreground bg-background hover:bg-hover w-full whitespace-nowrap rounded-sm px-2 py-1.5 text-left text-xs"
                     onClick={(e) => {
                       e.stopPropagation();
                       setIsTitleMenuOpen(false);
@@ -532,12 +530,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     }}
                   >
                     <span className="flex items-center gap-2">
-                      <ArchiveIcon className="h-3 w-3" />
-                      <span>
-                        Archive chat{" "}
-                        <span className="text-muted text-[10px]">
-                          ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-                        </span>
+                      <ArchiveIcon className="h-3 w-3 shrink-0" />
+                      Archive chat{" "}
+                      <span className="text-muted text-[10px]">
+                        ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
                       </span>
                     </span>
                   </button>
