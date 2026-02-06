@@ -17,6 +17,7 @@ import type { ORPCContext } from "../../src/node/orpc/context";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { createOrpcTestClient, type OrpcTestClient } from "./orpcTestClient";
 import { shouldRunIntegrationTests, validateApiKeys, getApiKey } from "../testUtils";
+import type { ExperimentId } from "../../src/common/constants/experiments";
 
 export interface TestEnvironment {
   config: Config;
@@ -47,6 +48,44 @@ function createMockBrowserWindow(): BrowserWindow {
   } as unknown as BrowserWindow;
 
   return mockWindow;
+}
+
+/**
+ * Build an ORPCContext from a TestEnvironment. Useful for creating standalone
+ * oRPC servers (e.g., to simulate a remote mux instance in federation tests).
+ */
+export function buildOrpcContext(env: TestEnvironment): ORPCContext {
+  return {
+    config: env.services.config,
+    aiService: env.services.aiService,
+    projectService: env.services.projectService,
+    workspaceService: env.services.workspaceService,
+    muxGatewayOauthService: env.services.muxGatewayOauthService,
+    muxGovernorOauthService: env.services.muxGovernorOauthService,
+    taskService: env.services.taskService,
+    providerService: env.services.providerService,
+    terminalService: env.services.terminalService,
+    editorService: env.services.editorService,
+    windowService: env.services.windowService,
+    updateService: env.services.updateService,
+    tokenizerService: env.services.tokenizerService,
+    serverService: env.services.serverService,
+    remoteServersService: env.services.remoteServersService,
+    featureFlagService: env.services.featureFlagService,
+    workspaceMcpOverridesService: env.services.workspaceMcpOverridesService,
+    sessionTimingService: env.services.sessionTimingService,
+    mcpConfigService: env.services.mcpConfigService,
+    mcpOauthService: env.services.mcpOauthService,
+    mcpServerManager: env.services.mcpServerManager,
+    menuEventService: env.services.menuEventService,
+    voiceService: env.services.voiceService,
+    experimentsService: env.services.experimentsService,
+    telemetryService: env.services.telemetryService,
+    sessionUsageService: env.services.sessionUsageService,
+    signingService: env.services.signingService,
+    coderService: env.services.coderService,
+    policyService: env.services.policyService,
+  };
 }
 
 /**
@@ -153,6 +192,32 @@ export async function cleanupTestEnvironment(env: TestEnvironment): Promise<void
     }
   }
   console.warn(`Failed to cleanup test environment after ${maxRetries} attempts:`, lastError);
+}
+
+/**
+ * Enable specific experiments on a TestEnvironment for testing.
+ *
+ * In tests PostHog is unavailable, so `ExperimentsService.isExperimentEnabled()`
+ * always returns `false`. This overrides the method on the service instance so that
+ * the specified experiment(s) return `true`. The oRPC context holds a reference to
+ * the same service instance, so downstream middleware/handlers see the override.
+ */
+export function enableExperimentForTesting(
+  env: TestEnvironment,
+  ...experimentIds: ExperimentId[]
+): void {
+  const service = env.services.experimentsService;
+  const original = service.isExperimentEnabled.bind(service);
+  const enabledSet = new Set<ExperimentId>(experimentIds);
+
+  Object.defineProperty(service, "isExperimentEnabled", {
+    value: (id: ExperimentId): boolean => {
+      if (enabledSet.has(id)) return true;
+      return original(id);
+    },
+    writable: true,
+    configurable: true,
+  });
 }
 
 /**

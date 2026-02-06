@@ -8,10 +8,14 @@
  */
 
 import { encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
-import type { ORPCContext } from "@/node/orpc/context";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { createOrpcServer, type OrpcServer } from "@/node/orpc/server";
-import type { TestEnvironment } from "./setup";
-import { cleanupTestEnvironment, createTestEnvironment } from "./setup";
+import {
+  buildOrpcContext,
+  cleanupTestEnvironment,
+  createTestEnvironment,
+  enableExperimentForTesting,
+} from "./setup";
 import {
   cleanupTempGitRepo,
   createTempGitRepo,
@@ -21,44 +25,11 @@ import {
 
 const TEST_TIMEOUT_MS = 60_000;
 
-function buildOrpcContext(env: TestEnvironment): ORPCContext {
-  return {
-    config: env.services.config,
-    aiService: env.services.aiService,
-    projectService: env.services.projectService,
-    workspaceService: env.services.workspaceService,
-    muxGatewayOauthService: env.services.muxGatewayOauthService,
-    muxGovernorOauthService: env.services.muxGovernorOauthService,
-    taskService: env.services.taskService,
-    providerService: env.services.providerService,
-    terminalService: env.services.terminalService,
-    editorService: env.services.editorService,
-    windowService: env.services.windowService,
-    updateService: env.services.updateService,
-    tokenizerService: env.services.tokenizerService,
-    serverService: env.services.serverService,
-    remoteServersService: env.services.remoteServersService,
-    featureFlagService: env.services.featureFlagService,
-    workspaceMcpOverridesService: env.services.workspaceMcpOverridesService,
-    sessionTimingService: env.services.sessionTimingService,
-    mcpConfigService: env.services.mcpConfigService,
-    mcpOauthService: env.services.mcpOauthService,
-    mcpServerManager: env.services.mcpServerManager,
-    menuEventService: env.services.menuEventService,
-    voiceService: env.services.voiceService,
-    experimentsService: env.services.experimentsService,
-    telemetryService: env.services.telemetryService,
-    sessionUsageService: env.services.sessionUsageService,
-    signingService: env.services.signingService,
-    coderService: env.services.coderService,
-    policyService: env.services.policyService,
-  };
-}
-
 test(
   "agentSkills.* and agents.* proxy remote workspaceIds",
   async () => {
     const localEnv = await createTestEnvironment();
+    enableExperimentForTesting(localEnv, EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
     const remoteEnv = await createTestEnvironment();
     const repoPath = await createTempGitRepo();
 
