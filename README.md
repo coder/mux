@@ -41,40 +41,45 @@ macOS and Linux.
 
 ## Screenshots
 
-<div align="center">
-  <p><em>Integrated code-review for faster iteration:</p>
-  <img src="./docs/img/code-review.webp" alt="Screenshot of code review" />
-</div>
-
-<div align="center">
-  <p><em>Agents report their status through the sidebar:</em></p>
-  <img src="./docs/img/agent-status.webp" alt="Screenshot of agent status" />
-</div>
-
-<div align="center">
-  <p><em>Git divergence UI keeps you looped in on changes and potential conflicts:</em></p>
-  <img src="./docs/img/git-status.webp" alt="Screenshot of git status" />
-</div>
-
-<div align="center">
-  <p><em>Mermaid diagrams make it easier to review complex proposals from the Agent:</em></p>
-  <img src="./docs/img/plan-mermaid.webp" alt="Screenshot of mermaid diagram" />
-</div>
-
-<div align="center">
-  <p><em>Project secrets help split your Human and Agent identities:</em></p>
-  <img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" />
-</div>
-
-<div align="center">
-  <p><em>Stay looped in on costs and token consumption:</em></p>
-  <img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" />
-</div>
-
-<div align="center">
-  <p><em>Opportunistic compaction helps keep context small:</em></p>
-  <img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" />
-</div>
+<table>
+<tr>
+<td align="center" width="50%">
+<em>Integrated code-review for faster iteration</em><br><br>
+<img src="./docs/img/code-review.webp" alt="Screenshot of code review" width="100%" />
+</td>
+<td align="center" width="50%">
+<em>Agents report their status through the sidebar</em><br><br>
+<img src="./docs/img/agent-status.webp" alt="Screenshot of agent status" width="100%" />
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<em>Git divergence UI keeps you looped in on changes and potential conflicts</em><br><br>
+<img src="./docs/img/git-status.webp" alt="Screenshot of git status" width="100%" />
+</td>
+<td align="center" width="50%">
+<em>Mermaid diagrams make it easier to review complex proposals from the Agent</em><br><br>
+<img src="./docs/img/plan-mermaid.webp" alt="Screenshot of mermaid diagram" width="100%" />
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<em>Project secrets help split your Human and Agent identities</em><br><br>
+<img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" width="100%" />
+</td>
+<td align="center" width="50%">
+<em>Stay looped in on costs and token consumption</em><br><br>
+<img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="100%" />
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<em>Opportunistic compaction helps keep context small</em><br><br>
+<img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" width="100%" />
+</td>
+<td></td>
+</tr>
+</table>
 
 ## More reading
 
