@@ -1272,6 +1272,7 @@ export class WorkspaceService extends EventEmitter {
           trunkBranch: normalizedTrunkBranch,
           directoryName: finalBranchName,
           initLogger,
+          abortSignal: initAbortController.signal,
         });
 
         if (createResult.success) break;

@@ -525,12 +525,17 @@ export class CoderSSHRuntime extends SSHRuntime {
     force: boolean,
     abortSignal?: AbortSignal
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
+    // Deleting a Coder workspace is dangerous; only relax the mux- prefix safety check
+    // when we believe mux created/owns the workspace.
+    const allowNonMuxPrefix = this.coderConfig.existingWorkspace !== true;
+
     // If this workspace is an existing Coder workspace that mux didn't create, just do SSH cleanup.
     if (this.coderConfig.existingWorkspace) {
       return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
     }
 
     const coderWorkspaceName = this.coderConfig.workspaceName;
+
     if (!coderWorkspaceName) {
       log.warn("Coder workspace name not set, falling back to SSH-only deletion");
       return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
@@ -542,7 +547,7 @@ export class CoderSSHRuntime extends SSHRuntime {
       const deleteResult = await this.coderService.deleteWorkspaceEventually(coderWorkspaceName, {
         timeoutMs: 60_000,
         signal: abortSignal,
-        allowNonMuxPrefix: true,
+        allowNonMuxPrefix,
         // Avoid races where coder create finishes server-side after we abort the local CLI.
         waitForExistence: true,
       });
@@ -588,7 +593,7 @@ export class CoderSSHRuntime extends SSHRuntime {
             {
               timeoutMs: 60_000,
               signal: abortSignal,
-              allowNonMuxPrefix: true,
+              allowNonMuxPrefix,
               waitForExistence: false,
             }
           );
@@ -638,7 +643,7 @@ export class CoderSSHRuntime extends SSHRuntime {
       const deleteResult = await this.coderService.deleteWorkspaceEventually(coderWorkspaceName, {
         timeoutMs: 60_000,
         signal: abortSignal,
-        allowNonMuxPrefix: true,
+        allowNonMuxPrefix,
         waitForExistence: false,
       });
 

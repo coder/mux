@@ -239,9 +239,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   // Destructure metadata for convenience
   const { id: workspaceId, namedWorkspacePath, status } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
-  const isCreating = status === "creating";
+  const isInitializing = metadata.isInitializing === true || status === "creating";
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
-  const isDisabled = isCreating || isRemoving || isArchiving === true;
+  const isDisabled = isInitializing || isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
@@ -334,12 +334,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       : defaultModel;
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const hasStatusText =
-    Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating || isRemoving;
+    Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
   // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
 
-  const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
+  const showUnreadBar = !isInitializing && !isEditing && isUnread && !(isSelected && !isDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -419,7 +419,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         aria-label={
           isRemoving
             ? `Deleting workspace ${displayTitle}`
-            : isCreating
+            : isInitializing
               ? `Initializing workspace ${displayTitle}`
               : isArchiving
                 ? `Archiving workspace ${displayTitle}`
@@ -433,8 +433,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       >
         <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
 
-        {/* Action button: cancel/delete spinner for creating workspaces, overflow menu otherwise */}
-        {isCreating ? (
+        {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
+        {isInitializing ? (
           <ActionButtonWrapper hasSubtitle={hasStatusText}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -446,8 +446,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     // but force it visible as a spinner once deletion starts.
                     isRemoving
                       ? "cursor-default opacity-100"
-                      : "cursor-pointer opacity-0 hover:text-destructive"
+                      : "cursor-pointer opacity-0 hover:text-destructive focus-visible:opacity-100"
                   )}
+                  disabled={isRemoving}
                   onKeyDown={stopKeyboardPropagation}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -459,7 +460,6 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                       ? `Deleting workspace ${displayTitle}`
                       : `Cancel workspace creation ${displayTitle}`
                   }
-                  aria-disabled={isRemoving}
                   data-workspace-id={workspaceId}
                 >
                   {isRemoving ? (
@@ -593,7 +593,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     {/* Always render text in same structure; Shimmer just adds animation class */}
                     <Shimmer
-                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
+                      className={cn(
+                        "w-full truncate",
+                        !(isWorking || isInitializing) && "no-shimmer"
+                      )}
                       colorClass="var(--color-foreground)"
                     >
                       {displayTitle}
@@ -622,7 +625,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               </HoverCard>
             )}
 
-            {!isCreating && !isEditing && (
+            {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
                 <GitStatusIndicator
                   gitStatus={gitStatus}

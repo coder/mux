@@ -136,7 +136,8 @@ async function executeSSH(command: string): Promise<string> {
 
 async function clearMarkerFile(runtimeType: "local" | "ssh", markerPath: string): Promise<void> {
   if (runtimeType === "ssh") {
-    await executeSSH(`rm -f ${markerPath}`);
+    // Quote paths to avoid surprises if markerPath contains spaces or glob chars.
+    await executeSSH(`rm -f -- "${markerPath}"`);
     return;
   }
 
@@ -148,7 +149,7 @@ async function markerFileExists(
   markerPath: string
 ): Promise<boolean> {
   if (runtimeType === "ssh") {
-    const result = await executeSSH(`if [ -f ${markerPath} ]; then echo yes; else echo no; fi`);
+    const result = await executeSSH(`if [ -f "${markerPath}" ]; then echo yes; else echo no; fi`);
     return result === "yes";
   }
 
@@ -273,10 +274,10 @@ describeIntegration("Workspace deletion integration tests", () => {
       );
 
       runTest(
-        "archive during init should delete workspace and cancel init",
+        "force remove during init should delete workspace and cancel init",
         async () => {
           const env = await createTestEnvironment();
-          const branchName = generateBranchName("archive-during-init");
+          const branchName = generateBranchName("remove-during-init");
 
           const markerPath =
             type === "ssh"
@@ -326,10 +327,13 @@ describeIntegration("Workspace deletion integration tests", () => {
               // workspace disappears mid-stream.
               collector.stop();
 
-              const archiveResult = await env.orpc.workspace.archive({ workspaceId });
-              expect(archiveResult.success).toBe(true);
+              const removeResult = await env.orpc.workspace.remove({
+                workspaceId,
+                options: { force: true },
+              });
+              expect(removeResult.success).toBe(true);
 
-              // Verify workspace is no longer in config (archive during init should behave like remove).
+              // Verify workspace is no longer in config
               const config = env.config.loadConfigOrDefault();
               const project = config.projects.get(tempGitRepo);
               if (project) {
@@ -347,7 +351,13 @@ describeIntegration("Workspace deletion integration tests", () => {
               }
 
               // Wait long enough that the init hook would have written the marker if it wasn't aborted.
-              await new Promise((resolve) => setTimeout(resolve, (sleepSeconds + 2) * 1000));
+              // Poll (instead of sleeping once) so failures show up as soon as the marker appears.
+              const pollIntervalMs = type === "ssh" ? 1000 : 250;
+              const deadline = Date.now() + (sleepSeconds + 2) * 1000;
+              while (Date.now() < deadline) {
+                expect(await markerFileExists(type, markerPath)).toBe(false);
+                await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+              }
 
               expect(await markerFileExists(type, markerPath)).toBe(false);
               expect(await workspaceExists(env, workspaceId)).toBe(false);

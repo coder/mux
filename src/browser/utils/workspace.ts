@@ -8,11 +8,15 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
  * workspaces appear in the sidebar, add it here to ensure UI updates.
  */
 export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string {
+  const initKey = meta.isInitializing === true || meta.status === "creating" ? "initializing" : "";
+  const removingKey = meta.isRemoving === true ? "removing" : "";
+
   return [
     meta.id,
     meta.name,
     meta.title ?? "", // Display title (falls back to name in UI)
-    meta.isInitializing === true ? "initializing" : "", // Init-in-progress indicator
+    initKey,
+    removingKey,
     meta.parentWorkspaceId ?? "", // Nested sidebar indentation/order
     meta.agentType ?? "", // Agent preset badge/label (future)
     meta.sectionId ?? "", // Section grouping for sidebar organization

@@ -1385,7 +1385,6 @@ describe("deleteWorkspaceEventually", () => {
     const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
       timeoutMs: 1_000,
       waitForExistence: true,
-      existenceGraceMs: 10_000,
     });
 
     expect(result.success).toBe(true);
@@ -1393,12 +1392,15 @@ describe("deleteWorkspaceEventually", () => {
     expect(serviceHack.runCoderCommand).toHaveBeenCalled();
   });
 
-  it("treats not_found as success after existenceGraceMs", async () => {
+  it("treats sustained not_found as success after timeout when waitForExistence=true", async () => {
     const service = new CoderService();
 
-    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus").mockImplementation(() =>
-      Promise.resolve({ kind: "not_found" as const })
-    );
+    let now = 0;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "not_found" as const,
+    });
 
     const serviceHack = service as unknown as {
       runCoderCommand: (
@@ -1416,16 +1418,24 @@ describe("deleteWorkspaceEventually", () => {
     serviceHack.runCoderCommand = vi.fn(() =>
       Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
     );
-    serviceHack.sleep = vi.fn(() => Promise.resolve());
-
-    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
-      timeoutMs: 1_000,
-      waitForExistence: true,
-      existenceGraceMs: 0,
+    serviceHack.sleep = vi.fn((ms: number) => {
+      now += ms;
+      return Promise.resolve();
     });
 
-    expect(result.success).toBe(true);
-    expect(getWorkspaceStatusSpy).toHaveBeenCalled();
+    try {
+      const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+        timeoutMs: 1_000,
+        waitForExistence: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(getWorkspaceStatusSpy).toHaveBeenCalled();
+      expect(serviceHack.runCoderCommand).not.toHaveBeenCalled();
+    } finally {
+      // Reset Date.now even if the test fails.
+      nowSpy.mockRestore();
+    }
   });
 });
 

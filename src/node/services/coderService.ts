@@ -1322,16 +1322,10 @@ export class CoderService {
        * This avoids races where `coder create` finishes server-side after mux aborts the CLI.
        */
       waitForExistence?: boolean;
-      /**
-       * If waitForExistence is true, how long to tolerate "not found" before assuming the
-       * workspace will never materialize.
-       */
-      existenceGraceMs?: number;
     }
   ): Promise<Result<void>> {
     const timeoutMs = options?.timeoutMs ?? 60_000;
     const startTime = Date.now();
-    const existenceGraceMs = options?.existenceGraceMs ?? 15_000;
 
     const allowNonMuxPrefix = options?.allowNonMuxPrefix === true;
     if (!allowNonMuxPrefix && !name.startsWith("mux-")) {
@@ -1386,11 +1380,16 @@ export class CoderService {
         }
 
         // For cancel-init, avoid treating an initial not_found as success: `coder create` may still
-        // complete server-side after we abort the local CLI. We only treat not_found as success
-        // after we've observed the workspace exist, or after a short grace window.
-        if (sawWorkspaceExist || Date.now() - startTime > existenceGraceMs) {
+        // complete server-side after we abort the local CLI. Keep polling until we either observe
+        // the workspace exist (and then disappear), or we hit the overall timeout.
+        if (sawWorkspaceExist) {
           return Ok(undefined);
         }
+
+        attempt++;
+        const backoffMs = Math.min(2_000, 250 + attempt * 150);
+        await this.sleep(backoffMs, options?.signal);
+        continue;
       }
 
       if (statusResult.kind === "error") {
@@ -1411,6 +1410,10 @@ export class CoderService {
       attempt++;
       const backoffMs = Math.min(2_000, 250 + attempt * 150);
       await this.sleep(backoffMs, options?.signal);
+    }
+
+    if (options?.waitForExistence === true && !sawWorkspaceExist && !lastError) {
+      return Ok(undefined);
     }
 
     return Err(lastError ?? "Timed out deleting Coder workspace");
