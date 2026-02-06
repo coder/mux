@@ -26,6 +26,7 @@ import type {
 
 import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import type { MuxMetadata, MuxMessage } from "@/common/types/message";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
 import {
   coerceStreamErrorTypeForMessage,
@@ -329,6 +330,9 @@ export class StreamManager extends EventEmitter {
             ...streamInfo.initialMetadata,
             model: canonicalModel,
             routedThroughGateway,
+            ...(streamInfo.thinkingLevel && {
+              thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
+            }),
             partial: true, // Always true - this method only writes partial messages
           },
           parts: streamInfo.parts, // Parts array includes reasoning, text, and tools
@@ -1881,6 +1885,9 @@ export class StreamManager extends EventEmitter {
         ...streamInfo.initialMetadata,
         model: canonicalModel,
         routedThroughGateway,
+        ...(streamInfo.thinkingLevel && {
+          thinkingLevel: streamInfo.thinkingLevel as ThinkingLevel,
+        }),
         partial: true,
         error: payload.error,
         errorType: payload.errorType,
