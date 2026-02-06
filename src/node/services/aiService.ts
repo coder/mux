@@ -930,19 +930,24 @@ export class AIService extends EventEmitter {
           (providerConfig as { codexOauth?: unknown }).codexOauth
         );
 
-        if (codexOauthRequired && !storedCodexOauth) {
+        // Resolve credentials from config + env BEFORE OAuth checks so we can
+        // fall back to an API key when OAuth is not connected.
+        const creds = resolveProviderCredentials("openai", providerConfig);
+
+        // When a model requires Codex OAuth but the user hasn't connected it,
+        // fall back to their API key instead of blocking entirely.  If the model
+        // truly only works through OAuth, OpenAI's API will return a clear error.
+        if (codexOauthRequired && !storedCodexOauth && !creds.isConfigured) {
           return Err({ type: "oauth_not_connected", provider: providerName });
         }
-
-        // Resolve credentials from config + env (single source of truth)
-        const creds = resolveProviderCredentials("openai", providerConfig);
 
         const codexOauthDefaultAuthRaw = (providerConfig as { codexOauthDefaultAuth?: unknown })
           .codexOauthDefaultAuth;
         const codexOauthDefaultAuth = codexOauthDefaultAuthRaw === "apiKey" ? "apiKey" : "oauth";
 
         // Codex OAuth routing:
-        // - Required models always route through ChatGPT OAuth.
+        // - Required models route through ChatGPT OAuth when connected.
+        // - If OAuth is not connected, fall back to API key (if available).
         // - Allowed models route through OAuth only when:
         //   - no API key is configured, OR
         //   - the user prefers OAuth when both are set.

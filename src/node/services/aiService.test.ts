@@ -248,20 +248,43 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     return "";
   }
 
-  it("returns oauth_not_connected for required Codex models when OAuth is missing", async () => {
+  it("returns oauth_not_connected for required Codex models when both OAuth and API key are missing", async () => {
     using muxHome = new DisposableTempDir("codex-oauth-missing");
 
     await writeProvidersConfig(muxHome.path, {
       openai: {},
     });
 
+    // Temporarily clear OPENAI_API_KEY so resolveProviderCredentials doesn't find it
+    const savedKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const service = createService(muxHome.path);
+      const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({ type: "oauth_not_connected", provider: "openai" });
+      }
+    } finally {
+      if (savedKey !== undefined) {
+        process.env.OPENAI_API_KEY = savedKey;
+      }
+    }
+  });
+
+  it("falls back to API key for required Codex models when OAuth is missing but API key is present", async () => {
+    using muxHome = new DisposableTempDir("codex-oauth-missing-apikey-present");
+
+    await writeProvidersConfig(muxHome.path, {
+      openai: { apiKey: "sk-test-key" },
+    });
+
     const service = createService(muxHome.path);
     const result = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
 
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toEqual({ type: "oauth_not_connected", provider: "openai" });
-    }
+    // Should succeed — falls back to API key instead of erroring with oauth_not_connected
+    expect(result.success).toBe(true);
   });
 
   it("does not require an OpenAI API key when Codex OAuth is configured", async () => {
