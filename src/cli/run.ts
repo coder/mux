@@ -11,25 +11,13 @@
 import { Command } from "commander";
 import { tool } from "ai";
 import { z } from "zod";
-import * as os from "os";
 import * as path from "path";
 import * as fs from "fs/promises";
 import * as fsSync from "fs";
 import { Config } from "@/node/config";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { HistoryService } from "@/node/services/historyService";
-import { PartialService } from "@/node/services/partialService";
-import { InitStateManager } from "@/node/services/initStateManager";
-import { AIService } from "@/node/services/aiService";
-import { ProviderService } from "@/node/services/providerService";
 import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
-import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import { MCPConfigService } from "@/node/services/mcpConfigService";
-import { MCPServerManager } from "@/node/services/mcpServerManager";
-import { WorkspaceService } from "@/node/services/workspaceService";
-import { TaskService } from "@/node/services/taskService";
-import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
-import { SessionUsageService } from "@/node/services/sessionUsageService";
+import { createCoreServices } from "@/node/services/coreServices";
 import {
   isCaughtUpMessage,
   isReasoningDelta,
@@ -406,26 +394,42 @@ async function main(): Promise<number> {
   );
   log.info(`Mode: ${initialMode}`);
 
-  // Initialize services
-  const historyService = new HistoryService(config);
-  const partialService = new PartialService(config, historyService);
-  const initStateManager = new InitStateManager(config);
-  const providerService = new ProviderService(config);
-  const backgroundProcessManager = new BackgroundProcessManager(
-    path.join(os.tmpdir(), "mux-bashes")
-  );
-  // SessionUsageService tracks per-model usage and rolls up sub-agent costs into the
-  // parent workspace so that --budget enforcement and the cost summary include all work.
-  const sessionUsageService = new SessionUsageService(config, historyService);
-  const aiService = new AIService(
-    config,
+  // Bootstrap providers from env vars if no providers.jsonc exists
+  if (!hasAnyConfiguredProvider(existingProviders)) {
+    const providersFromEnv = buildProvidersFromEnv();
+    if (hasAnyConfiguredProvider(providersFromEnv)) {
+      config.saveProvidersConfig(providersFromEnv);
+    } else {
+      throw new Error(
+        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
+      );
+    }
+  }
+
+  // Initialize the core service graph (shared with ServiceContainer).
+  // CLI overrides: ephemeral extension metadata, persistent MCP config via
+  // realConfig, and CLI-specific MCPServerManager options for inline servers.
+  const inlineServers: Record<string, string> = {};
+  for (const entry of opts.mcp) {
+    inlineServers[entry.name] = entry.command;
+  }
+  const {
+    aiService,
     historyService,
     partialService,
     initStateManager,
-    providerService,
     backgroundProcessManager,
-    sessionUsageService
-  );
+    mcpServerManager,
+    workspaceService,
+  } = createCoreServices({
+    config,
+    extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
+    mcpConfig: realConfig,
+    mcpServerManagerOptions: {
+      inlineServers,
+      ignoreConfigFile: !opts.mcpConfig,
+    },
+  });
 
   // CLI-only exit code control: allows agent to set the process exit code
   // Useful for CI workflows where the agent should block merge on failure
@@ -451,57 +455,6 @@ async function main(): Promise<number> {
     },
   });
   aiService.setExtraTools({ set_exit_code: setExitCodeTool });
-
-  // Bootstrap providers from env vars if no providers.jsonc exists
-  if (!hasAnyConfiguredProvider(existingProviders)) {
-    const providersFromEnv = buildProvidersFromEnv();
-    if (hasAnyConfiguredProvider(providersFromEnv)) {
-      config.saveProvidersConfig(providersFromEnv);
-    } else {
-      throw new Error(
-        "No provider credentials found. Configure providers.jsonc or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY."
-      );
-    }
-  }
-
-  // Initialize MCP support
-  const mcpConfigService = new MCPConfigService(realConfig);
-  const inlineServers: Record<string, string> = {};
-  for (const entry of opts.mcp) {
-    inlineServers[entry.name] = entry.command;
-  }
-  const mcpServerManager = new MCPServerManager(mcpConfigService, {
-    inlineServers,
-    ignoreConfigFile: !opts.mcpConfig,
-  });
-  aiService.setMCPServerManager(mcpServerManager);
-
-  // Wire up sub-agent support: TaskService needs WorkspaceService, which needs
-  // ExtensionMetadataService. For CLI mode the extension metadata is ephemeral.
-  const extensionMetadata = new ExtensionMetadataService(
-    path.join(tempDir.path, "extensionMetadata.json")
-  );
-  const workspaceService = new WorkspaceService(
-    config,
-    historyService,
-    partialService,
-    aiService,
-    initStateManager,
-    extensionMetadata,
-    backgroundProcessManager,
-    sessionUsageService
-  );
-  const taskService = new TaskService(
-    config,
-    historyService,
-    partialService,
-    aiService,
-    workspaceService,
-    initStateManager
-  );
-  aiService.setTaskService(taskService);
-  // Ensure sub-agent workspaces clean up MCP server processes on removal
-  workspaceService.setMCPServerManager(mcpServerManager);
 
   const session = new AgentSession({
     workspaceId,
