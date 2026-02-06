@@ -946,20 +946,14 @@ async function main(): Promise<number> {
         usageHistory.push(usage);
       }
 
-      // Enforce budget after rolling up sub-agent costs (mirrors the stream-end budget check)
+      // Enforce budget after rolling up sub-agent costs (mirrors the stream-end budget check).
+      // Use hasUnknownCosts instead of cost===undefined since sumUsageHistory returns a
+      // partial cost sum when some models have pricing and others don't.
       if (budget !== undefined && !budgetExceeded) {
         const totalUsage = sumUsageHistory(usageHistory);
         const cost = getTotalCost(totalUsage);
-        const hasTokens = totalUsage
-          ? totalUsage.input.tokens +
-              totalUsage.output.tokens +
-              totalUsage.cached.tokens +
-              totalUsage.cacheCreate.tokens +
-              totalUsage.reasoning.tokens >
-            0
-          : false;
 
-        if (hasTokens && cost === undefined) {
+        if (totalUsage?.hasUnknownCosts) {
           const errMsg = `Cannot enforce budget: sub-agent used a model with unknown pricing`;
           emitJsonLine({ type: "budget-error", error: errMsg });
           rejectStream(new Error(errMsg));
