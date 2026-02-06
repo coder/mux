@@ -3,6 +3,7 @@ import type { RemoteMuxServerConfig } from "@/common/types/project";
 import { secretsToRecord, type Secret, type SecretsConfig } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { log } from "./log";
 
 const REMOTE_MUX_SERVER_SECRETS_PREFIX = "__remoteMuxServer:";
 const REMOTE_MUX_SERVER_AUTH_TOKEN_KEY = "authToken";
@@ -153,6 +154,14 @@ export class RemoteServersService {
   }
   async upsert(params: { config: RemoteMuxServerConfig; authToken?: string }): Promise<void> {
     const normalizedConfig = normalizeRemoteMuxServerConfig(params.config);
+
+    // Warn when an auth token will be sent over plaintext HTTP.
+    if (params.authToken && normalizedConfig.baseUrl.startsWith("http://")) {
+      log.warn(
+        `Server "${normalizedConfig.label ?? normalizedConfig.id}" uses http:// — ` +
+          "auth tokens will be transmitted in cleartext. Consider switching to https://."
+      );
+    }
 
     await this.config.editConfig((config) => {
       const existing = config.remoteServers ?? [];
