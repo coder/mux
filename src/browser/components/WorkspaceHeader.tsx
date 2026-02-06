@@ -246,16 +246,19 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           tooltipSide="bottom"
         />
         <span className="min-w-0 truncate font-mono text-xs">{projectName}</span>
-        <div className="flex items-center gap-1">
-          <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
-          <GitStatusIndicator
-            gitStatus={gitStatus}
-            workspaceId={workspaceId}
-            projectPath={projectPath}
-            tooltipPosition="bottom"
-            isWorking={isWorking}
-          />
-        </div>
+        {/* Git controls don't work for remote workspaces (no local repo) */}
+        {!remoteWorkspaceInfo && (
+          <div className="flex items-center gap-1">
+            <BranchSelector workspaceId={workspaceId} workspaceName={workspaceName} />
+            <GitStatusIndicator
+              gitStatus={gitStatus}
+              workspaceId={workspaceId}
+              projectPath={projectPath}
+              tooltipPosition="bottom"
+              isWorking={isWorking}
+            />
+          </div>
+        )}
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
         <WorkspaceLinks workspaceId={workspaceId} />

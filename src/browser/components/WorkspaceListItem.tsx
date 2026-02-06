@@ -634,7 +634,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               </HoverCard>
             )}
 
-            {!isCreating && !isEditing && (
+            {/* Git controls don't work for remote workspaces (no local repo) */}
+            {!isCreating && !isEditing && !remoteWorkspaceInfo && (
               <div className="flex items-center gap-1">
                 <GitStatusIndicator
                   gitStatus={gitStatus}
