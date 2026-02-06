@@ -796,7 +796,7 @@ export function ProvidersSection() {
   const cancelCopilotLogin = () => {
     copilotLoginAttemptRef.current++;
     if (api && copilotFlowId) {
-      void (api as CopilotOAuthCapable).copilotOauth?.cancelDeviceFlow({
+      void api.copilotOauth.cancelDeviceFlow({
         flowId: copilotFlowId,
       });
     }
@@ -830,14 +830,7 @@ export function ProvidersSection() {
         return;
       }
 
-      const copilotApi = (api as CopilotOAuthCapable).copilotOauth;
-      if (!copilotApi) {
-        setCopilotLoginStatus("error");
-        setCopilotLoginError("Copilot OAuth not available. Please update Mux.");
-        return;
-      }
-
-      const startResult = await copilotApi.startDeviceFlow({});
+      const startResult = await api.copilotOauth.startDeviceFlow({});
 
       if (attempt !== copilotLoginAttemptRef.current) return;
 
@@ -857,7 +850,7 @@ export function ProvidersSection() {
       window.open(verificationUri, "_blank", "noopener");
 
       // Wait for flow to complete (polling happens on backend)
-      const waitResult = await copilotApi.waitForDeviceFlow({ flowId });
+      const waitResult = await api.copilotOauth.waitForDeviceFlow({ flowId });
 
       if (attempt !== copilotLoginAttemptRef.current) return;
 
