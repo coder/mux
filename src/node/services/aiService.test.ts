@@ -27,6 +27,7 @@ import { createTaskTool } from "./tools/task";
 import { createTestToolConfig } from "./tools/testHelpers";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
 describe("AIService", () => {
@@ -378,8 +379,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     });
 
     // fetchWithOpenAITruncation closes over codexOauthService during createModel.
-    // @ts-expect-error - accessing private field for testing
-    service.codexOauthService = {
+    service.setCodexOauthService({
       getValidAuth: () =>
         Promise.resolve({
           success: true,
@@ -391,7 +391,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
             accountId: "test-account-id",
           },
         }),
-    };
+    } as CodexOauthService);
 
     const modelResult = await service.createModel(KNOWN_MODELS.GPT.id);
     expect(modelResult.success).toBe(true);
@@ -579,8 +579,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     });
 
     // fetchWithOpenAITruncation closes over codexOauthService during createModel.
-    // @ts-expect-error - accessing private field for testing
-    service.codexOauthService = {
+    service.setCodexOauthService({
       getValidAuth: () =>
         Promise.resolve({
           success: true,
@@ -592,7 +591,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
             accountId: "test-account-id",
           },
         }),
-    };
+    } as CodexOauthService);
 
     const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
     expect(modelResult.success).toBe(true);
@@ -729,8 +728,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       },
     });
 
-    // @ts-expect-error - accessing private field for testing
-    service.codexOauthService = {
+    service.setCodexOauthService({
       getValidAuth: () =>
         Promise.resolve({
           success: true,
@@ -742,7 +740,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
             accountId: "test-account-id",
           },
         }),
-    };
+    } as CodexOauthService);
 
     const modelResult = await service.createModel(KNOWN_MODELS.GPT_52_CODEX.id);
     expect(modelResult.success).toBe(true);
