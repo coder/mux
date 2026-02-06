@@ -39,20 +39,6 @@ export const CODEX_OAUTH_DEVICE_USERCODE_URL = `${CODEX_OAUTH_ORIGIN}/api/accoun
 export const CODEX_OAUTH_DEVICE_TOKEN_POLL_URL = `${CODEX_OAUTH_ORIGIN}/api/accounts/deviceauth/token`;
 export const CODEX_OAUTH_DEVICE_VERIFY_URL = `${CODEX_OAUTH_ORIGIN}/codex/device`;
 
-// ------------------------------------------------------------------------------------
-// Guide-aligned alias exports (so future ports can follow the guide naming).
-// ------------------------------------------------------------------------------------
-
-export const ISSUER = CODEX_OAUTH_ORIGIN;
-export const CLIENT_ID = CODEX_OAUTH_CLIENT_ID;
-export const AUTHORIZE_ENDPOINT = CODEX_OAUTH_AUTHORIZE_URL;
-export const TOKEN_ENDPOINT = CODEX_OAUTH_TOKEN_URL;
-export const SCOPES = CODEX_OAUTH_SCOPE;
-export const DEVICE_USERCODE = CODEX_OAUTH_DEVICE_USERCODE_URL;
-export const DEVICE_TOKEN_POLL = CODEX_OAUTH_DEVICE_TOKEN_POLL_URL;
-export const DEVICE_VERIFY_URL = CODEX_OAUTH_DEVICE_VERIFY_URL;
-export const BROWSER_REDIRECT = CODEX_OAUTH_BROWSER_REDIRECT_URI;
-
 export function buildCodexAuthorizeUrl(input: {
   redirectUri: string;
   state: string;
