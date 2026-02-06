@@ -2451,6 +2451,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                     data={contextUsageData}
                     autoCompaction={autoCompactionProps}
                     idleCompaction={idleCompactionProps}
+                    model={usageModel ?? undefined}
                   />
                 )}
 

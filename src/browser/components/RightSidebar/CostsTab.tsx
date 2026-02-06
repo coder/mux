@@ -151,6 +151,7 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
                 <ContextUsageBar
                   testId="context-usage"
                   data={contextUsageData}
+                  model={model}
                   autoCompaction={{
                     threshold: autoCompactThreshold,
                     setThreshold: setAutoCompactThreshold,
