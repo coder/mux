@@ -394,6 +394,67 @@ describe("buildChatJsonlForSharing", () => {
     expect(originalStrippedPart.state).toBe("output-available");
     expect(originalStrippedPart).toHaveProperty("output");
   });
+  it("preserves task tool outputs while stripping other tool outputs when includeToolOutput=false", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-task",
+            toolName: "task",
+            state: "output-available",
+            input: { prompt: "Fix the bug", title: "Bug fix" },
+            output: {
+              status: "completed",
+              taskId: "task-123",
+              reportMarkdown: "## Report\n\nFixed the bug in foo.ts",
+            },
+          },
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-bash",
+            toolName: "bash",
+            state: "output-available",
+            input: { script: "echo hi" },
+            output: { success: true, output: "hi" },
+          },
+        ],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, {
+      includeToolOutput: false,
+    });
+
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+
+    // task output should be preserved
+    const taskPart = parsed.parts[0];
+    if (taskPart.type !== "dynamic-tool" || taskPart.state !== "output-available") {
+      throw new Error("Expected completed task tool part");
+    }
+
+    const taskOutput = taskPart.output;
+    if (taskOutput === null || typeof taskOutput !== "object") {
+      throw new Error("Expected task output object");
+    }
+
+    expect((taskOutput as Record<string, unknown>).reportMarkdown).toBe(
+      "## Report\n\nFixed the bug in foo.ts"
+    );
+
+    // bash output should be stripped
+    const strippedPart = parsed.parts[1];
+    if (strippedPart.type !== "dynamic-tool") {
+      throw new Error("Expected tool part");
+    }
+
+    expect(strippedPart.state).toBe("output-redacted");
+    expect(strippedPart).not.toHaveProperty("output");
+  });
+
   it("does not overwrite propose_plan planContent when already present", () => {
     const messages: MuxMessage[] = [
       {

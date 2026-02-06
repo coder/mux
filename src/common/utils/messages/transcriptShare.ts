@@ -112,12 +112,21 @@ function stripNestedToolCallOutput(call: NestedToolCall): NestedToolCall {
   };
 }
 
+// Tools whose output is preserved even when stripping — their output IS the content
+// (plan text, sub-agent reports) and can't be reconstructed from disk.
+const PRESERVE_OUTPUT_TOOLS = new Set([
+  "propose_plan",
+  "task",
+  "task_await",
+  "task_list",
+  "task_terminate",
+  "task_apply_git_patch",
+]);
+
 function stripToolPartOutput(part: MuxToolPart): MuxToolPart {
   const nestedCalls = part.nestedCalls?.map(stripNestedToolCallOutput);
 
-  // Keep propose_plan output even when stripping other tool outputs.
-  // Shared transcripts need the plan content to be portable (mux-md can't read plan files from disk).
-  if (part.toolName === "propose_plan") {
+  if (PRESERVE_OUTPUT_TOOLS.has(part.toolName)) {
     return nestedCalls ? { ...part, nestedCalls } : part;
   }
 
