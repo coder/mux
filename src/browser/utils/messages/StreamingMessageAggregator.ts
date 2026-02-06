@@ -1169,12 +1169,15 @@ export class StreamingMessageAggregator {
       return context.thinkingLevel;
     }
 
-    // Otherwise, return the thinking level from the most recent assistant message
+    // Only check the most recent assistant message to avoid returning
+    // stale values from older turns where settings may have differed.
+    // If it lacks thinkingLevel (e.g. error/abort), return undefined so
+    // callers fall back to localStorage.
     const messages = this.getAllMessages();
     for (let i = messages.length - 1; i >= 0; i--) {
       const message = messages[i];
-      if (message.role === "assistant" && message.metadata?.thinkingLevel) {
-        return message.metadata.thinkingLevel;
+      if (message.role === "assistant") {
+        return message.metadata?.thinkingLevel;
       }
     }
 
