@@ -3081,6 +3081,15 @@ export const router = (authToken?: string) => {
               let backoffMs = BASE_BACKOFF_MS;
 
               while (!controller.signal.aborted) {
+                // On reconnect, clear stale workspaces from the previous
+                // connection so the frontend removes them before the fresh
+                // stream re-adds any that still exist.
+                for (const staleId of visibleWorkspaceIds) {
+                  const encodedId = encodeRemoteIdBestEffort(server.id, staleId);
+                  push({ workspaceId: encodedId, metadata: null });
+                }
+                visibleWorkspaceIds.clear();
+
                 try {
                   const authToken =
                     context.remoteServersService.getAuthToken({ id: server.id }) ?? undefined;
