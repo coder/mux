@@ -54,7 +54,7 @@ import { RenameProvider } from "@/browser/contexts/WorkspaceRenameContext";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { ChevronRight, CircleHelp, KeyRound } from "lucide-react";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
+import { useWorkspaceActions } from "@/browser/contexts/WorkspaceContext";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { usePopoverError } from "@/browser/hooks/usePopoverError";
 import { PopoverError } from "./PopoverError";
@@ -338,6 +338,7 @@ function MuxChatStatusIndicator() {
     <WorkspaceStatusIndicator
       workspaceId={MUX_HELP_CHAT_WORKSPACE_ID}
       fallbackModel={fallbackModel}
+      isCreating={false}
     />
   );
 }
@@ -347,6 +348,9 @@ interface ProjectSidebarProps {
   onToggleCollapsed: () => void;
   sortedWorkspacesByProject: Map<string, FrontendWorkspaceMetadata[]>;
   workspaceRecency: Record<string, number>;
+  /** Pre-computed from metadata in App.tsx so the sidebar doesn't subscribe to
+   *  the WorkspaceMetadataContext (which changes on every workspace op). */
+  muxChatProjectPath: string | null;
 }
 
 const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
@@ -354,10 +358,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   onToggleCollapsed,
   sortedWorkspacesByProject,
   workspaceRecency,
+  muxChatProjectPath,
 }) => {
-  // Get workspace state and operations from context
+  // Use the narrow actions context — does NOT subscribe to workspaceMetadata
+  // changes, preventing the entire sidebar tree from re-rendering on every
+  // workspace create/archive/rename.
   const {
-    workspaceMetadata,
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
     archiveWorkspace: onArchiveWorkspace,
@@ -370,7 +376,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     createWorkspaceDraft,
     openWorkspaceDraft,
     deleteWorkspaceDraft,
-  } = useWorkspaceContext();
+  } = useWorkspaceActions();
   const workspaceStore = useWorkspaceStoreRaw();
   const { navigateToProject } = useRouter();
 
@@ -429,7 +435,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const handleOpenMuxChat = useCallback(() => {
-    const meta = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID);
+    // Read metadata imperatively from the store (no subscription) to avoid
+    // making this callback depend on the metadata Map.
+    const meta = workspaceStore.getWorkspaceMetadata(MUX_HELP_CHAT_WORKSPACE_ID);
 
     handleSelectWorkspace(
       meta
@@ -453,7 +461,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
         console.error("Failed to refresh workspace metadata", error);
       });
     }
-  }, [handleSelectWorkspace, refreshWorkspaceMetadata, workspaceMetadata]);
+  }, [handleSelectWorkspace, refreshWorkspaceMetadata, workspaceStore]);
   // Workspace-specific subscriptions moved to WorkspaceListItem component
 
   // Store as array in localStorage, convert to Set for usage
@@ -461,10 +469,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     EXPANDED_PROJECTS_KEY,
     []
   );
-  // Handle corrupted localStorage data (old Set stored as {})
-  const expandedProjects = new Set(
-    Array.isArray(expandedProjectsArray) ? expandedProjectsArray : []
-  );
+  // Handle corrupted localStorage data (old Set stored as {}).
+  // Use a plain array with .includes() instead of new Set() on every render —
+  // the React Compiler cannot stabilize Set allocations (see AGENTS.md).
+  // For typical sidebar sizes (< 20 projects) .includes() is equivalent perf.
+  const expandedProjectsList = Array.isArray(expandedProjectsArray) ? expandedProjectsArray : [];
 
   // Track which projects have old workspaces expanded (per-project, per-tier)
   // Key format: getTierKey(projectPath, tierIndex) where tierIndex is 0, 1, 2 for 1/7/30 days
@@ -580,7 +589,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleArchiveWorkspace = useCallback(
     async (workspaceId: string, buttonElement?: HTMLElement) => {
       if (hasActiveStream(workspaceId)) {
-        const metadata = workspaceMetadata.get(workspaceId);
+        // Read metadata imperatively (no subscription) to build the display title.
+        const metadata = workspaceStore.getWorkspaceMetadata(workspaceId);
         const displayTitle = metadata?.title ?? metadata?.name ?? workspaceId;
         // Confirm before archiving if a stream is active so users don't interrupt in-progress work.
         setArchiveConfirmation({ workspaceId, displayTitle, buttonElement });
@@ -589,7 +599,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
       await performArchiveWorkspace(workspaceId, buttonElement);
     },
-    [hasActiveStream, performArchiveWorkspace, workspaceMetadata]
+    [hasActiveStream, performArchiveWorkspace, workspaceStore]
   );
 
   const handleArchiveWorkspaceConfirm = useCallback(async () => {
@@ -688,8 +698,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Hide the built-in Chat with Mux system project from the normal projects list.
   // We still render the mux-chat workspace as a dedicated pinned row above projects.
-  const muxChatMetadata = workspaceMetadata.get(MUX_HELP_CHAT_WORKSPACE_ID);
-  const muxChatProjectPath = muxChatMetadata?.projectPath ?? null;
+  // muxChatProjectPath is pre-computed in App.tsx and passed as a prop so we don't
+  // need to subscribe to the WorkspaceMetadataContext here.
   const visibleProjectPaths = React.useMemo(
     () =>
       muxChatProjectPath
@@ -752,7 +762,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                   >
                     <MuxLogo className="h-5 w-[44px]" aria-hidden="true" />
                   </button>
-                  {muxChatMetadata && (
+                  {muxChatProjectPath && (
                     <>
                       <MuxChatHelpButton
                         onClick={handleOpenMuxChat}
@@ -790,7 +800,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     const sanitizedProjectId =
                       projectPath.replace(/[^a-zA-Z0-9_-]/g, "-") || "root";
                     const workspaceListId = `workspace-list-${sanitizedProjectId}`;
-                    const isExpanded = expandedProjects.has(projectPath);
+                    const isExpanded = expandedProjectsList.includes(projectPath);
 
                     return (
                       <div key={projectPath} className="border-hover border-b">

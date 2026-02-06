@@ -585,7 +585,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span className="min-w-0 truncate">Archiving...</span>
                 </div>
               ) : (
-                <WorkspaceStatusIndicator workspaceId={workspaceId} fallbackModel={fallbackModel} />
+                <WorkspaceStatusIndicator
+                  workspaceId={workspaceId}
+                  fallbackModel={fallbackModel}
+                  isCreating={isCreating}
+                />
               )}
             </div>
           )}
