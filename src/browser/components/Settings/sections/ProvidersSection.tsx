@@ -786,7 +786,9 @@ export function ProvidersSection() {
   const [copilotFlowId, setCopilotFlowId] = useState<string | null>(null);
   const [copilotUserCode, setCopilotUserCode] = useState<string | null>(null);
   const [copilotVerificationUri, setCopilotVerificationUri] = useState<string | null>(null);
+  const [copilotCodeCopied, setCopilotCodeCopied] = useState(false);
   const copilotLoginAttemptRef = useRef(0);
+  const copilotFlowIdRef = useRef<string | null>(null);
 
   const copilotApiKeySet = config?.["github-copilot"]?.apiKeySet ?? false;
   const copilotLoginInProgress =
@@ -801,11 +803,21 @@ export function ProvidersSection() {
       });
     }
     setCopilotFlowId(null);
+    copilotFlowIdRef.current = null;
     setCopilotUserCode(null);
     setCopilotVerificationUri(null);
     setCopilotLoginStatus("idle");
     setCopilotLoginError(null);
   };
+
+  // Cancel any in-flight Copilot login if the component unmounts
+  useEffect(() => {
+    return () => {
+      if (copilotFlowIdRef.current && api) {
+        void api.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
+      }
+    };
+  }, [api]);
 
   const clearCopilotCredentials = () => {
     if (!api) return;
@@ -842,6 +854,7 @@ export function ProvidersSection() {
 
       const { flowId, verificationUri, userCode } = startResult.data;
       setCopilotFlowId(flowId);
+      copilotFlowIdRef.current = flowId;
       setCopilotUserCode(userCode);
       setCopilotVerificationUri(verificationUri);
       setCopilotLoginStatus("waiting");
@@ -1234,12 +1247,15 @@ export function ProvidersSection() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              aria-label="Copy verification code"
                               onClick={() => {
                                 void navigator.clipboard.writeText(copilotUserCode);
+                                setCopilotCodeCopied(true);
+                                setTimeout(() => setCopilotCodeCopied(false), 2000);
                               }}
                               className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
                             >
-                              Copy
+                              {copilotCodeCopied ? "Copied!" : "Copy"}
                             </Button>
                           </div>
                           {copilotVerificationUri && (
@@ -1251,7 +1267,7 @@ export function ProvidersSection() {
                                 rel="noopener noreferrer"
                                 className="text-accent hover:text-accent-light underline"
                               >
-                                click here
+                                open the verification page
                               </a>
                               .
                             </p>
