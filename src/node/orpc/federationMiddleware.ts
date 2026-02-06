@@ -12,6 +12,7 @@ import {
   rewriteRemoteTaskToolPayloadIds,
   rewriteRemoteWorkspaceChatMessageIds,
 } from "./remoteMuxProxying";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import type {
   FrontendWorkspaceMetadataSchemaType,
   WorkspaceChatMessage,
@@ -467,12 +468,30 @@ export function createFederationMiddleware() {
         return rewriteSubagentTranscriptOutput({ value, serverId: rewrittenInput.serverId });
       }
 
-      return rewriteFederationOutputValue({
+      const rewritten = rewriteFederationOutputValue({
         value,
         serverId: rewrittenInput.serverId,
         remoteProjectPathMap,
         decodedRemoteIds: rewrittenInput.decodedRemoteIds,
       });
+
+      // workspace.fork returns { metadata, projectPath }. The generic rewriter
+      // rewrites metadata via duck-typing, but the top-level projectPath is a
+      // remote filesystem path that needs mapping to its local equivalent.
+      if (isExactPath(options.path, ["workspace", "fork"])) {
+        if (typeof rewritten === "object" && rewritten !== null && "projectPath" in rewritten) {
+          const record = rewritten as Record<string, unknown>;
+          const remotePath = record.projectPath;
+          if (typeof remotePath === "string") {
+            const localPath = remoteProjectPathMap.get(stripTrailingSlashes(remotePath.trim()));
+            if (localPath) {
+              record.projectPath = localPath;
+            }
+          }
+        }
+      }
+
+      return rewritten;
     };
 
     if (isAsyncIterable(remoteResult)) {
