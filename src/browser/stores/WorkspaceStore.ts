@@ -616,7 +616,7 @@ export class WorkspaceStore {
       this.assertChatTransientState(workspaceId).queuedMessage = queuedMessage;
       this.states.bump(workspaceId);
     },
-    "restore-to-input": (workspaceId, _aggregator, data) => {
+    "restore-to-input": (_workspaceId, _aggregator, data) => {
       if (!isRestoreToInput(data)) return;
 
       // Use UPDATE_CHAT_INPUT event with mode="replace"

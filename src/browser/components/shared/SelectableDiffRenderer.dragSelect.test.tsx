@@ -1,4 +1,3 @@
-import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test, type Mock } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";

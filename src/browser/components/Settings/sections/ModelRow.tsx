@@ -1,4 +1,3 @@
-import React from "react";
 import { Check, Eye, Info, Pencil, Star, Trash2, X } from "lucide-react";
 import { createEditKeyHandler } from "@/browser/utils/ui/keybinds";
 import { GatewayToggleButton } from "@/browser/components/GatewayToggleButton";

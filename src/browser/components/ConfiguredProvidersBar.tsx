@@ -1,4 +1,3 @@
-import React from "react";
 import { Check, Settings } from "lucide-react";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { PROVIDER_DISPLAY_NAMES } from "@/common/constants/providers";

@@ -1,4 +1,3 @@
-import React from "react";
 import { Bot, X } from "lucide-react";
 
 interface AgentsInitBannerProps {

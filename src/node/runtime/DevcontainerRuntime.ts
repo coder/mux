@@ -55,7 +55,6 @@ export interface DevcontainerRuntimeOptions {
  */
 export class DevcontainerRuntime extends LocalBaseRuntime {
   private readonly worktreeManager: WorktreeManager;
-  private readonly srcBaseDir: string;
   private readonly configPath: string;
 
   // Cached env used for credential forwarding
@@ -409,7 +408,6 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
 
   constructor(options: DevcontainerRuntimeOptions) {
     super();
-    this.srcBaseDir = options.srcBaseDir;
     this.worktreeManager = new WorktreeManager(options.srcBaseDir);
     this.configPath = options.configPath;
     this.shareCredentials = options.shareCredentials ?? false;

@@ -102,7 +102,7 @@ export class IdleCompactionService {
 
   private async checkWorkspace(
     workspaceId: string,
-    projectPath: string,
+    _projectPath: string,
     thresholdMs: number,
     now: number
   ): Promise<void> {

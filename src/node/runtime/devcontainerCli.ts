@@ -24,17 +24,6 @@ export interface DevcontainerUpResultLine {
   description?: string;
 }
 
-interface _DevcontainerLogLine {
-  type?: string;
-  level?: number;
-  text?: string;
-  channel?: string;
-  timestamp?: number;
-  startTimestamp?: number;
-  name?: string;
-  status?: string;
-}
-
 export type DevcontainerStdoutParse =
   | { kind: "result"; result: DevcontainerUpResultLine }
   | { kind: "log"; text: string }

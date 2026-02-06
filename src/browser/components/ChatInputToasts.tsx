@@ -1,4 +1,3 @@
-import React from "react";
 import type { Toast } from "./ChatInputToast";
 import { SolutionLabel } from "./ChatInputToast";
 import { DocsLink } from "./DocsLink";

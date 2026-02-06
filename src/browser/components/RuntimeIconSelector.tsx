@@ -1,4 +1,3 @@
-import React from "react";
 import { cn } from "@/common/lib/utils";
 import { RUNTIME_MODE, type RuntimeMode } from "@/common/types/runtime";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";

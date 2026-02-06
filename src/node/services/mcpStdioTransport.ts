@@ -21,7 +21,7 @@ export class MCPStdioTransport implements MCPTransport {
   onerror?: (error: Error) => void;
   onmessage?: (message: JSONRPCMessage) => void;
 
-  constructor(private readonly execStream: ExecStream) {
+  constructor(execStream: ExecStream) {
     this.stdoutReader = execStream.stdout.getReader();
     this.stdinWriter = execStream.stdin.getWriter();
     this.exitPromise = execStream.exitCode;

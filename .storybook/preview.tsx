@@ -1,4 +1,3 @@
-import React from "react";
 import type { Preview } from "@storybook/react-vite";
 import { ThemeProvider, type ThemeMode } from "../src/browser/contexts/ThemeContext";
 import "../src/browser/styles/globals.css";

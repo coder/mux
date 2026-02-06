@@ -1174,7 +1174,7 @@ export class MCPServerManager {
     name: string,
     info: MCPServerInfo,
     runtime: Runtime,
-    projectPath: string,
+    _projectPath: string,
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void
