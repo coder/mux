@@ -1050,20 +1050,36 @@ export const ProjectSecretsModal: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     // The manage-secrets button is hidden (opacity-0) until the project row is hovered.
-    // Wrap in waitFor so it retries until the sidebar renders.
-    let projectRow!: HTMLElement;
+    // Wait for sidebar to render, then hover → find button → click → verify modal.
+    const body = within(canvasElement.ownerDocument.body);
+
+    // Wait for project row to render
     await waitFor(
       () => {
         const row = canvasElement.querySelector<HTMLElement>(
           `[data-project-path="${README_PROJECT_PATH}"]`
         );
         if (!row) throw new Error("project row not found");
-        projectRow = row;
       },
       { timeout: 10_000 }
     );
 
+    const projectRow = canvasElement.querySelector<HTMLElement>(
+      `[data-project-path="${README_PROJECT_PATH}"]`
+    )!;
+
+    // Hover to reveal the opacity-0 manage-secrets button
     await userEvent.hover(projectRow);
+
+    // Wait for the button to become available after hover
+    await waitFor(
+      () => {
+        within(projectRow).getByRole("button", {
+          name: new RegExp(`Manage secrets for ${README_PROJECT_NAME}`, "i"),
+        });
+      },
+      { timeout: 5_000 }
+    );
 
     const manageSecretsButton = within(projectRow).getByRole("button", {
       name: new RegExp(`Manage secrets for ${README_PROJECT_NAME}`, "i"),
@@ -1071,10 +1087,11 @@ export const ProjectSecretsModal: AppStory = {
 
     await userEvent.click(manageSecretsButton);
 
+    // Wait for modal with secrets to appear (portaled to document.body)
     await waitFor(
       () => {
-        within(document.body).getByText(/Manage Secrets/i);
-        within(document.body).getByText(/GITHUB_TOKEN/i);
+        body.getByText(/Manage Secrets/i);
+        body.getByText(/GITHUB_TOKEN/i);
       },
       { timeout: 10_000 }
     );
