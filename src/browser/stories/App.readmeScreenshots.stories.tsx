@@ -1020,7 +1020,11 @@ export const AgentStatusSidebar: AppStory = {
 };
 
 // README: docs/img/git-status.webp
+// The play function opens a Radix portaled tooltip which is unreliable in
+// the headless test-runner. The capture script replicates the interaction via
+// Playwright, so we skip this story in test-storybook.
 export const GitStatusPopover: AppStory = {
+  tags: ["!test"],
   render: () => (
     <AppWithMocks
       setup={() => {
@@ -1242,7 +1246,11 @@ graph TD
 };
 
 // README: docs/img/project-secrets.webp
+// The secrets button is opacity-0 behind a Radix Tooltip wrapper, which conflicts
+// with the headless test-runner. The capture script handles modal opening via
+// Playwright, so we skip this story in test-storybook.
 export const ProjectSecretsModal: AppStory = {
+  tags: ["!test"],
   render: () => (
     <AppWithMocks
       setup={() => {
