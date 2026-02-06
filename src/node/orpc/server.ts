@@ -244,6 +244,12 @@ export async function createOrpcServer({
       return;
     }
 
+    // Restrict postMessage target origin to the server's own origin (falls back
+    // to "*" when the host header is unavailable so the flow isn't broken).
+    const cbHost = (req.get("x-forwarded-host") ?? req.get("host"))?.split(",")[0]?.trim() ?? "";
+    const cbProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? req.protocol;
+    const expectedOrigin = cbHost ? `${cbProto}://${cbHost}` : "*";
+
     const state = getStringParamFromQueryOrBody(req, "state");
     const code = getStringParamFromQueryOrBody(req, "code");
     const error = getStringParamFromQueryOrBody(req, "error");
@@ -305,11 +311,12 @@ export async function createOrpcServer({
     <script>
       (() => {
         const payload = ${payloadJson};
+        const targetOrigin = ${JSON.stringify(expectedOrigin)};
         const ok = payload.ok === true;
 
         try {
           if (window.opener && typeof window.opener.postMessage === "function") {
-            window.opener.postMessage(payload, "*");
+            window.opener.postMessage(payload, targetOrigin);
           }
         } catch {
           // Ignore postMessage failures.
@@ -405,6 +412,12 @@ export async function createOrpcServer({
       return;
     }
 
+    // Restrict postMessage target origin to the server's own origin (falls back
+    // to "*" when the host header is unavailable so the flow isn't broken).
+    const cbHost = (req.get("x-forwarded-host") ?? req.get("host"))?.split(",")[0]?.trim() ?? "";
+    const cbProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? req.protocol;
+    const expectedOrigin = cbHost ? `${cbProto}://${cbHost}` : "*";
+
     const state = getStringParamFromQueryOrBody(req, "state");
     const code = getStringParamFromQueryOrBody(req, "code");
     const error = getStringParamFromQueryOrBody(req, "error");
@@ -463,11 +476,12 @@ export async function createOrpcServer({
     <script>
       (() => {
         const payload = ${payloadJson};
+        const targetOrigin = ${JSON.stringify(expectedOrigin)};
         const ok = payload.ok === true;
 
         try {
           if (window.opener && typeof window.opener.postMessage === "function") {
-            window.opener.postMessage(payload, "*");
+            window.opener.postMessage(payload, targetOrigin);
           }
         } catch {
           // Ignore postMessage failures.
@@ -524,6 +538,12 @@ export async function createOrpcServer({
       res.sendStatus(405);
       return;
     }
+
+    // Restrict postMessage target origin to the server's own origin (falls back
+    // to "*" when the host header is unavailable so the flow isn't broken).
+    const cbHost = (req.get("x-forwarded-host") ?? req.get("host"))?.split(",")[0]?.trim() ?? "";
+    const cbProto = req.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? req.protocol;
+    const expectedOrigin = cbHost ? `${cbProto}://${cbHost}` : "*";
 
     const state = getStringParamFromQueryOrBody(req, "state");
     const code = getStringParamFromQueryOrBody(req, "code");
@@ -586,11 +606,12 @@ export async function createOrpcServer({
     <script>
       (() => {
         const payload = ${payloadJson};
+        const targetOrigin = ${JSON.stringify(expectedOrigin)};
         const ok = payload.ok === true;
 
         try {
           if (window.opener && typeof window.opener.postMessage === "function") {
-            window.opener.postMessage(payload, "*");
+            window.opener.postMessage(payload, targetOrigin);
           }
         } catch {
           // Ignore postMessage failures.
