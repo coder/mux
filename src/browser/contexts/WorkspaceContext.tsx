@@ -55,6 +55,63 @@ import { isAbortError } from "@/browser/utils/isAbortError";
 import { useRouter } from "@/browser/contexts/RouterContext";
 import { migrateGatewayModel } from "@/browser/hooks/useGatewayModels";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
+import type { APIClient } from "@/browser/contexts/API";
+
+/**
+ * One-time best-effort migration: if the backend doesn't have model preferences yet,
+ * persist non-default localStorage values so future port/origin changes keep them.
+ * Called once on startup after backend config is fetched.
+ */
+function migrateLocalModelPrefsToBackend(
+  api: APIClient,
+  cfg: { defaultModel?: string; hiddenModels?: string[]; preferredCompactionModel?: string }
+): void {
+  if (!api.config.updateModelPreferences) return;
+
+  const localDefaultModelRaw = readPersistedString(DEFAULT_MODEL_KEY);
+  const localDefaultModel =
+    typeof localDefaultModelRaw === "string"
+      ? migrateGatewayModel(localDefaultModelRaw).trim()
+      : undefined;
+  const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
+  const localPreferredCompactionModel = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
+
+  const patch: {
+    defaultModel?: string;
+    hiddenModels?: string[];
+    preferredCompactionModel?: string;
+  } = {};
+
+  if (
+    cfg.defaultModel === undefined &&
+    localDefaultModel &&
+    localDefaultModel !== WORKSPACE_DEFAULTS.model
+  ) {
+    patch.defaultModel = localDefaultModel;
+  }
+
+  if (
+    cfg.hiddenModels === undefined &&
+    Array.isArray(localHiddenModels) &&
+    localHiddenModels.length > 0
+  ) {
+    patch.hiddenModels = localHiddenModels;
+  }
+
+  if (
+    cfg.preferredCompactionModel === undefined &&
+    typeof localPreferredCompactionModel === "string" &&
+    localPreferredCompactionModel.trim()
+  ) {
+    patch.preferredCompactionModel = localPreferredCompactionModel;
+  }
+
+  if (Object.keys(patch).length > 0) {
+    api.config.updateModelPreferences(patch).catch(() => {
+      // Best-effort only.
+    });
+  }
+}
 
 /**
  * Seed per-workspace localStorage from backend workspace metadata.
@@ -438,51 +495,7 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
         // One-time best-effort migration: if the backend doesn't have model prefs yet,
         // persist non-default localStorage values so future port changes keep them.
-        if (api.config.updateModelPreferences) {
-          const localDefaultModelRaw = readPersistedString(DEFAULT_MODEL_KEY);
-          const localDefaultModel =
-            typeof localDefaultModelRaw === "string"
-              ? migrateGatewayModel(localDefaultModelRaw).trim()
-              : undefined;
-          const localHiddenModels = readPersistedState<string[] | null>(HIDDEN_MODELS_KEY, null);
-          const localPreferredCompactionModel = readPersistedString(PREFERRED_COMPACTION_MODEL_KEY);
-
-          const patch: {
-            defaultModel?: string;
-            hiddenModels?: string[];
-            preferredCompactionModel?: string;
-          } = {};
-
-          if (
-            cfg.defaultModel === undefined &&
-            localDefaultModel &&
-            localDefaultModel !== WORKSPACE_DEFAULTS.model
-          ) {
-            patch.defaultModel = localDefaultModel;
-          }
-
-          if (
-            cfg.hiddenModels === undefined &&
-            Array.isArray(localHiddenModels) &&
-            localHiddenModels.length > 0
-          ) {
-            patch.hiddenModels = localHiddenModels;
-          }
-
-          if (
-            cfg.preferredCompactionModel === undefined &&
-            typeof localPreferredCompactionModel === "string" &&
-            localPreferredCompactionModel.trim()
-          ) {
-            patch.preferredCompactionModel = localPreferredCompactionModel;
-          }
-
-          if (Object.keys(patch).length > 0) {
-            api.config.updateModelPreferences(patch).catch(() => {
-              // Best-effort only.
-            });
-          }
-        }
+        migrateLocalModelPrefsToBackend(api, cfg);
       })
       .catch(() => {
         // Best-effort only.
