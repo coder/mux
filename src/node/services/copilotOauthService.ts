@@ -19,7 +19,16 @@ function githubUrls(domain: string) {
 }
 
 function normalizeDomain(url: string): string {
-  return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  try {
+    const withProtocol = url.includes("://") ? url : `https://${url}`;
+    return new URL(withProtocol).hostname;
+  } catch {
+    // Fall back to basic cleanup if URL parsing fails
+    return url
+      .replace(/^https?:\/\//, "")
+      .replace(/[/?#].*$/, "")
+      .replace(/\/$/, "");
+  }
 }
 
 interface DeviceFlow {
@@ -158,7 +167,7 @@ export class CopilotOauthService {
     this.finishFlow(flowId, Err("Device flow cancelled"));
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
     for (const flow of this.flows.values()) {
       clearTimeout(flow.timeout);
       if (flow.cleanupTimeout !== null) clearTimeout(flow.cleanupTimeout);
@@ -215,10 +224,15 @@ export class CopilotOauthService {
 
           // Persist the enterprise domain so aiService can derive the correct API base URL.
           // For regular github.com, we clear any previously stored domain.
-          if (flow.domain !== "github.com") {
-            this.providerService.setConfig("github-copilot", ["enterpriseDomain"], flow.domain);
-          } else {
-            this.providerService.setConfig("github-copilot", ["enterpriseDomain"], "");
+          const domainValue = flow.domain !== "github.com" ? flow.domain : "";
+          const domainResult = this.providerService.setConfig(
+            "github-copilot",
+            ["enterpriseDomain"],
+            domainValue
+          );
+          if (!domainResult.success) {
+            void this.finishFlow(flow.flowId, Err(domainResult.error));
+            return;
           }
 
           log.debug(`Copilot OAuth completed successfully (flowId=${flow.flowId})`);

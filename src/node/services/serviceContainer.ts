@@ -420,7 +420,7 @@ export class ServiceContainer {
     await this.muxGovernorOauthService.dispose();
     await this.codexOauthService.dispose();
 
-    this.copilotOauthService.dispose();
+    await this.copilotOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }
