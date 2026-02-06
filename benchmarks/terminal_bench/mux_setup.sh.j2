@@ -50,14 +50,14 @@ fi
 
 cd "${MUX_APP_ROOT}"
 
-# The archive ships node_modules pre-installed to avoid OOM during `bun install`
-# in memory-constrained Daytona sandboxes (2GB). Fall back to bun install when
-# node_modules is missing (e.g., git-clone path with MUX_AGENT_VERSION).
+# Use --production to skip devDependencies (electron-builder, storybook, etc.)
+# which cuts install size from 1.9GB → 728MB and avoids OOM in memory-constrained
+# Daytona sandboxes (2GB). The headless CLI only needs production deps.
 if [[ -d "node_modules" ]]; then
-  log "node_modules present in archive, skipping bun install"
+  log "node_modules already present, skipping bun install"
 else
-  log "installing mux dependencies via bun"
-  bun install --frozen-lockfile
+  log "installing mux production dependencies via bun"
+  bun install --production --frozen-lockfile
 fi
 
 mkdir -p "${MUX_CONFIG_ROOT}"

@@ -6,16 +6,8 @@ from collections.abc import Iterable
 from pathlib import Path
 
 
-def build_app_archive(
-    repo_root: Path,
-    include_paths: Iterable[str],
-    optional_paths: Iterable[str] = (),
-) -> bytes:
-    """Pack the mux workspace into a gzipped tarball.
-
-    ``include_paths`` are required and raise if missing.
-    ``optional_paths`` are silently skipped when absent.
-    """
+def build_app_archive(repo_root: Path, include_paths: Iterable[str]) -> bytes:
+    """Pack the mux workspace into a gzipped tarball."""
     if not repo_root.exists():
         raise FileNotFoundError(f"mux repo root {repo_root} not found")
 
@@ -26,8 +18,4 @@ def build_app_archive(
             if not source.exists():
                 raise FileNotFoundError(f"Required file {source} missing")
             archive.add(source, arcname=relative_path, recursive=True)
-        for relative_path in optional_paths:
-            source = repo_root / relative_path
-            if source.exists():
-                archive.add(source, arcname=relative_path, recursive=True)
     return buffer.getvalue()

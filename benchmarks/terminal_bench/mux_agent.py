@@ -35,12 +35,6 @@ class MuxAgent(BaseInstalledAgent):
         "scripts/postinstall.sh",
     )
 
-    # Included when present — node_modules is shipped pre-installed to avoid OOM
-    # during `bun install` in 2GB Daytona sandboxes (AI SDK v2→v3 upgrade pushed
-    # peak install memory past 2GB). Falls back to `bun install` in the sandbox
-    # if absent.
-    _OPTIONAL_INCLUDE_PATHS: Sequence[str] = ("node_modules",)
-
     _PROVIDER_ENV_KEYS: Sequence[str] = (
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",
@@ -208,9 +202,7 @@ class MuxAgent(BaseInstalledAgent):
         # install template, which extracts the archive and runs chmod on runner
         if not self._archive_bytes:
             self._archive_bytes = build_app_archive(
-                self._repo_root,
-                self._INCLUDE_PATHS,
-                optional_paths=self._OPTIONAL_INCLUDE_PATHS,
+                self._repo_root, self._INCLUDE_PATHS
             )
 
         # Write archive to logs_dir and upload
