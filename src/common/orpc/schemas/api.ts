@@ -250,34 +250,6 @@ export const copilotOauth = {
 };
 
 // Mux Governor OAuth (enrollment for enterprise policy service)
-// GitHub Copilot OAuth (device code flow for Copilot token)
-export const copilotOauth = {
-  startDeviceFlow: {
-    input: z.object({}).strict(),
-    output: ResultSchema(
-      z.object({
-        flowId: z.string(),
-        verificationUri: z.string(),
-        userCode: z.string(),
-      }),
-      z.string()
-    ),
-  },
-  waitForDeviceFlow: {
-    input: z
-      .object({
-        flowId: z.string(),
-        timeoutMs: z.number().int().positive().optional(),
-      })
-      .strict(),
-    output: ResultSchema(z.void(), z.string()),
-  },
-  cancelDeviceFlow: {
-    input: z.object({ flowId: z.string() }).strict(),
-    output: z.void(),
-  },
-};
-
 export const muxGovernorOauth = {
   startDesktopFlow: {
     input: z.object({ governorOrigin: z.string() }).strict(),
