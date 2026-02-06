@@ -684,18 +684,33 @@ export const ToolSelectorInteraction: AppStory = {
 
     const body = within(canvasElement.ownerDocument.body);
 
-    // Find the tool selector section
-    await body.findByText("mux", {}, { timeout: 10000 });
+    // Wait for the modal's data loading to fully settle. After loadData()
+    // completes, all tools are allowed by default, so the "All" button is
+    // disabled (allAllowed === true). Checking for this avoids interacting
+    // with DOM elements that may be stale from an earlier render.
+    await waitFor(
+      () => {
+        const allBtn = body.queryByRole("button", { name: /^All$/i });
+        if (!allBtn) throw new Error("All button not found — modal still loading");
+        return expect(allBtn).toBeDisabled();
+      },
+      { timeout: 10000 }
+    );
 
-    // Click "None" to deselect all tools
-    const noneButton = await body.findByRole("button", { name: /^None$/i }, { timeout: 10000 });
+    // Click "None" to deselect all tools.
+    // Re-query to get a fresh DOM reference (the loading cycle may have
+    // replaced earlier elements).
+    const noneButton = body.getByRole("button", { name: /^None$/i });
     await userEvent.click(noneButton);
 
-    // Wait for selection state to update (CI can be slower than local runs).
-    await waitFor(() => expect(noneButton).toBeDisabled());
+    // Re-query for the assertion — the previous noneButton reference could
+    // be stale if React replaced the DOM node during re-render.
+    await waitFor(() => {
+      const btn = body.getByRole("button", { name: /^None$/i });
+      return expect(btn).toBeDisabled();
+    });
 
     // Should now show "0 of X tools enabled".
-    // CI can be slower than local runs, so use an explicit timeout to avoid flake.
     await body.findByText(
       (_content, element) => {
         const text = (element?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -705,11 +720,14 @@ export const ToolSelectorInteraction: AppStory = {
       { timeout: 10000 }
     );
 
-    // Click "All" to select all tools
-    const allButton = await body.findByRole("button", { name: /^All$/i }, { timeout: 10000 });
+    // Click "All" to select all tools — re-query for a fresh element.
+    const allButton = body.getByRole("button", { name: /^All$/i });
     await waitFor(() => expect(allButton).toBeEnabled());
     await userEvent.click(allButton);
-    await waitFor(() => expect(allButton).toBeDisabled());
+    await waitFor(() => {
+      const btn = body.getByRole("button", { name: /^All$/i });
+      return expect(btn).toBeDisabled();
+    });
   },
 };
 
