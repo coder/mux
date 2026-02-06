@@ -12,7 +12,7 @@
 
 A desktop & browser application for parallel agentic development.
 
-![mux product demo](docs/img/mux-demo-opt.gif)
+<img src="docs/img/mux-demo-opt.gif" alt="mux product demo" width="100%">
 
 ## Features
 
