@@ -460,6 +460,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
   const workspaceRemoveError = usePopoverError();
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
@@ -595,12 +596,23 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   const handleCancelWorkspaceCreation = useCallback(
     async (workspaceId: string) => {
-      const result = await removeWorkspace(workspaceId, { force: true });
-      if (!result.success) {
-        workspaceRemoveError.showError(
-          workspaceId,
-          result.error ?? "Failed to cancel workspace creation"
-        );
+      // Give immediate UI feedback (spinner / disabled row) while deletion is in-flight.
+      setRemovingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+
+      try {
+        const result = await removeWorkspace(workspaceId, { force: true });
+        if (!result.success) {
+          workspaceRemoveError.showError(
+            workspaceId,
+            result.error ?? "Failed to cancel workspace creation"
+          );
+        }
+      } finally {
+        setRemovingWorkspaceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(workspaceId);
+          return next;
+        });
       }
     },
     [removeWorkspace, workspaceRemoveError]
@@ -981,6 +993,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   isArchiving={archivingWorkspaceIds.has(metadata.id)}
+                                  isRemoving={
+                                    removingWorkspaceIds.has(metadata.id) ||
+                                    metadata.isRemoving === true
+                                  }
                                   onSelectWorkspace={handleSelectWorkspace}
                                   onArchiveWorkspace={handleArchiveWorkspace}
                                   onCancelCreation={handleCancelWorkspaceCreation}

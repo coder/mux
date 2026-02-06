@@ -18,7 +18,7 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis } from "lucide-react";
+import { Pencil, Trash2, Ellipsis, Loader2 } from "lucide-react";
 import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
 import { Shimmer } from "./ai-elements/shimmer";
 import { ArchiveIcon } from "./icons/ArchiveIcon";
@@ -70,6 +70,8 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
   isArchiving?: boolean;
+  /** True when deletion is in-flight (optimistic UI while backend removes). */
+  isRemoving?: boolean;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
@@ -230,6 +232,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     projectName,
     isSelected,
     isArchiving,
+    isRemoving: isRemovingProp,
     depth,
     sectionId,
     onSelectWorkspace,
@@ -241,7 +244,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const { id: workspaceId, namedWorkspacePath } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const isInitializing = metadata.isInitializing === true;
-  const isSelectionDisabled = isInitializing || isArchiving === true;
+  const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
+  const isSelectionDisabled = isInitializing || isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
@@ -316,7 +320,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     listener: true,
   });
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
-  const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing;
+  const hasStatusText =
+    Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
   // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
@@ -358,6 +363,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           isDragging && "opacity-50",
+          isRemoving && "opacity-70",
           // Keep hover styles enabled for initializing workspaces so the row feels interactive
           // (the click selection is disabled, but the cancel action remains accessible).
           !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
@@ -399,11 +405,13 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         tabIndex={isSelectionDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
         aria-label={
-          isInitializing
-            ? `Initializing workspace ${displayTitle}`
-            : isArchiving
-              ? `Archiving workspace ${displayTitle}`
-              : `Select workspace ${displayTitle}`
+          isRemoving
+            ? `Deleting workspace ${displayTitle}`
+            : isInitializing
+              ? `Initializing workspace ${displayTitle}`
+              : isArchiving
+                ? `Archiving workspace ${displayTitle}`
+                : `Select workspace ${displayTitle}`
         }
         aria-disabled={isSelectionDisabled}
         data-workspace-path={namedWorkspacePath}
@@ -421,19 +429,38 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="text-muted hover:text-destructive inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+                    className={cn(
+                      "text-muted inline-flex h-4 w-4 items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                      // Keep cancel affordance hidden until row-hover while initializing,
+                      // but force it visible as a spinner once deletion starts.
+                      isRemoving
+                        ? "cursor-default opacity-100"
+                        : "cursor-pointer opacity-0 hover:text-destructive"
+                    )}
                     onKeyDown={stopKeyboardPropagation}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (isRemoving) return;
                       void onCancelCreation(workspaceId);
                     }}
-                    aria-label={`Cancel workspace creation ${displayTitle}`}
+                    aria-label={
+                      isRemoving
+                        ? `Deleting workspace ${displayTitle}`
+                        : `Cancel workspace creation ${displayTitle}`
+                    }
+                    aria-disabled={isRemoving}
                     data-workspace-id={workspaceId}
                   >
-                    <Trash2 className="h-3 w-3" />
+                    {isRemoving ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3 w-3" />
+                    )}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent align="start">Cancel creation</TooltipContent>
+                <TooltipContent align="start">
+                  {isRemoving ? "Deleting..." : "Cancel creation"}
+                </TooltipContent>
               </Tooltip>
             ) : (
               <Tooltip>
@@ -617,7 +644,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           </div>
           {hasSecondaryRow && (
             <div className="min-w-0">
-              {isArchiving ? (
+              {isRemoving ? (
+                <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                  <span className="min-w-0 truncate">Deleting...</span>
+                </div>
+              ) : isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <ArchiveIcon className="h-3 w-3 shrink-0" />
                   <span className="min-w-0 truncate">Archiving...</span>
