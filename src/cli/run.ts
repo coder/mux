@@ -29,6 +29,7 @@ import { MCPServerManager } from "@/node/services/mcpServerManager";
 import { WorkspaceService } from "@/node/services/workspaceService";
 import { TaskService } from "@/node/services/taskService";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
+import { SessionUsageService } from "@/node/services/sessionUsageService";
 import {
   isCaughtUpMessage,
   isReasoningDelta,
@@ -413,13 +414,17 @@ async function main(): Promise<number> {
   const backgroundProcessManager = new BackgroundProcessManager(
     path.join(os.tmpdir(), "mux-bashes")
   );
+  // SessionUsageService tracks per-model usage and rolls up sub-agent costs into the
+  // parent workspace so that --budget enforcement and the cost summary include all work.
+  const sessionUsageService = new SessionUsageService(config, historyService);
   const aiService = new AIService(
     config,
     historyService,
     partialService,
     initStateManager,
     providerService,
-    backgroundProcessManager
+    backgroundProcessManager,
+    sessionUsageService
   );
 
   // CLI-only exit code control: allows agent to set the process exit code
@@ -483,7 +488,8 @@ async function main(): Promise<number> {
     aiService,
     initStateManager,
     extensionMetadata,
-    backgroundProcessManager
+    backgroundProcessManager,
+    sessionUsageService
   );
   const taskService = new TaskService(
     config,
