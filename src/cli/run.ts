@@ -26,6 +26,9 @@ import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentS
 import { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager } from "@/node/services/mcpServerManager";
+import { WorkspaceService } from "@/node/services/workspaceService";
+import { TaskService } from "@/node/services/taskService";
+import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import {
   isCaughtUpMessage,
   isReasoningDelta,
@@ -468,6 +471,30 @@ async function main(): Promise<number> {
   });
   aiService.setMCPServerManager(mcpServerManager);
 
+  // Wire up sub-agent support: TaskService needs WorkspaceService, which needs
+  // ExtensionMetadataService. For CLI mode the extension metadata is ephemeral.
+  const extensionMetadata = new ExtensionMetadataService(
+    path.join(tempDir.path, "extensionMetadata.json")
+  );
+  const workspaceService = new WorkspaceService(
+    config,
+    historyService,
+    partialService,
+    aiService,
+    initStateManager,
+    extensionMetadata,
+    backgroundProcessManager
+  );
+  const taskService = new TaskService(
+    config,
+    historyService,
+    partialService,
+    aiService,
+    workspaceService,
+    initStateManager
+  );
+  aiService.setTaskService(taskService);
+
   const session = new AgentSession({
     workspaceId,
     config,
@@ -546,6 +573,9 @@ async function main(): Promise<number> {
     projectName: path.basename(projectDir),
     runtimeConfig,
   });
+
+  // Resume any queued/in-progress sub-agent tasks (relevant after crash recovery)
+  await taskService.initialize();
 
   const experiments = buildExperimentsObject(opts.experiment);
 
@@ -1019,6 +1049,7 @@ async function main(): Promise<number> {
     unsubscribe();
     session.dispose();
     mcpServerManager.dispose();
+    await backgroundProcessManager.terminateAll();
   }
 
   // Exit codes: 2 for budget exceeded, agent-specified exit code, or 0 for success
