@@ -112,11 +112,11 @@ export interface FileEditErrorResult extends ToolOutputUiOnlyFields {
 
 export interface FileEditInsertToolArgs {
   file_path: string;
-  content: string;
   /** Anchor text to insert before. Content will be placed immediately before this substring. */
   insert_before?: string;
   /** Anchor text to insert after. Content will be placed immediately after this substring. */
   insert_after?: string;
+  content: string;
 }
 
 // FileEditInsertToolResult derived from Zod schema (single source of truth)

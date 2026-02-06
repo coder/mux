@@ -713,7 +713,6 @@ export const TOOL_DEFINITIONS = {
     schema: z
       .object({
         file_path: FILE_EDIT_FILE_PATH,
-        content: z.string().describe("The content to insert"),
         insert_before: z
           .string()
           .min(1)
@@ -728,6 +727,7 @@ export const TOOL_DEFINITIONS = {
           .describe(
             "Anchor text to insert after. Content will be placed immediately after this substring."
           ),
+        content: z.string().describe("The content to insert"),
       })
       .refine((data) => !(data.insert_before !== undefined && data.insert_after !== undefined), {
         message: "Provide only one of insert_before or insert_after (not both).",
