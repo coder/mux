@@ -601,7 +601,16 @@ async function main(): Promise<number> {
     providerOptions: {
       openai: { serviceTier: opts.serviceTier },
     },
-    // toolPolicy is computed by backend from agent definitions (resolveToolPolicyForAgent)
+    // Disable UI-only tools that have no effect in CLI mode:
+    // - status_set: backend no-op, status indicator only visible in desktop UI
+    // - todo_write/todo_read: TODO list only visible in desktop UI
+    // - notify: sends OS notifications via Electron, silently swallowed in CLI
+    toolPolicy: [
+      { regex_match: "status_set", action: "disable" as const },
+      { regex_match: "todo_write", action: "disable" as const },
+      { regex_match: "todo_read", action: "disable" as const },
+      { regex_match: "notify", action: "disable" as const },
+    ],
     // Plan agent instructions are handled by the backend (has access to plan file path)
   });
 
