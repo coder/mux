@@ -1068,12 +1068,9 @@ async function main(): Promise<number> {
       }
     }
 
-    // Compute final usage/cost summary. SessionUsageService includes rolled-up sub-agent
-    // costs, so prefer it over the in-memory usageHistory which only tracks parent streams.
-    const sessionUsage = await sessionUsageService.getSessionUsage(workspaceId);
-    const totalUsage = sessionUsage
-      ? sumUsageHistory(Object.values(sessionUsage.byModel))
-      : sumUsageHistory(usageHistory);
+    // Compute final usage/cost summary. usageHistory includes both parent stream usage
+    // (from stream-end events) and rolled-up sub-agent costs (from session-usage-delta events).
+    const totalUsage = sumUsageHistory(usageHistory);
     const totalCost = getTotalCost(totalUsage);
 
     // Emit run-complete event in JSON mode with usage and cost
