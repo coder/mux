@@ -1,9 +1,9 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/logo-white.svg" />
-  <source media="(prefers-color-scheme: light)" srcset="docs/img/logo-black.svg" />
-  <img src="docs/img/logo-black.svg" alt="mux logo" width="15%" />
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/white-mux.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="docs/img/black-mux.svg" />
+  <img src="docs/img/black-mux.svg" alt="mux logo" width="15%" />
 </picture>
 
 # mux - coding agent multiplexer
