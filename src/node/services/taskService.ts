@@ -29,7 +29,11 @@ import { Ok, Err, type Result } from "@/common/types/result";
 import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import {
+  createMuxMessage,
+  getCompactionFollowUpContent,
+  type MuxMessage,
+} from "@/common/types/message";
 import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -2097,6 +2101,16 @@ export class TaskService {
       return;
     }
 
+    // Don't send the agent_report reminder if a follow-up message is incoming:
+    // 1. Compaction with follow-up: the original message will be re-dispatched after compaction.
+    if (await this.isCompactionStreamWithFollowUp(workspaceId)) {
+      return;
+    }
+    // 2. Queued user message: will be sent after stream-end processing.
+    if (this.workspaceService.hasQueuedMessages(workspaceId)) {
+      return;
+    }
+
     // If a task stream ends without agent_report, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
       await this.fallbackReportMissingAgentReport(entry);
@@ -2118,6 +2132,17 @@ export class TaskService {
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
       }
     );
+  }
+
+  /** Check if the stream was a compaction request that has a pending follow-up message. */
+  private async isCompactionStreamWithFollowUp(workspaceId: string): Promise<boolean> {
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    if (!historyResult.success) return false;
+    const lastUserMsg = [...historyResult.data].reverse().find((m) => m.role === "user");
+    const muxMeta = lastUserMsg?.metadata?.muxMetadata;
+    // Only skip the reminder if a follow-up will be dispatched after compaction.
+    // Compactions without follow-ups (e.g. idle compaction) should still trigger the reminder.
+    return getCompactionFollowUpContent(muxMeta) !== undefined;
   }
 
   private async fallbackReportMissingAgentReport(entry: {
