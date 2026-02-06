@@ -187,6 +187,10 @@ export class CopilotOauthService {
           interval?: number;
         };
 
+        // Re-check cancellation after the fetch round-trip to avoid
+        // persisting credentials for a flow that was cancelled mid-request.
+        if (flow.cancelled) return;
+
         if (data.access_token) {
           // Store token as apiKey for the github-copilot provider
           const persistResult = this.providerService.setConfig(
