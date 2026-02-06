@@ -574,6 +574,7 @@ export const router = (authToken?: string) => {
             client = createRemoteClient<RemoteMuxProjectsClient>({
               baseUrl: server.baseUrl,
               authToken,
+              timeoutMs: 30_000,
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -655,6 +656,7 @@ export const router = (authToken?: string) => {
             client = createRemoteClient<RemoteMuxOrpcClient>({
               baseUrl: server.baseUrl,
               authToken,
+              timeoutMs: 30_000,
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -2507,6 +2509,7 @@ export const router = (authToken?: string) => {
                   const client = createRemoteClient<RemoteMuxOrpcClient>({
                     baseUrl: server.baseUrl,
                     authToken,
+                    timeoutMs: 30_000,
                   });
 
                   const workspaces = await client.workspace.list(input);
@@ -3208,6 +3211,7 @@ export const router = (authToken?: string) => {
                   const client = createRemoteClient<RemoteMuxOrpcClient>({
                     baseUrl: server.baseUrl,
                     authToken,
+                    timeoutMs: 30_000,
                   });
 
                   const allowedWorkspaceIds = new Set<string>();

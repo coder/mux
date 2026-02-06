@@ -434,6 +434,7 @@ export function createFederationMiddleware() {
     const client = createRemoteClient<AnyOrpcClient>({
       baseUrl: server.baseUrl,
       authToken,
+      timeoutMs: 30_000,
     });
 
     const procedure = resolveRemoteProcedure(client, options.path);
