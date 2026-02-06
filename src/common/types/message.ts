@@ -539,6 +539,7 @@ export type DisplayedMessage =
         input: unknown;
         output?: unknown;
         state: "input-available" | "output-available" | "output-redacted";
+        failed?: boolean;
         timestamp?: number;
       }>;
     }

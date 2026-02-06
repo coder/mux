@@ -38,5 +38,6 @@ export interface NestedToolCall {
   input: unknown;
   output?: unknown;
   state: "input-available" | "output-available" | "output-redacted";
+  failed?: boolean;
   timestamp?: number;
 }

@@ -585,4 +585,147 @@ describe("buildChatJsonlForSharing", () => {
     const parsed = lines.map((line) => JSON.parse(line) as MuxMessage);
     expect(parsed).toEqual(messages);
   });
+
+  it("sets failed: true on stripped tool part when output indicates failure", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "bash",
+            state: "output-available",
+            input: { script: "exit 1" },
+            output: { success: false, error: "command failed" },
+          },
+        ],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool") {
+      throw new Error("Expected tool part");
+    }
+
+    expect(part.state).toBe("output-redacted");
+    expect(part).not.toHaveProperty("output");
+    // failed: true is preserved so downstream renderers can show failure status
+    expect((part as Record<string, unknown>).failed).toBe(true);
+  });
+
+  it("does NOT set failed on stripped tool part when output indicates success", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "bash",
+            state: "output-available",
+            input: { script: "echo hi" },
+            output: { success: true, output: "hi" },
+          },
+        ],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool") {
+      throw new Error("Expected tool part");
+    }
+
+    expect(part.state).toBe("output-redacted");
+    // Successful tools should not have failed flag
+    expect((part as Record<string, unknown>).failed).toBeUndefined();
+  });
+
+  it("sets failed: true on stripped nested call when output indicates failure", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "code_execution",
+            state: "input-available",
+            input: { code: "mux.bash({ script: 'fail' })" },
+            nestedCalls: [
+              {
+                toolCallId: "nested-1",
+                toolName: "bash",
+                input: { script: "fail" },
+                output: { success: false },
+                state: "output-available",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool") {
+      throw new Error("Expected tool part");
+    }
+
+    const nested = part.nestedCalls?.[0];
+    expect(nested?.state).toBe("output-redacted");
+    expect(nested).not.toHaveProperty("output");
+    expect((nested as Record<string, unknown> | undefined)?.failed).toBe(true);
+  });
+
+  it("does NOT set failed on stripped nested call when output indicates success", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolCallId: "tc-1",
+            toolName: "code_execution",
+            state: "input-available",
+            input: { code: "mux.bash({ script: 'echo ok' })" },
+            nestedCalls: [
+              {
+                toolCallId: "nested-1",
+                toolName: "bash",
+                input: { script: "echo ok" },
+                output: { success: true, output: "ok" },
+                state: "output-available",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    const jsonl = buildChatJsonlForSharing(messages, { includeToolOutput: false });
+    const parsed = JSON.parse(splitJsonlLines(jsonl)[0]) as MuxMessage;
+    const part = parsed.parts[0];
+
+    if (part.type !== "dynamic-tool") {
+      throw new Error("Expected tool part");
+    }
+
+    const nested = part.nestedCalls?.[0];
+    expect(nested?.state).toBe("output-redacted");
+    // Successful nested calls should not have failed flag
+    expect((nested as Record<string, unknown> | undefined)?.failed).toBeUndefined();
+  });
 });
