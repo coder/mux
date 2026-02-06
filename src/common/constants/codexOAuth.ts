@@ -112,7 +112,12 @@ export const CODEX_OAUTH_ALLOWED_MODELS = new Set<string>([
 ]);
 
 /**
- * Models that *require* Codex OAuth (i.e. cannot fall back to OpenAI API keys).
+ * Models that *prefer* Codex OAuth routing.
+ *
+ * These models are initially gated behind OAuth but eventually become available
+ * via regular API keys.  When the user has OAuth connected, we route through it;
+ * otherwise we fall back to their API key and let OpenAI decide whether the
+ * model is accessible.
  */
 export const CODEX_OAUTH_REQUIRED_MODELS = new Set<string>([
   "gpt-5.1-codex-max",
