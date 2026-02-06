@@ -1050,12 +1050,18 @@ export const ProjectSecretsModal: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     // The manage-secrets button is hidden (opacity-0) until the project row is hovered.
-    const projectRow = canvasElement.querySelector<HTMLElement>(
-      `[data-project-path="${README_PROJECT_PATH}"]`
+    // Wrap in waitFor so it retries until the sidebar renders.
+    let projectRow!: HTMLElement;
+    await waitFor(
+      () => {
+        const row = canvasElement.querySelector<HTMLElement>(
+          `[data-project-path="${README_PROJECT_PATH}"]`
+        );
+        if (!row) throw new Error("project row not found");
+        projectRow = row;
+      },
+      { timeout: 10_000 }
     );
-    if (!projectRow) {
-      throw new Error("project row not found");
-    }
 
     await userEvent.hover(projectRow);
 
@@ -1293,7 +1299,9 @@ export const OpportunisticCompactionTooltip: AppStory = {
     );
 
     // Hover the Start Here button on the final assistant message.
-    const startHereButton = await canvas.findByRole("button", { name: "Start Here" });
+    // Multiple assistant messages each have a "Start Here" button; grab the last one.
+    const startHereButtons = await canvas.findAllByRole("button", { name: "Start Here" });
+    const startHereButton = startHereButtons[startHereButtons.length - 1];
     await userEvent.hover(startHereButton);
 
     await waitFor(
