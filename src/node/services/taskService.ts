@@ -31,7 +31,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 
 import {
   createMuxMessage,
-  getCompactionFollowUpContent,
+  isCompactionSummaryMetadata,
   type MuxMessage,
 } from "@/common/types/message";
 import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
@@ -2141,12 +2141,13 @@ export class TaskService {
   /** Check if the stream was a compaction request that has a pending follow-up message. */
   private async isCompactionStreamWithFollowUp(workspaceId: string): Promise<boolean> {
     const historyResult = await this.historyService.getHistory(workspaceId);
-    if (!historyResult.success) return false;
-    const lastUserMsg = [...historyResult.data].reverse().find((m) => m.role === "user");
-    const muxMeta = lastUserMsg?.metadata?.muxMetadata;
-    // Only skip the reminder if a follow-up will be dispatched after compaction.
-    // Compactions without follow-ups (e.g. idle compaction) should still trigger the reminder.
-    return getCompactionFollowUpContent(muxMeta) !== undefined;
+    if (!historyResult.success || historyResult.data.length === 0) return false;
+    // After compaction, history is cleared and replaced with a single assistant
+    // summary message. Check the last message (any role) for a compaction-summary
+    // with pendingFollowUp — mirrors dispatchPendingFollowUp() in AgentSession.
+    const lastMsg = historyResult.data[historyResult.data.length - 1];
+    const muxMeta = lastMsg.metadata?.muxMetadata;
+    return isCompactionSummaryMetadata(muxMeta) && muxMeta.pendingFollowUp !== undefined;
   }
 
   private async fallbackReportMissingAgentReport(entry: {
