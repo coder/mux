@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AgentIdSchema } from "./agentDefinition";
 import { AgentModeSchema } from "../../types/mode";
+import { THINKING_LEVELS } from "../../types/thinking";
 import { ChatUsageDisplaySchema } from "./chatStats";
 import { StreamErrorTypeSchema } from "./errors";
 import {
@@ -54,8 +55,7 @@ export const DeleteMessageSchema = z.object({
   historySequences: z.array(z.number()),
 });
 
-// Matches THINKING_LEVELS from src/common/types/thinking.ts
-const ThinkingLevelSchema = z.enum(["off", "low", "medium", "high", "xhigh", "max"]);
+const ThinkingLevelSchema = z.enum(THINKING_LEVELS);
 
 export const StreamStartEventSchema = z.object({
   type: z.literal("stream-start"),
