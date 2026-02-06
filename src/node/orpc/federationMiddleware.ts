@@ -1,7 +1,7 @@
 import { os } from "@orpc/server";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { ORPCContext } from "./context";
-import { decodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
+import { decodeRemoteWorkspaceId, isRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
 import {
   buildRemoteProjectPathMap,
@@ -36,6 +36,7 @@ const FEDERATION_ID_KEYS = new Set<string>([
   "task_id",
   "task_ids",
   "sectionId",
+  "sessionId",
 ]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -351,7 +352,15 @@ function rewriteFederationOutputValue(params: {
         ? encodeRemoteIdBestEffort(params.serverId, key)
         : key;
 
-      const nextValue = visit(entry, depth + 1);
+      // VALUE rewriting: re-encode string values under known ID keys so that
+      // output IDs (e.g. sessionId from terminal.create) are encoded for the
+      // frontend to round-trip back through federation on subsequent calls.
+      let nextValue: unknown;
+      if (FEDERATION_ID_KEYS.has(key) && typeof entry === "string" && !isRemoteWorkspaceId(entry)) {
+        nextValue = encodeRemoteIdBestEffort(params.serverId, entry);
+      } else {
+        nextValue = visit(entry, depth + 1);
+      }
 
       if (nextKey !== key || nextValue !== entry) {
         changed = true;
@@ -417,6 +426,16 @@ export function createFederationMiddleware() {
       return options.next();
     }
 
+    // Skip local-only Electron terminal window operations — these manage
+    // local windows/processes and must never be proxied to remote servers.
+    if (
+      isExactPath(options.path, ["terminal", "openWindow"]) ||
+      isExactPath(options.path, ["terminal", "closeWindow"]) ||
+      isExactPath(options.path, ["terminal", "openNative"])
+    ) {
+      return options.next();
+    }
+
     const rewrittenInput = rewriteFederationInputIds(input);
     if (!rewrittenInput) {
       return options.next();
@@ -474,6 +493,19 @@ export function createFederationMiddleware() {
         remoteProjectPathMap,
         decodedRemoteIds: rewrittenInput.decodedRemoteIds,
       });
+
+      // terminal.listSessions returns a bare string[] of session IDs — the
+      // generic object-key rewriter won't touch plain array elements, so we
+      // re-encode each element explicitly.
+      if (isExactPath(options.path, ["terminal", "listSessions"])) {
+        if (Array.isArray(rewritten)) {
+          return rewritten.map((id: unknown) =>
+            typeof id === "string" && !isRemoteWorkspaceId(id)
+              ? encodeRemoteIdBestEffort(rewrittenInput.serverId, id)
+              : id
+          );
+        }
+      }
 
       // workspace.fork returns { metadata, projectPath }. The generic rewriter
       // rewrites metadata via duck-typing, but the top-level projectPath is a
