@@ -189,7 +189,7 @@ export { shouldRunIntegrationTests, validateApiKeys, getApiKey };
 export async function preloadTestModules(): Promise<void> {
   const [{ loadTokenizerModules }, { preloadAISDKProviders }] = await Promise.all([
     import("../../src/node/utils/main/tokenizer"),
-    import("../../src/node/services/aiService"),
+    import("../../src/node/services/providerModelFactory"),
   ]);
   await Promise.all([loadTokenizerModules(), preloadAISDKProviders()]);
 }

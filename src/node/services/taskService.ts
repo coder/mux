@@ -21,8 +21,12 @@ import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/age
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { createRuntime, runBackgroundInit } from "@/node/runtime/runtimeFactory";
-import type { InitLogger, WorkspaceCreationResult, Runtime } from "@/node/runtime/Runtime";
-import { execBuffered } from "@/node/utils/runtime/helpers";
+import type { InitLogger, WorkspaceCreationResult } from "@/node/runtime/Runtime";
+import {
+  coerceNonEmptyString,
+  tryReadGitHeadCommitSha,
+  findWorkspaceEntry,
+} from "@/node/services/taskUtils";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { TaskSettings } from "@/common/types/tasks";
@@ -153,34 +157,6 @@ function isStreamEndEvent(value: unknown): value is StreamEndEvent {
     "workspaceId" in value &&
     typeof (value as { workspaceId: unknown }).workspaceId === "string"
   );
-}
-
-async function tryReadGitHeadCommitSha(
-  runtime: Runtime,
-  workspacePath: string
-): Promise<string | null> {
-  assert(workspacePath.length > 0, "tryReadGitHeadCommitSha: workspacePath must be non-empty");
-
-  try {
-    const result = await execBuffered(runtime, "git rev-parse HEAD", {
-      cwd: workspacePath,
-      timeout: 10,
-    });
-    if (result.exitCode !== 0) {
-      return null;
-    }
-
-    const sha = result.stdout.trim();
-    return sha.length > 0 ? sha : null;
-  } catch {
-    return null;
-  }
-}
-
-function coerceNonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 function hasAncestorWorkspaceId(
@@ -491,7 +467,7 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
 
-    const parentEntry = this.findWorkspaceEntry(cfg, parentWorkspaceId);
+    const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
     if (parentEntry?.workspace.taskStatus === "reported") {
       return Err("Task.create: cannot spawn new tasks after agent_report");
     }
@@ -898,7 +874,7 @@ export class TaskService {
       await using _lock = await this.mutex.acquire();
 
       const cfg = this.config.loadConfigOrDefault();
-      const entry = this.findWorkspaceEntry(cfg, taskId);
+      const entry = findWorkspaceEntry(cfg, taskId);
       if (!entry?.workspace.parentWorkspaceId) {
         return Err("Task not found");
       }
@@ -1071,7 +1047,7 @@ export class TaskService {
     // Fast-path: if the task is already gone (cleanup) or already reported (restart), return the
     // persisted artifact from the requesting workspace session dir.
     const cfg = this.config.loadConfigOrDefault();
-    const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
+    const taskWorkspaceEntry = findWorkspaceEntry(cfg, taskId);
     if (!taskWorkspaceEntry || taskWorkspaceEntry.workspace.taskStatus === "reported") {
       const persisted = await tryReadPersistedReport();
       if (persisted) {
@@ -1085,7 +1061,7 @@ export class TaskService {
       void (async () => {
         // Validate existence early to avoid waiting on never-resolving task IDs.
         const cfg = this.config.loadConfigOrDefault();
-        const taskWorkspaceEntry = this.findWorkspaceEntry(cfg, taskId);
+        const taskWorkspaceEntry = findWorkspaceEntry(cfg, taskId);
         if (!taskWorkspaceEntry) {
           const persisted = await tryReadPersistedReport();
           if (persisted) {
@@ -1203,7 +1179,7 @@ export class TaskService {
 
           // Close the race where the task starts between the initial config read and registering the waiter.
           const cfgAfterRegister = this.config.loadConfigOrDefault();
-          const afterEntry = this.findWorkspaceEntry(cfgAfterRegister, taskId);
+          const afterEntry = findWorkspaceEntry(cfgAfterRegister, taskId);
           if (afterEntry?.workspace.taskStatus !== "queued") {
             cleanupStartWaiter();
             startReportTimeout();
@@ -1242,7 +1218,7 @@ export class TaskService {
     assert(taskId.length > 0, "getAgentTaskStatus: taskId must be non-empty");
 
     const cfg = this.config.loadConfigOrDefault();
-    const entry = this.findWorkspaceEntry(cfg, taskId);
+    const entry = findWorkspaceEntry(cfg, taskId);
     const status = entry?.workspace.taskStatus;
     return status ?? null;
   }
@@ -1647,7 +1623,7 @@ export class TaskService {
         break;
       }
 
-      const taskEntry = this.findWorkspaceEntry(config, taskId);
+      const taskEntry = findWorkspaceEntry(config, taskId);
       if (!taskEntry?.workspace.parentWorkspaceId) continue;
       const task = taskEntry.workspace;
       if (task.taskStatus !== "queued") continue;
@@ -1669,7 +1645,7 @@ export class TaskService {
         continue;
       }
 
-      const parentEntry = this.findWorkspaceEntry(config, parentId);
+      const parentEntry = findWorkspaceEntry(config, parentId);
       if (!parentEntry) {
         log.error("Queued task parent not found; cannot start", { taskId, parentId });
         continue;
@@ -2010,7 +1986,7 @@ export class TaskService {
     const workspaceId = event.workspaceId;
 
     const cfg = this.config.loadConfigOrDefault();
-    const entry = this.findWorkspaceEntry(cfg, workspaceId);
+    const entry = findWorkspaceEntry(cfg, workspaceId);
     if (!entry) return;
 
     // Parent workspaces must not end while they have active background tasks.
@@ -2167,7 +2143,7 @@ export class TaskService {
     }
 
     const cfgBeforeReport = this.config.loadConfigOrDefault();
-    const childEntryBeforeReport = this.findWorkspaceEntry(cfgBeforeReport, childWorkspaceId);
+    const childEntryBeforeReport = findWorkspaceEntry(cfgBeforeReport, childWorkspaceId);
     if (childEntryBeforeReport?.workspace.taskStatus === "reported") {
       return;
     }
@@ -2207,7 +2183,7 @@ export class TaskService {
     );
 
     const cfgBeforeReport = this.config.loadConfigOrDefault();
-    const statusBefore = this.findWorkspaceEntry(cfgBeforeReport, childWorkspaceId)?.workspace
+    const statusBefore = findWorkspaceEntry(cfgBeforeReport, childWorkspaceId)?.workspace
       .taskStatus;
     if (statusBefore === "reported") {
       return;
@@ -2270,8 +2246,7 @@ export class TaskService {
     }
 
     const cfgAfterReport = this.config.loadConfigOrDefault();
-    const latestChildEntry =
-      this.findWorkspaceEntry(cfgAfterReport, childWorkspaceId) ?? childEntry;
+    const latestChildEntry = findWorkspaceEntry(cfgAfterReport, childWorkspaceId) ?? childEntry;
     const parentWorkspaceId = latestChildEntry?.workspace.parentWorkspaceId;
     if (!parentWorkspaceId) {
       const reason = latestChildEntry
@@ -2359,7 +2334,7 @@ export class TaskService {
 
     // Auto-resume any parent stream that was waiting on a task tool call (restart-safe).
     const postCfg = this.config.loadConfigOrDefault();
-    if (!this.findWorkspaceEntry(postCfg, parentWorkspaceId)) {
+    if (!findWorkspaceEntry(postCfg, parentWorkspaceId)) {
       // Parent may have been cleaned up (e.g. it already reported and this was its last descendant).
       return;
     }
@@ -2658,7 +2633,7 @@ export class TaskService {
       visited.add(currentWorkspaceId);
 
       const config = this.config.loadConfigOrDefault();
-      const entry = this.findWorkspaceEntry(config, currentWorkspaceId);
+      const entry = findWorkspaceEntry(config, currentWorkspaceId);
       if (!entry) return;
 
       const ws = entry.workspace;
@@ -2699,19 +2674,5 @@ export class TaskService {
     log.error("cleanupReportedLeafTask: exceeded max parent traversal depth", {
       workspaceId,
     });
-  }
-
-  private findWorkspaceEntry(
-    config: ReturnType<Config["loadConfigOrDefault"]>,
-    workspaceId: string
-  ): { projectPath: string; workspace: WorkspaceConfigEntry } | null {
-    for (const [projectPath, project] of config.projects) {
-      for (const workspace of project.workspaces) {
-        if (workspace.id === workspaceId) {
-          return { projectPath, workspace };
-        }
-      }
-    }
-    return null;
   }
 }

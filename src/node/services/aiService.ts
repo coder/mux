@@ -81,7 +81,7 @@ import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 import { DEFAULT_TASK_SETTINGS, SYSTEM1_BASH_OUTPUT_COMPACTION_LIMITS } from "@/common/types/tasks";
 import type {
   StreamAbortEvent,
@@ -117,16 +117,6 @@ import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/reso
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
-
-// Re-export helpers from providerModelFactory for backward compatibility
-// (tests and other modules import these from aiService.ts)
-export {
-  normalizeAnthropicBaseURL,
-  buildAnthropicHeaders,
-  buildAppAttributionHeaders,
-  ANTHROPIC_1M_CONTEXT_HEADER,
-  preloadAISDKProviders,
-} from "@/node/services/providerModelFactory";
 
 // Lazy-loaded PTC modules (only loaded when experiment is enabled)
 // This avoids loading typescript/prettier at startup which causes issues:
@@ -497,18 +487,6 @@ export class AIService extends EventEmitter {
     return this.providerModelFactory.createModel(modelString, muxProviderOptions);
   }
 
-  private resolveGatewayModelString(
-    modelString: string,
-    modelKey?: string,
-    explicitlyRequestedGateway = false
-  ): string {
-    return this.providerModelFactory.resolveGatewayModelString(
-      modelString,
-      modelKey,
-      explicitlyRequestedGateway
-    );
-  }
-
   /**
    * Stream a message conversation to the AI model
    * @param messages Array of conversation messages
@@ -613,7 +591,7 @@ export class AIService extends EventEmitter {
         });
       }
 
-      effectiveModelString = this.resolveGatewayModelString(
+      effectiveModelString = this.providerModelFactory.resolveGatewayModelString(
         effectiveModelString,
         canonicalModelString,
         explicitlyRequestedGateway
@@ -1774,11 +1752,12 @@ export class AIService extends EventEmitter {
                   return undefined;
                 }
 
-                const resolvedSystem1ModelString = this.resolveGatewayModelString(
-                  system1ModelString,
-                  undefined,
-                  system1ExplicitGateway
-                );
+                const resolvedSystem1ModelString =
+                  this.providerModelFactory.resolveGatewayModelString(
+                    system1ModelString,
+                    undefined,
+                    system1ExplicitGateway
+                  );
                 const created = await this.createModel(
                   resolvedSystem1ModelString,
                   effectiveMuxProviderOptions

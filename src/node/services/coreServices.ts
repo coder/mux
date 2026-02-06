@@ -1,11 +1,5 @@
 /**
  * Core service graph shared by `mux run` (CLI) and `ServiceContainer` (desktop).
- *
- * Both entry points instantiate the same dependency chain:
- *   HistoryService → PartialService → AIService → WorkspaceService → TaskService
- * with identical constructor args and setter wiring. Differences between CLI
- * and desktop (e.g., ephemeral vs persistent paths, MCP options) are handled
- * via the options bag.
  */
 
 import * as os from "os";
@@ -29,37 +23,14 @@ import type { TelemetryService } from "@/node/services/telemetryService";
 import type { ExperimentsService } from "@/node/services/experimentsService";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
 
-// ---------------------------------------------------------------------------
-// Options & return types
-// ---------------------------------------------------------------------------
-
 export interface CoreServicesOptions {
-  /** Primary config instance (used by most services). */
   config: Config;
-
-  /** Path for ExtensionMetadataService storage. Desktop uses ~/.mux/, CLI uses a temp dir. */
   extensionMetadataPath: string;
-
-  /**
-   * Config instance for MCPConfigService. Defaults to `config`.
-   * CLI passes its persistent `realConfig` so MCP server definitions survive
-   * across ephemeral session configs.
-   */
+  /** Overrides config for MCPConfigService; CLI passes its persistent realConfig. */
   mcpConfig?: Config;
-
-  /** Options forwarded to MCPServerManager (e.g., inline servers from CLI flags). */
   mcpServerManagerOptions?: MCPServerManagerOptions;
-
-  /**
-   * Optional workspace-level MCP overrides. Desktop passes an explicit instance;
-   * when omitted, AIService creates a default internally.
-   */
   workspaceMcpOverridesService?: WorkspaceMcpOverridesService;
-
-  /**
-   * Optional cross-cutting services. Desktop creates these before core services
-   * so they can be wired via constructors instead of setters.
-   */
+  /** Optional cross-cutting services (desktop creates before core services). */
   policyService?: PolicyService;
   telemetryService?: TelemetryService;
   experimentsService?: ExperimentsService;
@@ -81,15 +52,6 @@ export interface CoreServices {
   taskService: TaskService;
 }
 
-// ---------------------------------------------------------------------------
-// Factory
-// ---------------------------------------------------------------------------
-
-/**
- * Instantiate and wire the core service graph that both `mux run` and the
- * Electron `ServiceContainer` share. Returns a flat bag of services; callers
- * can destructure what they need.
- */
 export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   const { config, extensionMetadataPath } = opts;
 

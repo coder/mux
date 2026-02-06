@@ -2,14 +2,18 @@ import * as path from "node:path";
 import assert from "node:assert/strict";
 import * as fsPromises from "fs/promises";
 
-import type { Config, Workspace as WorkspaceConfigEntry } from "@/node/config";
+import type { Config } from "@/node/config";
+import {
+  coerceNonEmptyString,
+  tryReadGitHeadCommitSha,
+  findWorkspaceEntry,
+} from "@/node/services/taskUtils";
 import { log } from "@/node/services/log";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { execBuffered } from "@/node/utils/runtime/helpers";
-import type { Runtime } from "@/node/runtime/Runtime";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import {
   getSubagentGitPatchMboxPath,
@@ -20,38 +24,6 @@ import { streamToString } from "@/node/runtime/streamUtils";
 
 /** Callback invoked after patch generation completes (success or failure). */
 export type OnPatchGenerationComplete = (childWorkspaceId: string) => Promise<void>;
-
-// ---------------------------------------------------------------------------
-// Small pure helpers (duplicated from taskService to avoid circular imports)
-// ---------------------------------------------------------------------------
-
-function coerceNonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-async function tryReadGitHeadCommitSha(
-  runtime: Runtime,
-  workspacePath: string
-): Promise<string | null> {
-  assert(workspacePath.length > 0, "tryReadGitHeadCommitSha: workspacePath must be non-empty");
-
-  try {
-    const result = await execBuffered(runtime, "git rev-parse HEAD", {
-      cwd: workspacePath,
-      timeout: 10,
-    });
-    if (result.exitCode !== 0) {
-      return null;
-    }
-
-    const sha = result.stdout.trim();
-    return sha.length > 0 ? sha : null;
-  } catch {
-    return null;
-  }
-}
 
 async function writeReadableStreamToLocalFile(
   stream: ReadableStream<Uint8Array>,
@@ -78,20 +50,6 @@ async function writeReadableStreamToLocalFile(
   } finally {
     await fileHandle.close();
   }
-}
-
-function findWorkspaceEntry(
-  config: ReturnType<Config["loadConfigOrDefault"]>,
-  workspaceId: string
-): { projectPath: string; workspace: WorkspaceConfigEntry } | null {
-  for (const [projectPath, project] of config.projects) {
-    for (const workspace of project.workspaces) {
-      if (workspace.id === workspaceId) {
-        return { projectPath, workspace };
-      }
-    }
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------

@@ -7,14 +7,13 @@ import * as path from "node:path";
 
 import { describe, it, expect, beforeEach } from "bun:test";
 
+import { AIService, discoverAvailableSubagentsForToolContext } from "./aiService";
 import {
-  AIService,
   normalizeAnthropicBaseURL,
   buildAnthropicHeaders,
   buildAppAttributionHeaders,
   ANTHROPIC_1M_CONTEXT_HEADER,
-  discoverAvailableSubagentsForToolContext,
-} from "./aiService";
+} from "./providerModelFactory";
 import { HistoryService } from "./historyService";
 import { PartialService } from "./partialService";
 import { InitStateManager } from "./initStateManager";
@@ -114,8 +113,8 @@ describe("AIService.resolveGatewayModelString", () => {
 
     const service = createService(muxHome.path);
 
-    // @ts-expect-error - accessing private method for testing
-    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
+    // @ts-expect-error - accessing private field for testing
+    const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
 
     expect(resolved).toBe(toGatewayModelString(KNOWN_MODELS.SONNET.id));
   });
@@ -133,8 +132,8 @@ describe("AIService.resolveGatewayModelString", () => {
 
     const service = createService(muxHome.path);
 
-    // @ts-expect-error - accessing private method for testing
-    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
+    // @ts-expect-error - accessing private field for testing
+    const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
 
     expect(resolved).toBe(KNOWN_MODELS.SONNET.id);
   });
@@ -149,8 +148,8 @@ describe("AIService.resolveGatewayModelString", () => {
 
     const service = createService(muxHome.path);
 
-    // @ts-expect-error - accessing private method for testing
-    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
+    // @ts-expect-error - accessing private field for testing
+    const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
 
     expect(resolved).toBe(KNOWN_MODELS.SONNET.id);
   });
@@ -169,8 +168,8 @@ describe("AIService.resolveGatewayModelString", () => {
 
     const service = createService(muxHome.path);
 
-    // @ts-expect-error - accessing private method for testing
-    const resolved = service.resolveGatewayModelString(modelString);
+    // @ts-expect-error - accessing private field for testing
+    const resolved = service.providerModelFactory.resolveGatewayModelString(modelString);
 
     expect(resolved).toBe(modelString);
   });
@@ -189,8 +188,11 @@ describe("AIService.resolveGatewayModelString", () => {
 
     const service = createService(muxHome.path);
 
-    // @ts-expect-error - accessing private method for testing
-    const resolved = service.resolveGatewayModelString(variant, KNOWN_MODELS.GROK_4_1.id);
+    // @ts-expect-error - accessing private field for testing
+    const resolved = service.providerModelFactory.resolveGatewayModelString(
+      variant,
+      KNOWN_MODELS.GROK_4_1.id
+    );
 
     expect(resolved).toBe(toGatewayModelString(variant));
   });
@@ -208,8 +210,12 @@ describe("AIService.resolveGatewayModelString", () => {
 
     const service = createService(muxHome.path);
 
-    // @ts-expect-error - accessing private method for testing
-    const resolved = service.resolveGatewayModelString(KNOWN_MODELS.GPT.id, undefined, true);
+    // @ts-expect-error - accessing private field for testing
+    const resolved = service.providerModelFactory.resolveGatewayModelString(
+      KNOWN_MODELS.GPT.id,
+      undefined,
+      true
+    );
 
     expect(resolved).toBe(toGatewayModelString(KNOWN_MODELS.GPT.id));
   });
