@@ -1277,6 +1277,7 @@ export class StreamingMessageAggregator {
       model: data.model,
       routedThroughGateway: data.routedThroughGateway,
       mode: data.mode,
+      thinkingLevel: data.thinkingLevel,
     });
 
     this.messages.set(data.messageId, streamingMessage);
