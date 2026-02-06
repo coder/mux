@@ -787,9 +787,22 @@ export function ProvidersSection() {
   const [copilotUserCode, setCopilotUserCode] = useState<string | null>(null);
   const [copilotVerificationUri, setCopilotVerificationUri] = useState<string | null>(null);
   const [copilotCodeCopied, setCopilotCodeCopied] = useState(false);
-  const [copilotEnterpriseUrl, setCopilotEnterpriseUrl] = useState("");
+  const [copilotEnterpriseUrl, setCopilotEnterpriseUrl] = useState(
+    () =>
+      ((config?.["github-copilot"] as Record<string, unknown> | undefined)
+        ?.enterpriseDomain as string) ?? ""
+  );
   const copilotLoginAttemptRef = useRef(0);
   const copilotFlowIdRef = useRef<string | null>(null);
+  const copilotCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copilotCopiedTimeoutRef.current !== null) {
+        clearTimeout(copilotCopiedTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const copilotApiKeySet = config?.["github-copilot"]?.apiKeySet ?? false;
   const copilotLoginInProgress =
@@ -1277,7 +1290,13 @@ export function ProvidersSection() {
                               onClick={() => {
                                 void navigator.clipboard.writeText(copilotUserCode);
                                 setCopilotCodeCopied(true);
-                                setTimeout(() => setCopilotCodeCopied(false), 2000);
+                                if (copilotCopiedTimeoutRef.current !== null) {
+                                  clearTimeout(copilotCopiedTimeoutRef.current);
+                                }
+                                copilotCopiedTimeoutRef.current = setTimeout(
+                                  () => setCopilotCodeCopied(false),
+                                  2000
+                                );
                               }}
                               className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
                             >
