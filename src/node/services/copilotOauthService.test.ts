@@ -40,7 +40,9 @@ function authorizationPendingResponse(): Response {
 }
 
 // Helper to mock globalThis.fetch without needing the `preconnect` property.
-function mockFetch(fn: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>): void {
+function mockFetch(
+  fn: (input: string | URL, init?: RequestInit) => Response | Promise<Response>
+): void {
   globalThis.fetch = Object.assign(fn, {
     preconnect: (_url: string | URL) => {
       // no-op in tests
@@ -104,9 +106,9 @@ describe("CopilotOauthService", () => {
     service = createService(deps);
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     globalThis.fetch = originalFetch;
-    await service.dispose();
+    service.dispose();
   });
 
   // -------------------------------------------------------------------------
@@ -115,7 +117,7 @@ describe("CopilotOauthService", () => {
 
   describe("startDeviceFlow", () => {
     it("returns flowId, verificationUri, and userCode on success", async () => {
-      mockFetch(async () => deviceCodeResponse());
+      mockFetch(() => deviceCodeResponse());
 
       const result = await service.startDeviceFlow();
       expect(result.success).toBe(true);
@@ -128,7 +130,7 @@ describe("CopilotOauthService", () => {
 
     it("sends request to github.com device code endpoint", async () => {
       let capturedUrl = "";
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         capturedUrl = String(input);
         return deviceCodeResponse();
       });
@@ -138,7 +140,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("returns Err when fetch response is not ok", async () => {
-      mockFetch(async () => new Response("Server Error", { status: 500 }));
+      mockFetch(() => new Response("Server Error", { status: 500 }));
 
       const result = await service.startDeviceFlow();
       expect(result.success).toBe(false);
@@ -148,7 +150,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("returns Err when fetch throws a network error", async () => {
-      mockFetch(async () => {
+      mockFetch(() => {
         throw new Error("DNS resolution failed");
       });
 
@@ -160,7 +162,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("returns Err when response is missing required fields", async () => {
-      mockFetch(async () => jsonResponse({ verification_uri: "https://example.com" }));
+      mockFetch(() => jsonResponse({ verification_uri: "https://example.com" }));
 
       const result = await service.startDeviceFlow();
       expect(result.success).toBe(false);
@@ -170,7 +172,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("each flow gets a unique flowId", async () => {
-      mockFetch(async () => deviceCodeResponse());
+      mockFetch(() => deviceCodeResponse());
 
       const first = await service.startDeviceFlow();
       const second = await service.startDeviceFlow();
@@ -190,7 +192,7 @@ describe("CopilotOauthService", () => {
     it("polls until access_token is returned, then persists it", async () => {
       // startDeviceFlow fetch
       let pollCount = 0;
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -222,7 +224,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("calls focusMainWindow after successful auth", async () => {
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -247,7 +249,7 @@ describe("CopilotOauthService", () => {
   describe("slow_down response", () => {
     it("respects slow_down and eventually succeeds", async () => {
       let pollCount = 0;
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -284,7 +286,7 @@ describe("CopilotOauthService", () => {
 
   describe("terminal error", () => {
     it("resolves with Err on access_denied", async () => {
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -313,7 +315,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("resolves with Err on expired_token", async () => {
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -343,7 +345,7 @@ describe("CopilotOauthService", () => {
   describe("cancellation", () => {
     it("resolves waitForDeviceFlow with error when cancelled", async () => {
       // Make polling hang indefinitely with authorization_pending
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -383,7 +385,7 @@ describe("CopilotOauthService", () => {
       // Control when the polling fetch resolves
       let resolvePollFetch!: (res: Response) => void;
 
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -429,7 +431,7 @@ describe("CopilotOauthService", () => {
   describe("transient network error recovery", () => {
     it("retries after a transient fetch error and eventually succeeds", async () => {
       let pollCount = 0;
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -466,7 +468,7 @@ describe("CopilotOauthService", () => {
   describe("re-entrancy guard", () => {
     it("only starts one polling loop even when waitForDeviceFlow is called twice", async () => {
       let pollCallCount = 0;
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -503,7 +505,7 @@ describe("CopilotOauthService", () => {
   describe("enterprise URL normalization", () => {
     it("uses enterprise domain in device code URL", async () => {
       let capturedUrl = "";
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           capturedUrl = url;
@@ -518,7 +520,7 @@ describe("CopilotOauthService", () => {
 
     it("extracts hostname from URL with path", async () => {
       let capturedUrl = "";
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           capturedUrl = url;
@@ -533,7 +535,7 @@ describe("CopilotOauthService", () => {
 
     it("handles URL with no protocol prefix", async () => {
       let capturedUrl = "";
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           capturedUrl = url;
@@ -550,7 +552,7 @@ describe("CopilotOauthService", () => {
       // URL("https://evil.com@attacker.com") → hostname is "attacker.com"
       // This tests that we use URL parsing (which extracts hostname correctly)
       let capturedUrl = "";
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           capturedUrl = url;
@@ -571,7 +573,7 @@ describe("CopilotOauthService", () => {
 
   describe("enterprise domain persistence", () => {
     it("persists enterprise domain after successful auth", async () => {
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -598,7 +600,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("clears enterprise domain after successful auth with github.com", async () => {
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -624,7 +626,7 @@ describe("CopilotOauthService", () => {
 
     it("uses enterprise domain for polling URL", async () => {
       let pollingUrl = "";
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -653,7 +655,7 @@ describe("CopilotOauthService", () => {
 
   describe("dispose", () => {
     it("resolves pending waitForDeviceFlow with error", async () => {
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -674,7 +676,7 @@ describe("CopilotOauthService", () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Dispose the service
-      await service.dispose();
+      service.dispose();
 
       const result = await waitPromise;
       expect(result.success).toBe(false);
@@ -690,7 +692,7 @@ describe("CopilotOauthService", () => {
     });
 
     it("clears all flows from the map", async () => {
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
@@ -704,7 +706,7 @@ describe("CopilotOauthService", () => {
       expect(flow1.success).toBe(true);
       expect(flow2.success).toBe(true);
 
-      await service.dispose();
+      service.dispose();
 
       // After dispose, waitForDeviceFlow should return "not found"
       if (flow1.success) {
@@ -725,7 +727,7 @@ describe("CopilotOauthService", () => {
     it("propagates setConfig error to waitForDeviceFlow result", async () => {
       deps.setConfigResult = Err("disk full");
 
-      mockFetch(async (input) => {
+      mockFetch((input) => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
