@@ -27,11 +27,11 @@ Mux is a desktop & browser application for parallel agentic development. It enab
 - **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
   - Ollama supported for local LLMs ([docs](https://mux.coder.com/config/models#ollama-local))
   - OpenRouter supported for long-tail of LLMs ([docs](https://mux.coder.com/config/models#openrouter-cloud))
-- **VS Code Extension**: Jump into mux workspaces directly from VS Code ([docs](https://mux.coder.com/integrations/vscode-extension))
+- **VS Code Extension**: Jump into Mux workspaces directly from VS Code ([docs](https://mux.coder.com/integrations/vscode-extension))
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)
 
-mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
+Mux has a custom agent loop but much of the core UX is inspired by Claude Code. You'll find familiar features like Plan/Exec mode, vim inputs, `/compact` and new ones
 like [opportunistic compaction](https://mux.coder.com/workspaces/compaction) and [mode prompts](https://mux.coder.com/agents/instruction-files#mode-prompts).
 
 **[Read the full documentation →](https://mux.coder.com)**
