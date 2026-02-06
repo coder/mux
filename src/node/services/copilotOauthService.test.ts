@@ -4,7 +4,7 @@ import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
-import { CopilotOauthService } from "./copilotOauthService";
+import { CopilotOauthService, copilotBaseUrl } from "./copilotOauthService";
 
 import { normalizeDomain } from "./copilotOauthService";
 
@@ -41,6 +41,11 @@ function authorizationPendingResponse(): Response {
   return jsonResponse({ error: "authorization_pending" });
 }
 
+/** Models list response from Copilot API. */
+function modelsResponse(models: string[] = ["gpt-4o", "claude-sonnet-4"]): Response {
+  return jsonResponse({ data: models.map((id) => ({ id })) });
+}
+
 // Helper to mock globalThis.fetch without needing the `preconnect` property.
 function mockFetch(
   fn: (input: string | URL, init?: RequestInit) => Response | Promise<Response>
@@ -59,6 +64,8 @@ function mockFetch(
 interface MockDeps {
   setConfigCalls: Array<{ provider: string; keyPath: string[]; value: string }>;
   setConfigResult: Result<void, string>;
+  setModelsCalls: Array<{ provider: string; models: string[] }>;
+  setModelsResult: Result<void, string>;
   focusCalls: number;
 }
 
@@ -66,15 +73,23 @@ function createMockDeps(): MockDeps {
   return {
     setConfigCalls: [],
     setConfigResult: Ok(undefined),
+    setModelsCalls: [],
+    setModelsResult: Ok(undefined),
     focusCalls: 0,
   };
 }
 
-function createMockProviderService(deps: MockDeps): Pick<ProviderService, "setConfig"> {
+function createMockProviderService(
+  deps: MockDeps
+): Pick<ProviderService, "setConfig" | "setModels"> {
   return {
     setConfig: (provider: string, keyPath: string[], value: string): Result<void, string> => {
       deps.setConfigCalls.push({ provider, keyPath, value });
       return deps.setConfigResult;
+    },
+    setModels: (provider: string, models: string[]): Result<void, string> => {
+      deps.setModelsCalls.push({ provider, models });
+      return deps.setModelsResult;
     },
   };
 }
@@ -199,6 +214,9 @@ describe("CopilotOauthService", () => {
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
         }
+        if (url.includes("/models")) {
+          return modelsResponse();
+        }
         // Polling endpoint
         pollCount++;
         if (pollCount === 1) {
@@ -231,6 +249,9 @@ describe("CopilotOauthService", () => {
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
         }
+        if (url.includes("/models")) {
+          return modelsResponse();
+        }
         return tokenSuccessResponse();
       });
 
@@ -255,6 +276,9 @@ describe("CopilotOauthService", () => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          return modelsResponse();
         }
         pollCount++;
         if (pollCount === 1) {
@@ -438,6 +462,9 @@ describe("CopilotOauthService", () => {
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
         }
+        if (url.includes("/models")) {
+          return modelsResponse();
+        }
         pollCount++;
         if (pollCount === 1) {
           throw new Error("ECONNRESET");
@@ -474,6 +501,9 @@ describe("CopilotOauthService", () => {
         const url = String(input);
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          return modelsResponse();
         }
         pollCallCount++;
         return tokenSuccessResponse("ghp_single_poll");
@@ -580,6 +610,9 @@ describe("CopilotOauthService", () => {
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
         }
+        if (url.includes("/models")) {
+          return modelsResponse();
+        }
         return tokenSuccessResponse();
       });
 
@@ -607,6 +640,9 @@ describe("CopilotOauthService", () => {
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
         }
+        if (url.includes("/models")) {
+          return modelsResponse();
+        }
         return tokenSuccessResponse();
       });
 
@@ -633,6 +669,9 @@ describe("CopilotOauthService", () => {
         if (url.includes("/login/device/code")) {
           return deviceCodeResponse();
         }
+        if (url.includes("/models")) {
+          return modelsResponse();
+        }
         if (url.includes("/login/oauth/access_token")) {
           pollingUrl = url;
         }
@@ -648,6 +687,205 @@ describe("CopilotOauthService", () => {
       await service.waitForDeviceFlow(startResult.data.flowId, { timeoutMs: 10_000 });
 
       expect(pollingUrl).toBe("https://github.myco.com/login/oauth/access_token");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Model fetching after successful auth
+  // -------------------------------------------------------------------------
+
+  describe("model fetching after successful auth", () => {
+    it("fetches models from Copilot API and stores them via setModels", async () => {
+      let modelsUrl = "";
+      let modelsAuthHeader = "";
+      mockFetch((input, init) => {
+        const url = String(input);
+        if (url.includes("/login/device/code")) {
+          return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          modelsUrl = url;
+          modelsAuthHeader = (init?.headers as Record<string, string>)?.Authorization ?? "";
+          return modelsResponse(["gpt-4o", "o3-mini"]);
+        }
+        return tokenSuccessResponse("ghp_model_token");
+      });
+
+      const startResult = await service.startDeviceFlow();
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+
+      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
+        timeoutMs: 10_000,
+      });
+      expect(waitResult.success).toBe(true);
+
+      // Verify models endpoint was called with correct URL and auth
+      expect(modelsUrl).toBe("https://api.githubcopilot.com/models");
+      expect(modelsAuthHeader).toBe("Bearer ghp_model_token");
+
+      // Verify models were stored
+      expect(deps.setModelsCalls).toHaveLength(1);
+      const call = deps.setModelsCalls[0];
+      expect(call?.provider).toBe("github-copilot");
+      expect(call?.models).toEqual(["gpt-4o", "o3-mini"]);
+    });
+
+    it("uses enterprise proxy URL for model fetch", async () => {
+      let modelsUrl = "";
+      mockFetch((input) => {
+        const url = String(input);
+        if (url.includes("/login/device/code")) {
+          return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          modelsUrl = url;
+          return modelsResponse(["gpt-4o"]);
+        }
+        return tokenSuccessResponse();
+      });
+
+      const startResult = await service.startDeviceFlow({
+        enterpriseUrl: "https://github.myco.com/",
+      });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+
+      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
+        timeoutMs: 10_000,
+      });
+      expect(waitResult.success).toBe(true);
+
+      expect(modelsUrl).toBe("https://copilot-proxy.github.myco.com/models");
+    });
+
+    it("login succeeds even if model fetch returns non-200", async () => {
+      mockFetch((input) => {
+        const url = String(input);
+        if (url.includes("/login/device/code")) {
+          return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          return new Response("Internal Server Error", { status: 500 });
+        }
+        return tokenSuccessResponse();
+      });
+
+      const startResult = await service.startDeviceFlow();
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+
+      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
+        timeoutMs: 10_000,
+      });
+
+      // Login should still succeed
+      expect(waitResult.success).toBe(true);
+
+      // No models should have been stored
+      expect(deps.setModelsCalls).toHaveLength(0);
+    });
+
+    it("login succeeds even if model fetch throws a network error", async () => {
+      mockFetch((input) => {
+        const url = String(input);
+        if (url.includes("/login/device/code")) {
+          return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          throw new Error("ECONNREFUSED");
+        }
+        return tokenSuccessResponse();
+      });
+
+      const startResult = await service.startDeviceFlow();
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+
+      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
+        timeoutMs: 10_000,
+      });
+
+      // Login should still succeed despite model fetch failure
+      expect(waitResult.success).toBe(true);
+
+      // Token should still have been persisted
+      const apiKeyCall = deps.setConfigCalls.find(
+        (c) => c.provider === "github-copilot" && c.keyPath[0] === "apiKey"
+      );
+      expect(apiKeyCall).toBeDefined();
+
+      // No models should have been stored
+      expect(deps.setModelsCalls).toHaveLength(0);
+    });
+
+    it("does not call setModels when API returns empty model list", async () => {
+      mockFetch((input) => {
+        const url = String(input);
+        if (url.includes("/login/device/code")) {
+          return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          return jsonResponse({ data: [] });
+        }
+        return tokenSuccessResponse();
+      });
+
+      const startResult = await service.startDeviceFlow();
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+
+      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
+        timeoutMs: 10_000,
+      });
+      expect(waitResult.success).toBe(true);
+
+      // Empty list — should not call setModels
+      expect(deps.setModelsCalls).toHaveLength(0);
+    });
+
+    it("does not call setModels when API response has no data field", async () => {
+      mockFetch((input) => {
+        const url = String(input);
+        if (url.includes("/login/device/code")) {
+          return deviceCodeResponse();
+        }
+        if (url.includes("/models")) {
+          return jsonResponse({ something_else: true });
+        }
+        return tokenSuccessResponse();
+      });
+
+      const startResult = await service.startDeviceFlow();
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+
+      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
+        timeoutMs: 10_000,
+      });
+      expect(waitResult.success).toBe(true);
+
+      expect(deps.setModelsCalls).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // copilotBaseUrl helper
+  // -------------------------------------------------------------------------
+
+  describe("copilotBaseUrl", () => {
+    it("returns api.githubcopilot.com for github.com", () => {
+      expect(copilotBaseUrl("github.com")).toBe("https://api.githubcopilot.com");
+    });
+
+    it("returns copilot-proxy URL for enterprise domains", () => {
+      expect(copilotBaseUrl("github.myco.com")).toBe("https://copilot-proxy.github.myco.com");
+    });
+
+    it("returns copilot-proxy URL for enterprise domains with port", () => {
+      expect(copilotBaseUrl("github.myco.com:8443")).toBe(
+        "https://copilot-proxy.github.myco.com:8443"
+      );
     });
   });
 

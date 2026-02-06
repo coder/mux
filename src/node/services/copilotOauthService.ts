@@ -18,6 +18,14 @@ function githubUrls(domain: string) {
   };
 }
 
+// Derive the Copilot API base URL from a GitHub domain.
+// Regular github.com → api.githubcopilot.com; enterprise → copilot-proxy.<domain>
+export function copilotBaseUrl(domain: string): string {
+  return domain === "github.com"
+    ? "https://api.githubcopilot.com"
+    : `https://copilot-proxy.${domain}`;
+}
+
 export function normalizeDomain(url: string): string {
   try {
     const withProtocol = url.includes("://") ? url : `https://${url}`;
@@ -234,6 +242,30 @@ export class CopilotOauthService {
           if (!domainResult.success) {
             void this.finishFlow(flow.flowId, Err(domainResult.error));
             return;
+          }
+
+          // Fetch available models from Copilot API (best-effort, non-blocking on failure)
+          try {
+            const baseURL = copilotBaseUrl(flow.domain);
+            const modelsRes = await fetch(`${baseURL}/models`, {
+              headers: {
+                Authorization: `Bearer ${data.access_token}`,
+                "Openai-Intent": "conversation-edits",
+                Accept: "application/json",
+              },
+            });
+
+            if (modelsRes.ok) {
+              const modelsData = (await modelsRes.json()) as {
+                data?: Array<{ id: string }>;
+              };
+              if (modelsData.data && modelsData.data.length > 0) {
+                const modelIds = modelsData.data.map((m) => m.id);
+                this.providerService.setModels("github-copilot", modelIds);
+              }
+            }
+          } catch (e) {
+            log.debug("Failed to fetch Copilot models after login", e);
           }
 
           log.debug(`Copilot OAuth completed successfully (flowId=${flow.flowId})`);
