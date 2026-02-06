@@ -137,10 +137,14 @@ export function getKnownModel(key: KnownModelKey): KnownModel {
 // Derived collections
 // ------------------------------------------------------------------------------------
 
-/** The default model key - change this single line to update the global default */
-export const DEFAULT_MODEL_KEY: KnownModelKey = "OPUS";
+/**
+ * The default known model key.
+ *
+ * Keep this local (non-exported) to avoid confusion with storage keys.
+ */
+const DEFAULT_KNOWN_MODEL_KEY: KnownModelKey = "OPUS";
 
-export const DEFAULT_MODEL = KNOWN_MODELS[DEFAULT_MODEL_KEY].id;
+export const DEFAULT_MODEL = KNOWN_MODELS[DEFAULT_KNOWN_MODEL_KEY].id;
 
 export const DEFAULT_WARM_MODELS = Object.values(KNOWN_MODELS)
   .filter((model) => model.warm)
@@ -157,26 +161,6 @@ export const TOKENIZER_MODEL_OVERRIDES: Record<string, string> = Object.fromEntr
     .filter((model) => Boolean(model.tokenizerOverride))
     .map((model) => [model.id, model.tokenizerOverride!])
 );
-
-export const MODEL_NAMES: Record<ModelProvider, Record<string, string>> = Object.entries(
-  KNOWN_MODELS
-).reduce<Record<ModelProvider, Record<string, string>>>(
-  (acc, [key, model]) => {
-    if (!acc[model.provider]) {
-      const emptyRecord: Record<string, string> = {};
-      acc[model.provider] = emptyRecord;
-    }
-    acc[model.provider][key] = model.providerModelId;
-    return acc;
-  },
-  {} as Record<ModelProvider, Record<string, string>>
-);
-
-/** Picker-friendly list: { label, value } for each known model */
-export const KNOWN_MODEL_OPTIONS = Object.values(KNOWN_MODELS).map((model) => ({
-  label: formatModelDisplayName(model.providerModelId),
-  value: model.id,
-}));
 
 /** Tooltip-friendly abbreviation examples: show representative shortcuts */
 export const MODEL_ABBREVIATION_EXAMPLES = (["opus", "sonnet"] as const).map((abbrev) => ({
