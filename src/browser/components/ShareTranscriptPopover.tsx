@@ -37,6 +37,8 @@ interface ShareTranscriptPopoverProps {
   workspaceName: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Custom trigger element rendered via `PopoverTrigger asChild`. When omitted the default Link2 icon button is used. */
+  children?: React.ReactNode;
 }
 
 function getTranscriptFileName(workspaceName: string): string {
@@ -252,26 +254,30 @@ export function ShareTranscriptPopover(props: ShareTranscriptPopoverProps) {
 
   return (
     <Popover open={props.open} onOpenChange={handleOpenChange}>
-      <Tooltip {...(props.open ? { open: false } : {})}>
-        <TooltipTrigger asChild>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Share transcript"
-              className={cn(
-                "h-6 w-6 shrink-0 [&_svg]:h-3.5 [&_svg]:w-3.5",
-                shareUrl ? "text-blue-400" : "text-muted hover:text-foreground"
-              )}
-            >
-              <Link2 />
-            </Button>
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="center">
-          Share transcript ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
-        </TooltipContent>
-      </Tooltip>
+      {props.children ? (
+        <PopoverTrigger asChild>{props.children}</PopoverTrigger>
+      ) : (
+        <Tooltip {...(props.open ? { open: false } : {})}>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Share transcript"
+                className={cn(
+                  "h-6 w-6 shrink-0 [&_svg]:h-3.5 [&_svg]:w-3.5",
+                  shareUrl ? "text-blue-400" : "text-muted hover:text-foreground"
+                )}
+              >
+                <Link2 />
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" align="center">
+            Share transcript ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
+          </TooltipContent>
+        </Tooltip>
+      )}
 
       <PopoverContent side="bottom" align="end" collisionPadding={16} className="w-[320px] p-3">
         <div className="space-y-3">

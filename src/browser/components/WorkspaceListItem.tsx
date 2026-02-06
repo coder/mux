@@ -19,7 +19,10 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis } from "lucide-react";
+import { Pencil, Trash2, Ellipsis, Link2 } from "lucide-react";
+import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
+import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { ShareTranscriptPopover } from "./ShareTranscriptPopover";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
 
@@ -249,6 +252,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const displayTitle = metadata.title ?? metadata.name;
   const isEditing = editingWorkspaceId === workspaceId;
 
+  const linkSharingEnabled = useLinkSharingEnabled();
+  const [shareTranscriptOpen, setShareTranscriptOpen] = useState(false);
+
   // Hover hamburger menu for discoverable title editing (requested to replace the double-click hint).
   const [isTitleMenuOpen, setIsTitleMenuOpen] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
@@ -261,6 +267,21 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       setContextMenuPosition(null);
     }
   }, [isEditing]);
+
+  // Keybind for opening transcript share popover (only for the selected workspace)
+  useEffect(() => {
+    if (!isSelected || linkSharingEnabled !== true) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (matchesKeybind(e, KEYBINDS.SHARE_TRANSCRIPT)) {
+        e.preventDefault();
+        setShareTranscriptOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isSelected, linkSharingEnabled]);
 
   const startEditing = () => {
     if (requestRename(workspaceId, displayTitle)) {
@@ -479,6 +500,22 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     Edit chat title
                   </span>
                 </button>
+                {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
+                {linkSharingEnabled === true && !isMuxHelpChat && (
+                  <button
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsTitleMenuOpen(false);
+                      setShareTranscriptOpen(true);
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Link2 className="h-3 w-3" />
+                      Share transcript
+                    </span>
+                  </button>
+                )}
                 {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
                 {!isMuxHelpChat && (
                   <button
@@ -497,6 +534,22 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 )}
               </PopoverContent>
             </Popover>
+            {/* Share transcript popover – rendered as a sibling to the overflow menu
+                so it doesn't nest inside another Popover. Triggered by the menu item
+                above or the Ctrl+Shift+L keybind. Uses a hidden span as the anchor. */}
+            {linkSharingEnabled === true && (
+              <ShareTranscriptPopover
+                workspaceId={workspaceId}
+                workspaceName={metadata.name}
+                open={shareTranscriptOpen}
+                onOpenChange={setShareTranscriptOpen}
+              >
+                <span
+                  className="pointer-events-none absolute h-0 w-0 overflow-hidden"
+                  aria-hidden="true"
+                />
+              </ShareTranscriptPopover>
+            )}
           </ActionButtonWrapper>
         )}
 
