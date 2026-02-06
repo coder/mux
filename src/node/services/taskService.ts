@@ -2142,12 +2142,16 @@ export class TaskService {
   private async isCompactionStreamWithFollowUp(workspaceId: string): Promise<boolean> {
     const historyResult = await this.historyService.getHistory(workspaceId);
     if (!historyResult.success || historyResult.data.length === 0) return false;
-    // After compaction, history is cleared and replaced with a single assistant
-    // summary message. Check the last message (any role) for a compaction-summary
-    // with pendingFollowUp — mirrors dispatchPendingFollowUp() in AgentSession.
-    const lastMsg = historyResult.data[historyResult.data.length - 1];
-    const muxMeta = lastMsg.metadata?.muxMetadata;
-    return isCompactionSummaryMetadata(muxMeta) && muxMeta.pendingFollowUp !== undefined;
+    // After compaction, history is cleared and replaced with a summary message,
+    // then dispatchPendingFollowUp() may append a follow-up user message. Both
+    // TaskService and AgentSession handle stream-end concurrently, so by the time
+    // we read history the follow-up may already be appended (making the summary
+    // no longer last). Scan all messages — there are at most 2 after compaction.
+    // pendingFollowUp is never cleared from the summary, so this is stable.
+    return historyResult.data.some((m) => {
+      const muxMeta = m.metadata?.muxMetadata;
+      return isCompactionSummaryMetadata(muxMeta) && muxMeta.pendingFollowUp !== undefined;
+    });
   }
 
   private async fallbackReportMissingAgentReport(entry: {
