@@ -1723,6 +1723,15 @@ export class WorkspaceStore {
   /**
    * Add a workspace and subscribe to its IPC events.
    */
+
+  /**
+   * Imperative metadata lookup — no React subscription. Safe to call from
+   * event handlers / callbacks without causing re-renders.
+   */
+  getWorkspaceMetadata(workspaceId: string): FrontendWorkspaceMetadata | undefined {
+    return this.workspaceMetadata.get(workspaceId);
+  }
+
   addWorkspace(metadata: FrontendWorkspaceMetadata): void {
     const workspaceId = metadata.id;
 
