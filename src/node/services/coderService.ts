@@ -1315,8 +1315,6 @@ export class CoderService {
     options?: {
       timeoutMs?: number;
       signal?: AbortSignal;
-      /** Allow deletion for mux-managed workspaces that don't use the mux- prefix. */
-      allowNonMuxPrefix?: boolean;
       /**
        * If true, treat an initial "not found" as inconclusive and keep polling.
        * This avoids races where `coder create` finishes server-side after mux aborts the CLI.
@@ -1327,8 +1325,9 @@ export class CoderService {
     const timeoutMs = options?.timeoutMs ?? 60_000;
     const startTime = Date.now();
 
-    const allowNonMuxPrefix = options?.allowNonMuxPrefix === true;
-    if (!allowNonMuxPrefix && !name.startsWith("mux-")) {
+    // Safety: never delete Coder workspaces mux didn't create.
+    // Mux-created workspaces always use the mux- prefix.
+    if (!name.startsWith("mux-")) {
       log.warn("Refusing to delete Coder workspace without mux- prefix", { name });
       return Ok(undefined);
     }

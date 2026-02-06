@@ -237,9 +237,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   } = props;
 
   // Destructure metadata for convenience
-  const { id: workspaceId, namedWorkspacePath, status } = metadata;
+  const { id: workspaceId, namedWorkspacePath } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
-  const isInitializing = metadata.isInitializing === true || status === "creating";
+  const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
   const isDisabled = isInitializing || isRemoving || isArchiving === true;
 

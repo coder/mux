@@ -1637,8 +1637,6 @@ export class WorkspaceService extends EventEmitter {
       ...metadata,
       isRemoving: this.removingWorkspaces.has(metadata.id) || undefined,
       isInitializing,
-      // Populate the schema's `status` field so the frontend can use `status === "creating"`
-      status: isInitializing ? "creating" : undefined,
     };
   }
 

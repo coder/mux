@@ -8,7 +8,7 @@ import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
  * workspaces appear in the sidebar, add it here to ensure UI updates.
  */
 export function getWorkspaceSidebarKey(meta: FrontendWorkspaceMetadata): string {
-  const initKey = meta.isInitializing === true || meta.status === "creating" ? "initializing" : "";
+  const initKey = meta.isInitializing === true ? "initializing" : "";
   const removingKey = meta.isRemoving === true ? "removing" : "";
 
   return [

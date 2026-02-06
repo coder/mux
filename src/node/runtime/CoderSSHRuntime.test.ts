@@ -353,7 +353,7 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     expect(sshDeleteSpy).not.toHaveBeenCalled();
     expect(deleteWorkspaceEventually).toHaveBeenCalledWith(
       "my-ws",
-      expect.objectContaining({ waitForExistence: true, allowNonMuxPrefix: true })
+      expect.objectContaining({ waitForExistence: true })
     );
   });
 
@@ -440,7 +440,7 @@ describe("CoderSSHRuntime.deleteWorkspace", () => {
     expect(sshDeleteSpy).not.toHaveBeenCalled();
     expect(deleteWorkspaceEventually).toHaveBeenCalledWith(
       "my-ws",
-      expect.objectContaining({ allowNonMuxPrefix: true, waitForExistence: false })
+      expect.objectContaining({ waitForExistence: false })
     );
   });
   it("succeeds immediately when Coder workspace status is 'deleting'", async () => {
