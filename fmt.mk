@@ -26,11 +26,11 @@ fmt-check: fmt-prettier-check fmt-shell-check fmt-python-check fmt-nix-check fmt
 
 fmt-prettier:
 	@echo "Formatting TypeScript/JSON/Markdown files..."
-	@$(PRETTIER) --log-level error --write $(PRETTIER_PATTERNS)
+	@$(PRETTIER) --cache --log-level error --write $(PRETTIER_PATTERNS)
 
 fmt-prettier-check:
 	@echo "Checking TypeScript/JSON/Markdown formatting..."
-	@$(PRETTIER) --log-level log --check $(PRETTIER_PATTERNS)
+	@$(PRETTIER) --cache --log-level log --check $(PRETTIER_PATTERNS)
 
 fmt-shell:
 ifeq ($(SHFMT),)

@@ -423,7 +423,7 @@ docs-server: node_modules/.installed ## Serve documentation locally (Mintlify de
 
 check-docs-links: ## Check documentation for broken links
 	@echo "🔗 Checking documentation links..."
-	@cd docs && npx mintlify broken-links
+	@cd docs && bun x mintlify broken-links
 
 check-code-docs-links: ## Validate code references to docs paths
 	@./scripts/check-code-docs-links.sh
