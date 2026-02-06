@@ -3,10 +3,10 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/white-mux.svg" />
   <source media="(prefers-color-scheme: light)" srcset="docs/img/black-mux.svg" />
-  <img src="docs/img/black-mux.svg" alt="mux logo" width="15%" />
+  <img src="docs/img/black-mux.svg" alt="mux logo" width="18%" />
 </picture>
 
-# mux - coding agent multiplexer
+# Mux - Coding Agent Multiplexer
 
 [![Download](https://img.shields.io/badge/Download-Releases-purple)](https://github.com/coder/mux/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
@@ -14,7 +14,7 @@
 
 </div>
 
-A desktop & browser application for parallel agentic development.
+Mux is a desktop & browser application for parallel agentic development.
 
 <p><img src="./docs/img/mux-demo.gif" alt="mux product demo" width="100%" /></p>
 
