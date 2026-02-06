@@ -79,8 +79,6 @@ export class ProviderService {
         secretAccessKey?: string;
         /** OpenAI-only: stored Codex OAuth tokens (never sent to frontend). */
         codexOauth?: unknown;
-        /** GitHub Copilot: enterprise domain set via OAuth flow. */
-        enterpriseDomain?: string;
       };
 
       const forcedBaseUrl = this.policyService?.isEnforced()
@@ -136,11 +134,6 @@ export class ProviderService {
           accessKeyIdSet: !!config.accessKeyId,
           secretAccessKeySet: !!config.secretAccessKey,
         };
-      }
-
-      // Expose enterpriseDomain if present (e.g. for GitHub Copilot Enterprise)
-      if (config.enterpriseDomain) {
-        providerInfo.enterpriseDomain = config.enterpriseDomain;
       }
 
       // Mux Gateway-specific fields (check couponCode first, fallback to legacy voucher)

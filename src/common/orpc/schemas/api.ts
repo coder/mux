@@ -138,8 +138,6 @@ export const ProviderConfigInfoSchema = z.object({
   codexOauthDefaultAuth: z.enum(["oauth", "apiKey"]).optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
-  /** GitHub Copilot-specific: enterprise domain (e.g. "github.mycompany.com") */
-  enterpriseDomain: z.string().optional(),
   /** Mux Gateway-specific fields */
   couponCodeSet: z.boolean().optional(),
 });
@@ -226,7 +224,7 @@ export const muxGatewayOauth = {
 // GitHub Copilot OAuth (Device Code Flow)
 export const copilotOauth = {
   startDeviceFlow: {
-    input: z.object({ enterpriseUrl: z.string().optional() }).strict(),
+    input: z.void(),
     output: ResultSchema(
       z.object({
         flowId: z.string(),

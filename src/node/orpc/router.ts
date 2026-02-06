@@ -1152,8 +1152,8 @@ export const router = (authToken?: string) => {
       startDeviceFlow: t
         .input(schemas.copilotOauth.startDeviceFlow.input)
         .output(schemas.copilotOauth.startDeviceFlow.output)
-        .handler(({ context, input }) => {
-          return context.copilotOauthService.startDeviceFlow(input);
+        .handler(({ context }) => {
+          return context.copilotOauthService.startDeviceFlow();
         }),
       waitForDeviceFlow: t
         .input(schemas.copilotOauth.waitForDeviceFlow.input)

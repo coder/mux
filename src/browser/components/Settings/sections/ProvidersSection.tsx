@@ -787,9 +787,6 @@ export function ProvidersSection() {
   const [copilotUserCode, setCopilotUserCode] = useState<string | null>(null);
   const [copilotVerificationUri, setCopilotVerificationUri] = useState<string | null>(null);
   const [copilotCodeCopied, setCopilotCodeCopied] = useState(false);
-  const [copilotEnterpriseUrl, setCopilotEnterpriseUrl] = useState(
-    () => config?.["github-copilot"]?.enterpriseDomain ?? ""
-  );
   const copilotLoginAttemptRef = useRef(0);
   const copilotFlowIdRef = useRef<string | null>(null);
   const copilotCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -840,12 +837,6 @@ export function ProvidersSection() {
       keyPath: ["apiKey"],
       value: "",
     });
-    void api.providers.setProviderConfig({
-      provider: "github-copilot",
-      keyPath: ["enterpriseDomain"],
-      value: "",
-    });
-    setCopilotEnterpriseUrl("");
   };
 
   const startCopilotLogin = async () => {
@@ -860,9 +851,7 @@ export function ProvidersSection() {
         return;
       }
 
-      const startResult = await api.copilotOauth.startDeviceFlow({
-        enterpriseUrl: copilotEnterpriseUrl || undefined,
-      });
+      const startResult = await api.copilotOauth.startDeviceFlow();
 
       if (attempt !== copilotLoginAttemptRef.current) return;
 
@@ -1217,23 +1206,6 @@ export function ProvidersSection() {
 
                 {provider === "github-copilot" && (
                   <div className="space-y-2">
-                    <div>
-                      <label className="text-muted mb-1 block text-xs">
-                        GitHub Enterprise URL <span className="text-dim">(optional)</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={copilotEnterpriseUrl}
-                        onChange={(e) => setCopilotEnterpriseUrl(e.target.value)}
-                        placeholder="e.g., github.mycompany.com"
-                        className="bg-modal-bg border-border-medium focus:border-accent w-full rounded border px-2 py-1.5 font-mono text-xs focus:outline-none"
-                        disabled={copilotLoginInProgress}
-                      />
-                      <span className="text-dim mt-0.5 block text-xs">
-                        Leave empty for github.com
-                      </span>
-                    </div>
-
                     <div>
                       <label className="text-foreground block text-xs font-medium">
                         Authentication

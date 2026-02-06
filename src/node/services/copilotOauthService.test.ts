@@ -4,7 +4,7 @@ import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
-import { CopilotOauthService, copilotBaseUrl, normalizeDomain } from "./copilotOauthService";
+import { CopilotOauthService } from "./copilotOauthService";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -529,166 +529,6 @@ describe("CopilotOauthService", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Enterprise URL normalization
-  // -------------------------------------------------------------------------
-
-  describe("enterprise URL normalization", () => {
-    it("uses enterprise domain in device code URL", async () => {
-      let capturedUrl = "";
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          capturedUrl = url;
-          return deviceCodeResponse();
-        }
-        return tokenSuccessResponse();
-      });
-
-      await service.startDeviceFlow({ enterpriseUrl: "https://github.myco.com/" });
-      expect(capturedUrl).toBe("https://github.myco.com/login/device/code");
-    });
-
-    it("extracts hostname from URL with path", async () => {
-      let capturedUrl = "";
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          capturedUrl = url;
-          return deviceCodeResponse();
-        }
-        return tokenSuccessResponse();
-      });
-
-      await service.startDeviceFlow({ enterpriseUrl: "github.myco.com/path/" });
-      expect(capturedUrl).toBe("https://github.myco.com/login/device/code");
-    });
-
-    it("handles URL with no protocol prefix", async () => {
-      let capturedUrl = "";
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          capturedUrl = url;
-          return deviceCodeResponse();
-        }
-        return tokenSuccessResponse();
-      });
-
-      await service.startDeviceFlow({ enterpriseUrl: "github.myco.com" });
-      expect(capturedUrl).toBe("https://github.myco.com/login/device/code");
-    });
-
-    it("safely normalizes URLs with user info", async () => {
-      // URL("https://evil.com@attacker.com") → hostname is "attacker.com"
-      // This tests that we use URL parsing (which extracts hostname correctly)
-      let capturedUrl = "";
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          capturedUrl = url;
-          return deviceCodeResponse();
-        }
-        return tokenSuccessResponse();
-      });
-
-      await service.startDeviceFlow({ enterpriseUrl: "https://evil.com@attacker.com" });
-      // URL parser treats "evil.com" as userinfo, "attacker.com" as hostname
-      expect(capturedUrl).toBe("https://attacker.com/login/device/code");
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Enterprise domain persistence
-  // -------------------------------------------------------------------------
-
-  describe("enterprise domain persistence", () => {
-    it("persists enterprise domain after successful auth", async () => {
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          return deviceCodeResponse();
-        }
-        if (url.includes("/models")) {
-          return modelsResponse();
-        }
-        return tokenSuccessResponse();
-      });
-
-      const startResult = await service.startDeviceFlow({
-        enterpriseUrl: "https://github.myco.com/",
-      });
-      expect(startResult.success).toBe(true);
-      if (!startResult.success) return;
-
-      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
-        timeoutMs: 10_000,
-      });
-      expect(waitResult.success).toBe(true);
-
-      const domainCall = deps.setConfigCalls.find(
-        (c) => c.provider === "github-copilot" && c.keyPath[0] === "enterpriseDomain"
-      );
-      expect(domainCall).toBeDefined();
-      expect(domainCall!.value).toBe("github.myco.com");
-    });
-
-    it("clears enterprise domain after successful auth with github.com", async () => {
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          return deviceCodeResponse();
-        }
-        if (url.includes("/models")) {
-          return modelsResponse();
-        }
-        return tokenSuccessResponse();
-      });
-
-      const startResult = await service.startDeviceFlow();
-      expect(startResult.success).toBe(true);
-      if (!startResult.success) return;
-
-      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
-        timeoutMs: 10_000,
-      });
-      expect(waitResult.success).toBe(true);
-
-      const domainCall = deps.setConfigCalls.find(
-        (c) => c.provider === "github-copilot" && c.keyPath[0] === "enterpriseDomain"
-      );
-      expect(domainCall).toBeDefined();
-      expect(domainCall!.value).toBe("");
-    });
-
-    it("uses enterprise domain for polling URL", async () => {
-      let pollingUrl = "";
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          return deviceCodeResponse();
-        }
-        if (url.includes("/models")) {
-          return modelsResponse();
-        }
-        if (url.includes("/login/oauth/access_token")) {
-          pollingUrl = url;
-        }
-        return tokenSuccessResponse();
-      });
-
-      const startResult = await service.startDeviceFlow({
-        enterpriseUrl: "https://github.myco.com/",
-      });
-      expect(startResult.success).toBe(true);
-      if (!startResult.success) return;
-
-      await service.waitForDeviceFlow(startResult.data.flowId, { timeoutMs: 10_000 });
-
-      expect(pollingUrl).toBe("https://github.myco.com/login/oauth/access_token");
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // Model fetching after successful auth
   // -------------------------------------------------------------------------
 
@@ -766,34 +606,6 @@ describe("CopilotOauthService", () => {
 
       // setModels should not be called when all models are filtered out
       expect(deps.setModelsCalls).toHaveLength(0);
-    });
-
-    it("uses enterprise proxy URL for model fetch", async () => {
-      let modelsUrl = "";
-      mockFetch((input) => {
-        const url = String(input);
-        if (url.includes("/login/device/code")) {
-          return deviceCodeResponse();
-        }
-        if (url.includes("/models")) {
-          modelsUrl = url;
-          return modelsResponse(["claude-sonnet-4"]);
-        }
-        return tokenSuccessResponse();
-      });
-
-      const startResult = await service.startDeviceFlow({
-        enterpriseUrl: "https://github.myco.com/",
-      });
-      expect(startResult.success).toBe(true);
-      if (!startResult.success) return;
-
-      const waitResult = await service.waitForDeviceFlow(startResult.data.flowId, {
-        timeoutMs: 10_000,
-      });
-      expect(waitResult.success).toBe(true);
-
-      expect(modelsUrl).toBe("https://copilot-proxy.github.myco.com/models");
     });
 
     it("login succeeds even if model fetch returns non-200", async () => {
@@ -907,26 +719,6 @@ describe("CopilotOauthService", () => {
   });
 
   // -------------------------------------------------------------------------
-  // copilotBaseUrl helper
-  // -------------------------------------------------------------------------
-
-  describe("copilotBaseUrl", () => {
-    it("returns api.githubcopilot.com for github.com", () => {
-      expect(copilotBaseUrl("github.com")).toBe("https://api.githubcopilot.com");
-    });
-
-    it("returns copilot-proxy URL for enterprise domains", () => {
-      expect(copilotBaseUrl("github.myco.com")).toBe("https://copilot-proxy.github.myco.com");
-    });
-
-    it("returns copilot-proxy URL for enterprise domains with port", () => {
-      expect(copilotBaseUrl("github.myco.com:8443")).toBe(
-        "https://copilot-proxy.github.myco.com:8443"
-      );
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // Dispose cleanup
   // -------------------------------------------------------------------------
 
@@ -1024,42 +816,6 @@ describe("CopilotOauthService", () => {
       if (!waitResult.success) {
         expect(waitResult.error).toContain("disk full");
       }
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // normalizeDomain
-  // ---------------------------------------------------------------------------
-
-  describe("normalizeDomain", () => {
-    it("strips protocol and returns host for standard URLs", () => {
-      expect(normalizeDomain("https://github.com")).toBe("github.com");
-    });
-
-    it("preserves non-standard port for enterprise servers", () => {
-      expect(normalizeDomain("https://github.myco.com:8443")).toBe("github.myco.com:8443");
-    });
-
-    it("omits port when using standard HTTPS port 443", () => {
-      expect(normalizeDomain("https://github.myco.com:443")).toBe("github.myco.com");
-    });
-
-    it("omits port when using standard HTTP port 80", () => {
-      expect(normalizeDomain("http://github.myco.com:80")).toBe("github.myco.com");
-    });
-
-    it("handles bare domain without protocol", () => {
-      expect(normalizeDomain("github.myco.com")).toBe("github.myco.com");
-    });
-
-    it("handles bare domain with port and no protocol", () => {
-      expect(normalizeDomain("github.myco.com:8443")).toBe("github.myco.com:8443");
-    });
-
-    it("strips trailing path", () => {
-      expect(normalizeDomain("https://github.myco.com:8443/some/path")).toBe(
-        "github.myco.com:8443"
-      );
     });
   });
 

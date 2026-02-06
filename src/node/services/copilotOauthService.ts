@@ -13,40 +13,14 @@ const COMPLETED_FLOW_TTL_MS = 60 * 1000;
 // Only surface top-tier model families from the Copilot API
 export const COPILOT_MODEL_PREFIXES = ["gpt-5", "claude-", "gemini-3", "grok-code"];
 
-function githubUrls(domain: string) {
-  return {
-    deviceCode: `https://${domain}/login/device/code`,
-    accessToken: `https://${domain}/login/oauth/access_token`,
-  };
-}
-
-// Derive the Copilot API base URL from a GitHub domain.
-// Regular github.com → api.githubcopilot.com; enterprise → copilot-proxy.<domain>
-export function copilotBaseUrl(domain: string): string {
-  return domain === "github.com"
-    ? "https://api.githubcopilot.com"
-    : `https://copilot-proxy.${domain}`;
-}
-
-export function normalizeDomain(url: string): string {
-  try {
-    const withProtocol = url.includes("://") ? url : `https://${url}`;
-    // Use .host (not .hostname) to preserve non-standard ports for GHES instances
-    return new URL(withProtocol).host;
-  } catch {
-    // Fall back to basic cleanup if URL parsing fails
-    return url
-      .replace(/^https?:\/\//, "")
-      .replace(/[/?#].*$/, "")
-      .replace(/\/$/, "");
-  }
-}
+const GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code";
+const GITHUB_ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token";
+const COPILOT_API_BASE_URL = "https://api.githubcopilot.com";
 
 interface DeviceFlow {
   flowId: string;
   deviceCode: string;
   interval: number;
-  domain: string;
   cancelled: boolean;
   timeout: ReturnType<typeof setTimeout>;
   cleanupTimeout: ReturnType<typeof setTimeout> | null;
@@ -63,14 +37,13 @@ export class CopilotOauthService {
     private readonly windowService?: WindowService
   ) {}
 
-  async startDeviceFlow(opts?: {
-    enterpriseUrl?: string;
-  }): Promise<Result<{ flowId: string; verificationUri: string; userCode: string }, string>> {
-    const domain = opts?.enterpriseUrl ? normalizeDomain(opts.enterpriseUrl) : "github.com";
+  async startDeviceFlow(): Promise<
+    Result<{ flowId: string; verificationUri: string; userCode: string }, string>
+  > {
     const flowId = crypto.randomUUID();
 
     try {
-      const res = await fetch(githubUrls(domain).deviceCode, {
+      const res = await fetch(GITHUB_DEVICE_CODE_URL, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -112,7 +85,6 @@ export class CopilotOauthService {
         flowId,
         deviceCode: data.device_code,
         interval: data.interval ?? 5,
-        domain,
         cancelled: false,
         pollingStarted: false,
         timeout,
@@ -193,11 +165,9 @@ export class CopilotOauthService {
   }
 
   private async pollForToken(flow: DeviceFlow): Promise<void> {
-    const urls = githubUrls(flow.domain);
-
     while (!flow.cancelled) {
       try {
-        const res = await fetch(urls.accessToken, {
+        const res = await fetch(GITHUB_ACCESS_TOKEN_URL, {
           method: "POST",
           headers: {
             Accept: "application/json",
@@ -233,23 +203,9 @@ export class CopilotOauthService {
             return;
           }
 
-          // Persist the enterprise domain so aiService can derive the correct API base URL.
-          // For regular github.com, we clear any previously stored domain.
-          const domainValue = flow.domain !== "github.com" ? flow.domain : "";
-          const domainResult = this.providerService.setConfig(
-            "github-copilot",
-            ["enterpriseDomain"],
-            domainValue
-          );
-          if (!domainResult.success) {
-            void this.finishFlow(flow.flowId, Err(domainResult.error));
-            return;
-          }
-
           // Fetch available models from Copilot API (best-effort, non-blocking on failure)
           try {
-            const baseURL = copilotBaseUrl(flow.domain);
-            const modelsRes = await fetch(`${baseURL}/models`, {
+            const modelsRes = await fetch(`${COPILOT_API_BASE_URL}/models`, {
               headers: {
                 Authorization: `Bearer ${data.access_token}`,
                 "Openai-Intent": "conversation-edits",
