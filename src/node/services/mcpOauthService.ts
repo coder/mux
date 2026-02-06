@@ -9,6 +9,7 @@ import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { WindowService } from "@/node/services/windowService";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { log } from "@/node/services/log";
+import { isLoopbackAddress } from "@/common/utils/urlSecurity";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { roundToBase2 } from "@/common/telemetry/utils";
@@ -626,6 +627,12 @@ export class McpOauthService {
       createDeferred<Result<void, string>>();
 
     const serverListener = http.createServer((req, res) => {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.statusCode = 403;
+        res.end("Forbidden");
+        return;
+      }
+
       const reqUrl = req.url ?? "/";
       const url = new URL(reqUrl, "http://localhost");
 

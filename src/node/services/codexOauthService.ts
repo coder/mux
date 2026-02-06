@@ -17,6 +17,7 @@ import type { Config } from "@/node/config";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { isLoopbackAddress } from "@/common/utils/urlSecurity";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import {
   extractChatGptAccountIdFromTokens,
@@ -87,17 +88,6 @@ function randomBase64Url(bytes = 32): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isLoopbackAddress(address: string | undefined): boolean {
-  if (!address) return false;
-
-  // Node may normalize IPv4 loopback to an IPv6-mapped address.
-  if (address === "::ffff:127.0.0.1") {
-    return true;
-  }
-
-  return address === "127.0.0.1" || address === "::1";
 }
 
 function parseOptionalNumber(value: unknown): number | null {
