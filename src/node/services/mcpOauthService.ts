@@ -174,6 +174,11 @@ function sanitizeServerUrlForRequest(serverUrl: string): string | null {
       return null;
     }
 
+    // Reject @-based URL confusion attacks
+    if (url.username || url.password) {
+      return null;
+    }
+
     // Avoid accidental mismatch from an irrelevant hash.
     url.hash = "";
 
