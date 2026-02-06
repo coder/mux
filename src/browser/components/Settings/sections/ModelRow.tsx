@@ -104,6 +104,55 @@ function ModelTooltipContent(props: {
   );
 }
 
+/**
+ * Inline toggle that slides between the model's base context window and 1M.
+ * Renders as a compact pill: clicking toggles the state, with the active
+ * end highlighted in accent.
+ */
+function ContextWindowSlider(props: {
+  baseTokens: number;
+  enabled: boolean;
+  onToggle: () => void;
+}) {
+  const baseLabel = formatTokenCount(props.baseTokens);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onToggle();
+          }}
+          className="border-border-medium bg-background-tertiary flex items-center gap-px rounded-full border px-0.5 py-px"
+          aria-label={props.enabled ? "Disable 1M context (beta)" : "Enable 1M context (beta)"}
+        >
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[10px] leading-none font-medium transition-colors",
+              !props.enabled ? "bg-background-secondary text-foreground" : "text-muted"
+            )}
+          >
+            {baseLabel}
+          </span>
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 font-mono text-[10px] leading-none font-bold transition-colors",
+              props.enabled ? "bg-accent/20 text-accent" : "text-muted"
+            )}
+          >
+            1M
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        {props.enabled ? "1M context enabled (beta)" : "Enable 1M context (beta)"}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export interface ModelRowProps {
   provider: string;
   modelId: string;
@@ -216,13 +265,19 @@ export function ModelRow(props: ModelRowProps) {
         </div>
       </td>
 
-      {/* Context Window */}
-      <td className="w-16 py-1.5 pr-2 text-right md:w-20">
-        <span className="text-muted text-xs">
-          {/* When 1M context is enabled the effective window is 1M tokens,
-              regardless of the model's default max_input_tokens. */}
-          {props.is1MContextEnabled ? "1M" : stats ? formatTokenCount(stats.max_input_tokens) : "—"}
-        </span>
+      {/* Context Window — inline slider for models that support 1M context */}
+      <td className="w-16 py-1.5 pr-2 md:w-20">
+        {props.onToggle1MContext && stats ? (
+          <ContextWindowSlider
+            baseTokens={stats.max_input_tokens}
+            enabled={props.is1MContextEnabled ?? false}
+            onToggle={props.onToggle1MContext}
+          />
+        ) : (
+          <span className="text-muted block text-right text-xs">
+            {stats ? formatTokenCount(stats.max_input_tokens) : "—"}
+          </span>
+        )}
       </td>
 
       {/* Actions */}
@@ -276,38 +331,6 @@ export function ModelRow(props: ModelRowProps) {
               active={props.isGatewayEnabled ?? false}
               onToggle={() => props.onToggleGateway?.()}
             />
-          )}
-          {/* 1M context toggle button — only rendered when model supports it */}
-          {props.onToggle1MContext && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    props.onToggle1MContext?.();
-                  }}
-                  className={cn(
-                    "p-0.5 transition-colors",
-                    props.is1MContextEnabled
-                      ? "text-accent"
-                      : "text-muted hover:text-foreground opacity-40"
-                  )}
-                  aria-label={props.is1MContextEnabled ? "Disable 1M context" : "Enable 1M context"}
-                >
-                  {/* Size the inner span to h-3.5 to match the Lucide icon dimensions used
-                      by neighboring action buttons, ensuring consistent vertical alignment. */}
-                  <span className="flex h-3.5 w-3.5 items-center justify-center font-mono text-[10px] leading-none font-bold">
-                    1M
-                  </span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {props.is1MContextEnabled
-                  ? "1M context enabled (beta)"
-                  : "Enable 1M context (beta)"}
-              </TooltipContent>
-            </Tooltip>
           )}
           {/* Favorite/default button */}
           <button
