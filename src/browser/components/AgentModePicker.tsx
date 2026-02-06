@@ -453,7 +453,10 @@ export const AgentModePicker: React.FC<AgentModePickerProps> = (props) => {
         </TooltipContent>
       </Tooltip>
 
-      <AgentHelpTooltip />
+      {/* Tooltip is hover-only; hide it on touch + narrow layouts to avoid overlap. */}
+      <div className="hidden [@container(min-width:420px)]:[@media(hover:hover)_and_(pointer:fine)]:block">
+        <AgentHelpTooltip />
+      </div>
 
       {isPickerOpen && (
         <div className="bg-separator border-border-light absolute right-0 bottom-full z-[1020] mb-1 max-w-[420px] min-w-72 overflow-hidden rounded border shadow-[0_4px_12px_rgba(0,0,0,0.3)]">

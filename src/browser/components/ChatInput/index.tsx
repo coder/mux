@@ -2424,7 +2424,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                   </div>
                 </div>
 
-                <div className="flex shrink-0 items-center" data-component="ThinkingSliderGroup">
+                {/* On narrow layouts, hide the thinking paddles to prevent control overlap. */}
+                <div
+                  className="flex shrink-0 items-center [@container(max-width:420px)]:[&_[data-thinking-paddle]]:hidden"
+                  data-component="ThinkingSliderGroup"
+                >
                   <ThinkingSliderComponent modelString={baseModel} />
                 </div>
 
