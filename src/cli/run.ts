@@ -947,8 +947,8 @@ async function main(): Promise<number> {
       }
 
       // Enforce budget after rolling up sub-agent costs (mirrors the stream-end budget check).
-      // Use hasUnknownCosts instead of cost===undefined since sumUsageHistory returns a
-      // partial cost sum when some models have pricing and others don't.
+      // sumUsageHistory sets hasUnknownCosts when any component has cost_usd===undefined,
+      // which catches models with unknown pricing regardless of how entries were merged.
       if (budget !== undefined && !budgetExceeded) {
         const totalUsage = sumUsageHistory(usageHistory);
         const cost = getTotalCost(totalUsage);
