@@ -362,6 +362,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // fireworks appear out-of-sync with the cursor.
           const intensity = delta > 0 ? Math.min(6, delta) : delta < 0 ? Math.min(6, -delta) : 1;
           const kind = delta < 0 ? "delete" : "insert";
+          // Capture the caret index now (before rAF) so bursts queued within the same frame
+          // don't all measure the latest caret position and appear "ahead" during fast typing.
           const caretIndex = inputRef.current?.selectionStart ?? next.length;
 
           requestAnimationFrame(() => {

@@ -24,6 +24,8 @@ interface PowerModeContextValue {
     textarea: HTMLTextAreaElement,
     intensity?: number,
     kind?: PowerModeBurstKind,
+    // Optional override so callers can defer measurement to `requestAnimationFrame()`
+    // without losing per-keystroke caret alignment during fast typing.
     caretIndex?: number
   ) => void;
 }
