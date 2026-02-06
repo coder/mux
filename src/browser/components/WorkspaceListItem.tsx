@@ -241,7 +241,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
   const isInitializing = metadata.isInitializing === true;
   const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
-  const isDisabled = isInitializing || isRemoving || isArchiving === true;
+  const isDisabled = isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
@@ -376,8 +376,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           LIST_ITEM_BASE_CLASSES,
           isDragging && "opacity-50",
           isRemoving && "opacity-70",
-          // Keep hover styles enabled for initializing workspaces so the row feels interactive
-          // (the click selection is disabled, but the cancel action remains accessible).
+          // Keep hover styles enabled for initializing workspaces so the row feels interactive.
           !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
           isArchiving && "pointer-events-none opacity-70",
           isDisabled ? "cursor-default" : "cursor-pointer",
