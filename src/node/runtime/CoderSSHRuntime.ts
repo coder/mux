@@ -525,15 +525,39 @@ export class CoderSSHRuntime extends SSHRuntime {
     force: boolean,
     abortSignal?: AbortSignal
   ): Promise<{ success: true; deletedPath: string } | { success: false; error: string }> {
+    // Deleting a Coder workspace is dangerous; CoderService refuses to delete workspaces
+    // without the mux- prefix to avoid accidentally deleting user-owned Coder workspaces.
+
     // If this workspace is an existing Coder workspace that mux didn't create, just do SSH cleanup.
     if (this.coderConfig.existingWorkspace) {
       return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
     }
 
     const coderWorkspaceName = this.coderConfig.workspaceName;
+
     if (!coderWorkspaceName) {
       log.warn("Coder workspace name not set, falling back to SSH-only deletion");
       return super.deleteWorkspace(projectPath, workspaceName, force, abortSignal);
+    }
+
+    // For force deletes ("cancel creation"), skip SSH cleanup and focus on deleting the
+    // underlying Coder workspace. During provisioning, the SSH host may not be reachable yet.
+    if (force) {
+      const deleteResult = await this.coderService.deleteWorkspaceEventually(coderWorkspaceName, {
+        timeoutMs: 60_000,
+        signal: abortSignal,
+        // Avoid races where coder create finishes server-side after we abort the local CLI.
+        waitForExistence: true,
+        // If the workspace never appears on the server within 10s, assume it was never created
+        // and return early instead of waiting the full 60s timeout.
+        waitForExistenceTimeoutMs: 10_000,
+      });
+
+      if (!deleteResult.success) {
+        return { success: false, error: `Failed to delete Coder workspace: ${deleteResult.error}` };
+      }
+
+      return { success: true, deletedPath: this.getWorkspacePath(projectPath, workspaceName) };
     }
 
     // Check if Coder workspace still exists before attempting SSH operations.
@@ -565,7 +589,22 @@ export class CoderSSHRuntime extends SSHRuntime {
           log.debug("Coder workspace is stopped; deleting without SSH cleanup", {
             coderWorkspaceName,
           });
-          await this.coderService.deleteWorkspace(coderWorkspaceName);
+          const deleteResult = await this.coderService.deleteWorkspaceEventually(
+            coderWorkspaceName,
+            {
+              timeoutMs: 60_000,
+              signal: abortSignal,
+              waitForExistence: false,
+            }
+          );
+
+          if (!deleteResult.success) {
+            return {
+              success: false,
+              error: `Failed to delete Coder workspace: ${deleteResult.error}`,
+            };
+          }
+
           return {
             success: true,
             deletedPath: this.getWorkspacePath(projectPath, workspaceName),
@@ -601,7 +640,15 @@ export class CoderSSHRuntime extends SSHRuntime {
 
     try {
       log.debug(`Deleting Coder workspace "${coderWorkspaceName}"`);
-      await this.coderService.deleteWorkspace(coderWorkspaceName);
+      const deleteResult = await this.coderService.deleteWorkspaceEventually(coderWorkspaceName, {
+        timeoutMs: 60_000,
+        signal: abortSignal,
+        waitForExistence: false,
+      });
+
+      if (!deleteResult.success) {
+        throw new Error(deleteResult.error);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log.error("Failed to delete Coder workspace", {

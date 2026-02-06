@@ -99,8 +99,9 @@ export class DisposableProcess implements Disposable {
     ) {
       // On Windows, childProcess.kill() does not terminate the full process tree.
       // Use taskkill /T to avoid leaking child processes (e.g., spawned by Git Bash).
-      if (this.process.pid !== undefined) {
-        killProcessTree(this.process.pid);
+      const pid = this.process.pid;
+      if (pid !== undefined && pid > 0) {
+        killProcessTree(pid);
       } else {
         try {
           this.process.kill("SIGKILL");

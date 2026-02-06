@@ -2,7 +2,7 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
-import { CircleHelp, ExternalLinkIcon } from "lucide-react";
+import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Button } from "./ui/button";
@@ -16,7 +16,7 @@ export const WorkspaceStatusIndicator = memo<{
   const { workspaceMetadata } = useWorkspaceContext();
 
   const metadata = workspaceMetadata.get(workspaceId);
-  const isCreating = metadata?.status === "creating";
+  const isInitializing = metadata?.isInitializing === true;
 
   // Show prompt when ask_user_question is pending - make it prominent
   if (awaitingUserQuestion) {
@@ -55,7 +55,7 @@ export const WorkspaceStatusIndicator = memo<{
 
   const phase: "starting" | "streaming" | null = canInterrupt
     ? "streaming"
-    : isStarting || isCreating
+    : isStarting || isInitializing
       ? "starting"
       : null;
 
@@ -68,6 +68,9 @@ export const WorkspaceStatusIndicator = memo<{
 
   return (
     <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+      {phase === "starting" && (
+        <Loader2 aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin opacity-70" />
+      )}
       {modelToShow ? (
         <>
           <span className="min-w-0 truncate">

@@ -361,6 +361,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     selectedWorkspace,
     setSelectedWorkspace: onSelectWorkspace,
     archiveWorkspace: onArchiveWorkspace,
+    removeWorkspace,
     renameWorkspace: onRenameWorkspace,
     refreshWorkspaceMetadata,
     pendingNewWorkspaceProject,
@@ -479,7 +480,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   );
 
   const [archivingWorkspaceIds, setArchivingWorkspaceIds] = useState<Set<string>>(new Set());
+  const [removingWorkspaceIds, setRemovingWorkspaceIds] = useState<Set<string>>(new Set());
   const workspaceArchiveError = usePopoverError();
+  const workspaceRemoveError = usePopoverError();
   const [archiveConfirmation, setArchiveConfirmation] = useState<{
     workspaceId: string;
     displayTitle: string;
@@ -610,6 +613,30 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const handleArchiveWorkspaceCancel = useCallback(() => {
     setArchiveConfirmation(null);
   }, []);
+
+  const handleCancelWorkspaceCreation = useCallback(
+    async (workspaceId: string) => {
+      // Give immediate UI feedback (spinner / disabled row) while deletion is in-flight.
+      setRemovingWorkspaceIds((prev) => new Set(prev).add(workspaceId));
+
+      try {
+        const result = await removeWorkspace(workspaceId, { force: true });
+        if (!result.success) {
+          workspaceRemoveError.showError(
+            workspaceId,
+            result.error ?? "Failed to cancel workspace creation"
+          );
+        }
+      } finally {
+        setRemovingWorkspaceIds((prev) => {
+          const next = new Set(prev);
+          next.delete(workspaceId);
+          return next;
+        });
+      }
+    },
+    [removeWorkspace, workspaceRemoveError]
+  );
 
   const handleRemoveSection = async (
     projectPath: string,
@@ -986,8 +1013,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   projectName={projectName}
                                   isSelected={selectedWorkspace?.workspaceId === metadata.id}
                                   isArchiving={archivingWorkspaceIds.has(metadata.id)}
+                                  isRemoving={
+                                    removingWorkspaceIds.has(metadata.id) ||
+                                    metadata.isRemoving === true
+                                  }
                                   onSelectWorkspace={handleSelectWorkspace}
                                   onArchiveWorkspace={handleArchiveWorkspace}
+                                  onCancelCreation={handleCancelWorkspaceCreation}
                                   depth={depthByWorkspaceId[metadata.id] ?? 0}
                                   sectionId={sectionId}
                                 />
@@ -1351,6 +1383,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
             error={workspaceArchiveError.error}
             prefix="Failed to archive chat"
             onDismiss={workspaceArchiveError.clearError}
+          />
+          <PopoverError
+            error={workspaceRemoveError.error}
+            prefix="Failed to cancel workspace creation"
+            onDismiss={workspaceRemoveError.clearError}
           />
           <PopoverError
             error={projectRemoveError.error}
