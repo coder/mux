@@ -107,7 +107,7 @@ jobs:
           set -euo pipefail
           curl --retry 5 --retry-all-errors --retry-delay 2 -LsSf https://astral.sh/uv/install.sh | sh
       - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: make -j static-check
+      - run: make -j static-check-ci
 
   lint-actions:
     name: Lint Actions
