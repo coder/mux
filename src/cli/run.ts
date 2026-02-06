@@ -936,6 +936,16 @@ async function main(): Promise<number> {
       return;
     }
 
+    // When a sub-agent workspace is cleaned up, its usage is rolled up into the parent
+    // and emitted as a session-usage-delta event. Add to usageHistory so budget checks
+    // and the final cost summary include sub-agent costs.
+    if (payload.type === "session-usage-delta") {
+      for (const usage of Object.values(payload.byModelDelta)) {
+        usageHistory.push(usage);
+      }
+      return;
+    }
+
     // Capture usage-delta events as fallback when stream-end lacks usage metadata
     // Also check budget limits if --budget is specified
     if (isUsageDelta(payload)) {
@@ -1027,8 +1037,12 @@ async function main(): Promise<number> {
       }
     }
 
-    // Compute final usage/cost summary
-    const totalUsage = sumUsageHistory(usageHistory);
+    // Compute final usage/cost summary. SessionUsageService includes rolled-up sub-agent
+    // costs, so prefer it over the in-memory usageHistory which only tracks parent streams.
+    const sessionUsage = await sessionUsageService.getSessionUsage(workspaceId);
+    const totalUsage = sessionUsage
+      ? sumUsageHistory(Object.values(sessionUsage.byModel))
+      : sumUsageHistory(usageHistory);
     const totalCost = getTotalCost(totalUsage);
 
     // Emit run-complete event in JSON mode with usage and cost
