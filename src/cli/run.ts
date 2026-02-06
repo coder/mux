@@ -586,8 +586,10 @@ async function main(): Promise<number> {
     runtimeConfig,
   });
 
-  // Resume any queued/in-progress sub-agent tasks (relevant after crash recovery)
-  await taskService.initialize();
+  // Note: taskService.initialize() is intentionally NOT called. It resumes tasks from a
+  // previous session, but mux run uses an ephemeral Config (temp dir) with no prior state.
+  // Calling initialize() on a fresh config is a no-op, but skipping it makes the intent
+  // clear and avoids any risk of cross-workspace side effects if config were ever shared.
 
   const experiments = buildExperimentsObject(opts.experiment);
 
