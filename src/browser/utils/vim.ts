@@ -1957,18 +1957,17 @@ function applyOperatorMotion(
     }
 
     if (op === "c") {
-      const lines = text.split("\n");
-      const removedLines: string[] = [];
-      for (let i = 0; i < safeCount && range.row + i < lines.length; i++) {
-        removedLines.push(lines[range.row + i]);
-        lines[range.row + i] = "";
-      }
-      const newText = lines.join("\n");
+      const yankText = removed.endsWith("\n") ? removed.slice(0, -1) : removed;
+
+      // Like Vim, counted linewise changes collapse to a single replacement line.
+      const replacement = range.to < text.length ? "\n" : "";
+      const newText = text.slice(0, range.from) + replacement + text.slice(range.to);
+
       return completeOperation(state, {
         mode: "insert",
         text: newText,
         cursor: range.from,
-        yankBuffer: removedLines.join("\n"),
+        yankBuffer: yankText,
         lastEdit: { kind: "opMotion", op: "c", motion, count: safeCount },
       });
     }

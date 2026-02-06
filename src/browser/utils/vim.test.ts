@@ -1054,6 +1054,28 @@ describe("Vim Command Integration Tests", () => {
       expect(state.yankBuffer).toBe("one\ntwo\n");
     });
 
+    test("2cc changes two lines into a single replacement line", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one\ntwo\nthree", cursor: 0, mode: "normal" },
+        ["2", "c", "c"]
+      );
+      expect(state.text).toBe("\nthree");
+      expect(state.cursor).toBe(0);
+      expect(state.mode).toBe("insert");
+      expect(state.yankBuffer).toBe("one\ntwo");
+    });
+
+    test("2c_ changes two lines into a single replacement line", () => {
+      const state = executeVimCommands(
+        { ...initialState, text: "one\ntwo\nthree", cursor: 0, mode: "normal" },
+        ["2", "c", "_"]
+      );
+      expect(state.text).toBe("\nthree");
+      expect(state.cursor).toBe(0);
+      expect(state.mode).toBe("insert");
+      expect(state.yankBuffer).toBe("one\ntwo");
+    });
+
     test("d3w deletes three words", () => {
       const state = executeVimCommands(
         { ...initialState, text: "one two three four", cursor: 0, mode: "normal" },
