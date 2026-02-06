@@ -1432,10 +1432,42 @@ export class AIService extends EventEmitter {
         return Ok(gateway(modelId));
       }
 
+      // GitHub Copilot — OpenAI-compatible with custom auth headers
+      if (providerName === "github-copilot") {
+        const creds = resolveProviderCredentials("github-copilot" as ProviderName, providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+
+        const { createOpenAICompatible } = await import("@ai-sdk/openai-compatible");
+
+        const baseFetch = getProviderFetch(providerConfig);
+        const copilotFetchFn = async (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1]
+        ) => {
+          const headers = new Headers(init?.headers);
+          headers.set("Authorization", `Bearer ${creds.apiKey}`);
+          headers.set("Openai-Intent", "conversation-edits");
+          headers.delete("x-api-key");
+          return baseFetch(input, { ...init, headers });
+        };
+        const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
+
+        const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
+        const provider = createOpenAICompatible({
+          name: "github-copilot",
+          baseURL,
+          apiKey: "copilot", // placeholder — actual auth via custom fetch
+          fetch: copilotFetch,
+        });
+        return Ok(provider.chatModel(modelId));
+      }
+
       // Generic handler for simple providers (standard API key + factory pattern)
-      // Providers with custom logic (anthropic, openai, xai, ollama, openrouter, bedrock, mux-gateway)
-      // are handled explicitly above. New providers using the standard pattern need only be
-      // added to PROVIDER_DEFINITIONS - no code changes required here.
+      // Providers with custom logic (anthropic, openai, xai, ollama, openrouter, bedrock, mux-gateway,
+      // github-copilot) are handled explicitly above. New providers using the standard pattern need
+      // only be added to PROVIDER_DEFINITIONS - no code changes required here.
       const providerDef = PROVIDER_DEFINITIONS[providerName as ProviderName];
       if (providerDef) {
         // Resolve credentials from config + env (single source of truth)

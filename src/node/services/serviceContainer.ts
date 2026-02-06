@@ -22,6 +22,7 @@ import { WorkspaceService } from "@/node/services/workspaceService";
 import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
 import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import { CodexOauthService } from "@/node/services/codexOauthService";
+import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { ProviderService } from "@/node/services/providerService";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { TerminalService } from "@/node/services/terminalService";
@@ -98,6 +99,7 @@ export class ServiceContainer {
   public readonly muxGatewayOauthService: MuxGatewayOauthService;
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
+  public readonly copilotOauthService: CopilotOauthService;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -199,6 +201,7 @@ export class ServiceContainer {
       this.windowService
     );
     this.aiService.setCodexOauthService(this.codexOauthService);
+    this.copilotOauthService = new CopilotOauthService(this.providerService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
     this.terminalService = new TerminalService(config, this.ptyService);
@@ -416,6 +419,7 @@ export class ServiceContainer {
     await this.muxGatewayOauthService.dispose();
     await this.muxGovernorOauthService.dispose();
     await this.codexOauthService.dispose();
+    this.copilotOauthService.dispose();
     await this.backgroundProcessManager.terminateAll();
   }
 }

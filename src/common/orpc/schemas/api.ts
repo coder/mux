@@ -221,6 +221,34 @@ export const muxGatewayOauth = {
   },
 };
 
+// GitHub Copilot OAuth (Device Code Flow)
+export const copilotOauth = {
+  startDeviceFlow: {
+    input: z.object({ enterpriseUrl: z.string().optional() }).strict(),
+    output: ResultSchema(
+      z.object({
+        flowId: z.string(),
+        verificationUri: z.string(),
+        userCode: z.string(),
+      }),
+      z.string()
+    ),
+  },
+  waitForDeviceFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelDeviceFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+};
+
 // Mux Governor OAuth (enrollment for enterprise policy service)
 export const muxGovernorOauth = {
   startDesktopFlow: {

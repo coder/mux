@@ -68,6 +68,12 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createOpenRouter",
     requiresApiKey: true,
   },
+  "github-copilot": {
+    displayName: "GitHub Copilot",
+    import: () => import("@ai-sdk/openai-compatible"),
+    factoryName: "createOpenAICompatible",
+    requiresApiKey: true,
+  },
   bedrock: {
     displayName: "Bedrock",
     import: () => import("@ai-sdk/amazon-bedrock"),

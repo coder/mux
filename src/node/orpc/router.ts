@@ -1148,6 +1148,28 @@ export const router = (authToken?: string) => {
           await context.muxGatewayOauthService.cancelDesktopFlow(input.flowId);
         }),
     },
+    copilotOauth: {
+      startDeviceFlow: t
+        .input(schemas.copilotOauth.startDeviceFlow.input)
+        .output(schemas.copilotOauth.startDeviceFlow.output)
+        .handler(({ context, input }) => {
+          return context.copilotOauthService.startDeviceFlow(input);
+        }),
+      waitForDeviceFlow: t
+        .input(schemas.copilotOauth.waitForDeviceFlow.input)
+        .output(schemas.copilotOauth.waitForDeviceFlow.output)
+        .handler(({ context, input }) => {
+          return context.copilotOauthService.waitForDeviceFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDeviceFlow: t
+        .input(schemas.copilotOauth.cancelDeviceFlow.input)
+        .output(schemas.copilotOauth.cancelDeviceFlow.output)
+        .handler(({ context, input }) => {
+          context.copilotOauthService.cancelDeviceFlow(input.flowId);
+        }),
+    },
     muxGovernorOauth: {
       startDesktopFlow: t
         .input(schemas.muxGovernorOauth.startDesktopFlow.input)

@@ -49,6 +49,9 @@ export const PROVIDER_ENV_VARS: Partial<
   deepseek: {
     apiKey: ["DEEPSEEK_API_KEY"],
   },
+  "github-copilot": {
+    apiKey: ["GITHUB_COPILOT_TOKEN"],
+  },
   bedrock: {
     region: ["AWS_REGION", "AWS_DEFAULT_REGION"],
   },

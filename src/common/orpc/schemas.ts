@@ -186,6 +186,7 @@ export {
   ProviderConfigInfoSchema,
   muxGateway,
   muxGatewayOauth,
+  copilotOauth,
   muxGovernorOauth,
   codexOauth,
   policy,

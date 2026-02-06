@@ -575,6 +575,7 @@ async function loadServices(): Promise<void> {
     muxGatewayOauthService: services.muxGatewayOauthService,
     muxGovernorOauthService: services.muxGovernorOauthService,
     codexOauthService: services.codexOauthService,
+    copilotOauthService: services.copilotOauthService,
     providerService: services.providerService,
     terminalService: services.terminalService,
     editorService: services.editorService,
