@@ -362,6 +362,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // fireworks appear out-of-sync with the cursor.
           const intensity = delta > 0 ? Math.min(6, delta) : delta < 0 ? Math.min(6, -delta) : 1;
           const kind = delta < 0 ? "delete" : "insert";
+          const caretIndex = inputRef.current?.selectionStart ?? next.length;
 
           requestAnimationFrame(() => {
             const el = inputRef.current;
@@ -369,7 +370,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
               return;
             }
 
-            powerMode.burstFromTextarea(el, intensity, kind);
+            powerMode.burstFromTextarea(el, intensity, kind, caretIndex);
           });
         }
       }

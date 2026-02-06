@@ -23,7 +23,8 @@ interface PowerModeContextValue {
   burstFromTextarea: (
     textarea: HTMLTextAreaElement,
     intensity?: number,
-    kind?: PowerModeBurstKind
+    kind?: PowerModeBurstKind,
+    caretIndex?: number
   ) => void;
 }
 
@@ -214,13 +215,17 @@ function syncMirrorStyles(
 
 function getCaretViewportPosition(
   textarea: HTMLTextAreaElement,
-  mirror: MirrorState
+  mirror: MirrorState,
+  caretIndex?: number
 ): {
   x: number;
   y: number;
 } | null {
   try {
-    const caret = textarea.selectionStart ?? textarea.value.length;
+    const rawCaret = caretIndex ?? textarea.selectionStart ?? textarea.value.length;
+    const caret = Number.isFinite(rawCaret)
+      ? Math.max(0, Math.min(textarea.value.length, rawCaret))
+      : textarea.value.length;
 
     const { lineHeightPx } = syncMirrorStyles(textarea, mirror);
 
@@ -279,7 +284,7 @@ export function PowerModeProvider(props: { children: ReactNode }) {
   }, []);
 
   const burstFromTextarea = useCallback<PowerModeContextValue["burstFromTextarea"]>(
-    (textarea, intensity = 1, kind: PowerModeBurstKind = "insert") => {
+    (textarea, intensity = 1, kind: PowerModeBurstKind = "insert", caretIndex) => {
       if (!enabled) return;
 
       const engine = engineRef.current;
@@ -291,7 +296,7 @@ export function PowerModeProvider(props: { children: ReactNode }) {
       };
 
       const mirror = ensureMirror(mirrorRef);
-      const caretPos = getCaretViewportPosition(textarea, mirror) ?? fallback;
+      const caretPos = getCaretViewportPosition(textarea, mirror, caretIndex) ?? fallback;
 
       engine.burst(caretPos.x, caretPos.y, intensity, { kind });
     },
