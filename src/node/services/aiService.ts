@@ -1454,7 +1454,13 @@ export class AIService extends EventEmitter {
         };
         const copilotFetch = Object.assign(copilotFetchFn, baseFetch) as typeof fetch;
 
-        const baseURL = providerConfig.baseURL ?? "https://api.githubcopilot.com";
+        // Enterprise Copilot uses a domain-scoped proxy; regular github.com uses the public API.
+        const enterpriseDomain = providerConfig.enterpriseDomain as string | undefined;
+        const baseURL =
+          providerConfig.baseURL ??
+          (enterpriseDomain
+            ? `https://copilot-proxy.${enterpriseDomain}`
+            : "https://api.githubcopilot.com");
         const provider = createOpenAICompatible({
           name: "github-copilot",
           baseURL,

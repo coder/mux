@@ -213,6 +213,14 @@ export class CopilotOauthService {
             return;
           }
 
+          // Persist the enterprise domain so aiService can derive the correct API base URL.
+          // For regular github.com, we clear any previously stored domain.
+          if (flow.domain !== "github.com") {
+            this.providerService.setConfig("github-copilot", ["enterpriseDomain"], flow.domain);
+          } else {
+            this.providerService.setConfig("github-copilot", ["enterpriseDomain"], "");
+          }
+
           log.debug(`Copilot OAuth completed successfully (flowId=${flow.flowId})`);
           this.windowService?.focusMainWindow();
           void this.finishFlow(flow.flowId, Ok(undefined));
