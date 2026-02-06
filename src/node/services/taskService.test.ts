@@ -2613,6 +2613,175 @@ describe("TaskService", () => {
     expect(resumeStream).toHaveBeenCalled();
   });
 
+  test("does not suppress agent_report reminder due to historical compaction summary", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const pendingFollowUp = {
+      text: "follow up",
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    };
+
+    const summary = createMuxMessage("summary-1", "assistant", "Compaction summary", {
+      timestamp: Date.now(),
+      muxMetadata: {
+        type: "compaction-summary",
+        pendingFollowUp,
+      },
+    });
+    const followUpUser = createMuxMessage("user-follow-up", "user", "follow up", {
+      timestamp: Date.now(),
+    });
+    const followUpAssistant = createMuxMessage(
+      "assistant-follow-up",
+      "assistant",
+      "Follow-up response",
+      { timestamp: Date.now() }
+    );
+
+    expect((await historyService.appendToHistory(childId, summary)).success).toBe(true);
+    expect((await historyService.appendToHistory(childId, followUpUser)).success).toBe(true);
+    expect((await historyService.appendToHistory(childId, followUpAssistant)).success).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-follow-up",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    expect(sendMessage).toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("awaiting_report");
+  });
+
+  test("skips agent_report reminder on compaction stream-end while follow-up is in progress", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { path: path.join(projectPath, "parent"), id: parentId, name: "parent" },
+              {
+                path: path.join(projectPath, "child"),
+                id: childId,
+                name: "agent_explore_child",
+                parentWorkspaceId: parentId,
+                agentType: "explore",
+                taskStatus: "running",
+                taskModelString: "openai:gpt-4o-mini",
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+    });
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { historyService, taskService } = createTaskServiceHarness(config, {
+      aiService,
+      workspaceService,
+    });
+
+    const pendingFollowUp = {
+      text: "follow up",
+      model: "openai:gpt-4o-mini",
+      agentId: "exec",
+    };
+
+    const summary = createMuxMessage("summary-1", "assistant", "Compaction summary", {
+      timestamp: Date.now(),
+      muxMetadata: {
+        type: "compaction-summary",
+        pendingFollowUp,
+      },
+    });
+    const followUpUser = createMuxMessage("user-follow-up", "user", "follow up", {
+      timestamp: Date.now(),
+    });
+    const followUpAssistantPlaceholder = createMuxMessage("assistant-follow-up", "assistant", "", {
+      timestamp: Date.now(),
+    });
+
+    expect((await historyService.appendToHistory(childId, summary)).success).toBe(true);
+    expect((await historyService.appendToHistory(childId, followUpUser)).success).toBe(true);
+    expect(
+      (await historyService.appendToHistory(childId, followUpAssistantPlaceholder)).success
+    ).toBe(true);
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "assistant-compaction-output",
+      metadata: { model: "openai:gpt-4o-mini" },
+      parts: [],
+    });
+
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const postCfg = config.loadConfigOrDefault();
+    const ws = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === childId);
+    expect(ws?.taskStatus).toBe("running");
+  });
+
   test("missing agent_report triggers one reminder, then posts fallback output and cleans up", async () => {
     const config = await createTestConfig(rootDir);
 

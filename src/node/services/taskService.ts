@@ -2138,20 +2138,41 @@ export class TaskService {
     );
   }
 
-  /** Check if the stream was a compaction request that has a pending follow-up message. */
+  /**
+   * Check if the stream was a compaction request that still has a follow-up message incoming.
+   *
+   * `pendingFollowUp` is intentionally never cleared from the compaction summary message (it is
+   * stored for crash-safe dispatch), so we must *not* treat historical summaries as active.
+   */
   private async isCompactionStreamWithFollowUp(workspaceId: string): Promise<boolean> {
     const historyResult = await this.historyService.getHistory(workspaceId);
     if (!historyResult.success || historyResult.data.length === 0) return false;
-    // After compaction, history is cleared and replaced with a summary message,
-    // then dispatchPendingFollowUp() may append a follow-up user message. Both
-    // TaskService and AgentSession handle stream-end concurrently, so by the time
-    // we read history the follow-up may already be appended (making the summary
-    // no longer last). Scan all messages — there are at most 2 after compaction.
-    // pendingFollowUp is never cleared from the summary, so this is stable.
-    return historyResult.data.some((m) => {
-      const muxMeta = m.metadata?.muxMetadata;
-      return isCompactionSummaryMetadata(muxMeta) && muxMeta.pendingFollowUp !== undefined;
-    });
+
+    // Find the most recent compaction summary that still has a pending follow-up.
+    // A historical summary should not suppress the agent_report reminder on later turns.
+    let summaryIndex = -1;
+    for (let i = historyResult.data.length - 1; i >= 0; i--) {
+      const muxMeta = historyResult.data[i].metadata?.muxMetadata;
+      if (isCompactionSummaryMetadata(muxMeta) && muxMeta.pendingFollowUp !== undefined) {
+        summaryIndex = i;
+        break;
+      }
+    }
+    if (summaryIndex === -1) return false;
+
+    // After compaction, dispatchPendingFollowUp() sends a follow-up user message.
+    // AIService appends an assistant placeholder to history immediately; it stays empty
+    // until the follow-up stream ends and StreamManager updates history with final parts.
+    //
+    // Only treat the follow-up as "incoming" until we see an assistant message *after*
+    // the summary with output parts.
+    for (let i = summaryIndex + 1; i < historyResult.data.length; i++) {
+      const msg = historyResult.data[i];
+      if (msg.role === "assistant" && msg.parts.length > 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private async fallbackReportMissingAgentReport(entry: {
