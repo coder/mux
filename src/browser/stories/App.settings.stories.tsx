@@ -373,14 +373,19 @@ export const ModelsEmpty: AppStory = {
 export const ModelsConfigured: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSettingsStory({
+      setup={() => {
+        // Pre-set 1M context enabled for Opus 4.6 so the story shows the toggle active
+        window.localStorage.setItem(
+          "provider_options_anthropic",
+          JSON.stringify({ use1MContextModels: ["anthropic:claude-opus-4-6"] })
+        );
+        return setupSettingsStory({
           providersConfig: {
             anthropic: {
               apiKeySet: true,
               isConfigured: true,
               baseUrl: "",
-              models: ["claude-sonnet-4-20250514", "claude-opus-4-20250514"],
+              models: ["claude-sonnet-4-20250514", "claude-opus-4-6"],
             },
             openai: {
               apiKeySet: true,
@@ -395,8 +400,8 @@ export const ModelsConfigured: AppStory = {
               models: ["grok-beta"],
             },
           },
-        })
-      }
+        });
+      }}
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {

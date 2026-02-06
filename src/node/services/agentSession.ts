@@ -1055,6 +1055,7 @@ export class AgentSession {
     options: SendMessageOptions | undefined
   ): SendMessageOptions {
     if (options) {
+      const existingModels = options.providerOptions?.anthropic?.use1MContextModels ?? [];
       return {
         ...options,
         providerOptions: {
@@ -1062,6 +1063,9 @@ export class AgentSession {
           anthropic: {
             ...options.providerOptions?.anthropic,
             use1MContext: true,
+            use1MContextModels: existingModels.includes(modelString)
+              ? existingModels
+              : [...existingModels, modelString],
           },
         },
       };
@@ -1073,6 +1077,7 @@ export class AgentSession {
       providerOptions: {
         anthropic: {
           use1MContext: true,
+          use1MContextModels: [modelString],
         },
       },
     };
@@ -1105,8 +1110,12 @@ export class AgentSession {
     }
 
     if (is1MCapable) {
-      const use1MContext = context.options?.providerOptions?.anthropic?.use1MContext ?? false;
-      if (use1MContext) {
+      // Skip retry if 1M context is already enabled (via legacy global flag or per-model list)
+      const anthropicOpts = context.options?.providerOptions?.anthropic;
+      const already1M =
+        anthropicOpts?.use1MContext === true ||
+        (anthropicOpts?.use1MContextModels?.includes(context.modelString) ?? false);
+      if (already1M) {
         return false;
       }
     }

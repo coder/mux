@@ -462,10 +462,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   // Context usage indicator data (workspace variant only)
   const workspaceIdForUsage = variant === "workspace" ? props.workspaceId : "";
   const usage = useWorkspaceUsage(workspaceIdForUsage);
-  const { options: providerOptions } = useProviderOptions();
-  const use1M = providerOptions.anthropic?.use1MContext ?? false;
+  const { has1MContext } = useProviderOptions();
   const lastUsage = usage?.liveUsage ?? usage?.lastContextUsage;
   const usageModel = lastUsage?.model ?? null;
+  const use1M = has1MContext(usageModel ?? "");
   const contextUsageData = useMemo(() => {
     return lastUsage
       ? calculateTokenMeterData(lastUsage, usageModel ?? "unknown", use1M, false)

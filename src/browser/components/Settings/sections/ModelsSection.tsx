@@ -18,6 +18,7 @@ import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { usePolicy } from "@/browser/contexts/PolicyContext";
+import { supports1MContext } from "@/common/utils/ai/models";
 import { getAllowedProvidersForUi, isModelAllowedByPolicy } from "@/browser/utils/policyUi";
 import {
   LAST_CUSTOM_MODEL_PROVIDER_KEY,
@@ -73,7 +74,7 @@ export function ModelsSection() {
   const { defaultModel, setDefaultModel, hiddenModels, hideModel, unhideModel } =
     useModelsFromSettings();
   const gateway = useGateway();
-  const { options: providerOptions, setAnthropicOptions } = useProviderOptions();
+  const { has1MContext, toggle1MContext } = useProviderOptions();
 
   // Compaction model preference
   const [compactionModel, setCompactionModel] = usePersistedState<string>(
@@ -285,29 +286,6 @@ export function ModelsSection() {
               />
             </div>
           </div>
-          {/* 1M Context row */}
-          <div className="flex items-center gap-4 px-2 py-2 md:px-3">
-            <div className="w-28 shrink-0 md:w-32">
-              <div className="text-muted text-xs">1M Context</div>
-              <div className="text-muted-light text-[10px]">Anthropic beta</div>
-            </div>
-            <div className="min-w-0 flex-1">
-              <label className="text-foreground flex cursor-pointer items-center gap-2 text-xs select-none">
-                <input
-                  type="checkbox"
-                  className="cursor-pointer"
-                  checked={providerOptions.anthropic?.use1MContext ?? false}
-                  onChange={(e) =>
-                    setAnthropicOptions({
-                      ...providerOptions.anthropic,
-                      use1MContext: e.target.checked,
-                    })
-                  }
-                />
-                Enable 1M token context window for Claude Sonnet 4/4.5 and Opus 4.6
-              </label>
-            </div>
-          </div>
         </div>
       </div>
 
@@ -380,6 +358,7 @@ export function ModelsSection() {
                       saving={false}
                       hasActiveEdit={editing !== null}
                       isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                      is1MContextEnabled={has1MContext(model.fullId)}
                       onSetDefault={() => setDefaultModel(model.fullId)}
                       onStartEdit={() => handleStartEdit(model.provider, model.modelId)}
                       onSaveEdit={handleSaveEdit}
@@ -397,6 +376,11 @@ export function ModelsSection() {
                       onToggleGateway={
                         gateway.canToggleModel(model.fullId)
                           ? () => gateway.toggleModelGateway(model.fullId)
+                          : undefined
+                      }
+                      onToggle1MContext={
+                        supports1MContext(model.fullId)
+                          ? () => toggle1MContext(model.fullId)
                           : undefined
                       }
                     />
@@ -428,6 +412,7 @@ export function ModelsSection() {
                   isDefault={defaultModel === model.fullId}
                   isEditing={false}
                   isGatewayEnabled={gateway.modelUsesGateway(model.fullId)}
+                  is1MContextEnabled={has1MContext(model.fullId)}
                   onSetDefault={() => setDefaultModel(model.fullId)}
                   isHiddenFromSelector={hiddenModels.includes(model.fullId)}
                   onToggleVisibility={() =>
@@ -438,6 +423,11 @@ export function ModelsSection() {
                   onToggleGateway={
                     gateway.canToggleModel(model.fullId)
                       ? () => gateway.toggleModelGateway(model.fullId)
+                      : undefined
+                  }
+                  onToggle1MContext={
+                    supports1MContext(model.fullId)
+                      ? () => toggle1MContext(model.fullId)
                       : undefined
                   }
                 />

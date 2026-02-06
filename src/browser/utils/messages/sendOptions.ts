@@ -32,7 +32,7 @@ import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 function getProviderOptions(): MuxProviderOptions {
   const anthropic = readPersistedState<MuxProviderOptions["anthropic"]>(
     "provider_options_anthropic",
-    { use1MContext: false }
+    {}
   );
   const google = readPersistedState<MuxProviderOptions["google"]>("provider_options_google", {});
 

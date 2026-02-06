@@ -895,11 +895,14 @@ export class AIService extends EventEmitter {
           ? { ...configWithApiKey, baseURL: normalizeAnthropicBaseURL(effectiveBaseURL) }
           : configWithApiKey;
 
-        // Add 1M context beta header if requested and model supports it
-        const headers = buildAnthropicHeaders(
-          normalizedConfig.headers,
-          muxProviderOptions?.anthropic?.use1MContext && supports1MContext(`anthropic:${modelId}`)
-        );
+        // Add 1M context beta header if requested and model supports it.
+        // Check both per-model list (use1MContextModels) and legacy global flag (use1MContext).
+        const fullModelId = `anthropic:${modelId}`;
+        const is1MEnabled =
+          ((muxProviderOptions?.anthropic?.use1MContextModels?.includes(fullModelId) ?? false) ||
+            muxProviderOptions?.anthropic?.use1MContext === true) &&
+          supports1MContext(fullModelId);
+        const headers = buildAnthropicHeaders(normalizedConfig.headers, is1MEnabled);
 
         // Lazy-load Anthropic provider to reduce startup time
         const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
