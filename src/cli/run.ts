@@ -494,6 +494,8 @@ async function main(): Promise<number> {
     initStateManager
   );
   aiService.setTaskService(taskService);
+  // Ensure sub-agent workspaces clean up MCP server processes on removal
+  workspaceService.setMCPServerManager(mcpServerManager);
 
   const session = new AgentSession({
     workspaceId,
