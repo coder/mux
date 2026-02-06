@@ -6,8 +6,7 @@
 #   make help          - Show all available targets
 #   make dev           - Start development server with hot reload
 #   make build         - Build all targets (parallel when possible)
-#   make static-check  - Run local static checks (typecheck + lint + shellcheck)
-#   make static-check-ci - Run all static checks (adds fmt-check + docs links)
+#   make static-check  - Run all static checks (lint + typecheck + fmt-check)
 #   make test          - Run tests
 #
 # Parallelism:
@@ -54,7 +53,7 @@ include fmt.mk
 
 .PHONY: all build dev start clean help
 .PHONY: build-renderer version build-icons build-static
-.PHONY: lint lint-fix typecheck typecheck-react-native static-check static-check-ci
+.PHONY: lint lint-fix typecheck typecheck-react-native static-check
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e smoke-test
 .PHONY: dist dist-mac dist-win dist-linux install-mac-arm64
 .PHONY: vscode-ext vscode-ext-install
@@ -277,11 +276,7 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-# Local checks — typecheck includes noUnusedLocals/noUnusedParameters; lint uses .eslintcache
-static-check: typecheck lint check-eager-imports check-code-docs-links lint-shellcheck ## Run local static checks (typecheck + lint + shellcheck)
-
-# Full CI checks — everything above plus formatting and docs link checking
-static-check-ci: static-check fmt-check check-bench-agent check-docs-links ## Run all static checks (CI)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck ## Run all static checks (lint + typecheck + fmt-check)
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh

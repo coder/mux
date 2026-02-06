@@ -116,7 +116,7 @@ jobs:
           key: ${{ runner.os }}-lint-fmt-${{ hashFiles('eslint.config.mjs', '.prettierrc', '.prettierignore') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-lint-fmt-${{ hashFiles('eslint.config.mjs', '.prettierrc', '.prettierignore') }}-
-      - run: make -j static-check-ci
+      - run: make -j static-check
 
   lint-actions:
     name: Lint Actions
