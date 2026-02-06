@@ -44,38 +44,38 @@ macOS and Linux.
 <table>
 <tr>
 <td align="center" width="50%">
-<em>Integrated code-review for faster iteration</em><br><br>
-<img src="./docs/img/code-review.webp" alt="Screenshot of code review" width="100%" />
+<img src="./docs/img/code-review.webp" alt="Screenshot of code review" width="100%" /><br>
+<sub>Integrated code-review for faster iteration</sub>
 </td>
 <td align="center" width="50%">
-<em>Agents report their status through the sidebar</em><br><br>
-<img src="./docs/img/agent-status.webp" alt="Screenshot of agent status" width="100%" />
-</td>
-</tr>
-<tr>
-<td align="center" width="50%">
-<em>Git divergence UI keeps you looped in on changes and potential conflicts</em><br><br>
-<img src="./docs/img/git-status.webp" alt="Screenshot of git status" width="100%" />
-</td>
-<td align="center" width="50%">
-<em>Mermaid diagrams make it easier to review complex proposals from the Agent</em><br><br>
-<img src="./docs/img/plan-mermaid.webp" alt="Screenshot of mermaid diagram" width="100%" />
+<img src="./docs/img/agent-status.webp" alt="Screenshot of agent status" width="100%" /><br>
+<sub>Agents report their status through the sidebar</sub>
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
-<em>Project secrets help split your Human and Agent identities</em><br><br>
-<img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" width="100%" />
+<img src="./docs/img/git-status.webp" alt="Screenshot of git status" width="100%" /><br>
+<sub>Git divergence UI keeps you looped in on changes and potential conflicts</sub>
 </td>
 <td align="center" width="50%">
-<em>Stay looped in on costs and token consumption</em><br><br>
-<img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="100%" />
+<img src="./docs/img/plan-mermaid.webp" alt="Screenshot of mermaid diagram" width="100%" /><br>
+<sub>Mermaid diagrams make it easier to review complex proposals from the Agent</sub>
 </td>
 </tr>
 <tr>
 <td align="center" width="50%">
-<em>Opportunistic compaction helps keep context small</em><br><br>
-<img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" width="100%" />
+<img src="./docs/img/project-secrets.webp" alt="Screenshot of project secrets" width="100%" /><br>
+<sub>Project secrets help split your Human and Agent identities</sub>
+</td>
+<td align="center" width="50%">
+<img src="./docs/img/costs-tab.webp" alt="Screenshot of costs table" width="100%" /><br>
+<sub>Stay looped in on costs and token consumption</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<img src="./docs/img/opportunistic-compaction.webp" alt="Screenshot of opportunistic compaction" width="100%" /><br>
+<sub>Opportunistic compaction helps keep context small</sub>
 </td>
 <td></td>
 </tr>
