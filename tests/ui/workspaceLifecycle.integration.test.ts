@@ -154,9 +154,6 @@ describeIntegration("Workspace Archive (UI)", () => {
         const archiveButton = await waitFor(
           () => {
             // The archive button is inside a popover, search the whole document
-            const btn = document
-              .querySelector(`button:has(.flex > svg) span:has(svg)`)
-              ?.closest("button") as HTMLElement | null;
             // Look for the button containing "Archive chat" text
             const buttons = Array.from(document.querySelectorAll("button"));
             const archiveBtn = buttons.find((b) => b.textContent?.includes("Archive chat"));

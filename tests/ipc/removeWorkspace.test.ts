@@ -19,12 +19,9 @@ import {
   generateBranchName,
   addSubmodule,
   waitForFileNotExists,
-  waitForInitComplete,
   createWorkspaceWithInit,
   TEST_TIMEOUT_LOCAL_MS,
   TEST_TIMEOUT_SSH_MS,
-  INIT_HOOK_WAIT_MS,
-  SSH_INIT_WAIT_MS,
   getTestRunner,
 } from "./helpers";
 import {
@@ -236,7 +233,7 @@ describeIntegration("Workspace deletion integration tests", () => {
           try {
             const branchName = generateBranchName("already-deleted");
             const runtimeConfig = getRuntimeConfig(branchName);
-            const { workspaceId, workspacePath } = await createWorkspaceWithInit(
+            const { workspaceId, workspacePath: _workspacePath } = await createWorkspaceWithInit(
               env,
               tempGitRepo,
               branchName,
@@ -593,7 +590,7 @@ describeIntegration("Workspace deletion integration tests", () => {
   describe("SSH-only tests", () => {
     // SSH-only tests run serially to avoid overloading the shared Docker container.
     const runSshTest = getTestRunner("ssh");
-    const getRuntimeConfig = (branchName: string): RuntimeConfig | undefined => {
+    const getRuntimeConfig = (_branchName: string): RuntimeConfig | undefined => {
       if (!sshConfig) {
         throw new Error("SSH config not initialized");
       }

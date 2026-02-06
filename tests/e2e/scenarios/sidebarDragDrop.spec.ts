@@ -77,8 +77,8 @@ test.describe("sidebar drag and drop", () => {
     await expect(terminalTab).toHaveAttribute("aria-selected", "false");
 
     // Verify initial order: costs, review, terminal (terminal is last after adding)
-    const initialTabs = await tablist.getByRole("tab").all();
-    const costsIndex = await tablist.getByRole("tab", { name: /Costs/ }).evaluate((el) => {
+    await tablist.getByRole("tab").all();
+    await tablist.getByRole("tab", { name: /Costs/ }).evaluate((el) => {
       return Array.from(el.parentElement?.parentElement?.children ?? []).indexOf(el.parentElement!);
     });
     const reviewIndex = await tablist.getByRole("tab", { name: /Review/ }).evaluate((el) => {

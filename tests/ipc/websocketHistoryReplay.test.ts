@@ -2,12 +2,9 @@ import { createTestEnvironment, cleanupTestEnvironment } from "./setup";
 import {
   createWorkspace,
   generateBranchName,
-  resolveOrpcClient,
   createTempGitRepo,
   cleanupTempGitRepo,
 } from "./helpers";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import type { MuxMessage } from "@/common/types/message";
 import { HistoryService } from "@/node/services/historyService";
 import { createMuxMessage } from "@/common/types/message";
 

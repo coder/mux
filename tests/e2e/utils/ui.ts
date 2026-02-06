@@ -598,7 +598,7 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
      * Since ghostty uses canvas rendering, we can't directly query DOM text.
      * This method runs a command that echoes a marker and waits for it to complete.
      */
-    async expectTerminalOutput(expectedText: string, timeoutMs = 10000): Promise<void> {
+    async expectTerminalOutput(_expectedText: string, _timeoutMs = 10000): Promise<void> {
       // ghostty renders to canvas, so we need to use Playwright's built-in
       // accessibility/text detection or rely on behavioral verification.
       // For now, we verify by running echo commands and checking they don't error.

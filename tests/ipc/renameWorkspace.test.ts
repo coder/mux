@@ -10,19 +10,12 @@
  * Uses real IPC handlers, real git operations, and Docker SSH server.
  */
 
-import * as fs from "fs/promises";
-import * as path from "path";
-import { exec } from "child_process";
-import { promisify } from "util";
 import { shouldRunIntegrationTests, createTestEnvironment, cleanupTestEnvironment } from "./setup";
-import type { TestEnvironment } from "./setup";
 import {
   createTempGitRepo,
   cleanupTempGitRepo,
   generateBranchName,
   createWorkspaceWithInit,
-  INIT_HOOK_WAIT_MS,
-  SSH_INIT_WAIT_MS,
   TEST_TIMEOUT_SSH_MS,
 } from "./helpers";
 import {
@@ -35,8 +28,6 @@ import { resolveOrpcClient, getTestRunner } from "./helpers";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { sshConnectionPool } from "../../src/node/runtime/sshConnectionPool";
 import { ssh2ConnectionPool } from "../../src/node/runtime/SSH2ConnectionPool";
-
-const execAsync = promisify(exec);
 
 // Test constants
 const TEST_TIMEOUT_MS = TEST_TIMEOUT_SSH_MS; // Use SSH timeout for consistency
@@ -85,7 +76,7 @@ describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
     "Runtime: $type",
     ({ type }) => {
       // Helper to build runtime config
-      const getRuntimeConfig = (branchName: string): RuntimeConfig | undefined => {
+      const getRuntimeConfig = (_branchName: string): RuntimeConfig | undefined => {
         if (type === "ssh" && sshConfig) {
           return {
             type: "ssh",
@@ -97,9 +88,6 @@ describeIntegration("WORKSPACE_RENAME with both runtimes", () => {
         }
         return undefined; // undefined = defaults to local
       };
-
-      // Get runtime-specific init wait time (SSH needs more time for rsync)
-      const getInitWaitTime = () => (type === "ssh" ? SSH_INIT_WAIT_MS : INIT_HOOK_WAIT_MS);
 
       // SSH tests run serially to avoid Docker container overload
       const runTest = getTestRunner(type);

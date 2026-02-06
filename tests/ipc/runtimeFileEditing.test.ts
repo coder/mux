@@ -7,8 +7,6 @@
  * Uses toolPolicy to restrict AI to only file tools (prevents bash circumvention).
  */
 
-import * as fs from "fs/promises";
-import * as path from "path";
 import {
   createTestEnvironment,
   cleanupTestEnvironment,
@@ -16,7 +14,6 @@ import {
   validateApiKeys,
   getApiKey,
   setupProviders,
-  type TestEnvironment,
 } from "./setup";
 import {
   createTempGitRepo,

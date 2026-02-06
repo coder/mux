@@ -11,7 +11,7 @@
 import * as path from "path";
 import * as fs from "fs/promises";
 import { shouldRunIntegrationTests, validateApiKeys } from "./setup";
-import { sendMessageWithModel, modelString, createStreamCollector } from "./helpers";
+import { sendMessageWithModel, modelString } from "./helpers";
 import {
   createSharedRepo,
   cleanupSharedRepo,

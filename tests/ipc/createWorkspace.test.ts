@@ -60,7 +60,6 @@ const MUX_DIR = ".mux";
 const INIT_HOOK_FILENAME = "init";
 
 // Event type constants
-const EVENT_TYPE_PREFIX_INIT = "init-";
 const EVENT_TYPE_INIT_OUTPUT = "init-output";
 const EVENT_TYPE_INIT_END = "init-end";
 
@@ -73,19 +72,6 @@ let sshConfig: SSHServerConfig | undefined;
 // ============================================================================
 // Test Helpers
 // ============================================================================
-
-/**
- * Type guard to check if an event is an init event with a type field
- */
-function isInitEvent(data: unknown): data is { type: string } {
-  return (
-    data !== null &&
-    typeof data === "object" &&
-    "type" in data &&
-    typeof (data as { type: unknown }).type === "string" &&
-    (data as { type: string }).type.startsWith(EVENT_TYPE_PREFIX_INIT)
-  );
-}
 
 /**
  * Filter events by type.
@@ -200,7 +186,7 @@ describeIntegration("WORKSPACE_CREATE with both runtimes", () => {
     "Runtime: $type",
     ({ type }) => {
       // Helper to build runtime config
-      const getRuntimeConfig = (branchName: string): RuntimeConfig | undefined => {
+      const getRuntimeConfig = (_branchName: string): RuntimeConfig | undefined => {
         if (type === "ssh" && sshConfig) {
           return {
             type: "ssh",
@@ -909,7 +895,7 @@ exit 1
               timeout: 10,
             });
 
-            const [stdout, stderr, exitCode] = await Promise.all([
+            const [stdout, _stderr, exitCode] = await Promise.all([
               streamToString(originStream.stdout),
               streamToString(originStream.stderr),
               originStream.exitCode,
