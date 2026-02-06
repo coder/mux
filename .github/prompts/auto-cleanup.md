@@ -30,7 +30,6 @@ Constraints:
 - Prefer local refactors; avoid sweeping renames across many files.
 - No dependency bumps.
 - Avoid CI/workflow changes.
-- Keep it small: **≤3 files changed** and **≤100 LOC touched**.
 
 Examples of good changes:
 
