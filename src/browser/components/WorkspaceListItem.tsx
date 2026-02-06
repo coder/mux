@@ -21,7 +21,7 @@ import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
 import { Pencil, Trash2, Ellipsis, Link2 } from "lucide-react";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
-import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
+import { formatKeybind, matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
 
 const RADIX_PORTAL_WRAPPER_SELECTOR = "[data-radix-popper-content-wrapper]" as const;
@@ -484,7 +484,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 align={contextMenuPosition ? "start" : "end"}
                 side={contextMenuPosition ? "right" : "bottom"}
                 sideOffset={contextMenuPosition ? 0 : 6}
-                className="w-[150px] !min-w-0 p-1"
+                className="w-[200px] !min-w-0 p-1"
                 onClick={(e) => e.stopPropagation()}
               >
                 <button
@@ -512,7 +512,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     <span className="flex items-center gap-2">
                       <Link2 className="h-3 w-3" />
-                      Share transcript
+                      <span>
+                        Share transcript{" "}
+                        <span className="text-muted text-[10px]">
+                          ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
+                        </span>
+                      </span>
                     </span>
                   </button>
                 )}
@@ -528,7 +533,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     <span className="flex items-center gap-2">
                       <ArchiveIcon className="h-3 w-3" />
-                      Archive chat
+                      <span>
+                        Archive chat{" "}
+                        <span className="text-muted text-[10px]">
+                          ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+                        </span>
+                      </span>
                     </span>
                   </button>
                 )}
