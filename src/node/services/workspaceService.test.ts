@@ -1249,11 +1249,12 @@ describe("WorkspaceService archiveMergedInProject", () => {
 });
 
 describe("WorkspaceService init cancellation", () => {
-  test("archive() deletes workspace when init is running", async () => {
+  test("archive() aborts init and still archives when init is running", async () => {
     const workspaceId = "ws-init-running";
 
     const removeMock = mock(() => Promise.resolve({ success: true as const, data: undefined }));
     const editConfigMock = mock(() => Promise.resolve());
+    const clearInMemoryStateMock = mock((_workspaceId: string) => undefined);
 
     const mockAIService = {
       isStreaming: mock(() => false),
@@ -1285,7 +1286,7 @@ describe("WorkspaceService init cancellation", () => {
           endTime: null,
         })
       ),
-      clearInMemoryState: mock((_workspaceId: string) => undefined),
+      clearInMemoryState: clearInMemoryStateMock,
     };
 
     const mockHistoryService: Partial<HistoryService> = {};
@@ -1305,13 +1306,14 @@ describe("WorkspaceService init cancellation", () => {
       mockBackgroundProcessManager as BackgroundProcessManager
     );
 
-    // Force archive() down the "delete instead" path without exercising remove() internals.
+    // Make it obvious if archive() incorrectly chooses deletion.
     workspaceService.remove = removeMock as unknown as typeof workspaceService.remove;
 
     const result = await workspaceService.archive(workspaceId);
     expect(result.success).toBe(true);
-    expect(removeMock).toHaveBeenCalledWith(workspaceId, true);
-    expect(editConfigMock).not.toHaveBeenCalled();
+    expect(editConfigMock).toHaveBeenCalled();
+    expect(removeMock).not.toHaveBeenCalled();
+    expect(clearInMemoryStateMock).toHaveBeenCalledWith(workspaceId);
   });
 
   test("archive() uses normal archive flow when init is complete", async () => {

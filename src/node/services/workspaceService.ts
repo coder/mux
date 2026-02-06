@@ -1874,8 +1874,8 @@ export class WorkspaceService extends EventEmitter {
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
    *
-   * Note: if the workspace is still initializing/creating, we treat archive as
-   * "cancel creation" and remove it (force). That path is not reversible.
+   * If init is still running, we abort it before archiving so we don't leave
+   * orphaned post-create work running in the background.
    */
   async archive(workspaceId: string): Promise<Result<void>> {
     if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
@@ -1891,9 +1891,13 @@ export class WorkspaceService extends EventEmitter {
       }
       const initState = this.initStateManager.getInitState(workspaceId);
       if (initState?.status === "running") {
-        // Archiving a half-initialized workspace is just cancellation; delete it (force) instead
-        // so we don't leave orphaned init/provisioning work running in the background.
-        return this.remove(workspaceId, true);
+        // Archiving should not leave post-create setup running in the background.
+        const initAbortController = this.initAbortControllers.get(workspaceId);
+        if (initAbortController) {
+          initAbortController.abort();
+          this.initAbortControllers.delete(workspaceId);
+        }
+        this.initStateManager.clearInMemoryState(workspaceId);
       }
 
       const { projectPath, workspacePath } = workspace;

@@ -1305,36 +1305,48 @@ describe("non-string parameter defaults", () => {
 
 describe("deleteWorkspace", () => {
   let service: CoderService;
-  let spawnSpy: ReturnType<typeof spyOn<typeof childProcess, "spawn">> | null = null;
 
   beforeEach(() => {
     service = new CoderService();
     vi.clearAllMocks();
-    spawnSpy = spyOn(childProcess, "spawn");
   });
 
   afterEach(() => {
     service.clearCache();
-    spawnSpy?.mockRestore();
-    spawnSpy = null;
   });
 
-  it("refuses to delete workspace without mux- prefix", async () => {
-    await service.deleteWorkspace("my-workspace");
+  // deleteWorkspace is a thin wrapper around deleteWorkspaceEventually.
+  // Detailed polling/retry behavior is tested in the deleteWorkspaceEventually suite.
 
-    // Should not call spawn at all
-    expect(spawnSpy).not.toHaveBeenCalled();
-  });
-
-  it("deletes workspace with mux- prefix", async () => {
-    mockCoderCommandResult({ exitCode: 0 });
+  it("delegates to deleteWorkspaceEventually with correct options", async () => {
+    const spy = spyOn(service, "deleteWorkspaceEventually").mockResolvedValue({
+      success: true as const,
+      data: undefined,
+    });
 
     await service.deleteWorkspace("mux-my-workspace");
 
-    expect(spawnSpy).toHaveBeenCalled();
-    const [cmd, args] = spawnSpy!.mock.calls[0] ?? [];
-    expect(cmd).toBe("coder");
-    expect(args).toEqual(["delete", "mux-my-workspace", "--yes"]);
+    expect(spy).toHaveBeenCalledWith("mux-my-workspace", {
+      timeoutMs: 30_000,
+      waitForExistence: false,
+    });
+  });
+
+  it("throws when deleteWorkspaceEventually returns an error", async () => {
+    spyOn(service, "deleteWorkspaceEventually").mockResolvedValue({
+      success: false as const,
+      error: "workspace stuck",
+    });
+
+    let error: unknown;
+    try {
+      await service.deleteWorkspace("mux-my-workspace");
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("workspace stuck");
   });
 });
 
