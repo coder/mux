@@ -34,6 +34,35 @@ describe("hasInterruptedStream", () => {
     expect(hasInterruptedStream(messages)).toBe(true);
   });
 
+  it("ignores decorative compaction boundary rows when checking interruption", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "user",
+        id: "user-1",
+        historyId: "user-1",
+        content: "Hello",
+        historySequence: 1,
+      },
+      {
+        type: "stream-error",
+        id: "error-1",
+        historyId: "assistant-1",
+        error: "Connection failed",
+        errorType: "network",
+        historySequence: 2,
+      },
+      {
+        type: "compaction-boundary",
+        id: "boundary-1",
+        historySequence: 2,
+        position: "end",
+      },
+    ];
+
+    expect(hasInterruptedStream(messages)).toBe(true);
+    expect(isEligibleForAutoRetry(messages)).toBe(true);
+  });
+
   it("returns true for partial assistant message", () => {
     const messages: DisplayedMessage[] = [
       {

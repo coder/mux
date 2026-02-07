@@ -505,9 +505,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
 
     const transformedMessages = mergeConsecutiveStreamErrors(workspaceState.messages);
     const editCutoffHistoryId = transformedMessages.find(
-      (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
+      (
+        msg
+      ): msg is Exclude<
+        DisplayedMessage,
+        { type: "history-hidden" | "workspace-init" | "compaction-boundary" }
+      > =>
         msg.type !== "history-hidden" &&
         msg.type !== "workspace-init" &&
+        msg.type !== "compaction-boundary" &&
         msg.historyId === editingMessage.id
     )?.historyId;
 
@@ -520,9 +526,15 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
   // When editing, find the cutoff point
   const editCutoffHistoryId = editingMessage
     ? transformedMessages.find(
-        (msg): msg is Exclude<DisplayedMessage, { type: "history-hidden" | "workspace-init" }> =>
+        (
+          msg
+        ): msg is Exclude<
+          DisplayedMessage,
+          { type: "history-hidden" | "workspace-init" | "compaction-boundary" }
+        > =>
           msg.type !== "history-hidden" &&
           msg.type !== "workspace-init" &&
+          msg.type !== "compaction-boundary" &&
           msg.historyId === editingMessage.id
       )?.historyId
     : undefined;
@@ -614,6 +626,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                       editCutoffHistoryId !== undefined &&
                       msg.type !== "history-hidden" &&
                       msg.type !== "workspace-init" &&
+                      msg.type !== "compaction-boundary" &&
                       msg.historyId === editCutoffHistoryId;
 
                     return (
@@ -621,7 +634,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                         <div
                           data-testid="chat-message"
                           data-message-id={
-                            msg.type !== "history-hidden" && msg.type !== "workspace-init"
+                            msg.type !== "history-hidden" &&
+                            msg.type !== "workspace-init" &&
+                            msg.type !== "compaction-boundary"
                               ? msg.historyId
                               : undefined
                           }

@@ -582,6 +582,13 @@ export type DisplayedMessage =
       errorCount?: number; // Number of consecutive identical errors merged into this message
     }
   | {
+      type: "compaction-boundary";
+      id: string; // Display ID for UI/React keys
+      historySequence: number; // Sequence of the compaction summary this boundary belongs to
+      position: "start" | "end";
+      compactionEpoch?: number;
+    }
+  | {
       type: "history-hidden";
       id: string; // Display ID for UI/React keys
       hiddenCount: number; // Number of messages hidden
