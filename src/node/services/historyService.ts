@@ -18,7 +18,19 @@ import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyFor
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 
 function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+  return (
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0
+  );
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return (
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+  );
+}
+
+function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
+  return value === true || value === "user" || value === "idle";
 }
 
 function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolean {
@@ -27,7 +39,7 @@ function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolea
   }
 
   // Self-healing read path: malformed boundary markers should be ignored.
-  if (metadata.compacted === undefined || metadata.compacted === false) {
+  if (!hasDurableCompactedMarker(metadata.compacted)) {
     return false;
   }
 
@@ -177,15 +189,34 @@ export class HistoryService {
     const historyResult = await this.getHistory(workspaceId);
     if (historyResult.success) {
       const messages = historyResult.data;
-      // Find max history sequence number
+      // Find max history sequence number.
+      // Self-healing read path: skip malformed persisted historySequence values.
       let maxSeqNum = -1;
       for (const msg of messages) {
         const seqNum = msg.metadata?.historySequence;
-        if (seqNum !== undefined && seqNum > maxSeqNum) {
-          maxSeqNum = seqNum;
+        if (seqNum === undefined) {
+          continue;
         }
+
+        if (!isNonNegativeInteger(seqNum)) {
+          log.warn(
+            "Ignoring malformed persisted historySequence while initializing sequence counter",
+            {
+              workspaceId,
+              messageId: msg.id,
+              historySequence: seqNum,
+            }
+          );
+          continue;
+        }
+
+        maxSeqNum = Math.max(maxSeqNum, seqNum);
       }
       const nextSeqNum = maxSeqNum + 1;
+      assert(
+        isNonNegativeInteger(nextSeqNum),
+        "next history sequence counter must be a non-negative integer"
+      );
       this.sequenceCounters.set(workspaceId, nextSeqNum);
       return nextSeqNum;
     }
@@ -219,6 +250,10 @@ export class HistoryService {
       if (!message.metadata) {
         // Create metadata with history sequence
         const nextSeqNum = await this.getNextHistorySequence(workspaceId);
+        assert(
+          isNonNegativeInteger(nextSeqNum),
+          "getNextHistorySequence must return a non-negative integer"
+        );
         message.metadata = {
           historySequence: nextSeqNum,
         };
@@ -227,14 +262,27 @@ export class HistoryService {
         // Message already has metadata, but may need historySequence assigned
         const existingSeqNum = message.metadata.historySequence;
         if (existingSeqNum !== undefined) {
+          assert(
+            isNonNegativeInteger(existingSeqNum),
+            "appendToHistory requires historySequence to be a non-negative integer when provided"
+          );
+
           // Already has history sequence, update counter if needed
           const currentCounter = this.sequenceCounters.get(workspaceId) ?? 0;
+          assert(
+            isNonNegativeInteger(currentCounter),
+            "history sequence counter must remain a non-negative integer"
+          );
           if (existingSeqNum >= currentCounter) {
             this.sequenceCounters.set(workspaceId, existingSeqNum + 1);
           }
         } else {
           // Has metadata but no historySequence, assign one
           const nextSeqNum = await this.getNextHistorySequence(workspaceId);
+          assert(
+            isNonNegativeInteger(nextSeqNum),
+            "getNextHistorySequence must return a non-negative integer"
+          );
           message.metadata = {
             ...message.metadata,
             historySequence: nextSeqNum,
@@ -289,6 +337,11 @@ export class HistoryService {
         if (targetSequence === undefined) {
           return Err("Cannot update message without historySequence");
         }
+
+        assert(
+          isNonNegativeInteger(targetSequence),
+          "updateHistory requires historySequence to be a non-negative integer"
+        );
 
         // Find and replace the message with matching historySequence
         let found = false;
@@ -372,9 +425,29 @@ export class HistoryService {
         // numbers on restart, but we must not regress within a running process.
         const maxSeq = filteredMessages.reduce((max, msg) => {
           const seq = msg.metadata?.historySequence;
-          return typeof seq === "number" && seq > max ? seq : max;
+          if (seq === undefined) {
+            return max;
+          }
+
+          if (!isNonNegativeInteger(seq)) {
+            log.warn(
+              "Ignoring malformed persisted historySequence while updating sequence counter after delete",
+              {
+                workspaceId,
+                messageId: msg.id,
+                historySequence: seq,
+              }
+            );
+            return max;
+          }
+
+          return seq > max ? seq : max;
         }, -1);
         const nextSeq = maxSeq + 1;
+        assert(
+          isNonNegativeInteger(nextSeq),
+          "next history sequence counter after delete must be a non-negative integer"
+        );
         const currentCounter = this.sequenceCounters.get(workspaceId);
         if (currentCounter === undefined || currentCounter < nextSeq) {
           this.sequenceCounters.set(workspaceId, nextSeq);
@@ -419,14 +492,34 @@ export class HistoryService {
         // Atomic write prevents corruption if app crashes mid-write
         await writeFileAtomic(historyPath, historyEntries);
 
-        // Update sequence counter to continue from where we truncated
-        if (truncatedMessages.length > 0) {
-          const lastMsg = truncatedMessages[truncatedMessages.length - 1];
-          const lastSeq = lastMsg.metadata?.historySequence ?? 0;
-          this.sequenceCounters.set(workspaceId, lastSeq + 1);
-        } else {
-          this.sequenceCounters.set(workspaceId, 0);
-        }
+        // Update sequence counter to continue from where we truncated.
+        // Self-healing read path: skip malformed persisted historySequence values.
+        const maxTruncatedSeq = truncatedMessages.reduce((max, msg) => {
+          const seq = msg.metadata?.historySequence;
+          if (seq === undefined) {
+            return max;
+          }
+
+          if (!isNonNegativeInteger(seq)) {
+            log.warn(
+              "Ignoring malformed persisted historySequence while updating sequence counter after truncation",
+              {
+                workspaceId,
+                messageId: msg.id,
+                historySequence: seq,
+              }
+            );
+            return max;
+          }
+
+          return seq > max ? seq : max;
+        }, -1);
+        const nextSeq = maxTruncatedSeq + 1;
+        assert(
+          isNonNegativeInteger(nextSeq),
+          "next history sequence counter after truncation must be a non-negative integer"
+        );
+        this.sequenceCounters.set(workspaceId, nextSeq);
 
         return Ok(undefined);
       } catch (error) {
@@ -455,8 +548,8 @@ export class HistoryService {
           const historyResult = await this.getHistory(workspaceId);
           const deletedSequences = historyResult.success
             ? historyResult.data
-                .map((msg) => msg.metadata?.historySequence ?? -1)
-                .filter((s) => s >= 0)
+                .map((msg) => msg.metadata?.historySequence)
+                .filter((s): s is number => isNonNegativeInteger(s))
             : [];
 
           try {
@@ -527,8 +620,8 @@ export class HistoryService {
           }
           this.sequenceCounters.set(workspaceId, 0);
           const deletedSequences = messages
-            .map((msg) => msg.metadata?.historySequence ?? -1)
-            .filter((s) => s >= 0);
+            .map((msg) => msg.metadata?.historySequence)
+            .filter((s): s is number => isNonNegativeInteger(s));
           return Ok(deletedSequences);
         }
 
@@ -536,8 +629,8 @@ export class HistoryService {
         const remainingMessages = messages.slice(removeCount);
         const deletedMessages = messages.slice(0, removeCount);
         const deletedSequences = deletedMessages
-          .map((msg) => msg.metadata?.historySequence ?? -1)
-          .filter((s) => s >= 0);
+          .map((msg) => msg.metadata?.historySequence)
+          .filter((s): s is number => isNonNegativeInteger(s));
 
         // Rewrite the history file with remaining messages
         const historyEntries = remainingMessages
@@ -547,14 +640,34 @@ export class HistoryService {
         // Atomic write prevents corruption if app crashes mid-write
         await writeFileAtomic(historyPath, historyEntries);
 
-        // Update sequence counter to continue from where we are
-        if (remainingMessages.length > 0) {
-          const lastMsg = remainingMessages[remainingMessages.length - 1];
-          const lastSeq = lastMsg.metadata?.historySequence ?? 0;
-          this.sequenceCounters.set(workspaceId, lastSeq + 1);
-        } else {
-          this.sequenceCounters.set(workspaceId, 0);
-        }
+        // Update sequence counter to continue from where we are.
+        // Self-healing read path: skip malformed persisted historySequence values.
+        const maxRemainingSeq = remainingMessages.reduce((max, msg) => {
+          const seq = msg.metadata?.historySequence;
+          if (seq === undefined) {
+            return max;
+          }
+
+          if (!isNonNegativeInteger(seq)) {
+            log.warn(
+              "Ignoring malformed persisted historySequence while updating sequence counter after truncateHistory",
+              {
+                workspaceId,
+                messageId: msg.id,
+                historySequence: seq,
+              }
+            );
+            return max;
+          }
+
+          return seq > max ? seq : max;
+        }, -1);
+        const nextSeq = maxRemainingSeq + 1;
+        assert(
+          isNonNegativeInteger(nextSeq),
+          "next history sequence counter after truncateHistory must be a non-negative integer"
+        );
+        this.sequenceCounters.set(workspaceId, nextSeq);
 
         return Ok(deletedSequences);
       } catch (error) {

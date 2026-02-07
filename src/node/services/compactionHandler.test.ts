@@ -30,10 +30,16 @@ const createMockHistoryService = () => {
   let appendToHistoryResult: Result<void, string> = Ok(undefined);
   let nextHistorySequence = 0;
 
+  const isNonNegativeInteger = (value: unknown): value is number => {
+    return (
+      typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+    );
+  };
+
   const updateNextHistorySequenceFromMessages = (messages: MuxMessage[]): void => {
     nextHistorySequence = messages.reduce((next, message) => {
       const sequence = message.metadata?.historySequence;
-      if (typeof sequence !== "number") {
+      if (!isNonNegativeInteger(sequence)) {
         return next;
       }
       return Math.max(next, sequence + 1);
@@ -45,7 +51,7 @@ const createMockHistoryService = () => {
   const appendToHistory = mock((_, message: MuxMessage) => {
     if (appendToHistoryResult.success) {
       const currentSequence = message.metadata?.historySequence;
-      if (typeof currentSequence === "number") {
+      if (isNonNegativeInteger(currentSequence)) {
         nextHistorySequence = Math.max(nextHistorySequence, currentSequence + 1);
       } else {
         message.metadata = {
@@ -474,12 +480,20 @@ describe("CompactionHandler", () => {
       expect(appendedMsg.metadata?.historySequence).toBe(6);
     });
     it("should ignore malformed persisted historySequence values when deriving monotonic bounds", async () => {
-      const malformedPersistedMessage = createMuxMessage(
-        "assistant-malformed-sequence",
+      const malformedNegativeSequence = createMuxMessage(
+        "assistant-malformed-negative-sequence",
         "assistant",
         "Corrupted persisted metadata",
         {
           historySequence: -7,
+        }
+      );
+      const malformedFractionalSequence = createMuxMessage(
+        "assistant-malformed-fractional-sequence",
+        "assistant",
+        "Corrupted persisted metadata",
+        {
+          historySequence: 99.5,
         }
       );
       const priorMessage = createMuxMessage("user-1", "user", "Earlier", {
@@ -491,7 +505,7 @@ describe("CompactionHandler", () => {
       });
 
       mockHistoryService.mockGetHistory(
-        Ok([malformedPersistedMessage, priorMessage, compactionReq])
+        Ok([malformedNegativeSequence, malformedFractionalSequence, priorMessage, compactionReq])
       );
       mockHistoryService.mockAppendToHistory(Ok(undefined));
 
@@ -594,6 +608,20 @@ describe("CompactionHandler", () => {
           compactionEpoch: 99,
         }
       );
+      const malformedBoundaryInvalidCompacted = createMuxMessage(
+        "summary-malformed-invalid-compacted",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 4,
+          compactionBoundary: true,
+          compactionEpoch: 200,
+        }
+      );
+      if (malformedBoundaryInvalidCompacted.metadata) {
+        (malformedBoundaryInvalidCompacted.metadata as Record<string, unknown>).compacted =
+          "corrupted";
+      }
       const malformedBoundaryInvalidEpoch = createMuxMessage(
         "summary-malformed-3",
         "assistant",
@@ -615,6 +643,7 @@ describe("CompactionHandler", () => {
           validBoundary,
           malformedBoundaryMissingEpoch,
           malformedBoundaryMissingCompacted,
+          malformedBoundaryInvalidCompacted,
           malformedBoundaryInvalidEpoch,
           compactionReq,
         ])

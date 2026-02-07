@@ -126,13 +126,24 @@ function coercePersistedPostCompactionState(value: unknown): PersistedPostCompac
   };
 }
 
+function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
+  return value === true || value === "user" || value === "idle";
+}
+
 function isCompactedSummaryMessage(message: MuxMessage): boolean {
-  const compacted = message.metadata?.compacted;
-  return compacted !== undefined && compacted !== false;
+  return hasDurableCompactedMarker(message.metadata?.compacted);
 }
 
 function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+  return (
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0
+  );
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return (
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+  );
 }
 
 function getNextCompactionEpoch(messages: MuxMessage[]): number {
@@ -513,11 +524,7 @@ export class CompactionHandler {
       }
 
       const historySequence = candidate.metadata?.historySequence;
-      if (
-        typeof historySequence !== "number" ||
-        !Number.isInteger(historySequence) ||
-        historySequence < 0
-      ) {
+      if (!isNonNegativeInteger(historySequence)) {
         // Self-healing read path: invalid sequence means we cannot safely update in-place.
         log.warn("Cannot reuse streamed compaction summary without valid historySequence", {
           workspaceId: this.workspaceId,
@@ -591,7 +598,7 @@ export class CompactionHandler {
         return maxSeq;
       }
 
-      if (!Number.isInteger(sequence) || sequence < 0) {
+      if (!isNonNegativeInteger(sequence)) {
         // Self-healing read path: malformed persisted historySequence should not brick compaction.
         log.warn(
           "Ignoring malformed historySequence while deriving compaction monotonicity bound",
@@ -700,9 +707,7 @@ export class CompactionHandler {
 
     const persistedSequence = summaryMessage.metadata?.historySequence;
     assert(
-      typeof persistedSequence === "number" &&
-        Number.isInteger(persistedSequence) &&
-        persistedSequence >= 0,
+      isNonNegativeInteger(persistedSequence),
       "Compaction summary persistence must produce a non-negative historySequence"
     );
     if (persistedStreamSummary) {

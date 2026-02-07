@@ -80,6 +80,34 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
   });
+  it("ignores boundary markers with malformed compacted values", () => {
+    const malformedCompactedBoundary = createMuxMessage(
+      "summary-malformed-compacted",
+      "assistant",
+      "malformed summary",
+      {
+        compactionBoundary: true,
+        compactionEpoch: 99,
+      }
+    );
+    if (malformedCompactedBoundary.metadata) {
+      (malformedCompactedBoundary.metadata as Record<string, unknown>).compacted = "corrupt";
+    }
+
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("summary-valid", "assistant", "valid summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      malformedCompactedBoundary,
+      createMuxMessage("u1", "user", "after"),
+    ];
+
+    expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
+  });
+
   it("ignores user-role messages with boundary-like metadata", () => {
     const messages = [
       createMuxMessage("u0", "user", "before"),
@@ -155,6 +183,32 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
     expect(sliced).toBe(messages);
     expect(sliced.map((msg) => msg.id)).toEqual(["u0", "summary-missing-epoch", "u1"]);
+  });
+
+  it("treats malformed compacted boundary markers as non-boundaries", () => {
+    const malformedCompactedBoundary = createMuxMessage(
+      "summary-malformed-compacted",
+      "assistant",
+      "malformed summary",
+      {
+        compactionBoundary: true,
+        compactionEpoch: 2,
+      }
+    );
+    if (malformedCompactedBoundary.metadata) {
+      (malformedCompactedBoundary.metadata as Record<string, unknown>).compacted = "corrupt";
+    }
+
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      malformedCompactedBoundary,
+      createMuxMessage("u1", "user", "after"),
+    ];
+
+    const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
+
+    expect(sliced).toBe(messages);
+    expect(sliced.map((msg) => msg.id)).toEqual(["u0", "summary-malformed-compacted", "u1"]);
   });
 
   it("does not slice from user-role messages with boundary-like metadata", () => {
