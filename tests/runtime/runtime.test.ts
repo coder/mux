@@ -1552,13 +1552,15 @@ describeIntegration("Runtime integration tests", () => {
         );
         expect(newCheck.stdout.trim()).toBe("worktree");
 
-        // Verify the worktree is still tracked by the base repo at the new location.
+        // Verify the worktree is tracked at the new path (not the old path).
+        // Note: git worktree move changes the path but NOT the branch name, so
+        // `git worktree list` shows `/new-name [old-name]`. Check path only.
         const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
           cwd: "/home/testuser",
           timeout: 30,
         });
-        expect(worktreeList.stdout).toContain("new-name");
-        expect(worktreeList.stdout).not.toContain("old-name");
+        expect(worktreeList.stdout).toContain("/new-name");
+        expect(worktreeList.stdout).not.toContain("/old-name");
       } finally {
         await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
           cwd: "/home/testuser",
