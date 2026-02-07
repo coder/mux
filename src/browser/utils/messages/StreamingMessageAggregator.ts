@@ -80,6 +80,7 @@ const ALWAYS_KEEP_MESSAGE_TYPES = new Set<DisplayedMessage["type"]>([
   "user",
   "assistant",
   "stream-error",
+  "compaction-boundary",
   "plan-display",
   "workspace-init",
 ]);
@@ -1941,6 +1942,39 @@ export class StreamingMessageAggregator {
     }
   }
 
+  private isCompactionBoundarySummaryMessage(message: MuxMessage): boolean {
+    const muxMeta = message.metadata?.muxMetadata;
+    return (
+      message.role === "assistant" &&
+      (message.metadata?.compactionBoundary === true || muxMeta?.type === "compaction-summary")
+    );
+  }
+
+  private createCompactionBoundaryRow(
+    message: MuxMessage,
+    position: "start" | "end",
+    historySequence: number
+  ): Extract<DisplayedMessage, { type: "compaction-boundary" }> {
+    assert(
+      message.role === "assistant",
+      "compaction boundaries must belong to assistant summaries"
+    );
+
+    const compactionEpoch = message.metadata?.compactionEpoch;
+    assert(
+      compactionEpoch === undefined || (Number.isInteger(compactionEpoch) && compactionEpoch > 0),
+      "compactionEpoch must be a positive integer when present"
+    );
+
+    return {
+      type: "compaction-boundary",
+      id: `${message.id}-compaction-boundary-${position}`,
+      historySequence,
+      position,
+      compactionEpoch,
+    };
+  }
+
   private buildDisplayedMessagesForMessage(
     message: MuxMessage,
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string }
@@ -2071,6 +2105,11 @@ export class StreamingMessageAggregator {
         }
       }
 
+      const isCompactionBoundarySummary = this.isCompactionBoundarySummaryMessage(message);
+      if (isCompactionBoundarySummary) {
+        displayedMessages.push(this.createCompactionBoundaryRow(message, "start", historySequence));
+      }
+
       mergedParts.forEach((part, partIndex) => {
         const isLastPart = partIndex === lastPartIndex;
         // Part is streaming if: active stream exists AND this is the last part
@@ -2199,6 +2238,10 @@ export class StreamingMessageAggregator {
           routedThroughGateway: message.metadata?.routedThroughGateway,
           timestamp: baseTimestamp,
         });
+      }
+
+      if (isCompactionBoundarySummary) {
+        displayedMessages.push(this.createCompactionBoundaryRow(message, "end", historySequence));
       }
     }
 

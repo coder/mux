@@ -682,6 +682,58 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("compaction boundary rows", () => {
+    test("inserts boundary rows around compaction summary messages", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const before = createMuxMessage("user-before", "user", "Before compaction", {
+        historySequence: 1,
+        timestamp: 1,
+      });
+      const summary = createMuxMessage("summary-1", "assistant", "Compacted summary", {
+        historySequence: 2,
+        timestamp: 2,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 3,
+        muxMetadata: { type: "compaction-summary" },
+      });
+      const after = createMuxMessage("user-after", "user", "After compaction", {
+        historySequence: 3,
+        timestamp: 3,
+      });
+
+      aggregator.loadHistoricalMessages([before, summary, after], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.map((message) => message.type)).toEqual([
+        "user",
+        "compaction-boundary",
+        "assistant",
+        "compaction-boundary",
+        "user",
+      ]);
+
+      const startBoundary = displayed[1];
+      const endBoundary = displayed[3];
+
+      expect(startBoundary?.type).toBe("compaction-boundary");
+      expect(endBoundary?.type).toBe("compaction-boundary");
+
+      if (startBoundary?.type === "compaction-boundary") {
+        expect(startBoundary.position).toBe("start");
+        expect(startBoundary.compactionEpoch).toBe(3);
+        expect(startBoundary.historySequence).toBe(2);
+      }
+
+      if (endBoundary?.type === "compaction-boundary") {
+        expect(endBoundary.position).toBe("end");
+        expect(endBoundary.compactionEpoch).toBe(3);
+        expect(endBoundary.historySequence).toBe(2);
+      }
+    });
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
