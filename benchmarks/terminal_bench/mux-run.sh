@@ -98,8 +98,8 @@ fi
 
 # Extract usage and cost from the JSONL output.
 # Prefer the run-complete event (emitted at end of --json run) which has aggregated
-# totals. Fall back to summing usage-delta events when run-complete is missing
-# (e.g. process killed by timeout, stdout not flushed before exit).
+# totals. Fall back to summing usage-delta + session-usage-delta events when
+# run-complete is missing (e.g. process killed by timeout, stdout not flushed).
 python3 -c '
 import json, sys
 result = {"input": 0, "output": 0, "cost_usd": None}
@@ -107,6 +107,11 @@ result = {"input": 0, "output": 0, "cost_usd": None}
 # Each usage-delta contains cumulative totals for its message, so we keep the
 # latest per message and sum across messages at the end.
 cumulative_by_msg = {}
+# Track sub-agent usage from session-usage-delta events. These carry per-model
+# byModelDelta dicts with {input: {tokens, cost_usd}, output: {tokens, cost_usd}, ...}.
+# Each event is an incremental delta, so we sum them all.
+subagent_input = 0
+subagent_output = 0
 for line in open(sys.argv[1]):
     try:
         obj = json.loads(line)
@@ -121,13 +126,22 @@ for line in open(sys.argv[1]):
         payload = obj.get("payload") or obj
         if payload.get("type") == "usage-delta":
             msg_id = payload.get("messageId", "")
-            usage = payload.get("usage") or payload.get("cumulativeUsage") or {}
+            # Prefer cumulativeUsage (running total across all steps in a message)
+            # over usage (per-step delta). Keeping the latest cumulative per message
+            # gives the correct total when summed across messages.
+            usage = payload.get("cumulativeUsage") or payload.get("usage") or {}
             cumulative_by_msg[msg_id] = usage
+        elif payload.get("type") == "session-usage-delta":
+            for model_usage in (payload.get("byModelDelta") or {}).values():
+                subagent_input += (model_usage.get("input") or {}).get("tokens", 0)
+                subagent_output += (model_usage.get("output") or {}).get("tokens", 0)
     except Exception:
         pass
-# No run-complete found — aggregate the last usage-delta per message
+# No run-complete found — aggregate the last usage-delta per message + sub-agent totals
 for usage in cumulative_by_msg.values():
     result["input"] += (usage.get("inputTokens", 0) or 0)
     result["output"] += (usage.get("outputTokens", 0) or 0)
+result["input"] += subagent_input
+result["output"] += subagent_output
 print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true
