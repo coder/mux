@@ -25,7 +25,7 @@ export interface OAuthFlowEntry {
     promise: Promise<Result<void, string>>;
     resolve: (value: Result<void, string>) => void;
   };
-  /** Handle for the server-side timeout (set by `waitFor`). */
+  /** Handle for the server-side timeout (set at registration time by the caller). */
   timeoutHandle: ReturnType<typeof setTimeout> | null;
 }
 

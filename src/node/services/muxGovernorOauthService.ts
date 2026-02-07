@@ -92,25 +92,32 @@ export class MuxGovernorOauthService {
       }, DEFAULT_DESKTOP_TIMEOUT_MS),
     });
 
-    // Wire the loopback result to drive token exchange + finish.
-    void loopback.result.then(async (callbackResult) => {
-      if (!callbackResult.success) {
-        await this.desktopFlows.finish(
-          flowId,
-          Err(`Mux Governor OAuth error: ${callbackResult.error}`)
-        );
-        return;
+    // Background task: await loopback callback, do token exchange, finish flow.
+    // Race against resultDeferred so that if the flow is cancelled/timed out
+    // externally, this task exits cleanly instead of dangling on loopback.result.
+    void (async () => {
+      const callbackOrDone = await Promise.race([
+        loopback.result,
+        resultDeferred.promise.then((): null => null),
+      ]);
+
+      // Flow was already finished externally (timeout or cancel).
+      if (callbackOrDone === null) return;
+
+      let result: Result<void, string>;
+      if (callbackOrDone.success) {
+        result = await this.handleCallbackAndExchange({
+          state: flowId,
+          governorOrigin,
+          code: callbackOrDone.data.code,
+          error: null,
+        });
+      } else {
+        result = Err(`Mux Governor OAuth error: ${callbackOrDone.error}`);
       }
 
-      const result = await this.handleCallbackAndExchange({
-        state: flowId,
-        governorOrigin,
-        code: callbackResult.data.code,
-        error: null,
-      });
-
       await this.desktopFlows.finish(flowId, result);
-    });
+    })();
 
     log.debug(
       `Mux Governor OAuth desktop flow started (flowId=${flowId}, origin=${governorOrigin})`
