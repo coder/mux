@@ -24,6 +24,10 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import { normalizeGatewayModel, supports1MContext } from "@/common/utils/ai/models";
 import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
+import {
+  normalizeGatewayStreamUsage,
+  normalizeGatewayGenerateResult,
+} from "@/node/utils/gatewayStreamNormalization";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 
 // ---------------------------------------------------------------------------
@@ -1014,7 +1018,35 @@ export class ProviderModelFactory {
           baseURL: gatewayBaseURL,
           fetch: fetchWithAutoLogout,
         });
-        return Ok(gateway(modelId));
+        const model = gateway(modelId);
+
+        // Normalize usage format from the gateway server.
+        // The gateway SDK declares specificationVersion "v3", so the AI SDK core
+        // expects nested v3 usage: { inputTokens: { total, ... }, outputTokens: { total, ... } }.
+        // However the gateway server may return flat v2-style usage
+        // (e.g. { inputTokens: 123, outputTokens: 456 }), causing
+        // asLanguageModelUsage to produce undefined → 0 for all token counts.
+        // These wrappers detect flat usage and convert to v3 nested format.
+        const originalDoStream = model.doStream.bind(model);
+        model.doStream = async (options) => {
+          const result = await originalDoStream(options);
+          return {
+            ...result,
+            // Type assertion safe: the transform only modifies the shape of usage/finishReason
+            // fields within existing chunks, it doesn't change the stream part types.
+            stream: result.stream.pipeThrough(
+              normalizeGatewayStreamUsage()
+            ) as typeof result.stream,
+          };
+        };
+
+        const originalDoGenerate = model.doGenerate.bind(model);
+        model.doGenerate = async (options) => {
+          const result = await originalDoGenerate(options);
+          return normalizeGatewayGenerateResult(result);
+        };
+
+        return Ok(model);
       }
 
       // GitHub Copilot — OpenAI-compatible with custom auth headers
