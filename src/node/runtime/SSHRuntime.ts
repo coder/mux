@@ -812,12 +812,13 @@ export class SSHRuntime extends RemoteRuntime {
         initLogger.logStep("Files synced successfully");
 
         // 2. Create a worktree from the shared bare base repo for this workspace.
-        const baseRepoPathArg = expandTildeForSSH(this.getBaseRepoPath(projectPath));
+        const baseRepoPath = this.getBaseRepoPath(projectPath);
+        const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
 
         // Fetch latest from origin in the base repo (best-effort) so new branches
         // can start from the latest upstream state.
         const fetchedOrigin = await this.fetchOriginTrunk(
-          this.getBaseRepoPath(projectPath),
+          baseRepoPath,
           trunkBranch,
           initLogger,
           abortSignal
@@ -825,12 +826,7 @@ export class SSHRuntime extends RemoteRuntime {
 
         const shouldUseOrigin =
           fetchedOrigin &&
-          (await this.canFastForwardToOrigin(
-            this.getBaseRepoPath(projectPath),
-            trunkBranch,
-            initLogger,
-            abortSignal
-          ));
+          (await this.canFastForwardToOrigin(baseRepoPath, trunkBranch, initLogger, abortSignal));
 
         const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : trunkBranch;
 
@@ -1266,7 +1262,9 @@ export class SSHRuntime extends RemoteRuntime {
           const stderr = await streamToString(stream.stderr);
           // Fallback: if worktree remove fails (e.g., locked), rm -rf + prune.
           const fallbackStream = await this.exec(
-            `rm -rf ${shescape.quote(deletedPath)} && git -C ${baseRepoPathArg} worktree prune`,
+            // Use quoteForRemote (expandTildeForSSH) to match the quoting in the
+            // worktree remove command above — shescape.quote doesn't expand tilde.
+            `rm -rf ${this.quoteForRemote(deletedPath)} && git -C ${baseRepoPathArg} worktree prune`,
             { cwd: this.config.srcBaseDir, timeout: 30, abortSignal }
           );
           await fallbackStream.stdin.abort();
