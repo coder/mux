@@ -1206,6 +1206,17 @@ export class WorkspaceStore {
    * REQUIRES: Workspace must have been added via addWorkspace() first.
    */
   getWorkspaceState(workspaceId: string): WorkspaceState {
+    // Ensure aggregator exists before accessing state. This handles race conditions
+    // during workspace switching (effect hasn't fired yet) and Storybook story
+    // transitions (singleton store outlives React tree remounts). The addWorkspace
+    // call is idempotent — returns immediately if already subscribed.
+    if (!this.aggregators.has(workspaceId)) {
+      const metadata = this.workspaceMetadata.get(workspaceId);
+      if (metadata) {
+        this.addWorkspace(metadata);
+      }
+    }
+
     return this.states.get(workspaceId, () => {
       const aggregator = this.assertGet(workspaceId);
 
