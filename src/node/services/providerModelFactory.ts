@@ -644,6 +644,7 @@ export class ProviderModelFactory {
                     "reasoning",
                     "temperature",
                     "top_p",
+                    "truncation",
                     "include",
                     "text", // structured output via Output.object → text.format
                   ]);
