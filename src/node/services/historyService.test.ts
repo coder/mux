@@ -204,6 +204,18 @@ describe("HistoryService", () => {
       }
     });
 
+    it("should reject malformed provided historySequence values", async () => {
+      const workspaceId = "workspace1";
+      const msg = createMuxMessage("msg1", "user", "Hello", { historySequence: 5.5 });
+
+      const result = await service.appendToHistory(workspaceId, msg);
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("non-negative integer");
+      }
+    });
+
     it("should update sequence counter when message has higher sequence", async () => {
       const workspaceId = "workspace1";
       const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 10 });
@@ -453,6 +465,65 @@ describe("HistoryService", () => {
       expect(finalMessage.metadata?.compactionBoundary).toBeUndefined();
       expect(finalMessage.metadata?.compactionEpoch).toBeUndefined();
     });
+
+    it("self-heals by not preserving malformed compacted markers in compaction boundaries", async () => {
+      const workspaceId = "workspace1";
+      const placeholder = createMuxMessage("summary-msg", "assistant", "", {
+        model: "openai:gpt-5",
+      });
+
+      await service.appendToHistory(workspaceId, placeholder);
+
+      const historyAfterAppend = await service.getHistory(workspaceId);
+      expect(historyAfterAppend.success).toBe(true);
+      if (!historyAfterAppend.success) {
+        return;
+      }
+
+      const sequence = historyAfterAppend.data[0]?.metadata?.historySequence;
+      expect(typeof sequence).toBe("number");
+      if (typeof sequence !== "number") {
+        return;
+      }
+
+      const malformedCompactionSummary = createMuxMessage(
+        "summary-msg",
+        "assistant",
+        "Compacted summary",
+        {
+          historySequence: sequence,
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        }
+      );
+      if (malformedCompactionSummary.metadata) {
+        (malformedCompactionSummary.metadata as Record<string, unknown>).compacted = "corrupt";
+      }
+
+      const malformedUpdateResult = await service.updateHistory(
+        workspaceId,
+        malformedCompactionSummary
+      );
+      expect(malformedUpdateResult.success).toBe(true);
+
+      const lateRewrite = createMuxMessage("summary-msg", "assistant", "Late rewrite", {
+        historySequence: sequence,
+        model: "openai:gpt-5",
+      });
+      const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
+      expect(lateRewriteResult.success).toBe(true);
+
+      const finalHistory = await service.getHistory(workspaceId);
+      expect(finalHistory.success).toBe(true);
+      if (!finalHistory.success) {
+        return;
+      }
+
+      const finalMessage = finalHistory.data[0];
+      expect(finalMessage.metadata?.compacted).toBeUndefined();
+      expect(finalMessage.metadata?.compactionBoundary).toBeUndefined();
+      expect(finalMessage.metadata?.compactionEpoch).toBeUndefined();
+    });
   });
 
   describe("deleteMessage", () => {
@@ -678,6 +749,42 @@ describe("HistoryService", () => {
       if (history.success) {
         expect(history.data).toHaveLength(3);
         expect(history.data[2].metadata?.historySequence).toBe(2);
+      }
+    });
+
+    it("should ignore malformed persisted numeric sequences when initializing counters", async () => {
+      const workspaceId = "workspace-with-malformed-sequences";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const validMessage = createMuxMessage("msg-valid", "user", "Hello", { historySequence: 3 });
+      const malformedMessage = createMuxMessage("msg-malformed", "assistant", "Hi", {
+        historySequence: 42,
+      });
+      if (malformedMessage.metadata) {
+        (malformedMessage.metadata as Record<string, unknown>).historySequence = 99.5;
+      }
+
+      const chatPath = path.join(workspaceDir, "chat.jsonl");
+      await fs.writeFile(
+        chatPath,
+        JSON.stringify({ ...validMessage, workspaceId }) +
+          "\n" +
+          JSON.stringify({ ...malformedMessage, workspaceId }) +
+          "\n"
+      );
+
+      const newService = new HistoryService(config);
+      const msg3 = createMuxMessage("msg3", "user", "How are you?");
+      const appendResult = await newService.appendToHistory(workspaceId, msg3);
+      expect(appendResult.success).toBe(true);
+
+      const history = await newService.getHistory(workspaceId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(history.data).toHaveLength(3);
+        const appended = history.data.find((msg) => msg.id === "msg3");
+        expect(appended?.metadata?.historySequence).toBe(4);
       }
     });
 
