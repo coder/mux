@@ -894,6 +894,12 @@ export const workspace = {
     input: z.object({
       workspaceId: z.string(),
       summaryMessage: MuxMessageSchema,
+      /**
+       * Replace strategy.
+       * - destructive (default): clear history, then append summary
+       * - append-compaction-boundary: keep history and append summary as durable boundary
+       */
+      mode: z.enum(["destructive", "append-compaction-boundary"]).nullish(),
       /** When true, delete the plan file (new + legacy paths) and clear plan tracking state. */
       deletePlanFile: z.boolean().optional(),
     }),
