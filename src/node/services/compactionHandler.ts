@@ -648,7 +648,9 @@ export class CompactionHandler {
       "assistant",
       summary,
       {
-        ...(persistedStreamSummary?.metadata ?? {}),
+        // Do not spread persisted streamed metadata here. Those rows can contain
+        // pre-compaction usage/context provider fields that would inflate post-
+        // compaction cache/context token displays.
         timestamp,
         compacted: isIdleCompaction ? "idle" : "user",
         compactionEpoch: nextCompactionEpoch,
@@ -674,6 +676,14 @@ export class CompactionHandler {
     assert(
       summaryMessage.metadata?.compactionEpoch === nextCompactionEpoch,
       "Compaction summary must persist the computed compaction epoch"
+    );
+    assert(
+      summaryMessage.metadata?.providerMetadata === undefined,
+      "Compaction summary must not persist stale providerMetadata"
+    );
+    assert(
+      summaryMessage.metadata?.contextProviderMetadata === undefined,
+      "Compaction summary must not persist stale contextProviderMetadata"
     );
 
     // TODO(Approach B): Persist/update a sidecar compaction index so provider-request

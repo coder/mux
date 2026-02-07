@@ -2,6 +2,10 @@ import assert from "node:assert";
 
 import type { MuxMessage } from "@/common/types/message";
 
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
 function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boolean {
   if (message?.metadata?.compactionBoundary !== true) {
     return false;
@@ -14,7 +18,7 @@ function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boo
   }
 
   const epoch = message.metadata.compactionEpoch;
-  if (epoch !== undefined && (!Number.isInteger(epoch) || epoch <= 0)) {
+  if (!isPositiveInteger(epoch)) {
     return false;
   }
 

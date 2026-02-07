@@ -529,7 +529,7 @@ describe("CompactionHandler", () => {
       expect(appendedMsg.metadata?.historySequence).toBe(4);
     });
 
-    it("should update the streamed summary in-place instead of appending a duplicate boundary", async () => {
+    it("should update streamed summaries in-place without carrying stale provider metadata", async () => {
       const compactionReq = createMuxMessage("req-streamed", "user", "Please summarize", {
         historySequence: 5,
         muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
@@ -538,6 +538,8 @@ describe("CompactionHandler", () => {
         historySequence: 6,
         timestamp: Date.now(),
         model: "claude-3-5-sonnet-20241022",
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
+        contextProviderMetadata: { anthropic: { cacheReadInputTokens: 10_000 } },
       });
 
       mockHistoryService.mockGetHistory(Ok([compactionReq, streamedSummary]));
@@ -555,6 +557,8 @@ describe("CompactionHandler", () => {
       expect(updatedSummary.metadata?.historySequence).toBe(6);
       expect(updatedSummary.metadata?.compactionBoundary).toBe(true);
       expect(updatedSummary.metadata?.compactionEpoch).toBe(1);
+      expect(updatedSummary.metadata?.providerMetadata).toBeUndefined();
+      expect(updatedSummary.metadata?.contextProviderMetadata).toBeUndefined();
 
       const summaryEvent = emittedEvents.find((_e) => {
         const m = _e.data.message as MuxMessage | undefined;
