@@ -96,7 +96,8 @@ test.describe("slash command flows", () => {
     await ui.chat.expectTranscriptContains(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText("Compaction boundary");
-    await expect(transcript).toContainText("Resume after compaction");
+    // Regression check: transcript now keeps only the top compaction boundary row.
+    await expect(transcript).not.toContainText("Resume after compaction");
     await expect(transcript).toContainText("Mock README content");
     await expect(transcript).toContainText("Directory listing:");
   });

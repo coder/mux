@@ -73,8 +73,8 @@ describe("Compaction UI (mock AI router)", () => {
 
       await app.chat.expectTranscriptContains("Mock compaction summary:");
       await app.chat.expectTranscriptContains(`Mock response: ${continueText}`);
+      // Compaction transcript now renders a single top boundary row.
       await app.chat.expectTranscriptContains("Compaction boundary");
-      await app.chat.expectTranscriptContains("Resume after compaction");
 
       // Compaction is append-only: pre-compaction transcript remains visible.
       await app.chat.expectTranscriptContains(seedMessage);
@@ -120,8 +120,8 @@ describe("Compaction UI (mock AI router)", () => {
 
       await app.chat.expectTranscriptContains("Mock compaction summary:", 60_000);
       await app.chat.expectTranscriptContains("Mock response: Continue", 60_000);
+      // Compaction transcript now renders a single top boundary row.
       await app.chat.expectTranscriptContains("Compaction boundary", 60_000);
-      await app.chat.expectTranscriptContains("Resume after compaction", 60_000);
 
       // Force compaction is append-only: keep the triggering history around the boundary rows.
       await app.chat.expectTranscriptContains(triggerMessage, 60_000);
