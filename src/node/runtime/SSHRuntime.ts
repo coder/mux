@@ -1345,17 +1345,20 @@ export class SSHRuntime extends RemoteRuntime {
         };
       }
 
-      // Check if we have a shared base repo — use fast worktree path if so.
+      // Try fast worktree path first when the shared base repo exists.
+      // Falls back to full directory copy when the base repo is missing OR when
+      // worktree creation fails (e.g. forking a legacy workspace whose branch
+      // only exists locally and not in the base repo).
       const baseRepoPath = this.getBaseRepoPath(projectPath);
       const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
+      let usedWorktree = false;
+
       const hasBaseRepo = await execBuffered(this, `test -d ${baseRepoPathArg}`, {
         cwd: "/tmp",
         timeout: 10,
       });
 
       if (hasBaseRepo.exitCode === 0) {
-        // Fast path: create a worktree from the shared bare base repo.
-        // This is near-instant compared to the full cp -R -P copy.
         initLogger.logStep("Creating worktree for forked workspace...");
         const worktreeCmd = `git -C ${baseRepoPathArg} worktree add ${newWorkspacePathArg} -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
         const worktreeResult = await execBuffered(this, worktreeCmd, {
@@ -1363,14 +1366,20 @@ export class SSHRuntime extends RemoteRuntime {
           timeout: 60,
         });
 
-        if (worktreeResult.exitCode !== 0) {
-          return {
-            success: false,
-            error: `Failed to create worktree: ${worktreeResult.stderr || worktreeResult.stdout}`,
-          };
+        if (worktreeResult.exitCode === 0) {
+          usedWorktree = true;
+        } else {
+          // Source branch likely doesn't exist in the base repo (legacy workspace).
+          // Fall through to the cp -R -P path below.
+          log.info(
+            `Worktree fork failed (${(worktreeResult.stderr || worktreeResult.stdout).trim()}); falling back to full copy`
+          );
+          initLogger.logStep("Worktree creation failed; falling back to full copy...");
         }
-      } else {
-        // Legacy fallback: full directory copy for workspaces created before the base repo existed.
+      }
+
+      if (!usedWorktree) {
+        // Full directory copy — either no base repo or worktree creation failed.
         initLogger.logStep("Preparing remote workspace...");
         const parentDir = path.posix.dirname(newWorkspacePath);
         const mkdirResult = await execBuffered(this, `mkdir -p ${expandTildeForSSH(parentDir)}`, {
