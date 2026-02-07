@@ -442,7 +442,7 @@ export class AIService extends EventEmitter {
 
       // OpenAI-specific: Keep reasoning parts in history
       // OpenAI manages conversation state via previousResponseId
-      if (providerForMessages === "openai") {
+      if (canonicalProviderName === "openai") {
         log.debug("Keeping reasoning parts for OpenAI (managed via previousResponseId)");
       }
       // Add [CONTINUE] sentinel to partial messages (for model context)
