@@ -11,6 +11,10 @@ function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boo
     return false;
   }
 
+  if (message.role !== "assistant") {
+    return false;
+  }
+
   // Self-healing read path: malformed persisted boundary metadata should be ignored,
   // not crash request assembly.
   if (message.metadata.compacted === undefined || message.metadata.compacted === false) {
