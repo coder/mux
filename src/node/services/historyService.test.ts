@@ -334,6 +334,125 @@ describe("HistoryService", () => {
         }
       }
     });
+
+    it("preserves durable compaction metadata across late in-place rewrites", async () => {
+      const workspaceId = "workspace1";
+      const placeholder = createMuxMessage("summary-msg", "assistant", "", {
+        model: "openai:gpt-5",
+      });
+
+      await service.appendToHistory(workspaceId, placeholder);
+
+      const historyAfterAppend = await service.getHistory(workspaceId);
+      expect(historyAfterAppend.success).toBe(true);
+      if (!historyAfterAppend.success) {
+        return;
+      }
+
+      const sequence = historyAfterAppend.data[0]?.metadata?.historySequence;
+      expect(typeof sequence).toBe("number");
+      if (typeof sequence !== "number") {
+        return;
+      }
+
+      // Simulate compaction finishing first and upgrading the streamed placeholder in place.
+      const compactionSummary = createMuxMessage("summary-msg", "assistant", "Compacted summary", {
+        historySequence: sequence,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+        muxMetadata: { type: "compaction-summary" },
+      });
+      const compactionUpdateResult = await service.updateHistory(workspaceId, compactionSummary);
+      expect(compactionUpdateResult.success).toBe(true);
+
+      // Simulate a late stream rewrite (e.g., simulateToolPolicyNoop path) that omits
+      // compaction metadata. The durable boundary markers must survive this rewrite.
+      const lateRewrite = createMuxMessage(
+        "summary-msg",
+        "assistant",
+        "Tool execution skipped because the requested tool is disabled by policy.",
+        {
+          historySequence: sequence,
+          model: "openai:gpt-5",
+        }
+      );
+      const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
+      expect(lateRewriteResult.success).toBe(true);
+
+      const finalHistory = await service.getHistory(workspaceId);
+      expect(finalHistory.success).toBe(true);
+      if (!finalHistory.success) {
+        return;
+      }
+
+      expect(finalHistory.data).toHaveLength(1);
+      const finalMessage = finalHistory.data[0];
+      expect(finalMessage.parts[0]).toMatchObject({
+        type: "text",
+        text: "Tool execution skipped because the requested tool is disabled by policy.",
+      });
+      expect(finalMessage.metadata?.compacted).toBe("user");
+      expect(finalMessage.metadata?.compactionBoundary).toBe(true);
+      expect(finalMessage.metadata?.compactionEpoch).toBe(1);
+      expect(finalMessage.metadata?.muxMetadata).toEqual({ type: "compaction-summary" });
+    });
+
+    it("self-heals by not preserving malformed compaction boundary metadata", async () => {
+      const workspaceId = "workspace1";
+      const placeholder = createMuxMessage("summary-msg", "assistant", "", {
+        model: "openai:gpt-5",
+      });
+
+      await service.appendToHistory(workspaceId, placeholder);
+
+      const historyAfterAppend = await service.getHistory(workspaceId);
+      expect(historyAfterAppend.success).toBe(true);
+      if (!historyAfterAppend.success) {
+        return;
+      }
+
+      const sequence = historyAfterAppend.data[0]?.metadata?.historySequence;
+      expect(typeof sequence).toBe("number");
+      if (typeof sequence !== "number") {
+        return;
+      }
+
+      // Simulate malformed persisted boundary metadata (invalid epoch).
+      const malformedCompactionSummary = createMuxMessage(
+        "summary-msg",
+        "assistant",
+        "Compacted summary",
+        {
+          historySequence: sequence,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 0,
+        }
+      );
+      const malformedUpdateResult = await service.updateHistory(
+        workspaceId,
+        malformedCompactionSummary
+      );
+      expect(malformedUpdateResult.success).toBe(true);
+
+      const lateRewrite = createMuxMessage("summary-msg", "assistant", "Late rewrite", {
+        historySequence: sequence,
+        model: "openai:gpt-5",
+      });
+      const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
+      expect(lateRewriteResult.success).toBe(true);
+
+      const finalHistory = await service.getHistory(workspaceId);
+      expect(finalHistory.success).toBe(true);
+      if (!finalHistory.success) {
+        return;
+      }
+
+      const finalMessage = finalHistory.data[0];
+      expect(finalMessage.metadata?.compactionBoundary).toBeUndefined();
+      expect(finalMessage.metadata?.compactionEpoch).toBeUndefined();
+    });
   });
 
   describe("deleteMessage", () => {

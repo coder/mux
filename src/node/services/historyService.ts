@@ -1,9 +1,14 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import writeFileAtomic from "write-file-atomic";
+import assert from "node:assert";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import type { MuxMessage } from "@/common/types/message";
+import {
+  isCompactionSummaryMetadata,
+  type MuxMessage,
+  type MuxMetadata,
+} from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { log } from "./log";
@@ -12,6 +17,76 @@ import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolean {
+  if (metadata?.compactionBoundary !== true) {
+    return false;
+  }
+
+  // Self-healing read path: malformed boundary markers should be ignored.
+  if (metadata.compacted === undefined || metadata.compacted === false) {
+    return false;
+  }
+
+  return isPositiveInteger(metadata.compactionEpoch);
+}
+
+function getCompactionMetadataToPreserve(
+  workspaceId: string,
+  existingMessage: MuxMessage,
+  incomingMessage: MuxMessage
+): Partial<MuxMetadata> | null {
+  const existingMetadata = existingMessage.metadata;
+  if (existingMetadata?.compactionBoundary !== true) {
+    return null;
+  }
+
+  if (existingMessage.role !== "assistant") {
+    // Self-healing read path: boundary metadata on non-assistant rows is invalid.
+    log.warn("Skipping malformed persisted compaction boundary during history update", {
+      workspaceId,
+      messageId: existingMessage.id,
+      reason: "compactionBoundary set on non-assistant message",
+    });
+    return null;
+  }
+
+  if (incomingMessage.role !== "assistant") {
+    return null;
+  }
+
+  if (!hasDurableCompactionBoundary(existingMetadata)) {
+    // Self-healing read path: malformed boundary metadata should not be propagated.
+    log.warn("Skipping malformed persisted compaction boundary during history update", {
+      workspaceId,
+      messageId: existingMessage.id,
+      reason: "compactionBoundary missing valid compacted+compactionEpoch metadata",
+    });
+    return null;
+  }
+
+  if (hasDurableCompactionBoundary(incomingMessage.metadata)) {
+    return null;
+  }
+
+  const preserved: Partial<MuxMetadata> = {
+    compacted: existingMetadata.compacted,
+    compactionBoundary: true,
+    compactionEpoch: existingMetadata.compactionEpoch,
+  };
+
+  if (
+    isCompactionSummaryMetadata(existingMetadata.muxMetadata) &&
+    !isCompactionSummaryMetadata(incomingMessage.metadata?.muxMetadata)
+  ) {
+    preserved.muxMetadata = existingMetadata.muxMetadata;
+  }
+
+  return preserved;
+}
 /**
  * HistoryService - Manages chat history persistence and sequence numbering
  *
@@ -219,11 +294,24 @@ export class HistoryService {
         let found = false;
         for (let i = 0; i < messages.length; i++) {
           if (messages[i].metadata?.historySequence === targetSequence) {
-            // Preserve the historySequence, update everything else
+            const existingMessage = messages[i];
+            assert(existingMessage, "updateHistory matched message must exist");
+
+            // Preserve compaction boundary metadata during late in-place rewrites.
+            // Compaction may update an assistant row first, then a late stream rewrite can
+            // update that same historySequence and accidentally drop compaction markers.
+            const preservedCompactionMetadata = getCompactionMetadataToPreserve(
+              workspaceId,
+              existingMessage,
+              message
+            );
+
+            // Preserve the historySequence, update everything else.
             messages[i] = {
               ...message,
               metadata: {
                 ...message.metadata,
+                ...(preservedCompactionMetadata ?? {}),
                 historySequence: targetSequence,
               },
             };
