@@ -27,7 +27,11 @@ import {
   type TaskSettings,
 } from "@/common/types/tasks";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
-import { THINKING_LEVELS, coerceThinkingLevel } from "@/common/types/thinking";
+import {
+  THINKING_LEVELS,
+  coerceThinkingLevel,
+  getThinkingOptionLabel,
+} from "@/common/types/thinking";
 
 import { SearchableModelSelect } from "../components/SearchableModelSelect";
 
@@ -345,7 +349,7 @@ export function System1Section() {
                 <SelectContent>
                   {allowedThinkingLevels.map((level) => (
                     <SelectItem key={level} value={level}>
-                      {level}
+                      {getThinkingOptionLabel(level, effectiveSystem1ModelStringForThinking)}
                     </SelectItem>
                   ))}
                 </SelectContent>
