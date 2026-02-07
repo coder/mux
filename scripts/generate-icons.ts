@@ -95,7 +95,7 @@ const LOGO_TARGETS = {
   "public/tray-icon-white@2x.png": { size: 32, source: SOURCE_WHITE, bg: false },
 } satisfies Record<string, LogoTargetConfig>;
 
-const APP_ICON_PADDING_RATIO = 0.2;
+const APP_ICON_PADDING_RATIO = 0.05;
 
 async function generateRasterIcon({ source, size, bg, format = "png" }: RasterTargetConfig) {
   let pipeline;
