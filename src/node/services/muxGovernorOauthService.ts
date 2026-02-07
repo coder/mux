@@ -60,6 +60,7 @@ export class MuxGovernorOauthService {
     try {
       loopback = await startLoopbackServer({
         expectedState: flowId,
+        deferSuccessResponse: true,
         renderHtml: (r) =>
           renderOAuthCallbackHtml({
             title: r.success ? "Enrollment complete" : "Enrollment failed",
@@ -114,6 +115,13 @@ export class MuxGovernorOauthService {
         });
       } else {
         result = Err(`Mux Governor OAuth error: ${callbackOrDone.error}`);
+      }
+
+      // Render the final browser response based on exchange outcome.
+      if (result.success) {
+        loopback.sendSuccessResponse();
+      } else {
+        loopback.sendFailureResponse(result.error);
       }
 
       await this.desktopFlows.finish(flowId, result);
