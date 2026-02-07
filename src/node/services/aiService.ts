@@ -1,6 +1,4 @@
 import * as fs from "fs/promises";
-import * as os from "os";
-import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 
 import { type LanguageModel, type Tool } from "ai";
@@ -10,7 +8,6 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { SendMessageOptions } from "@/common/orpc/types";
-import { AgentIdSchema } from "@/common/orpc/schemas";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 
@@ -23,7 +20,7 @@ import type { SendMessageError } from "@/common/types/errors";
 import { getToolsForModel } from "@/common/utils/tools/tools";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
-import { MUX_HELP_CHAT_AGENT_ID, MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { PolicyService } from "@/node/services/policyService";
@@ -44,8 +41,7 @@ import { createErrorEvent } from "./utils/sendMessageError";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
-import { buildSystemMessage, readToolInstructions } from "./systemMessage";
-import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
+import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
@@ -55,7 +51,7 @@ import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
-import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
+
 import type {
   StreamAbortEvent,
   StreamAbortReason,
@@ -75,24 +71,8 @@ import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { ProviderModelFactory, parseModelString, modelCostsIncluded } from "./providerModelFactory";
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
-import { getTaskDepthFromConfig } from "./taskUtils";
-import { hasStartHerePlanSummary } from "@/common/utils/messages/startHerePlanSummary";
-import { getPlanFilePath } from "@/common/utils/planStorage";
-import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
-
-import { readPlanFile } from "@/node/utils/runtime/helpers";
-import {
-  readAgentDefinition,
-  resolveAgentBody,
-  resolveAgentFrontmatter,
-  discoverAgentDefinitions,
-  type AgentDefinitionsRoots,
-} from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
-import { resolveToolPolicyForAgent } from "@/node/services/agentDefinitions/resolveToolPolicy";
-import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
-import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import { resolveAgentForStream } from "./agentResolution";
+import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
 
 // Lazy-loaded PTC modules (only loaded when experiment is enabled)
 // This avoids loading typescript/prettier at startup which causes issues:
@@ -128,73 +108,8 @@ async function getPTCModules(): Promise<PTCModules> {
   return ptcModules;
 }
 
-/**
- * Discover agent definitions for tool description context.
- *
- * The task tool lists "Available sub-agents" by filtering on
- * AgentDefinitionDescriptor.subagentRunnable.
- *
- * NOTE: discoverAgentDefinitions() sets descriptor.subagentRunnable from the agent's *own*
- * frontmatter only, which means derived agents (e.g. `base: exec`) may incorrectly appear
- * non-runnable if they don't repeat `subagent.runnable: true`.
- *
- * Re-resolve frontmatter with inheritance (base-first) so subagent.runnable is inherited.
- */
-export async function discoverAvailableSubagentsForToolContext(args: {
-  runtime: Parameters<typeof discoverAgentDefinitions>[0];
-  workspacePath: string;
-  cfg: ReturnType<Config["loadConfigOrDefault"]>;
-  roots?: AgentDefinitionsRoots;
-}): Promise<Awaited<ReturnType<typeof discoverAgentDefinitions>>> {
-  assert(args, "discoverAvailableSubagentsForToolContext: args is required");
-  assert(args.runtime, "discoverAvailableSubagentsForToolContext: runtime is required");
-  assert(
-    args.workspacePath && args.workspacePath.length > 0,
-    "discoverAvailableSubagentsForToolContext: workspacePath is required"
-  );
-  assert(args.cfg, "discoverAvailableSubagentsForToolContext: cfg is required");
-
-  const discovered = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
-    roots: args.roots,
-  });
-
-  const resolved = await Promise.all(
-    discovered.map(async (descriptor) => {
-      try {
-        const resolvedFrontmatter = await resolveAgentFrontmatter(
-          args.runtime,
-          args.workspacePath,
-          descriptor.id,
-          { roots: args.roots }
-        );
-
-        const effectivelyDisabled = isAgentEffectivelyDisabled({
-          cfg: args.cfg,
-          agentId: descriptor.id,
-          resolvedFrontmatter,
-        });
-
-        if (effectivelyDisabled) {
-          return null;
-        }
-
-        return {
-          ...descriptor,
-          // Important: descriptor.subagentRunnable comes from the agent's own frontmatter only.
-          // Re-resolve with inheritance so derived agents inherit runnable: true from their base.
-          subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
-        };
-      } catch {
-        // Best-effort: keep the descriptor if enablement or inheritance can't be resolved.
-        return descriptor;
-      }
-    })
-  );
-
-  return resolved.filter((descriptor): descriptor is NonNullable<typeof descriptor> =>
-    Boolean(descriptor)
-  );
-}
+// Re-export for backwards compatibility (tests import from aiService.ts)
+export { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
@@ -649,170 +564,37 @@ export class AIService extends EventEmitter {
         });
       }
 
-      // Resolve the active agent definition.
-      //
-      // Precedence:
-      // - Child workspaces (tasks) use their persisted agentId/agentType.
-      // - Main workspaces use the requested agentId (frontend), falling back to exec.
-      const requestedAgentIdRaw =
-        workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
-          ? MUX_HELP_CHAT_AGENT_ID
-          : ((metadata.parentWorkspaceId ? (metadata.agentId ?? metadata.agentType) : undefined) ??
-            (typeof agentId === "string" ? agentId : undefined) ??
-            "exec");
-      const requestedAgentIdNormalized = requestedAgentIdRaw.trim().toLowerCase();
-      const parsedAgentId = AgentIdSchema.safeParse(requestedAgentIdNormalized);
-      const requestedAgentId = parsedAgentId.success ? parsedAgentId.data : ("exec" as const);
-      let effectiveAgentId = requestedAgentId;
-
-      // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
-      // Use project path so only built-in/global agents are available. This allows "unbricking"
-      // when iterating on agent files - a broken agent in the worktree won't affect message sending.
-      const agentDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
-
+      // Resolve agent definition, compute effective mode & tool policy.
       const cfg = this.config.loadConfigOrDefault();
-      const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
-
-      let agentDefinition;
-      try {
-        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, effectiveAgentId);
-      } catch (error) {
-        workspaceLog.warn("Failed to load agent definition; falling back to exec", {
-          effectiveAgentId,
-          agentDiscoveryPath,
-          disableWorkspaceAgents,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
-      }
-
-      // Keep agent ID aligned with the actual definition used (may fall back to exec).
-      effectiveAgentId = agentDefinition.id;
-      // Enforce per-agent enablement for sub-agent workspaces (tasks).
-      //
-      // Disabled agents should never run as sub-agents, even if a task workspace already exists
-      // on disk (e.g., config changed since creation).
-      //
-      // For top-level workspaces, fall back to exec to keep the workspace usable.
-      if (agentDefinition.id !== "exec") {
-        try {
-          const resolvedFrontmatter = await resolveAgentFrontmatter(
-            runtime,
-            agentDiscoveryPath,
-            agentDefinition.id
-          );
-
-          const effectivelyDisabled = isAgentEffectivelyDisabled({
-            cfg,
-            agentId: agentDefinition.id,
-            resolvedFrontmatter,
-          });
-
-          if (effectivelyDisabled) {
-            const errorMessage = `Agent '${agentDefinition.id}' is disabled.`;
-
-            if (isSubagentWorkspace) {
-              const errorMessageId = createAssistantMessageId();
-              this.emit(
-                "error",
-                createErrorEvent(workspaceId, {
-                  messageId: errorMessageId,
-                  error: errorMessage,
-                  errorType: "unknown",
-                })
-              );
-              return Err({ type: "unknown", raw: errorMessage });
-            }
-
-            workspaceLog.warn("Selected agent is disabled; falling back to exec", {
-              agentId: agentDefinition.id,
-              requestedAgentId,
-            });
-            agentDefinition = await readAgentDefinition(runtime, agentDiscoveryPath, "exec");
-            effectiveAgentId = agentDefinition.id;
-          }
-        } catch (error: unknown) {
-          // Best-effort only - do not fail a stream due to disablement resolution.
-          workspaceLog.debug("Failed to resolve agent enablement; continuing", {
-            agentId: agentDefinition.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      // Determine if agent is plan-like by checking if propose_plan is in its resolved tools
-      // (including inherited tools from base agents).
-      const agentsForInheritance = await resolveAgentInheritanceChain({
-        runtime,
-        workspacePath: agentDiscoveryPath,
-        agentId: agentDefinition.id,
-        agentDefinition,
+      const agentResult = await resolveAgentForStream({
         workspaceId,
-      });
-
-      const agentIsPlanLike = isPlanLikeInResolvedChain(agentsForInheritance);
-      const effectiveMode =
-        agentDefinition.id === "compact" ? "compact" : agentIsPlanLike ? "plan" : "exec";
-
-      const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      const taskDepth = getTaskDepthFromConfig(cfg, workspaceId);
-      const shouldDisableTaskToolsForDepth = taskDepth >= taskSettings.maxTaskNestingDepth;
-
-      // NOTE: Caller-supplied policy is applied AFTER agent tool policy so callers can
-      // further restrict the tool set (e.g., disable all tools for testing).
-      // Agent policy establishes baseline (deny-all + enable whitelist + runtime restrictions).
-      // Caller policy then narrows further if needed.
-      const agentToolPolicy = resolveToolPolicyForAgent({
-        agents: agentsForInheritance,
-        isSubagent: isSubagentWorkspace,
-        disableTaskToolsForDepth: shouldDisableTaskToolsForDepth,
-      });
-
-      // The Chat with Mux system workspace must remain sandboxed regardless of caller-supplied
-      // toolPolicy (defense-in-depth).
-      const systemWorkspaceToolPolicy: ToolPolicy | undefined =
-        workspaceId === MUX_HELP_CHAT_WORKSPACE_ID
-          ? [
-              { regex_match: ".*", action: "disable" },
-
-              // Allow docs lookup via built-in skills (e.g. mux-docs), while keeping
-              // filesystem/binary execution locked down.
-              { regex_match: "agent_skill_read", action: "enable" },
-              { regex_match: "agent_skill_read_file", action: "enable" },
-
-              { regex_match: "mux_global_agents_read", action: "enable" },
-              { regex_match: "mux_global_agents_write", action: "enable" },
-              { regex_match: "ask_user_question", action: "enable" },
-              { regex_match: "todo_read", action: "enable" },
-              { regex_match: "todo_write", action: "enable" },
-              { regex_match: "status_set", action: "enable" },
-              { regex_match: "notify", action: "enable" },
-            ]
-          : undefined;
-
-      const effectiveToolPolicy: ToolPolicy | undefined =
-        toolPolicy || agentToolPolicy.length > 0 || systemWorkspaceToolPolicy
-          ? [...agentToolPolicy, ...(toolPolicy ?? []), ...(systemWorkspaceToolPolicy ?? [])]
-          : undefined;
-
-      // Compute tool names for agent transition sentinel.
-      const earlyRuntime = createRuntime({ type: "local", srcBaseDir: process.cwd() });
-      const earlyAllTools = await getToolsForModel(
+        metadata,
+        runtime,
+        workspacePath,
+        requestedAgentId: agentId,
+        disableWorkspaceAgents: disableWorkspaceAgents ?? false,
         modelString,
-        {
-          cwd: process.cwd(),
-          runtime: earlyRuntime,
-          runtimeTempDir: os.tmpdir(),
-          secrets: {},
-          planFileOnly: agentIsPlanLike,
-        },
-        "", // Empty workspace ID for early stub config
-        this.initStateManager,
-        undefined,
-        undefined
-      );
-      const earlyTools = applyToolPolicy(earlyAllTools, effectiveToolPolicy);
-      toolNamesForSentinel = Object.keys(earlyTools);
+        callerToolPolicy: toolPolicy,
+        cfg,
+        emitError: (event) => this.emit("error", event),
+        initStateManager: this.initStateManager,
+      });
+      if (!agentResult.success) {
+        return agentResult;
+      }
+      const {
+        effectiveAgentId,
+        agentDefinition,
+        agentDiscoveryPath,
+        isSubagentWorkspace,
+        agentIsPlanLike,
+        effectiveMode,
+        taskSettings,
+        taskDepth,
+        shouldDisableTaskToolsForDepth,
+        effectiveToolPolicy,
+      } = agentResult.data;
+      toolNamesForSentinel = agentResult.data.toolNamesForSentinel;
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
       // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
@@ -835,103 +617,23 @@ export class AIService extends EventEmitter {
           ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides)
           : undefined;
 
-      // Construct plan mode instruction if in plan mode
-      // This is done backend-side because we have access to the plan file path
-      let effectiveAdditionalInstructions = additionalSystemInstructions;
-      const muxHome = runtime.getMuxHome();
-      const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
-
-      // Read plan file (handles legacy migration transparently)
-      const planResult = await readPlanFile(
-        runtime,
-        metadata.name,
-        metadata.projectName,
-        workspaceId
-      );
-
-      const chatHasStartHerePlanSummary = hasStartHerePlanSummary(filteredMessages);
-
-      if (effectiveMode === "plan") {
-        const planModeInstruction = getPlanModeInstruction(planFilePath, planResult.exists);
-        effectiveAdditionalInstructions = additionalSystemInstructions
-          ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
-          : planModeInstruction;
-      } else if (planResult.exists && planResult.content.trim()) {
-        // Users often use "Replace all chat history" after plan mode. In exec (or other non-plan)
-        // modes, the model can lose the plan file location because plan path injection only
-        // happens in plan mode.
-        //
-        // Exception: the ProposePlanToolCall "Start Here" flow already stores the full plan
-        // (and plan path) directly in chat history. In that case, prompting the model to
-        // re-open the plan file is redundant and often results in an extra "read …KB" step.
-        if (!chatHasStartHerePlanSummary) {
-          const planFileHint = getPlanFileHint(planFilePath, planResult.exists);
-          if (planFileHint) {
-            effectiveAdditionalInstructions = effectiveAdditionalInstructions
-              ? `${planFileHint}\n\n${effectiveAdditionalInstructions}`
-              : planFileHint;
-          }
-        } else {
-          workspaceLog.debug(
-            "Skipping plan file hint: Start Here already includes the plan in chat history."
-          );
-        }
-      }
-
-      if (shouldDisableTaskToolsForDepth) {
-        const nestingInstruction =
-          `Task delegation is disabled in this workspace (taskDepth=${taskDepth}, ` +
-          `maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}). Do not call task/task_await/task_list/task_terminate.`;
-        effectiveAdditionalInstructions = effectiveAdditionalInstructions
-          ? `${effectiveAdditionalInstructions}\n\n${nestingInstruction}`
-          : nestingInstruction;
-      }
-
-      // Read plan content for agent transition (plan-like → exec/orchestrator).
-      // Only read if switching to the built-in exec/orchestrator agent and last assistant was plan-like.
-      let planContentForTransition: string | undefined;
-      const isPlanHandoffAgent = effectiveAgentId === "exec" || effectiveAgentId === "orchestrator";
-      if (isPlanHandoffAgent && !chatHasStartHerePlanSummary) {
-        const lastAssistantMessage = [...filteredMessages]
-          .reverse()
-          .find((m) => m.role === "assistant");
-        const lastAgentId = lastAssistantMessage?.metadata?.agentId;
-        if (lastAgentId && planResult.content.trim()) {
-          let lastAgentIsPlanLike = false;
-          if (lastAgentId === effectiveAgentId) {
-            lastAgentIsPlanLike = agentIsPlanLike;
-          } else {
-            try {
-              const lastDefinition = await readAgentDefinition(
-                runtime,
-                agentDiscoveryPath,
-                lastAgentId
-              );
-              const lastChain = await resolveAgentInheritanceChain({
-                runtime,
-                workspacePath: agentDiscoveryPath,
-                agentId: lastAgentId,
-                agentDefinition: lastDefinition,
-                workspaceId,
-              });
-              lastAgentIsPlanLike = isPlanLikeInResolvedChain(lastChain);
-            } catch (error) {
-              workspaceLog.warn("Failed to resolve last agent definition for plan handoff", {
-                lastAgentId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-          }
-
-          if (lastAgentIsPlanLike) {
-            planContentForTransition = planResult.content;
-          }
-        }
-      } else if (isPlanHandoffAgent && chatHasStartHerePlanSummary) {
-        workspaceLog.debug(
-          "Skipping plan content injection for plan handoff transition: Start Here already includes the plan in chat history."
-        );
-      }
+      // Build plan-aware instructions and determine plan→exec transition content.
+      const { effectiveAdditionalInstructions, planFilePath, planContentForTransition } =
+        await buildPlanInstructions({
+          runtime,
+          metadata,
+          workspaceId,
+          workspacePath,
+          effectiveMode,
+          effectiveAgentId,
+          agentIsPlanLike,
+          agentDiscoveryPath,
+          additionalSystemInstructions,
+          shouldDisableTaskToolsForDepth,
+          taskDepth,
+          taskSettings,
+          filteredMessages,
+        });
 
       // Run the full message preparation pipeline (inject context, transform, validate).
       // This is a purely functional pipeline with no service dependencies.
@@ -953,69 +655,26 @@ export class AIService extends EventEmitter {
         workspaceId,
       });
 
-      // Construct effective agent system prompt
-      // 1. Resolve the body with inheritance (prompt.append merges with base)
-      // 2. If running as subagent, append subagent.append_prompt
-      // Note: Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId
-      const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id);
-
-      let subagentAppendPrompt: string | undefined;
-      if (isSubagentWorkspace) {
-        try {
-          const resolvedFrontmatter = await resolveAgentFrontmatter(
-            runtime,
-            agentDiscoveryPath,
-            agentDefinition.id
-          );
-          subagentAppendPrompt = resolvedFrontmatter.subagent?.append_prompt;
-        } catch (error: unknown) {
-          workspaceLog.debug("Failed to resolve agent frontmatter for subagent append_prompt", {
-            agentId: agentDefinition.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      const agentSystemPrompt =
-        isSubagentWorkspace && subagentAppendPrompt
-          ? `${resolvedBody}\n\n${subagentAppendPrompt}`
-          : resolvedBody;
-
-      // Discover available agent definitions for sub-agent context (only for top-level workspaces).
-      //
-      // NOTE: discoverAgentDefinitions returns disabled agents too, so Settings can surface them.
-      // For tool descriptions (task tool), filter to agents that are effectively enabled.
-      let agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
-      if (!isSubagentWorkspace) {
-        agentDefinitions = await discoverAvailableSubagentsForToolContext({
-          runtime,
-          workspacePath: agentDiscoveryPath,
-          cfg,
-        });
-      }
-
-      // Discover available skills for tool description context
-      let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
-      try {
-        availableSkills = await discoverAgentSkills(runtime, workspacePath);
-      } catch (error) {
-        workspaceLog.warn("Failed to discover agent skills for tool description", { error });
-      }
-
-      // Build system message from workspace metadata
-      const systemMessage = await buildSystemMessage(
-        metadata,
+      // Build agent system prompt, system message, and discover agents/skills.
+      const {
+        agentSystemPrompt,
+        systemMessage,
+        systemMessageTokens,
+        agentDefinitions,
+        availableSkills,
+      } = await buildStreamSystemContext({
         runtime,
+        metadata,
         workspacePath,
+        workspaceId,
+        agentDefinition,
+        agentDiscoveryPath,
+        isSubagentWorkspace,
         effectiveAdditionalInstructions,
         modelString,
+        cfg,
         mcpServers,
-        { agentSystemPrompt }
-      );
-
-      // Count system message tokens for cost tracking
-      const tokenizer = await getTokenizerForModel(modelString);
-      const systemMessageTokens = await tokenizer.countTokens(systemMessage);
+      });
 
       // Load project secrets (system workspace never gets secrets injected)
       const projectSecrets =
