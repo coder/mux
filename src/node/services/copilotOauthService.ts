@@ -4,6 +4,7 @@ import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { createDeferred } from "@/node/utils/oauthUtils";
 
 const GITHUB_COPILOT_CLIENT_ID = "Ov23liCVKFN3jOo9R7HS";
 const SCOPE = "read:user";
@@ -71,11 +72,7 @@ export class CopilotOauthService {
         return Err("Invalid response from GitHub device code endpoint");
       }
 
-      // Create deferred promise
-      let resolveResult!: (result: Result<void, string>) => void;
-      const resultPromise = new Promise<Result<void, string>>((resolve) => {
-        resolveResult = resolve;
-      });
+      const { promise: resultPromise, resolve: resolveResult } = createDeferred<Result<void, string>>();
 
       const timeout = setTimeout(() => {
         void this.finishFlow(flowId, Err("Timed out waiting for GitHub authorization"));
