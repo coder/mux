@@ -80,6 +80,24 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
   });
+  it("ignores user-role messages with boundary-like metadata", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("summary-valid", "assistant", "valid summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createMuxMessage("u1", "user", "not-a-summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 2,
+      }),
+      createMuxMessage("u2", "user", "after"),
+    ];
+
+    expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
+  });
 });
 
 describe("sliceMessagesFromLatestCompactionBoundary", () => {
@@ -137,6 +155,28 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
     expect(sliced).toBe(messages);
     expect(sliced.map((msg) => msg.id)).toEqual(["u0", "summary-missing-epoch", "u1"]);
+  });
+
+  it("does not slice from user-role messages with boundary-like metadata", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("summary-valid", "assistant", "valid summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createMuxMessage("u1", "user", "not-a-summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 2,
+      }),
+      createMuxMessage("a1", "assistant", "after"),
+    ];
+
+    const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
+
+    expect(sliced.map((msg) => msg.id)).toEqual(["summary-valid", "u1", "a1"]);
+    expect(sliced[0]?.id).toBe("summary-valid");
   });
 
   it("treats malformed boundary markers as non-boundaries instead of crashing", () => {
