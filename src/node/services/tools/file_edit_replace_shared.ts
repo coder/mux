@@ -38,7 +38,7 @@ export interface StringReplaceArgs {
   file_path: string;
   old_string: string;
   new_string: string;
-  replace_count?: number;
+  replace_count?: number | null;
 }
 
 export interface LineReplaceArgs {
@@ -46,7 +46,7 @@ export interface LineReplaceArgs {
   start_line: number;
   end_line: number;
   new_lines: string[];
-  expected_lines?: string[];
+  expected_lines?: string[] | null;
 }
 
 /**

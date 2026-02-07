@@ -139,13 +139,13 @@ export const AgentSkillReadFileToolCall: React.FC<AgentSkillReadFileToolCallProp
                 <span className="text-secondary font-medium">File:</span>
                 <span className="text-text font-monospace break-all">{args.filePath}</span>
               </div>
-              {args.offset !== undefined && (
+              {args.offset != null && (
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-secondary font-medium">Offset:</span>
                   <span className="text-text font-monospace break-all">line {args.offset}</span>
                 </div>
               )}
-              {args.limit !== undefined && (
+              {args.limit != null && (
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-secondary font-medium">Limit:</span>
                   <span className="text-text font-monospace break-all">{args.limit} lines</span>

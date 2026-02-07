@@ -2448,7 +2448,9 @@ export class TaskService {
       if (!isSuccessfulToolResult(part.output)) continue;
       const parsed = AgentReportToolArgsSchema.safeParse(part.input);
       if (!parsed.success) continue;
-      return parsed.data;
+      // Normalize null → undefined at the schema boundary so downstream
+      // code that expects `title?: string` doesn't need to handle null.
+      return { reportMarkdown: parsed.data.reportMarkdown, title: parsed.data.title ?? undefined };
     }
     return null;
   }

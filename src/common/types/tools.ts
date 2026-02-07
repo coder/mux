@@ -113,9 +113,9 @@ export interface FileEditErrorResult extends ToolOutputUiOnlyFields {
 export interface FileEditInsertToolArgs {
   file_path: string;
   /** Anchor text to insert before. Content will be placed immediately before this substring. */
-  insert_before?: string;
+  insert_before?: string | null;
   /** Anchor text to insert after. Content will be placed immediately after this substring. */
-  insert_after?: string;
+  insert_after?: string | null;
   content: string;
 }
 

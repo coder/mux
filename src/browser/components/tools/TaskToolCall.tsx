@@ -467,10 +467,7 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
   const suppressReportInAwaitTaskIds = taskReportLinking?.suppressReportInAwaitTaskIds;
 
   const showConfigInfo =
-    taskIds !== undefined ||
-    timeoutSecs !== undefined ||
-    args.filter !== undefined ||
-    args.filter_exclude === true;
+    taskIds != null || timeoutSecs != null || args.filter != null || args.filter_exclude === true;
 
   // Summary for header
   const completedCount = results.filter((r) => r.status === "completed").length;
@@ -562,9 +559,9 @@ export const TaskAwaitToolCall: React.FC<TaskAwaitToolCallProps> = ({
             {/* Config info */}
             {showConfigInfo && (
               <div className="task-divider text-muted mb-2 flex flex-wrap gap-2 border-b pb-2 text-[10px]">
-                {taskIds !== undefined && <span>Waiting for: {taskIds.length} task(s)</span>}
-                {timeoutSecs !== undefined && <span>Timeout: {timeoutSecs}s</span>}
-                {args.filter !== undefined && <span>Filter: {args.filter}</span>}
+                {taskIds != null && <span>Waiting for: {taskIds.length} task(s)</span>}
+                {timeoutSecs != null && <span>Timeout: {timeoutSecs}s</span>}
+                {args.filter != null && <span>Filter: {args.filter}</span>}
                 {args.filter_exclude === true && <span>Exclude: true</span>}
               </div>
             )}

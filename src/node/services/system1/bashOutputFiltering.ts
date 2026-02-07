@@ -3,7 +3,7 @@ import assert from "@/common/utils/assert";
 export interface System1KeepRange {
   start: number;
   end: number;
-  reason?: string;
+  reason?: string | null;
 }
 
 export interface ApplySystem1KeepRangesResult {

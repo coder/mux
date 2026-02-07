@@ -29,7 +29,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
       const taskService = requireTaskService(config, "task_await");
 
       const timeoutMs = coerceTimeoutMs(args.timeout_secs);
-      const timeoutSecsForBash = args.timeout_secs;
+      const timeoutSecsForBash = args.timeout_secs ?? undefined;
 
       const requestedIds: string[] | null =
         args.task_ids && args.task_ids.length > 0 ? args.task_ids : null;
@@ -115,8 +115,8 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
             const outputResult = await config.backgroundProcessManager.getOutput(
               maybeProcessId,
-              args.filter,
-              args.filter_exclude,
+              args.filter ?? undefined,
+              args.filter_exclude ?? undefined,
               timeoutSecsForBash,
               abortSignal,
               workspaceId,
