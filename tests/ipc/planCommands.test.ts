@@ -242,6 +242,109 @@ describeIntegration("Plan Commands Integration", () => {
     }, 30000);
   });
 
+  it("should preserve existing history and append a durable boundary in append-compaction-boundary mode", async () => {
+    const branchName = generateBranchName("start-here-append-boundary");
+    const trunkBranch = await detectDefaultTrunkBranch(repoPath);
+
+    const createResult = await env.orpc.workspace.create({
+      projectPath: repoPath,
+      branchName,
+      trunkBranch,
+    });
+
+    expect(createResult.success).toBe(true);
+    if (!createResult.success) throw new Error("Failed to create workspace");
+
+    const workspaceId = createResult.metadata.id;
+
+    try {
+      const legacySummary = createMuxMessage(
+        `legacy-summary-${Date.now()}`,
+        "assistant",
+        "legacy summary",
+        {
+          timestamp: Date.now(),
+          compacted: true,
+        }
+      );
+
+      const initialReplaceResult = await env.orpc.workspace.replaceChatHistory({
+        workspaceId,
+        summaryMessage: legacySummary,
+      });
+      expect(initialReplaceResult.success).toBe(true);
+
+      // Inject malformed boundary metadata directly to verify self-healing epoch derivation.
+      const malformedBoundaryId = `malformed-boundary-${Date.now()}`;
+      const malformedBoundaryMessage = createMuxMessage(
+        malformedBoundaryId,
+        "assistant",
+        "malformed boundary",
+        {
+          timestamp: Date.now(),
+          compacted: false,
+          compactionBoundary: true,
+          compactionEpoch: 999,
+        }
+      );
+
+      const chatHistoryPath = path.join(env.config.getSessionDir(workspaceId), "chat.jsonl");
+      await fs.appendFile(
+        chatHistoryPath,
+        JSON.stringify({ ...malformedBoundaryMessage, workspaceId }) + "\n"
+      );
+
+      const appendSummary = createMuxMessage(
+        `append-summary-${Date.now()}`,
+        "assistant",
+        "append summary",
+        {
+          timestamp: Date.now(),
+          compacted: "user",
+          agentId: "plan",
+        }
+      );
+
+      const appendResult = await env.orpc.workspace.replaceChatHistory({
+        workspaceId,
+        summaryMessage: appendSummary,
+        mode: "append-compaction-boundary",
+      });
+
+      expect(appendResult.success).toBe(true);
+
+      const data = await fs.readFile(chatHistoryPath, "utf-8");
+      const entries = data
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              id: string;
+              metadata?: {
+                compacted?: "user" | "idle" | boolean;
+                compactionBoundary?: boolean;
+                compactionEpoch?: number;
+              };
+            }
+        );
+
+      expect(entries.length).toBe(3);
+      expect(entries[0]?.id).toBe(legacySummary.id);
+      expect(entries[1]?.id).toBe(malformedBoundaryId);
+
+      const appendedEntry = entries[2];
+      expect(appendedEntry?.id).toBe(appendSummary.id);
+      expect(appendedEntry?.metadata?.compacted).toBe("user");
+      expect(appendedEntry?.metadata?.compactionBoundary).toBe(true);
+      // Legacy summary contributes epoch 1; malformed boundary must be ignored.
+      expect(appendedEntry?.metadata?.compactionEpoch).toBe(2);
+    } finally {
+      await env.orpc.workspace.remove({ workspaceId });
+    }
+  }, 30000);
+
   describe("openInEditor", () => {
     it("should return error when editor command not found", async () => {
       const branchName = generateBranchName("plan-open-test");

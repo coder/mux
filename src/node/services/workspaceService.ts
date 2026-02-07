@@ -158,6 +158,89 @@ function isPathInsideDir(dirPath: string, filePath: string): boolean {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
+function isPositiveInteger(value: unknown): value is number {
+  return (
+    typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value > 0
+  );
+}
+
+function hasDurableCompactedMarker(value: unknown): value is true | "user" | "idle" {
+  return value === true || value === "user" || value === "idle";
+}
+
+function isCompactedSummaryMessage(message: MuxMessage): boolean {
+  return hasDurableCompactedMarker(message.metadata?.compacted);
+}
+
+function getNextCompactionEpochForAppendBoundary(
+  workspaceId: string,
+  messages: MuxMessage[]
+): number {
+  let epochCursor = 0;
+
+  for (const message of messages) {
+    const metadata = message.metadata;
+    if (!metadata) {
+      continue;
+    }
+
+    const isCompactedSummary = isCompactedSummaryMessage(message);
+    const hasBoundaryMarker = metadata.compactionBoundary === true;
+    const epoch = metadata.compactionEpoch;
+
+    if (hasBoundaryMarker && !isCompactedSummary) {
+      // Self-healing read path: skip malformed persisted boundary markers.
+      // Boundary markers are only valid on compacted summaries.
+      log.warn("Skipping malformed compaction boundary while deriving next epoch", {
+        workspaceId,
+        messageId: message.id,
+        reason: "compactionBoundary set on non-compacted message",
+      });
+      continue;
+    }
+
+    if (!isCompactedSummary) {
+      continue;
+    }
+
+    if (hasBoundaryMarker) {
+      if (!isPositiveInteger(epoch)) {
+        // Self-healing read path: invalid boundary metadata should not brick compaction.
+        log.warn("Skipping malformed compaction boundary while deriving next epoch", {
+          workspaceId,
+          messageId: message.id,
+          reason: "compactionBoundary missing positive integer compactionEpoch",
+        });
+        continue;
+      }
+      epochCursor = Math.max(epochCursor, epoch);
+      continue;
+    }
+
+    if (epoch === undefined) {
+      // Legacy compacted summaries predate compactionEpoch metadata.
+      epochCursor += 1;
+      continue;
+    }
+
+    if (!isPositiveInteger(epoch)) {
+      // Self-healing read path: malformed compactionEpoch should not crash compaction.
+      log.warn("Skipping malformed compactionEpoch while deriving next epoch", {
+        workspaceId,
+        messageId: message.id,
+        reason: "compactionEpoch must be a positive integer when present",
+      });
+      continue;
+    }
+
+    epochCursor = Math.max(epochCursor, epoch);
+  }
+
+  const nextEpoch = epochCursor + 1;
+  assert(nextEpoch > 0, "next compaction epoch must be positive");
+  return nextEpoch;
+}
+
 async function copyFileBestEffort(params: {
   srcPath: string;
   destPath: string;
@@ -3252,7 +3335,10 @@ export class WorkspaceService extends EventEmitter {
   async replaceHistory(
     workspaceId: string,
     summaryMessage: MuxMessage,
-    options?: { deletePlanFile?: boolean }
+    options?: {
+      mode?: "destructive" | "append-compaction-boundary" | null;
+      deletePlanFile?: boolean;
+    }
   ): Promise<Result<void>> {
     // Support both new enum ("user"|"idle") and legacy boolean (true)
     const isCompaction = !!summaryMessage.metadata?.compacted;
@@ -3262,14 +3348,74 @@ export class WorkspaceService extends EventEmitter {
       );
     }
 
-    try {
-      const clearResult = await this.historyService.clearHistory(workspaceId);
-      if (!clearResult.success) {
-        return Err(`Failed to clear history: ${clearResult.error}`);
-      }
-      const deletedSequences = clearResult.data;
+    const replaceMode = options?.mode ?? "destructive";
 
-      const appendResult = await this.historyService.appendToHistory(workspaceId, summaryMessage);
+    try {
+      let messageToAppend = summaryMessage;
+      let deletedSequences: number[] = [];
+
+      if (replaceMode === "append-compaction-boundary") {
+        assert(
+          summaryMessage.role === "assistant",
+          "append-compaction-boundary replace mode requires an assistant summary message"
+        );
+
+        const historyResult = await this.historyService.getHistory(workspaceId);
+        if (!historyResult.success) {
+          return Err(
+            `Failed to read history for append-compaction-boundary mode: ${historyResult.error}`
+          );
+        }
+
+        const nextCompactionEpoch = getNextCompactionEpochForAppendBoundary(
+          workspaceId,
+          historyResult.data
+        );
+        assert(
+          isPositiveInteger(nextCompactionEpoch),
+          "append-compaction-boundary replace mode must compute a positive compaction epoch"
+        );
+
+        const compactedMarker = hasDurableCompactedMarker(summaryMessage.metadata?.compacted)
+          ? summaryMessage.metadata.compacted
+          : "user";
+
+        messageToAppend = {
+          ...summaryMessage,
+          metadata: {
+            ...(summaryMessage.metadata ?? {}),
+            compacted: compactedMarker,
+            compactionBoundary: true,
+            compactionEpoch: nextCompactionEpoch,
+          },
+        };
+
+        assert(
+          hasDurableCompactedMarker(messageToAppend.metadata?.compacted),
+          "append-compaction-boundary replace mode requires a durable compacted marker"
+        );
+        assert(
+          messageToAppend.metadata?.compactionBoundary === true,
+          "append-compaction-boundary replace mode must persist compactionBoundary=true"
+        );
+        assert(
+          isPositiveInteger(messageToAppend.metadata?.compactionEpoch),
+          "append-compaction-boundary replace mode must persist a positive compactionEpoch"
+        );
+      } else {
+        assert(
+          replaceMode === "destructive",
+          `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
+        );
+
+        const clearResult = await this.historyService.clearHistory(workspaceId);
+        if (!clearResult.success) {
+          return Err(`Failed to clear history: ${clearResult.error}`);
+        }
+        deletedSequences = clearResult.data;
+      }
+
+      const appendResult = await this.historyService.appendToHistory(workspaceId, messageToAppend);
       if (!appendResult.success) {
         return Err(`Failed to append summary message: ${appendResult.error}`);
       }
@@ -3289,7 +3435,7 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Add type: "message" for discriminated union (MuxMessage doesn't have it)
-      const typedSummaryMessage = { ...summaryMessage, type: "message" as const };
+      const typedSummaryMessage = { ...messageToAppend, type: "message" as const };
       if (session) {
         session.emitChatEvent(typedSummaryMessage);
       } else {
