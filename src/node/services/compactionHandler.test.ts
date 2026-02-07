@@ -125,6 +125,30 @@ const createCompactionRequest = (id = "req-1"): MuxMessage =>
     muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
   });
 
+const createSuccessfulFileEditMessage = (
+  id: string,
+  filePath: string,
+  diff: string,
+  metadata?: MuxMessage["metadata"]
+): MuxMessage => ({
+  id,
+  role: "assistant",
+  parts: [
+    {
+      type: "dynamic-tool",
+      toolCallId: `tool-${id}`,
+      toolName: "file_edit_replace_string",
+      state: "output-available",
+      input: { file_path: filePath },
+      output: { success: true, diff },
+    },
+  ],
+  metadata: {
+    timestamp: 1234,
+    ...(metadata ?? {}),
+  },
+});
+
 const createStreamEndEvent = (
   summary: string,
   metadata?: Record<string, unknown>
@@ -244,21 +268,11 @@ describe("CompactionHandler", () => {
     it("persists pending diffs to disk and reloads them on restart", async () => {
       const compactionReq = createCompactionRequest();
 
-      const fileEditMessage: MuxMessage = {
-        id: "assistant-edit",
-        role: "assistant",
-        parts: [
-          {
-            type: "dynamic-tool",
-            toolCallId: "t1",
-            toolName: "file_edit_replace_string",
-            state: "output-available",
-            input: { file_path: "/tmp/foo.ts" },
-            output: { success: true, diff: "@@ -1 +1 @@\n-foo\n+bar\n" },
-          },
-        ],
-        metadata: { timestamp: 1234 },
-      };
+      const fileEditMessage = createSuccessfulFileEditMessage(
+        "assistant-edit",
+        "/tmp/foo.ts",
+        "@@ -1 +1 @@\n-foo\n+bar\n"
+      );
 
       setupSuccessfulCompaction(mockHistoryService, [fileEditMessage, compactionReq]);
 
@@ -302,6 +316,97 @@ describe("CompactionHandler", () => {
         exists = false;
       }
       expect(exists).toBe(false);
+    });
+
+    it("persists only latest-epoch diffs when a durable compaction boundary exists", async () => {
+      const staleEditMessage = createSuccessfulFileEditMessage(
+        "assistant-stale-edit",
+        "/tmp/stale.ts",
+        "@@ -1 +1 @@\n-old\n+stale\n",
+        { historySequence: 0 }
+      );
+      const latestBoundary = createMuxMessage("summary-boundary", "assistant", "Older summary", {
+        historySequence: 1,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      });
+      const recentEditMessage = createSuccessfulFileEditMessage(
+        "assistant-recent-edit",
+        "/tmp/recent.ts",
+        "@@ -1 +1 @@\n-before\n+after\n",
+        { historySequence: 2 }
+      );
+      const compactionReq = createMuxMessage("req-latest-epoch", "user", "Please summarize", {
+        historySequence: 3,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      setupSuccessfulCompaction(mockHistoryService, [
+        staleEditMessage,
+        latestBoundary,
+        recentEditMessage,
+        compactionReq,
+      ]);
+
+      const handled = await handler.handleCompletion(createStreamEndEvent("Summary"));
+      expect(handled).toBe(true);
+
+      const pending = await handler.peekPendingDiffs();
+      expect(pending?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts"]);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const raw = await fsPromises.readFile(persistedPath, "utf-8");
+      const parsed = JSON.parse(raw) as { diffs?: Array<{ path: string }> };
+      expect(parsed.diffs?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts"]);
+    });
+
+    it("falls back to full-history diff extraction when boundary marker is malformed", async () => {
+      const staleEditMessage = createSuccessfulFileEditMessage(
+        "assistant-stale-edit",
+        "/tmp/stale.ts",
+        "@@ -1 +1 @@\n-old\n+stale\n",
+        { historySequence: 0 }
+      );
+      const malformedBoundaryMissingEpoch = createMuxMessage(
+        "summary-malformed-boundary",
+        "assistant",
+        "Malformed summary",
+        {
+          historySequence: 1,
+          compacted: "user",
+          compactionBoundary: true,
+          // Missing compactionEpoch should be treated as malformed and ignored.
+        }
+      );
+      const recentEditMessage = createSuccessfulFileEditMessage(
+        "assistant-recent-edit",
+        "/tmp/recent.ts",
+        "@@ -1 +1 @@\n-before\n+after\n",
+        { historySequence: 2 }
+      );
+      const compactionReq = createMuxMessage("req-malformed-boundary", "user", "Please summarize", {
+        historySequence: 3,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      setupSuccessfulCompaction(mockHistoryService, [
+        staleEditMessage,
+        malformedBoundaryMissingEpoch,
+        recentEditMessage,
+        compactionReq,
+      ]);
+
+      const handled = await handler.handleCompletion(createStreamEndEvent("Summary"));
+      expect(handled).toBe(true);
+
+      const pending = await handler.peekPendingDiffs();
+      expect(pending?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts", "/tmp/stale.ts"]);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const raw = await fsPromises.readFile(persistedPath, "utf-8");
+      const parsed = JSON.parse(raw) as { diffs?: Array<{ path: string }> };
+      expect(parsed.diffs?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts", "/tmp/stale.ts"]);
     });
     it("should return true when successful", async () => {
       const compactionReq = createCompactionRequest();

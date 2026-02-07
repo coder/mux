@@ -29,6 +29,7 @@ import {
   extractEditedFileDiffs,
   type FileEditDiff,
 } from "@/common/utils/messages/extractEditedFiles";
+import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 
 /**
  * Check if a string is just a raw JSON object, which suggests the model
@@ -582,8 +583,12 @@ export class CompactionHandler {
       // Continue anyway - the partial may not exist, which is fine
     }
 
-    // Extract diffs from current history before appending the boundary summary.
-    this.cachedFileDiffs = extractEditedFileDiffs(messages);
+    // Extract diffs from the latest compaction epoch only, so append-only history
+    // does not re-inject stale pre-boundary edits after subsequent compactions.
+    // If boundary markers are malformed, slicing self-heals by falling back to
+    // full history instead of crashing or dropping all diffs.
+    const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(messages);
+    this.cachedFileDiffs = extractEditedFileDiffs(latestCompactionEpochMessages);
 
     // Persist pending state before append so pre-compaction diffs survive crashes/restarts.
     // Best-effort: compaction must not fail just because persistence fails.
