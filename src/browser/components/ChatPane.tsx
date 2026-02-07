@@ -26,7 +26,10 @@ import {
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashOutputCollapsedIndicator } from "./tools/BashOutputCollapsedIndicator";
 import { enableAutoRetryPreference } from "@/browser/utils/messages/autoRetryPreference";
-import { getInterruptionContext } from "@/browser/utils/messages/retryEligibility";
+import {
+  getInterruptionContext,
+  getLastNonDecorativeMessage,
+} from "@/browser/utils/messages/retryEligibility";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useAutoScroll } from "@/browser/hooks/useAutoScroll";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
@@ -191,10 +194,7 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       ? transformedMessages
       : deferredTransformedMessages;
 
-  const latestMessageId =
-    deferredMessages.length > 0
-      ? (deferredMessages[deferredMessages.length - 1]?.id ?? null)
-      : null;
+  const latestMessageId = getLastNonDecorativeMessage(deferredMessages)?.id ?? null;
   const messageListContextValue = useMemo(
     () => ({
       workspaceId,
@@ -476,9 +476,10 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
     ? !workspaceState.canInterrupt && (interruption?.hasInterruptedStream ?? false)
     : false;
 
-  const lastMessage = workspaceState.messages[workspaceState.messages.length - 1];
+  const lastActionableMessage = getLastNonDecorativeMessage(workspaceState.messages);
   const suppressRetryBarrier =
-    lastMessage?.type === "stream-error" && lastMessage.errorType === "context_exceeded";
+    lastActionableMessage?.type === "stream-error" &&
+    lastActionableMessage.errorType === "context_exceeded";
   const showRetryBarrierUI = showRetryBarrier && !suppressRetryBarrier;
 
   // Handle keyboard shortcuts (using optional refs that are safe even if not initialized)
