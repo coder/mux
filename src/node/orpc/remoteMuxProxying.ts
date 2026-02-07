@@ -10,6 +10,7 @@ import { decodeRemoteWorkspaceId, encodeRemoteWorkspaceId } from "@/common/utils
 import type { ORPCContext } from "./context";
 import { createRemoteClient } from "@/node/remote/remoteOrpcClient";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import assert from "node:assert/strict";
 
 // -----------------------------------------------------------------------------
@@ -158,6 +159,21 @@ export function encodeRemoteIdBestEffort(serverId: string, remoteId: string): st
 export function getRemoteServersForWorkspaceViews(context: ORPCContext) {
   const config = context.config.loadConfigOrDefault();
   const servers = config.remoteServers ?? [];
+  if (servers.length === 0) return [];
+
+  // Backend kill-switch: honor config override, then fall back to experiment service.
+  // Config override "off" → force-disable (admin kill-switch).
+  // Config override "on" → force-enable (self-hosted without PostHog).
+  // Config override "default" → check experiment service (PostHog).
+  const override = context.config.getFeatureFlagOverride(EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
+  if (override === "off") return [];
+  if (
+    override === "default" &&
+    !context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.REMOTE_MUX_SERVERS)
+  ) {
+    return [];
+  }
+
   return servers.filter((server) => server.enabled !== false && server.projectMappings.length > 0);
 }
 

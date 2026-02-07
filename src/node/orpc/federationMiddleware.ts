@@ -12,6 +12,7 @@ import {
   rewriteRemoteWorkspaceChatMessageIds,
 } from "./remoteMuxProxying";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type {
   FrontendWorkspaceMetadataSchemaType,
   WorkspaceChatMessage,
@@ -413,6 +414,21 @@ function isExactPath(path: readonly string[], expected: readonly string[]): bool
 
 export function createFederationMiddleware() {
   return os.$context<ORPCContext>().middleware(async (options, input, output) => {
+    // Backend kill-switch for remote server federation.
+    // Config override "off" → force-disable (admin kill-switch).
+    // Config override "on" → force-enable (self-hosted without PostHog).
+    // Config override "default" → check experiment service (PostHog).
+    const override = options.context.config.getFeatureFlagOverride(
+      EXPERIMENT_IDS.REMOTE_MUX_SERVERS
+    );
+    if (override === "off") return options.next();
+    if (
+      override === "default" &&
+      !options.context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.REMOTE_MUX_SERVERS)
+    ) {
+      return options.next();
+    }
+
     // Skip routes that handle their own remote splitting
     if (isExactPath(options.path, ["workspace", "getSessionUsageBatch"])) {
       return options.next();
