@@ -96,10 +96,17 @@ if ! printf '%s' "${instruction}" | "${cmd[@]}" | tee "${MUX_OUTPUT_FILE}"; then
   fatal "mux agent session failed"
 fi
 
-# Extract usage and cost from run-complete event (emitted at end of --json run)
+# Extract usage and cost from the JSONL output.
+# Prefer the run-complete event (emitted at end of --json run) which has aggregated
+# totals. Fall back to summing usage-delta events when run-complete is missing
+# (e.g. process killed by timeout, stdout not flushed before exit).
 python3 -c '
 import json, sys
 result = {"input": 0, "output": 0, "cost_usd": None}
+# Track cumulative usage from usage-delta events (keyed by messageId).
+# Each usage-delta contains cumulative totals for its message, so we keep the
+# latest per message and sum across messages at the end.
+cumulative_by_msg = {}
 for line in open(sys.argv[1]):
     try:
         obj = json.loads(line)
@@ -108,7 +115,19 @@ for line in open(sys.argv[1]):
             result["input"] = usage.get("inputTokens", 0) or 0
             result["output"] = usage.get("outputTokens", 0) or 0
             result["cost_usd"] = obj.get("cost_usd")
-            break
-    except: pass
+            print(json.dumps(result))
+            sys.exit(0)
+        # Nested event wrapper: {"type":"event","payload":{"type":"usage-delta",...}}
+        payload = obj.get("payload") or obj
+        if payload.get("type") == "usage-delta":
+            msg_id = payload.get("messageId", "")
+            usage = payload.get("usage") or payload.get("cumulativeUsage") or {}
+            cumulative_by_msg[msg_id] = usage
+    except Exception:
+        pass
+# No run-complete found — aggregate the last usage-delta per message
+for usage in cumulative_by_msg.values():
+    result["input"] += (usage.get("inputTokens", 0) or 0)
+    result["output"] += (usage.get("outputTokens", 0) or 0)
 print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true
