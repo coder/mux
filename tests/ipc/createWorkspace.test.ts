@@ -600,9 +600,14 @@ exit 1
                   expect(outputLines.some((line) => line.includes("Syncing project files"))).toBe(
                     true
                   );
-                  expect(outputLines.some((line) => line.includes("Checking out branch"))).toBe(
-                    true
-                  );
+                  // SSH init creates a worktree (or checks out a branch on legacy workspaces)
+                  expect(
+                    outputLines.some(
+                      (line) =>
+                        line.includes("Checking out branch") ||
+                        line.includes("Creating worktree for branch")
+                    )
+                  ).toBe(true);
 
                   // Verify init-end event was emitted
                   const endEvents = filterEventsByType(allEvents, EVENT_TYPE_INIT_END);
