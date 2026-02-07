@@ -1,0 +1,141 @@
+import type http from "node:http";
+import type { Result } from "@/common/types/result";
+import { Err } from "@/common/types/result";
+import { closeServer } from "@/node/utils/oauthUtils";
+import { log } from "@/node/services/log";
+
+/**
+ * Shared desktop OAuth flow lifecycle manager.
+ *
+ * Four OAuth services (Gateway, Governor, Codex, MCP) track in-flight desktop
+ * flows with an identical `Map<string, DesktopFlow>` + `waitFor`/`cancel`/
+ * `finish`/`shutdownAll` pattern. This class extracts that shared lifecycle
+ * so each service can delegate flow bookkeeping here.
+ */
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface OAuthFlowEntry {
+  /** The loopback HTTP server (null for device-code flows). */
+  server: http.Server | null;
+  /** Deferred that resolves with the final flow result. */
+  resultDeferred: {
+    promise: Promise<Result<void, string>>;
+    resolve: (value: Result<void, string>) => void;
+  };
+  /** Handle for the server-side timeout (set by `waitFor`). */
+  timeoutHandle: ReturnType<typeof setTimeout> | null;
+}
+
+// ---------------------------------------------------------------------------
+// Manager
+// ---------------------------------------------------------------------------
+
+export class OAuthFlowManager {
+  private readonly flows = new Map<string, OAuthFlowEntry>();
+
+  /** Register a new in-flight flow. */
+  register(flowId: string, entry: OAuthFlowEntry): void {
+    this.flows.set(flowId, entry);
+  }
+
+  /** Get a flow entry by ID, or undefined if not found. */
+  get(flowId: string): OAuthFlowEntry | undefined {
+    return this.flows.get(flowId);
+  }
+
+  /** Check whether a flow exists. */
+  has(flowId: string): boolean {
+    return this.flows.has(flowId);
+  }
+
+  /**
+   * Wait for a flow to complete, with a timeout.
+   *
+   * Mirrors the `waitForDesktopFlow` pattern shared across all four services:
+   * - Sets up a timeout that races against the deferred promise.
+   * - Stores the timeout handle in the entry for cleanup.
+   * - On timeout/error, calls `finish` to close the server and clean up.
+   */
+  async waitFor(flowId: string, timeoutMs: number): Promise<Result<void, string>> {
+    const flow = this.flows.get(flowId);
+    if (!flow) {
+      return Err("OAuth flow not found");
+    }
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<Result<void, string>>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        resolve(Err("Timed out waiting for OAuth callback"));
+      }, timeoutMs);
+    });
+
+    const result = await Promise.race([flow.resultDeferred.promise, timeoutPromise]);
+
+    if (timeoutHandle !== null) {
+      clearTimeout(timeoutHandle);
+    }
+
+    if (!result.success) {
+      // Ensure listener is closed on timeout/errors.
+      void this.finish(flowId, result);
+    }
+
+    return result;
+  }
+
+  /**
+   * Cancel a flow — resolves the deferred with an error and cleans up.
+   *
+   * Mirrors the `cancelDesktopFlow` pattern.
+   */
+  async cancel(flowId: string): Promise<void> {
+    const flow = this.flows.get(flowId);
+    if (!flow) return;
+
+    await this.finish(flowId, Err("OAuth flow cancelled"));
+  }
+
+  /**
+   * Finish a flow: resolve the deferred, clear the timeout, close the server,
+   * and remove the entry from the map.
+   *
+   * Idempotent — no-op if the flow was already removed. Mirrors the
+   * `finishDesktopFlow` pattern.
+   */
+  async finish(flowId: string, result: Result<void, string>): Promise<void> {
+    const flow = this.flows.get(flowId);
+    if (!flow) return;
+
+    // Remove from map first to make re-entrant calls no-ops.
+    this.flows.delete(flowId);
+
+    if (flow.timeoutHandle !== null) {
+      clearTimeout(flow.timeoutHandle);
+    }
+
+    try {
+      flow.resultDeferred.resolve(result);
+
+      if (flow.server) {
+        // Stop accepting new connections.
+        await closeServer(flow.server);
+      }
+    } catch (error) {
+      log.debug("Failed to close OAuth callback listener:", error);
+    }
+  }
+
+  /**
+   * Shut down all active flows — resolves each with an error.
+   *
+   * Mirrors the `dispose` pattern where services iterate all flows
+   * and finish them with `Err("App shutting down")`.
+   */
+  async shutdownAll(): Promise<void> {
+    const flowIds = [...this.flows.keys()];
+    await Promise.all(flowIds.map((id) => this.finish(id, Err("App shutting down"))));
+  }
+}
