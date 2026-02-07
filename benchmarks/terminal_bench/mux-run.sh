@@ -20,7 +20,14 @@ export BUN_INSTALL="${BUN_INSTALL:-/root/.bun}"
 export PATH="${BUN_INSTALL}/bin:${PATH}"
 
 MUX_APP_ROOT="${MUX_APP_ROOT:-/opt/mux-app}"
-MUX_CONFIG_ROOT="${MUX_CONFIG_ROOT:-/root/.mux}"
+
+# Prefer an explicit MUX_CONFIG_ROOT, but fall back to MUX_ROOT for callers that
+# only override the mux home via MUX_ROOT.
+MUX_CONFIG_ROOT="${MUX_CONFIG_ROOT:-${MUX_ROOT:-/root/.mux}}"
+
+# Export MUX_ROOT so mux's getMuxHome() finds providers.jsonc and other config.
+# Don't clobber caller-provided MUX_ROOT (e.g. local runs/tests with a custom root).
+export MUX_ROOT="${MUX_ROOT:-${MUX_CONFIG_ROOT}}"
 MUX_PROJECT_PATH="${MUX_PROJECT_PATH:-}"
 MUX_PROJECT_CANDIDATES="${MUX_PROJECT_CANDIDATES:-/workspace:/app:/workspaces:/root/project}"
 MUX_MODEL="${MUX_MODEL:-anthropic:claude-sonnet-4-5}"
@@ -81,7 +88,13 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
   done
 fi
 
-MUX_OUTPUT_FILE="/tmp/mux-output.jsonl"
+# NOTE: Harbor only automatically collects /logs/agent on timeouts.
+# Persist stdout/stderr there so we can inspect partial agent output even when
+# the trial hits AgentTimeoutError and the exec call is cancelled.
+MUX_LOG_DIR="/logs/agent/command-0"
+mkdir -p "${MUX_LOG_DIR}"
+MUX_OUTPUT_FILE="${MUX_LOG_DIR}/stdout.txt"
+MUX_STDERR_FILE="${MUX_LOG_DIR}/stderr.txt"
 MUX_TOKEN_FILE="/tmp/mux-tokens.json"
 
 # Wrap command with timeout if MUX_TIMEOUT_MS is set (converts ms to seconds)
@@ -90,9 +103,12 @@ if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
   cmd=(timeout "${timeout_sec}s" "${cmd[@]}")
 fi
 
-# Terminal-bench enforces timeouts via --global-agent-timeout-sec
-# Capture output to file while streaming to terminal for token extraction
-if ! printf '%s' "${instruction}" | "${cmd[@]}" | tee "${MUX_OUTPUT_FILE}"; then
+# Capture output to file while streaming to terminal for token extraction.
+# Keep stderr separate so the stdout log stays valid JSONL.
+if ! printf '%s' "${instruction}" \
+  | "${cmd[@]}" \
+    2> >(tee "${MUX_STDERR_FILE}" >&2) \
+  | tee "${MUX_OUTPUT_FILE}"; then
   fatal "mux agent session failed"
 fi
 
