@@ -145,7 +145,12 @@ async function main() {
 
   try {
     // Stream the message - pass all messages including the new one
-    const result = await aiService.streamMessage(messages, workspaceId, modelString, thinkingLevel);
+    const result = await aiService.streamMessage({
+      messages,
+      workspaceId,
+      modelString,
+      thinkingLevel,
+    });
 
     if (!result.success) {
       console.error(`\n❌ Error:`, JSON.stringify(result.error, null, 2));

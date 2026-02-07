@@ -939,27 +939,27 @@ export class AgentSession {
     // Bind recordFileState to this session for the propose_plan tool
     const recordFileState = this.fileChangeTracker.record.bind(this.fileChangeTracker);
 
-    const streamResult = await this.aiService.streamMessage(
-      historyResult.data,
-      this.workspaceId,
+    const streamResult = await this.aiService.streamMessage({
+      messages: historyResult.data,
+      workspaceId: this.workspaceId,
       modelString,
-      effectiveThinkingLevel,
-      options?.toolPolicy,
-      undefined,
-      options?.additionalSystemInstructions,
-      options?.maxOutputTokens,
-      options?.providerOptions,
-      options?.agentId,
+      thinkingLevel: effectiveThinkingLevel,
+      toolPolicy: options?.toolPolicy,
+      additionalSystemInstructions: options?.additionalSystemInstructions,
+      maxOutputTokens: options?.maxOutputTokens,
+      muxProviderOptions: options?.providerOptions,
+      agentId: options?.agentId,
       recordFileState,
-      changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
+      changedFileAttachments:
+        changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
-      options?.experiments,
-      options?.system1Model,
-      options?.system1ThinkingLevel,
-      options?.disableWorkspaceAgents,
-      () => !this.messageQueue.isEmpty(),
-      openaiTruncationModeOverride
-    );
+      experiments: options?.experiments,
+      system1Model: options?.system1Model,
+      system1ThinkingLevel: options?.system1ThinkingLevel,
+      disableWorkspaceAgents: options?.disableWorkspaceAgents,
+      hasQueuedMessage: () => !this.messageQueue.isEmpty(),
+      openaiTruncationModeOverride,
+    });
 
     if (!streamResult.success) {
       this.activeCompactionRequest = undefined;

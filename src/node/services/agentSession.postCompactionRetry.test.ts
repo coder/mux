@@ -160,13 +160,18 @@ describe("AgentSession post-compaction context retry", () => {
 
     expect(streamMessage).toHaveBeenCalledTimes(2);
 
-    const firstAttachments = (streamMessage as ReturnType<typeof mock>).mock
-      .calls[0][12] as unknown;
-    expect(Array.isArray(firstAttachments)).toBe(true);
+    // With the options bag, arg[0] is the StreamMessageOptions object.
+    const firstOpts = (streamMessage as ReturnType<typeof mock>).mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect(Array.isArray(firstOpts.postCompactionAttachments)).toBe(true);
 
-    const secondAttachments = (streamMessage as ReturnType<typeof mock>).mock
-      .calls[1][12] as unknown;
-    expect(secondAttachments).toBeNull();
+    const secondOpts = (streamMessage as ReturnType<typeof mock>).mock.calls[1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(secondOpts.postCompactionAttachments).toBeNull();
 
     expect((historyService.deleteMessage as ReturnType<typeof mock>).mock.calls[0][1]).toBe(
       "assistant-ctx-exceeded"
@@ -389,9 +394,11 @@ describe("AgentSession execSubagentHardRestart", () => {
     ).toBe("user-1");
 
     // Retry should include the continuation notice in additionalSystemInstructions.
-    const retryAdditionalSystemInstructions = (streamMessage as ReturnType<typeof mock>).mock
-      .calls[1][6] as unknown;
-    expect(String(retryAdditionalSystemInstructions)).toContain("restarted");
+    const retryOpts = (streamMessage as ReturnType<typeof mock>).mock.calls[1][0] as Record<
+      string,
+      unknown
+    >;
+    expect(String(retryOpts.additionalSystemInstructions)).toContain("restarted");
 
     session.dispose();
   });

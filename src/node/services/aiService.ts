@@ -68,6 +68,44 @@ import {
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 
+// ---------------------------------------------------------------------------
+// streamMessage options
+// ---------------------------------------------------------------------------
+
+/** Options bag for {@link AIService.streamMessage}. */
+export interface StreamMessageOptions {
+  messages: MuxMessage[];
+  workspaceId: string;
+  modelString: string;
+  thinkingLevel?: ThinkingLevel;
+  toolPolicy?: ToolPolicy;
+  abortSignal?: AbortSignal;
+  additionalSystemInstructions?: string;
+  maxOutputTokens?: number;
+  muxProviderOptions?: MuxProviderOptions;
+  agentId?: string;
+  recordFileState?: (filePath: string, state: FileState) => void;
+  changedFileAttachments?: EditedFileAttachment[];
+  postCompactionAttachments?: PostCompactionAttachment[] | null;
+  experiments?: SendMessageOptions["experiments"];
+  system1Model?: string;
+  system1ThinkingLevel?: ThinkingLevel;
+  disableWorkspaceAgents?: boolean;
+  hasQueuedMessage?: () => boolean;
+  openaiTruncationModeOverride?: "auto" | "disabled";
+}
+
+// ---------------------------------------------------------------------------
+// Utility: deep-clone with structuredClone fallback
+// ---------------------------------------------------------------------------
+
+/** Deep-clone a value using structuredClone (with JSON fallback). */
+function safeClone<T>(value: T): T {
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : (JSON.parse(JSON.stringify(value)) as T);
+}
+
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
   private readonly historyService: HistoryService;
@@ -192,12 +230,7 @@ export class AIService extends EventEmitter {
               },
             };
 
-            const cloned =
-              typeof structuredClone === "function"
-                ? structuredClone(updated)
-                : (JSON.parse(JSON.stringify(updated)) as DebugLlmRequestSnapshot);
-
-            this.lastLlmRequestByWorkspace.set(data.workspaceId, cloned);
+            this.lastLlmRequestByWorkspace.set(data.workspaceId, safeClone(updated));
           }
         }
       } catch (error) {
@@ -287,27 +320,28 @@ export class AIService extends EventEmitter {
   }
 
   /** Stream a message conversation to the AI model. */
-  async streamMessage(
-    messages: MuxMessage[],
-    workspaceId: string,
-    modelString: string,
-    thinkingLevel?: ThinkingLevel,
-    toolPolicy?: ToolPolicy,
-    abortSignal?: AbortSignal,
-    additionalSystemInstructions?: string,
-    maxOutputTokens?: number,
-    muxProviderOptions?: MuxProviderOptions,
-    agentId?: string,
-    recordFileState?: (filePath: string, state: FileState) => void,
-    changedFileAttachments?: EditedFileAttachment[],
-    postCompactionAttachments?: PostCompactionAttachment[] | null,
-    experiments?: SendMessageOptions["experiments"],
-    system1Model?: string,
-    system1ThinkingLevel?: ThinkingLevel,
-    disableWorkspaceAgents?: boolean,
-    hasQueuedMessage?: () => boolean,
-    openaiTruncationModeOverride?: "auto" | "disabled"
-  ): Promise<Result<void, SendMessageError>> {
+  async streamMessage(opts: StreamMessageOptions): Promise<Result<void, SendMessageError>> {
+    const {
+      messages,
+      workspaceId,
+      modelString,
+      thinkingLevel,
+      toolPolicy,
+      abortSignal,
+      additionalSystemInstructions,
+      maxOutputTokens,
+      muxProviderOptions,
+      agentId,
+      recordFileState,
+      changedFileAttachments,
+      postCompactionAttachments,
+      experiments,
+      system1Model,
+      system1ThinkingLevel,
+      disableWorkspaceAgents,
+      hasQueuedMessage,
+      openaiTruncationModeOverride,
+    } = opts;
     // Support interrupts during startup (before StreamManager emits stream-start).
     // We register an AbortController up-front and let stopStream() abort it.
     const pendingAbortController = new AbortController();
@@ -382,34 +416,20 @@ export class AIService extends EventEmitter {
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
 
-      // Normalize provider for provider-specific handling (Mux Gateway models should behave
-      // like their underlying provider for message transforms and compliance checks).
-      const providerForMessages = canonicalProviderName;
-
-      // Tool names are needed for the mode transition sentinel injection.
-      // Compute them once we know the effective agent + tool policy.
+      // toolNamesForSentinel is set after agent resolution below, used in message pipeline.
       let toolNamesForSentinel: string[] = [];
 
       // Filter out assistant messages with only reasoning (no text/tools)
       // EXCEPTION: When extended thinking is enabled, preserve reasoning-only messages
       // to comply with Extended Thinking API requirements
       const preserveReasoningOnly =
-        providerForMessages === "anthropic" && effectiveThinkingLevel !== "off";
+        canonicalProviderName === "anthropic" && effectiveThinkingLevel !== "off";
       const filteredMessages = filterEmptyAssistantMessages(messages, preserveReasoningOnly);
       log.debug(`Filtered ${messages.length - filteredMessages.length} empty assistant messages`);
       log.debug_obj(`${workspaceId}/1a_filtered_messages.json`, filteredMessages);
 
-      // OpenAI-specific: Keep reasoning parts in history
-      // OpenAI manages conversation state via previousResponseId
-      if (providerForMessages === "openai") {
-        log.debug("Keeping reasoning parts for OpenAI (managed via previousResponseId)");
-      }
-
       // Add [CONTINUE] sentinel to partial messages (for model context)
       const messagesWithSentinel = addInterruptedSentinel(filteredMessages);
-
-      // Note: Further message processing (mode transition, file changes, etc.) happens
-      // after runtime is created below, as we need runtime to read the plan file
 
       // Get workspace metadata to retrieve workspace path
       const metadataResult = await this.getWorkspaceMetadata(workspaceId);
@@ -429,13 +449,9 @@ export class AIService extends EventEmitter {
       }
       const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
 
-      // Get actual workspace path from config (handles both legacy and new format)
-      const workspace = this.config.findWorkspace(workspaceId);
-      if (!workspace) {
+      if (!this.config.findWorkspace(workspaceId)) {
         return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
       }
-
-      // Get workspace path - handle both worktree and in-place modes
       const runtime = createRuntime(metadata.runtimeConfig, {
         projectPath: metadata.projectPath,
         workspaceName: metadata.name,
@@ -584,7 +600,7 @@ export class AIService extends EventEmitter {
         runtime,
         workspacePath,
         abortSignal: combinedAbortSignal,
-        providerForMessages,
+        providerForMessages: canonicalProviderName,
         effectiveThinkingLevel,
         modelString,
         canonicalModelId,
@@ -717,6 +733,10 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
+      // Create assistant message ID early so the PTC callback closure captures it.
+      // The placeholder is appended to history below (after abort check).
+      const assistantMessageId = createAssistantMessageId();
+
       // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
       const tools = await applyToolPolicyAndExperiments({
         allTools,
@@ -745,12 +765,10 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
       });
 
-      // Create assistant message placeholder with historySequence from backend
-
       if (combinedAbortSignal.aborted) {
         return Ok(undefined);
       }
-      const assistantMessageId = createAssistantMessageId();
+
       const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
         timestamp: Date.now(),
         model: canonicalModelString,
@@ -820,31 +838,30 @@ export class AIService extends EventEmitter {
       );
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
-      // This helps diagnose issues with system prompts, messages, tools, etc.
       if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
-        const llmRequest = {
-          workspaceId,
-          model: modelString,
-          systemMessage,
-          messages: finalMessages,
-          tools: Object.fromEntries(
-            Object.entries(tools).map(([name, tool]) => [
-              name,
-              {
-                description: tool.description,
-                inputSchema: tool.inputSchema,
-              },
-            ])
-          ),
-          providerOptions,
-          thinkingLevel: effectiveThinkingLevel,
-          maxOutputTokens,
-          mode: effectiveMode,
-          agentId: effectiveAgentId,
-          toolPolicy: effectiveToolPolicy,
-        };
         log.info(
-          `[MUX_DEBUG_LLM_REQUEST] Full LLM request:\n${JSON.stringify(llmRequest, null, 2)}`
+          `[MUX_DEBUG_LLM_REQUEST] Full LLM request:\n${JSON.stringify(
+            {
+              workspaceId,
+              model: modelString,
+              systemMessage,
+              messages: finalMessages,
+              tools: Object.fromEntries(
+                Object.entries(tools).map(([n, t]) => [
+                  n,
+                  { description: t.description, inputSchema: t.inputSchema },
+                ])
+              ),
+              providerOptions,
+              thinkingLevel: effectiveThinkingLevel,
+              maxOutputTokens,
+              mode: effectiveMode,
+              agentId: effectiveAgentId,
+              toolPolicy: effectiveToolPolicy,
+            },
+            null,
+            2
+          )}`
         );
       }
 
@@ -869,12 +886,7 @@ export class AIService extends EventEmitter {
       };
 
       try {
-        const cloned =
-          typeof structuredClone === "function"
-            ? structuredClone(snapshot)
-            : (JSON.parse(JSON.stringify(snapshot)) as DebugLlmRequestSnapshot);
-
-        this.lastLlmRequestByWorkspace.set(workspaceId, cloned);
+        this.lastLlmRequestByWorkspace.set(workspaceId, safeClone(snapshot));
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         workspaceLog.warn("Failed to capture debug LLM request snapshot", { error: errMsg });
