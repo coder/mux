@@ -14,6 +14,7 @@ import {
   buildAnthropicHeaders,
   buildAppAttributionHeaders,
   ANTHROPIC_1M_CONTEXT_HEADER,
+  type ProviderModelFactory,
 } from "./providerModelFactory";
 import { HistoryService } from "./historyService";
 import { PartialService } from "./partialService";
@@ -971,10 +972,29 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
 
     const fakeModel = Object.create(null) as LanguageModel;
-    spyOn(service, "createModel").mockResolvedValue({
+    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in streamMessage test harness");
+    }
+
+    const resolveAndCreateModelResult: Awaited<
+      ReturnType<ProviderModelFactory["resolveAndCreateModel"]>
+    > = {
       success: true,
-      data: fakeModel,
-    });
+      data: {
+        model: fakeModel,
+        effectiveModelString: "openai:gpt-5.2",
+        canonicalModelString: "openai:gpt-5.2",
+        canonicalProviderName: "openai",
+        canonicalModelId: "gpt-5.2",
+        routedThroughGateway: false,
+      },
+    };
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue(
+      resolveAndCreateModelResult
+    );
 
     spyOn(service, "getWorkspaceMetadata").mockResolvedValue({
       success: true,
