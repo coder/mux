@@ -91,14 +91,14 @@ test.describe("slash command flows", () => {
 
     await ui.chat.expectStatusMessageContains("Compaction started");
 
-    // Compaction now uses direct text streaming instead of a tool call
-    // Verify the summary text appears in the transcript
+    // Compaction now appends a summary boundary to the existing transcript.
     const transcript = page.getByRole("log", { name: "Conversation transcript" });
     await ui.chat.expectTranscriptContains(MOCK_COMPACTION_SUMMARY_PREFIX);
     await expect(transcript).toContainText(MOCK_COMPACTION_SUMMARY_PREFIX);
-    // Note: The old "📦 compacted" label was removed - compaction now shows only summary text
-    await expect(transcript).not.toContainText("Mock README content");
-    await expect(transcript).not.toContainText("Directory listing:");
+    await expect(transcript).toContainText("Compaction boundary");
+    await expect(transcript).toContainText("Resume after compaction");
+    await expect(transcript).toContainText("Mock README content");
+    await expect(transcript).toContainText("Directory listing:");
   });
 
   test("slash command /model sonnet switches models for subsequent turns", async ({ ui, page }) => {
