@@ -1386,6 +1386,96 @@ describeIntegration("Runtime integration tests", () => {
       }
     }, 60000);
 
+    test("forkWorkspace falls back to cp when base repo exists but source branch is missing from it", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `wt-mixed-fork-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+      const sourceWorkspacePath = `${srcBaseDir}/${projectName}/legacy-ws`;
+      const newWorkspaceName = "forked-mixed";
+      const newWorkspacePath = `${srcBaseDir}/${projectName}/${newWorkspaceName}`;
+
+      try {
+        // 1. Create a bare base repo with a commit on 'main' (simulates a previous initWorkspace).
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${srcBaseDir}/${projectName}"`,
+            `git init --bare "${baseRepoPath}"`,
+            `TMPCLONE=$(mktemp -d)`,
+            `git clone "${baseRepoPath}" "$TMPCLONE/work"`,
+            `cd "$TMPCLONE/work"`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "base" > base.txt`,
+            `git add base.txt`,
+            `git commit -m "initial"`,
+            `git push origin HEAD:main`,
+            `rm -rf "$TMPCLONE"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // 2. Create a legacy workspace (full clone) with a branch that does NOT exist in the base repo.
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${sourceWorkspacePath}"`,
+            `cd "${sourceWorkspacePath}"`,
+            `git init`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "legacy content" > legacy.txt`,
+            `git add legacy.txt`,
+            `git commit -m "legacy commit"`,
+            `git checkout -b only-on-legacy`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Confirm base repo exists (so forkWorkspace will try the worktree path first).
+        const baseCheck = await execBuffered(
+          runtime,
+          `test -d "${baseRepoPath}" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(baseCheck.stdout.trim()).toBe("exists");
+
+        // 3. Fork the legacy workspace — should fall back to cp since "only-on-legacy"
+        //    doesn't exist in the base repo.
+        const forkResult = await runtime.forkWorkspace({
+          projectPath,
+          sourceWorkspaceName: "legacy-ws",
+          newWorkspaceName,
+          initLogger: noopInitLogger,
+        });
+
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+        expect(forkResult.sourceBranch).toBe("only-on-legacy");
+
+        // 4. Verify the forked workspace is a full clone (cp -R -P path), not a worktree.
+        const gitTypeCheck = await execBuffered(
+          runtime,
+          `test -d "${newWorkspacePath}/.git" && echo "dir" || echo "not-dir"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(gitTypeCheck.stdout.trim()).toBe("dir");
+
+        // 5. Verify content was copied.
+        const fileCheck = await execBuffered(runtime, `cat "${newWorkspacePath}/legacy.txt"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+        expect(fileCheck.stdout.trim()).toBe("legacy content");
+      } finally {
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 60000);
+
     test("deleteWorkspace removes worktree and cleans up base repo metadata", async () => {
       const runtime = createSSHRuntime();
       const projectName = `wt-delete-${Date.now()}-${Math.random().toString(36).substring(7)}`;
