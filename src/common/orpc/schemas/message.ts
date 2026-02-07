@@ -114,6 +114,10 @@ export const MuxMessageSchema = z.object({
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
       // Compaction source: "user" (manual), "idle" (auto), or legacy boolean (true)
       compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
+      // Monotonic compaction epoch id. Incremented whenever compaction succeeds.
+      compactionEpoch: z.number().int().positive().optional(),
+      // Durable boundary marker for compaction summaries.
+      compactionBoundary: z.boolean().optional(),
       toolPolicy: z.any().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
       partial: z.boolean().optional(),
