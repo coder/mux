@@ -131,6 +131,7 @@ export class CodexOauthService {
         callbackPath: "/auth/callback",
         validateLoopback: true,
         expectedState: flowId,
+        deferSuccessResponse: true,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -180,6 +181,12 @@ export class CodexOauthService {
         error: null,
         errorDescription: undefined,
       });
+
+      if (exchangeResult.success) {
+        loopback.sendSuccessResponse();
+      } else {
+        loopback.sendFailureResponse(exchangeResult.error);
+      }
 
       await this.desktopFlows.finish(flowId, exchangeResult);
     })();

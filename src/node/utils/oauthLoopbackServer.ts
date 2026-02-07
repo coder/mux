@@ -28,6 +28,14 @@ export interface LoopbackServerOptions {
   validateLoopback?: boolean;
   /** Custom HTML renderer. If not provided, uses renderOAuthCallbackHtml with generic branding. */
   renderHtml?: (result: { success: boolean; error?: string }) => string;
+  /**
+   * Defer success-page rendering until the caller finishes token exchange.
+   *
+   * When true, a valid callback resolves `result` but does not immediately
+   * respond to the browser tab. The caller must later call
+   * `sendSuccessResponse()` or `sendFailureResponse()`.
+   */
+  deferSuccessResponse?: boolean;
 }
 
 export interface LoopbackCallbackResult {
@@ -46,6 +54,10 @@ export interface LoopbackServer {
   cancel: () => Promise<void>;
   /** Close the server. */
   close: () => Promise<void>;
+  /** Send a deferred success page to the callback browser tab. */
+  sendSuccessResponse: () => void;
+  /** Send a deferred failure page to the callback browser tab. */
+  sendFailureResponse: (error: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +95,7 @@ function isLoopbackAddress(address: string | undefined): boolean {
  * 2. Matches only GET requests on `callbackPath`.
  * 3. Validates the `state` query parameter against `expectedState`.
  * 4. Extracts `code` from the query string.
- * 5. Responds with HTML (success or error).
+ * 5. Responds with HTML (success or error) unless success is deferred.
  * 6. Resolves the result deferred — the caller then performs token exchange
  *    and calls `close()`.
  *
@@ -96,8 +108,10 @@ export async function startLoopbackServer(options: LoopbackServerOptions): Promi
   const host = options.host ?? "127.0.0.1";
   const callbackPath = options.callbackPath ?? "/callback";
   const validateLoopback = options.validateLoopback ?? false;
+  const deferSuccessResponse = options.deferSuccessResponse ?? false;
 
   const deferred = createDeferred<Result<LoopbackCallbackResult, string>>();
+  let deferredSuccessResponse: http.ServerResponse | null = null;
 
   const render =
     options.renderHtml ??
@@ -109,6 +123,37 @@ export async function startLoopbackServer(options: LoopbackServerOptions): Promi
           : (r.error ?? "Unknown error"),
         success: r.success,
       }));
+
+  const clearDeferredSuccessResponse = (response: http.ServerResponse) => {
+    if (deferredSuccessResponse === response) {
+      deferredSuccessResponse = null;
+    }
+  };
+
+  const sendDeferredResponse = (result: { success: boolean; error?: string }) => {
+    const pendingResponse = deferredSuccessResponse;
+    if (!pendingResponse || pendingResponse.writableEnded || pendingResponse.destroyed) {
+      deferredSuccessResponse = null;
+      return;
+    }
+
+    deferredSuccessResponse = null;
+    pendingResponse.statusCode = result.success ? 200 : 400;
+    pendingResponse.setHeader("Content-Type", "text/html");
+    pendingResponse.end(render(result));
+  };
+
+  const sendSuccessResponse = () => {
+    sendDeferredResponse({ success: true });
+  };
+
+  const sendFailureResponse = (error: string) => {
+    sendDeferredResponse({ success: false, error });
+  };
+
+  const sendCancelledResponseIfPending = () => {
+    sendFailureResponse("OAuth flow cancelled");
+  };
 
   const server = http.createServer((req, res) => {
     // Optionally reject non-loopback connections (Codex sets validateLoopback: true).
@@ -158,10 +203,33 @@ export async function startLoopbackServer(options: LoopbackServerOptions): Promi
       return;
     }
 
+    if (deferSuccessResponse) {
+      if (deferredSuccessResponse && !deferredSuccessResponse.writableEnded) {
+        res.statusCode = 409;
+        res.setHeader("Content-Type", "text/html");
+        res.end(render({ success: false, error: "OAuth callback already received" }));
+        return;
+      }
+
+      deferredSuccessResponse = res;
+      res.once("close", () => clearDeferredSuccessResponse(res));
+      deferred.resolve(Ok({ code, state }));
+      return;
+    }
+
     res.setHeader("Content-Type", "text/html");
+    res.statusCode = 200;
     res.end(render({ success: true }));
     deferred.resolve(Ok({ code, state }));
   });
+
+  // Ensure pending deferred browser responses are completed before server close,
+  // even when callers close via the raw `server` handle (e.g. OAuthFlowManager).
+  const originalClose = server.close.bind(server);
+  server.close = ((callback?: (err?: Error) => void) => {
+    sendCancelledResponseIfPending();
+    return originalClose(callback);
+  }) as typeof server.close;
 
   // Listen on the specified host/port — mirrors the existing
   // `server.listen(port, host, () => resolve())` pattern.
@@ -184,8 +252,14 @@ export async function startLoopbackServer(options: LoopbackServerOptions): Promi
     result: deferred.promise,
     cancel: async () => {
       deferred.resolve(Err("OAuth flow cancelled"));
+      sendCancelledResponseIfPending();
       await closeServer(server);
     },
-    close: () => closeServer(server),
+    close: async () => {
+      sendCancelledResponseIfPending();
+      await closeServer(server);
+    },
+    sendSuccessResponse,
+    sendFailureResponse,
   };
 }

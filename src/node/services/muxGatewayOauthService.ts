@@ -40,6 +40,7 @@ export class MuxGatewayOauthService {
     try {
       loopback = await startLoopbackServer({
         expectedState: flowId,
+        deferSuccessResponse: true,
         renderHtml: (r) =>
           renderOAuthCallbackHtml({
             title: r.success ? "Login complete" : "Login failed",
@@ -89,6 +90,12 @@ export class MuxGatewayOauthService {
           code: callbackOrDone.data.code,
           error: null,
         });
+
+        if (result.success) {
+          loopback.sendSuccessResponse();
+        } else {
+          loopback.sendFailureResponse(result.error);
+        }
       } else {
         result = Err(`Mux Gateway OAuth error: ${callbackOrDone.error}`);
       }

@@ -15,13 +15,15 @@ function portFromUri(uri: string): number {
 /** Simple GET helper that returns { status, body }. */
 async function httpGet(url: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    http.get(url, (res) => {
-      let body = "";
-      res.on("data", (chunk: Buffer) => {
-        body += chunk.toString();
-      });
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
-    }).on("error", reject);
+    http
+      .get(url, (res) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      })
+      .on("error", reject);
   });
 }
 
@@ -150,6 +152,69 @@ describe("startLoopbackServer", () => {
 
     const result = await loopback.result;
     expect(result.success).toBe(true);
+  });
+
+  it("defers success response until sendSuccessResponse is called", async () => {
+    loopback = await startLoopbackServer({
+      expectedState: "s1",
+      deferSuccessResponse: true,
+    });
+
+    const callbackUrl = `${loopback.redirectUri}?state=s1&code=c1`;
+    const responsePromise = httpGet(callbackUrl);
+
+    const callbackResult = await loopback.result;
+    expect(callbackResult.success).toBe(true);
+
+    const responseState = await Promise.race([
+      responsePromise.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 25)),
+    ]);
+    expect(responseState).toBe("pending");
+
+    loopback.sendSuccessResponse();
+
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
+    expect(response.body).toContain("Login complete");
+  });
+
+  it("can send deferred failure response after receiving a valid code", async () => {
+    loopback = await startLoopbackServer({
+      expectedState: "s1",
+      deferSuccessResponse: true,
+    });
+
+    const callbackUrl = `${loopback.redirectUri}?state=s1&code=c1`;
+    const responsePromise = httpGet(callbackUrl);
+
+    const callbackResult = await loopback.result;
+    expect(callbackResult.success).toBe(true);
+
+    loopback.sendFailureResponse("Token exchange failed");
+
+    const response = await responsePromise;
+    expect(response.status).toBe(400);
+    expect(response.body).toContain("Token exchange failed");
+  });
+
+  it("sends a cancellation response if deferred callback is still pending during close", async () => {
+    loopback = await startLoopbackServer({
+      expectedState: "s1",
+      deferSuccessResponse: true,
+    });
+
+    const callbackUrl = `${loopback.redirectUri}?state=s1&code=c1`;
+    const responsePromise = httpGet(callbackUrl);
+
+    const callbackResult = await loopback.result;
+    expect(callbackResult.success).toBe(true);
+
+    await loopback.close();
+
+    const response = await responsePromise;
+    expect(response.status).toBe(400);
+    expect(response.body).toContain("OAuth flow cancelled");
   });
 
   it("uses a custom renderHtml function", async () => {
