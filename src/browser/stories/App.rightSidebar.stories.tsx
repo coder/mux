@@ -215,7 +215,8 @@ export const ReviewTab: AppStory = {
       canvas.getByRole("tab", { name: /costs.*\$0\.42/i });
     });
 
-    const reviewTab = canvas.getByRole("tab", { name: /^review/i });
+    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
+    const reviewTab = await canvas.findByRole("tab", { name: /^review/i });
     await userEvent.click(reviewTab);
 
     await waitFor(() => {
@@ -1234,13 +1235,12 @@ export const ManyTabsWrap: AppStory = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
 
-    const tablist = await canvas.findByRole(
-      "tablist",
-      { name: /sidebar views/i },
-      { timeout: 10_000 }
-    );
+    await canvas.findByRole("tablist", { name: /sidebar views/i }, { timeout: 10_000 });
 
+    // Re-query tablist inside waitFor so retries always use a fresh DOM ref
+    // (the captured ref from findByRole could go stale if the component remounts).
     await waitFor(async () => {
+      const tablist = canvas.getByRole("tablist", { name: /sidebar views/i });
       const tabs = within(tablist).getAllByRole("tab");
       const rowTops = new Set(tabs.map((tab) => Math.round(tab.getBoundingClientRect().top)));
       await expect(rowTops.size).toBeGreaterThan(1);

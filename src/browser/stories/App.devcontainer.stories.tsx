@@ -168,8 +168,9 @@ export const DevcontainerSingleConfig: AppStory = {
       if (!configSelect) throw new Error("Dev container config dropdown not found");
     });
 
-    // Should show the dropdown with the single config selected
-    const configSelect = canvas.getByRole("combobox", { name: "Dev container config" });
+    // Should show the dropdown with the single config selected.
+    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
+    const configSelect = await canvas.findByRole("combobox", { name: "Dev container config" });
     await expect(configSelect).toBeEnabled();
     await expect(
       canvas.findByText("Default (.devcontainer/devcontainer.json)")
@@ -219,7 +220,8 @@ export const DevcontainerMultiConfig: AppStory = {
       if (!configSelect) throw new Error("Dev container config dropdown not found");
     });
 
-    const configSelect = canvas.getByRole("combobox", { name: "Dev container config" });
+    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
+    const configSelect = await canvas.findByRole("combobox", { name: "Dev container config" });
     await userEvent.click(configSelect);
 
     const backendOption = await body.findByRole("option", {

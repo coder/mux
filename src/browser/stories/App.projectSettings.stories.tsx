@@ -260,7 +260,8 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     const transportContainer = transportLabel.closest("div");
     await expect(transportContainer).not.toBeNull();
 
-    const transportSelect = within(transportContainer as HTMLElement).getByRole("combobox");
+    // Use findByRole (retry-capable) to handle transient DOM gaps between awaits.
+    const transportSelect = await within(transportContainer as HTMLElement).findByRole("combobox");
     await userEvent.click(transportSelect);
 
     const httpOption = await body.findByRole("option", { name: /HTTP \(Streamable\)/i });
@@ -273,10 +274,11 @@ export const ProjectSettingsAddRemoteServerHeaders: AppStory = {
     const addHeaderButton = await body.findByRole("button", { name: /\+ Add header/i });
     await userEvent.click(addHeaderButton);
 
-    const headerNameInputs = body.getAllByPlaceholderText("Authorization");
+    // Use findAllByRole / waitFor to handle transient DOM gaps between awaits.
+    const headerNameInputs = await body.findAllByPlaceholderText("Authorization");
     await userEvent.type(headerNameInputs[0], "Authorization");
 
-    const secretToggles = body.getAllByRole("radio", { name: "Secret" });
+    const secretToggles = await body.findAllByRole("radio", { name: "Secret" });
     await userEvent.click(secretToggles[0]);
 
     await expect(
@@ -698,9 +700,10 @@ export const ToolSelectorInteraction: AppStory = {
     );
 
     // Click "None" to deselect all tools.
-    // Re-query to get a fresh DOM reference (the loading cycle may have
-    // replaced earlier elements).
-    const noneButton = body.getByRole("button", { name: /^None$/i });
+    // Use findByRole (retry-capable) instead of getByRole to handle transient
+    // DOM gaps — in CI the Storybook iframe can briefly unmount/remount the
+    // story component between awaits.
+    const noneButton = await body.findByRole("button", { name: /^None$/i });
     await userEvent.click(noneButton);
 
     // Re-query for the assertion — the previous noneButton reference could
@@ -720,9 +723,14 @@ export const ToolSelectorInteraction: AppStory = {
       { timeout: 10000 }
     );
 
-    // Click "All" to select all tools — re-query for a fresh element.
-    const allButton = body.getByRole("button", { name: /^All$/i });
-    await waitFor(() => expect(allButton).toBeEnabled());
+    // Click "All" to select all tools.
+    // Use findByRole (retry-capable) and re-query inside waitFor to avoid
+    // stale refs if the DOM transiently unmounts between awaits.
+    const allButton = await body.findByRole("button", { name: /^All$/i });
+    await waitFor(() => {
+      const btn = body.getByRole("button", { name: /^All$/i });
+      return expect(btn).toBeEnabled();
+    });
     await userEvent.click(allButton);
     await waitFor(() => {
       const btn = body.getByRole("button", { name: /^All$/i });

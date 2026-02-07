@@ -465,8 +465,10 @@ export const AskUserQuestionPending: AppStory = {
       await userEvent.click(toolTitle);
     }
 
-    const getSectionButton = (prefix: string): HTMLElement => {
-      const buttons = canvas.getAllByRole("button");
+    // Use findAllByRole (retry-capable) instead of getAllByRole to handle
+    // transient DOM gaps when the Storybook iframe remounts between awaits.
+    const getSectionButton = async (prefix: string): Promise<HTMLElement> => {
+      const buttons = await canvas.findAllByRole("button");
       const btn = buttons.find(
         (el) => el.tagName === "BUTTON" && (el.textContent ?? "").startsWith(prefix)
       );
@@ -475,7 +477,7 @@ export const AskUserQuestionPending: AppStory = {
     };
 
     // Ensure we're on the first question.
-    await userEvent.click(getSectionButton("Approach"));
+    await userEvent.click(await getSectionButton("Approach"));
 
     // Wait for the first question to render.
     try {
@@ -489,11 +491,11 @@ export const AskUserQuestionPending: AppStory = {
     }
 
     // Selecting a single-select option should auto-advance.
-    await userEvent.click(canvas.getByText("Approach A"));
+    await userEvent.click(await canvas.findByText("Approach A"));
     await canvas.findByText("Which platforms do we need to support?");
 
     // Regression: you must be able to jump back to a previous section after answering it.
-    await userEvent.click(getSectionButton("Approach"));
+    await userEvent.click(await getSectionButton("Approach"));
 
     await canvas.findByText("Which approach should we take?");
 
