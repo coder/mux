@@ -1,5 +1,4 @@
 import * as fs from "fs/promises";
-import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 
 import { type LanguageModel, type Tool } from "ai";
@@ -42,8 +41,7 @@ import { createErrorEvent } from "./utils/sendMessageError";
 import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
-import { buildSystemMessage, readToolInstructions } from "./systemMessage";
-import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
+import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
@@ -74,24 +72,7 @@ import { ProviderModelFactory, parseModelString, modelCostsIncluded } from "./pr
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
 import { resolveAgentForStream } from "./agentResolution";
-
-import { hasStartHerePlanSummary } from "@/common/utils/messages/startHerePlanSummary";
-import { getPlanFilePath } from "@/common/utils/planStorage";
-import { getPlanFileHint, getPlanModeInstruction } from "@/common/utils/ui/modeUtils";
-
-import { readPlanFile } from "@/node/utils/runtime/helpers";
-import {
-  readAgentDefinition,
-  resolveAgentBody,
-  resolveAgentFrontmatter,
-  discoverAgentDefinitions,
-  type AgentDefinitionsRoots,
-} from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
-
-import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
-import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
 
 // Lazy-loaded PTC modules (only loaded when experiment is enabled)
 // This avoids loading typescript/prettier at startup which causes issues:
@@ -127,73 +108,8 @@ async function getPTCModules(): Promise<PTCModules> {
   return ptcModules;
 }
 
-/**
- * Discover agent definitions for tool description context.
- *
- * The task tool lists "Available sub-agents" by filtering on
- * AgentDefinitionDescriptor.subagentRunnable.
- *
- * NOTE: discoverAgentDefinitions() sets descriptor.subagentRunnable from the agent's *own*
- * frontmatter only, which means derived agents (e.g. `base: exec`) may incorrectly appear
- * non-runnable if they don't repeat `subagent.runnable: true`.
- *
- * Re-resolve frontmatter with inheritance (base-first) so subagent.runnable is inherited.
- */
-export async function discoverAvailableSubagentsForToolContext(args: {
-  runtime: Parameters<typeof discoverAgentDefinitions>[0];
-  workspacePath: string;
-  cfg: ReturnType<Config["loadConfigOrDefault"]>;
-  roots?: AgentDefinitionsRoots;
-}): Promise<Awaited<ReturnType<typeof discoverAgentDefinitions>>> {
-  assert(args, "discoverAvailableSubagentsForToolContext: args is required");
-  assert(args.runtime, "discoverAvailableSubagentsForToolContext: runtime is required");
-  assert(
-    args.workspacePath && args.workspacePath.length > 0,
-    "discoverAvailableSubagentsForToolContext: workspacePath is required"
-  );
-  assert(args.cfg, "discoverAvailableSubagentsForToolContext: cfg is required");
-
-  const discovered = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
-    roots: args.roots,
-  });
-
-  const resolved = await Promise.all(
-    discovered.map(async (descriptor) => {
-      try {
-        const resolvedFrontmatter = await resolveAgentFrontmatter(
-          args.runtime,
-          args.workspacePath,
-          descriptor.id,
-          { roots: args.roots }
-        );
-
-        const effectivelyDisabled = isAgentEffectivelyDisabled({
-          cfg: args.cfg,
-          agentId: descriptor.id,
-          resolvedFrontmatter,
-        });
-
-        if (effectivelyDisabled) {
-          return null;
-        }
-
-        return {
-          ...descriptor,
-          // Important: descriptor.subagentRunnable comes from the agent's own frontmatter only.
-          // Re-resolve with inheritance so derived agents inherit runnable: true from their base.
-          subagentRunnable: resolvedFrontmatter.subagent?.runnable ?? false,
-        };
-      } catch {
-        // Best-effort: keep the descriptor if enablement or inheritance can't be resolved.
-        return descriptor;
-      }
-    })
-  );
-
-  return resolved.filter((descriptor): descriptor is NonNullable<typeof descriptor> =>
-    Boolean(descriptor)
-  );
-}
+// Re-export for backwards compatibility (tests import from aiService.ts)
+export { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
@@ -701,103 +617,23 @@ export class AIService extends EventEmitter {
           ? await this.mcpServerManager.listServers(metadata.projectPath, mcpOverrides)
           : undefined;
 
-      // Construct plan mode instruction if in plan mode
-      // This is done backend-side because we have access to the plan file path
-      let effectiveAdditionalInstructions = additionalSystemInstructions;
-      const muxHome = runtime.getMuxHome();
-      const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
-
-      // Read plan file (handles legacy migration transparently)
-      const planResult = await readPlanFile(
-        runtime,
-        metadata.name,
-        metadata.projectName,
-        workspaceId
-      );
-
-      const chatHasStartHerePlanSummary = hasStartHerePlanSummary(filteredMessages);
-
-      if (effectiveMode === "plan") {
-        const planModeInstruction = getPlanModeInstruction(planFilePath, planResult.exists);
-        effectiveAdditionalInstructions = additionalSystemInstructions
-          ? `${planModeInstruction}\n\n${additionalSystemInstructions}`
-          : planModeInstruction;
-      } else if (planResult.exists && planResult.content.trim()) {
-        // Users often use "Replace all chat history" after plan mode. In exec (or other non-plan)
-        // modes, the model can lose the plan file location because plan path injection only
-        // happens in plan mode.
-        //
-        // Exception: the ProposePlanToolCall "Start Here" flow already stores the full plan
-        // (and plan path) directly in chat history. In that case, prompting the model to
-        // re-open the plan file is redundant and often results in an extra "read …KB" step.
-        if (!chatHasStartHerePlanSummary) {
-          const planFileHint = getPlanFileHint(planFilePath, planResult.exists);
-          if (planFileHint) {
-            effectiveAdditionalInstructions = effectiveAdditionalInstructions
-              ? `${planFileHint}\n\n${effectiveAdditionalInstructions}`
-              : planFileHint;
-          }
-        } else {
-          workspaceLog.debug(
-            "Skipping plan file hint: Start Here already includes the plan in chat history."
-          );
-        }
-      }
-
-      if (shouldDisableTaskToolsForDepth) {
-        const nestingInstruction =
-          `Task delegation is disabled in this workspace (taskDepth=${taskDepth}, ` +
-          `maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}). Do not call task/task_await/task_list/task_terminate.`;
-        effectiveAdditionalInstructions = effectiveAdditionalInstructions
-          ? `${effectiveAdditionalInstructions}\n\n${nestingInstruction}`
-          : nestingInstruction;
-      }
-
-      // Read plan content for agent transition (plan-like → exec/orchestrator).
-      // Only read if switching to the built-in exec/orchestrator agent and last assistant was plan-like.
-      let planContentForTransition: string | undefined;
-      const isPlanHandoffAgent = effectiveAgentId === "exec" || effectiveAgentId === "orchestrator";
-      if (isPlanHandoffAgent && !chatHasStartHerePlanSummary) {
-        const lastAssistantMessage = [...filteredMessages]
-          .reverse()
-          .find((m) => m.role === "assistant");
-        const lastAgentId = lastAssistantMessage?.metadata?.agentId;
-        if (lastAgentId && planResult.content.trim()) {
-          let lastAgentIsPlanLike = false;
-          if (lastAgentId === effectiveAgentId) {
-            lastAgentIsPlanLike = agentIsPlanLike;
-          } else {
-            try {
-              const lastDefinition = await readAgentDefinition(
-                runtime,
-                agentDiscoveryPath,
-                lastAgentId
-              );
-              const lastChain = await resolveAgentInheritanceChain({
-                runtime,
-                workspacePath: agentDiscoveryPath,
-                agentId: lastAgentId,
-                agentDefinition: lastDefinition,
-                workspaceId,
-              });
-              lastAgentIsPlanLike = isPlanLikeInResolvedChain(lastChain);
-            } catch (error) {
-              workspaceLog.warn("Failed to resolve last agent definition for plan handoff", {
-                lastAgentId,
-                error: error instanceof Error ? error.message : String(error),
-              });
-            }
-          }
-
-          if (lastAgentIsPlanLike) {
-            planContentForTransition = planResult.content;
-          }
-        }
-      } else if (isPlanHandoffAgent && chatHasStartHerePlanSummary) {
-        workspaceLog.debug(
-          "Skipping plan content injection for plan handoff transition: Start Here already includes the plan in chat history."
-        );
-      }
+      // Build plan-aware instructions and determine plan→exec transition content.
+      const { effectiveAdditionalInstructions, planFilePath, planContentForTransition } =
+        await buildPlanInstructions({
+          runtime,
+          metadata,
+          workspaceId,
+          workspacePath,
+          effectiveMode,
+          effectiveAgentId,
+          agentIsPlanLike,
+          agentDiscoveryPath,
+          additionalSystemInstructions,
+          shouldDisableTaskToolsForDepth,
+          taskDepth,
+          taskSettings,
+          filteredMessages,
+        });
 
       // Run the full message preparation pipeline (inject context, transform, validate).
       // This is a purely functional pipeline with no service dependencies.
@@ -819,69 +655,26 @@ export class AIService extends EventEmitter {
         workspaceId,
       });
 
-      // Construct effective agent system prompt
-      // 1. Resolve the body with inheritance (prompt.append merges with base)
-      // 2. If running as subagent, append subagent.append_prompt
-      // Note: Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId
-      const resolvedBody = await resolveAgentBody(runtime, agentDiscoveryPath, agentDefinition.id);
-
-      let subagentAppendPrompt: string | undefined;
-      if (isSubagentWorkspace) {
-        try {
-          const resolvedFrontmatter = await resolveAgentFrontmatter(
-            runtime,
-            agentDiscoveryPath,
-            agentDefinition.id
-          );
-          subagentAppendPrompt = resolvedFrontmatter.subagent?.append_prompt;
-        } catch (error: unknown) {
-          workspaceLog.debug("Failed to resolve agent frontmatter for subagent append_prompt", {
-            agentId: agentDefinition.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-
-      const agentSystemPrompt =
-        isSubagentWorkspace && subagentAppendPrompt
-          ? `${resolvedBody}\n\n${subagentAppendPrompt}`
-          : resolvedBody;
-
-      // Discover available agent definitions for sub-agent context (only for top-level workspaces).
-      //
-      // NOTE: discoverAgentDefinitions returns disabled agents too, so Settings can surface them.
-      // For tool descriptions (task tool), filter to agents that are effectively enabled.
-      let agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
-      if (!isSubagentWorkspace) {
-        agentDefinitions = await discoverAvailableSubagentsForToolContext({
-          runtime,
-          workspacePath: agentDiscoveryPath,
-          cfg,
-        });
-      }
-
-      // Discover available skills for tool description context
-      let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
-      try {
-        availableSkills = await discoverAgentSkills(runtime, workspacePath);
-      } catch (error) {
-        workspaceLog.warn("Failed to discover agent skills for tool description", { error });
-      }
-
-      // Build system message from workspace metadata
-      const systemMessage = await buildSystemMessage(
-        metadata,
+      // Build agent system prompt, system message, and discover agents/skills.
+      const {
+        agentSystemPrompt,
+        systemMessage,
+        systemMessageTokens,
+        agentDefinitions,
+        availableSkills,
+      } = await buildStreamSystemContext({
         runtime,
+        metadata,
         workspacePath,
+        workspaceId,
+        agentDefinition,
+        agentDiscoveryPath,
+        isSubagentWorkspace,
         effectiveAdditionalInstructions,
         modelString,
+        cfg,
         mcpServers,
-        { agentSystemPrompt }
-      );
-
-      // Count system message tokens for cost tracking
-      const tokenizer = await getTokenizerForModel(modelString);
-      const systemMessageTokens = await tokenizer.countTokens(systemMessage);
+      });
 
       // Load project secrets (system workspace never gets secrets injected)
       const projectSecrets =
