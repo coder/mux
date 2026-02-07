@@ -1,6 +1,7 @@
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import type { LanguageModel } from "ai";
+import type { ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
@@ -1098,6 +1099,71 @@ export class ProviderModelFactory {
     }
   }
 
+  /**
+   * Resolve model string (xAI variant mapping + gateway routing) and create the model.
+   *
+   * Combines the xAI thinking-level variant swap, gateway resolution, and model
+   * creation into a single call. Previously this logic was inlined in
+   * `AIService.streamMessage()`.
+   *
+   * @returns On success: the created model + resolution metadata.
+   */
+  async resolveAndCreateModel(
+    modelString: string,
+    thinkingLevel: ThinkingLevel,
+    muxProviderOptions?: MuxProviderOptions
+  ): Promise<
+    Result<
+      {
+        model: LanguageModel;
+        /** Model string after gateway routing (may have `mux-gateway:` prefix). */
+        effectiveModelString: string;
+        /** Model string with gateway prefix stripped (canonical provider:model). */
+        canonicalModelString: string;
+        /** Provider name from the canonical model string. */
+        canonicalProviderName: string;
+        /** Model ID from the canonical model string. */
+        canonicalModelId: string;
+        /** Whether the request is being routed through the Mux gateway. */
+        routedThroughGateway: boolean;
+      },
+      SendMessageError
+    >
+  > {
+    const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
+    const canonicalModelString = normalizeGatewayModel(modelString);
+    let effectiveModelString = canonicalModelString;
+    const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
+
+    // xAI Grok: swap between reasoning and non-reasoning variants based on thinking level.
+    // xAI only supports full reasoning (no medium/low).
+    if (canonicalProviderName === "xai" && canonicalModelId === "grok-4-1-fast") {
+      const variant =
+        thinkingLevel !== "off" ? "grok-4-1-fast-reasoning" : "grok-4-1-fast-non-reasoning";
+      effectiveModelString = `xai:${variant}`;
+    }
+
+    effectiveModelString = this.resolveGatewayModelString(
+      effectiveModelString,
+      canonicalModelString,
+      explicitlyRequestedGateway
+    );
+
+    const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
+    const modelResult = await this.createModel(effectiveModelString, muxProviderOptions);
+    if (!modelResult.success) {
+      return Err(modelResult.error);
+    }
+
+    return Ok({
+      model: modelResult.data,
+      effectiveModelString,
+      canonicalModelString,
+      canonicalProviderName,
+      canonicalModelId,
+      routedThroughGateway,
+    });
+  }
   resolveGatewayModelString(
     modelString: string,
     modelKey?: string,

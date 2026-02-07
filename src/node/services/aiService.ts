@@ -34,7 +34,7 @@ import {
   filterEmptyAssistantMessages,
 } from "@/browser/utils/messages/modelMessageTransform";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
-import { normalizeGatewayModel } from "@/common/utils/ai/models";
+
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createErrorEvent } from "./utils/sendMessageError";
@@ -43,7 +43,7 @@ import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { readToolInstructions } from "./systemMessage";
 import type { TelemetryService } from "@/node/services/telemetryService";
-import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
+
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
@@ -56,7 +56,7 @@ import type { StreamAbortEvent, StreamAbortReason, StreamEndEvent } from "@/comm
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
-import { ProviderModelFactory, parseModelString, modelCostsIncluded } from "./providerModelFactory";
+import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
 import { resolveAgentForStream } from "./agentResolution";
@@ -66,7 +66,7 @@ import {
   simulateToolPolicyNoop,
   type SimulationContext,
 } from "./streamSimulation";
-import { applyToolPolicyAndExperiments } from "./toolAssembly";
+import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
 
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
@@ -286,25 +286,7 @@ export class AIService extends EventEmitter {
     return this.providerModelFactory.createModel(modelString, muxProviderOptions);
   }
 
-  /**
-   * Stream a message conversation to the AI model
-   * @param messages Array of conversation messages
-   * @param workspaceId Unique identifier for the workspace
-   * @param modelString Model string (e.g., "anthropic:claude-opus-4-1") - required from frontend
-   * @param thinkingLevel Optional thinking/reasoning level for AI models
-   * @param toolPolicy Optional policy to filter available tools
-   * @param abortSignal Optional signal to abort the stream
-   * @param additionalSystemInstructions Optional additional system instructions to append
-   * @param maxOutputTokens Optional maximum tokens for model output
-   * @param muxProviderOptions Optional provider-specific options
-   * @param agentId Optional agent id - determines tool policy and plan-file behavior
-   * @param recordFileState Optional callback to record file state for external edit detection
-   * @param changedFileAttachments Optional attachments for files that were edited externally
-   * @param postCompactionAttachments Optional attachments to inject after compaction
-   * @param disableWorkspaceAgents When true, read agent definitions from project path instead of workspace worktree
-   * @param openaiTruncationModeOverride Optional OpenAI truncation override (e.g., compaction retry)
-   * @returns Promise that resolves when streaming completes or fails
-   */
+  /** Stream a message conversation to the AI model. */
   async streamMessage(
     messages: MuxMessage[],
     workspaceId: string,
@@ -365,44 +347,37 @@ export class AIService extends EventEmitter {
       // This is idempotent - won't double-commit if already in chat.jsonl
       await this.partialService.commitToHistory(workspaceId);
 
+      // Helper: clean up an assistant placeholder that was appended to history but never
+      // streamed (due to abort during setup). Used in two abort-check sites below.
+      const deleteAbortedPlaceholder = async (messageId: string): Promise<void> => {
+        const deleteResult = await this.historyService.deleteMessage(workspaceId, messageId);
+        if (!deleteResult.success) {
+          log.error(
+            `Failed to delete aborted assistant placeholder (${messageId}): ${deleteResult.error}`
+          );
+        }
+      };
+
       // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
       const effectiveThinkingLevel: ThinkingLevel = thinkingLevel ?? THINKING_LEVEL_OFF;
 
-      // For xAI models, swap between reasoning and non-reasoning variants based on thinking level
-      // Similar to how OpenAI handles reasoning vs non-reasoning models
-      const explicitlyRequestedGateway = modelString.trim().startsWith("mux-gateway:");
-      const canonicalModelString = normalizeGatewayModel(modelString);
-      let effectiveModelString = canonicalModelString;
-      const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
-      if (canonicalProviderName === "xai" && canonicalModelId === "grok-4-1-fast") {
-        // xAI Grok only supports full reasoning (no medium/low)
-        // Map to appropriate variant based on thinking level
-        const variant =
-          effectiveThinkingLevel !== "off"
-            ? "grok-4-1-fast-reasoning"
-            : "grok-4-1-fast-non-reasoning";
-        effectiveModelString = `xai:${variant}`;
-        log.debug("Mapping xAI Grok model to variant", {
-          original: modelString,
-          effective: effectiveModelString,
-          thinkingLevel: effectiveThinkingLevel,
-        });
-      }
-
-      effectiveModelString = this.providerModelFactory.resolveGatewayModelString(
-        effectiveModelString,
-        canonicalModelString,
-        explicitlyRequestedGateway
+      // Resolve model string (xAI variant mapping + gateway routing) and create the model.
+      const modelResult = await this.providerModelFactory.resolveAndCreateModel(
+        modelString,
+        effectiveThinkingLevel,
+        effectiveMuxProviderOptions
       );
-
-      const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");
-
-      // Create model instance with early API key validation
-      const modelResult = await this.createModel(effectiveModelString, effectiveMuxProviderOptions);
       if (!modelResult.success) {
         return Err(modelResult.error);
       }
+      const {
+        effectiveModelString,
+        canonicalModelString,
+        canonicalProviderName,
+        canonicalModelId,
+        routedThroughGateway,
+      } = modelResult.data;
 
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
@@ -757,55 +732,17 @@ export class AIService extends EventEmitter {
         },
       });
 
-      const effectiveMcpStats: MCPWorkspaceStats =
-        mcpStats ??
-        ({
-          enabledServerCount: 0,
-          startedServerCount: 0,
-          failedServerCount: 0,
-          autoFallbackCount: 0,
-          hasStdio: false,
-          hasHttp: false,
-          hasSse: false,
-          transportMode: "none",
-        } satisfies MCPWorkspaceStats);
-
-      const mcpToolNames = new Set(Object.keys(mcpTools ?? {}));
-      const toolNames = Object.keys(tools);
-      const mcpToolCount = toolNames.filter((name) => mcpToolNames.has(name)).length;
-      const totalToolCount = toolNames.length;
-      const builtinToolCount = Math.max(0, totalToolCount - mcpToolCount);
-
-      this.telemetryService?.capture({
-        event: "mcp_context_injected",
-        properties: {
-          workspaceId,
-          model: modelString,
-          agentId: effectiveAgentId,
-          runtimeType: getRuntimeTypeForTelemetry(metadata.runtimeConfig),
-
-          mcp_server_enabled_count: effectiveMcpStats.enabledServerCount,
-          mcp_server_started_count: effectiveMcpStats.startedServerCount,
-          mcp_server_failed_count: effectiveMcpStats.failedServerCount,
-
-          mcp_tool_count: mcpToolCount,
-          total_tool_count: totalToolCount,
-          builtin_tool_count: builtinToolCount,
-
-          mcp_transport_mode: effectiveMcpStats.transportMode,
-          mcp_has_http: effectiveMcpStats.hasHttp,
-          mcp_has_sse: effectiveMcpStats.hasSse,
-          mcp_has_stdio: effectiveMcpStats.hasStdio,
-          mcp_auto_fallback_count: effectiveMcpStats.autoFallbackCount,
-          mcp_setup_duration_ms_b2: roundToBase2(mcpSetupDurationMs),
-        },
-      });
-
-      log.info("AIService.streamMessage: tool configuration", {
+      captureMcpToolTelemetry({
+        telemetryService: this.telemetryService,
+        mcpStats,
+        mcpTools,
+        tools,
+        mcpSetupDurationMs,
         workspaceId,
-        model: modelString,
-        toolNames: Object.keys(tools),
-        hasToolPolicy: Boolean(effectiveToolPolicy),
+        modelString,
+        effectiveAgentId,
+        metadata,
+        effectiveToolPolicy,
       });
 
       // Create assistant message placeholder with historySequence from backend
@@ -912,15 +849,7 @@ export class AIService extends EventEmitter {
       }
 
       if (combinedAbortSignal.aborted) {
-        const deleteResult = await this.historyService.deleteMessage(
-          workspaceId,
-          assistantMessageId
-        );
-        if (!deleteResult.success) {
-          log.error(
-            `Failed to delete aborted assistant placeholder (${assistantMessageId}): ${deleteResult.error}`
-          );
-        }
+        await deleteAbortedPlaceholder(assistantMessageId);
         return Ok(undefined);
       }
 
@@ -958,7 +887,7 @@ export class AIService extends EventEmitter {
               system1ThinkingLevel,
               modelString,
               effectiveModelString,
-              primaryModel: modelResult.data,
+              primaryModel: modelResult.data.model,
               muxProviderOptions: effectiveMuxProviderOptions,
               workspaceId,
               effectiveMode,
@@ -977,7 +906,7 @@ export class AIService extends EventEmitter {
       const streamResult = await this.streamManager.startStream(
         workspaceId,
         finalMessages,
-        modelResult.data,
+        modelResult.data.model,
         modelString,
         historySequence,
         systemMessage,
@@ -991,7 +920,7 @@ export class AIService extends EventEmitter {
           agentId: effectiveAgentId,
           mode: effectiveMode,
           routedThroughGateway,
-          ...(modelCostsIncluded(modelResult.data) ? { costsIncluded: true } : {}),
+          ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },
         providerOptions,
         maxOutputTokens,
@@ -1010,15 +939,7 @@ export class AIService extends EventEmitter {
       // If we were interrupted during StreamManager startup before the stream was registered,
       // make sure we don't leave an empty assistant placeholder behind.
       if (combinedAbortSignal.aborted && !this.streamManager.isStreaming(workspaceId)) {
-        const deleteResult = await this.historyService.deleteMessage(
-          workspaceId,
-          assistantMessageId
-        );
-        if (!deleteResult.success) {
-          log.error(
-            `Failed to delete aborted assistant placeholder (${assistantMessageId}): ${deleteResult.error}`
-          );
-        }
+        await deleteAbortedPlaceholder(assistantMessageId);
       }
 
       // StreamManager now handles history updates directly on stream-end

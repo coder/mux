@@ -20,6 +20,10 @@ import type {
 import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import { log } from "./log";
+import type { MCPWorkspaceStats } from "@/node/services/mcpServerManager";
+import type { TelemetryService } from "@/node/services/telemetryService";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
+import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/utils";
 
 // ---------------------------------------------------------------------------
 // PTC Lazy-Loading Singleton
@@ -146,4 +150,86 @@ export async function applyToolPolicyAndExperiments(
   }
 
   return toolsForModel;
+}
+
+// ---------------------------------------------------------------------------
+// MCP Telemetry
+// ---------------------------------------------------------------------------
+
+/** Capture MCP tool configuration telemetry and log the final tool set. */
+export function captureMcpToolTelemetry(opts: {
+  telemetryService?: TelemetryService;
+  mcpStats: MCPWorkspaceStats | undefined;
+  mcpTools: Record<string, Tool> | undefined;
+  tools: Record<string, Tool>;
+  mcpSetupDurationMs: number;
+  workspaceId: string;
+  modelString: string;
+  effectiveAgentId: string;
+  metadata: WorkspaceMetadata;
+  effectiveToolPolicy: ToolPolicy | undefined;
+}): void {
+  const {
+    telemetryService,
+    mcpStats,
+    mcpTools,
+    tools,
+    mcpSetupDurationMs,
+    workspaceId,
+    modelString,
+    effectiveAgentId,
+    metadata,
+    effectiveToolPolicy,
+  } = opts;
+
+  const effectiveMcpStats: MCPWorkspaceStats =
+    mcpStats ??
+    ({
+      enabledServerCount: 0,
+      startedServerCount: 0,
+      failedServerCount: 0,
+      autoFallbackCount: 0,
+      hasStdio: false,
+      hasHttp: false,
+      hasSse: false,
+      transportMode: "none",
+    } satisfies MCPWorkspaceStats);
+
+  const mcpToolNames = new Set(Object.keys(mcpTools ?? {}));
+  const toolNames = Object.keys(tools);
+  const mcpToolCount = toolNames.filter((name) => mcpToolNames.has(name)).length;
+  const totalToolCount = toolNames.length;
+  const builtinToolCount = Math.max(0, totalToolCount - mcpToolCount);
+
+  telemetryService?.capture({
+    event: "mcp_context_injected",
+    properties: {
+      workspaceId,
+      model: modelString,
+      agentId: effectiveAgentId,
+      runtimeType: getRuntimeTypeForTelemetry(metadata.runtimeConfig),
+
+      mcp_server_enabled_count: effectiveMcpStats.enabledServerCount,
+      mcp_server_started_count: effectiveMcpStats.startedServerCount,
+      mcp_server_failed_count: effectiveMcpStats.failedServerCount,
+
+      mcp_tool_count: mcpToolCount,
+      total_tool_count: totalToolCount,
+      builtin_tool_count: builtinToolCount,
+
+      mcp_transport_mode: effectiveMcpStats.transportMode,
+      mcp_has_http: effectiveMcpStats.hasHttp,
+      mcp_has_sse: effectiveMcpStats.hasSse,
+      mcp_has_stdio: effectiveMcpStats.hasStdio,
+      mcp_auto_fallback_count: effectiveMcpStats.autoFallbackCount,
+      mcp_setup_duration_ms_b2: roundToBase2(mcpSetupDurationMs),
+    },
+  });
+
+  log.info("AIService.streamMessage: tool configuration", {
+    workspaceId,
+    model: modelString,
+    toolNames: Object.keys(tools),
+    hasToolPolicy: Boolean(effectiveToolPolicy),
+  });
 }
