@@ -91,9 +91,13 @@ if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
 fi
 
 # Terminal-bench enforces timeouts via --global-agent-timeout-sec
-# Capture output to file while streaming to terminal for token extraction
+# Capture output to file while streaming to terminal for token extraction.
+# Don't exit on failure — always fall through to token extraction so timed-out
+# or crashed runs still get usage data captured.
+mux_exit_code=0
 if ! printf '%s' "${instruction}" | "${cmd[@]}" | tee "${MUX_OUTPUT_FILE}"; then
-  fatal "mux agent session failed"
+  mux_exit_code=$?
+  log "WARNING: mux agent session exited with code ${mux_exit_code}"
 fi
 
 # Extract usage and cost from the JSONL output.
@@ -145,3 +149,7 @@ result["input"] += subagent_input
 result["output"] += subagent_output
 print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true
+
+# Propagate the agent's exit code so the harness can detect failures
+exit "${mux_exit_code}"
+

@@ -68,7 +68,7 @@ import { DockerRuntime } from "@/node/runtime/DockerRuntime";
 import { runFullInit } from "@/node/runtime/runtimeFactory";
 import { execSync } from "child_process";
 import { getParseOptions } from "./argv";
-import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { EXPERIMENT_IDS, EXPERIMENTS } from "@/common/constants/experiments";
 
 // Display labels for CLI help (OFF, LOW, MED, HIGH, MAX)
 const THINKING_LABELS_LIST = Object.values(THINKING_DISPLAY_LABELS).join(", ");
@@ -192,15 +192,26 @@ function collectExperiments(value: string, previous: string[]): string[] {
 
 /**
  * Convert experiment ID array to the experiments object expected by SendMessageOptions.
+ * Experiments with enabledByDefault=true are included automatically unless the user
+ * explicitly passes --experiment flags (which override defaults entirely).
  */
 function buildExperimentsObject(experimentIds: string[]): SendMessageOptions["experiments"] {
-  if (experimentIds.length === 0) return undefined;
+  // When user passes explicit --experiment flags, use exactly those.
+  // When no flags are passed, auto-enable experiments that are on by default.
+  const effectiveIds =
+    experimentIds.length > 0
+      ? experimentIds
+      : Object.values(EXPERIMENTS)
+          .filter((exp) => exp.enabledByDefault)
+          .map((exp) => exp.id);
+
+  if (effectiveIds.length === 0) return undefined;
 
   return {
-    programmaticToolCalling: experimentIds.includes("programmatic-tool-calling"),
-    programmaticToolCallingExclusive: experimentIds.includes("programmatic-tool-calling-exclusive"),
-    system1: experimentIds.includes("system-1"),
-    execSubagentHardRestart: experimentIds.includes("exec-subagent-hard-restart"),
+    programmaticToolCalling: effectiveIds.includes("programmatic-tool-calling"),
+    programmaticToolCallingExclusive: effectiveIds.includes("programmatic-tool-calling-exclusive"),
+    system1: effectiveIds.includes("system-1"),
+    execSubagentHardRestart: effectiveIds.includes("exec-subagent-hard-restart"),
   };
 }
 
