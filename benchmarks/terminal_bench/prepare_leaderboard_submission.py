@@ -112,6 +112,13 @@ MODEL_METADATA = {
         "model_org_display_name": "OpenAI",
         "folder_name": "GPT-5-Codex",
     },
+    "openai/gpt-5.3-codex": {
+        "model_name": "gpt-5.3-codex",
+        "model_provider": "openai",
+        "model_display_name": "GPT-5.3 Codex",
+        "model_org_display_name": "OpenAI",
+        "folder_name": "GPT-5.3-Codex",
+    },
 }
 
 
