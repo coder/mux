@@ -27,6 +27,9 @@ const ROOT = path.resolve(__dirname, "..");
 // Source logos
 const SOURCE_BLACK = path.join(ROOT, "docs", "img", "logo-black.svg");
 const SOURCE_WHITE = path.join(ROOT, "docs", "img", "logo-white.svg");
+// Tray-specific logos with tight viewBox (no internal padding)
+const SOURCE_TRAY_BLACK = path.join(ROOT, "docs", "img", "tray-black.svg");
+const SOURCE_TRAY_WHITE = path.join(ROOT, "docs", "img", "tray-white.svg");
 
 // Build outputs
 const BUILD_DIR = path.join(ROOT, "build");
@@ -91,11 +94,11 @@ const LOGO_TARGETS = {
   // Naming convention: macOS expects "@2x" suffix for Retina assets. The 1x
   // icon is 16x16 (menu bar point size) and 2x is 32x32 pixels.
   //
-  // Note: trim: true removes internal SVG padding for maximum icon size.
-  "public/tray-icon-black.png": { size: 16, ...MONO_ICON, trim: true },
-  "public/tray-icon-black@2x.png": { size: 32, ...MONO_ICON, trim: true },
-  "public/tray-icon-white.png": { size: 16, source: SOURCE_WHITE, bg: false, trim: true },
-  "public/tray-icon-white@2x.png": { size: 32, source: SOURCE_WHITE, bg: false, trim: true },
+  // Note: Uses tray-specific SVGs with tight viewBox for maximum icon size.
+  "public/tray-icon-black.png": { size: 16, source: SOURCE_TRAY_BLACK, bg: false },
+  "public/tray-icon-black@2x.png": { size: 32, source: SOURCE_TRAY_BLACK, bg: false },
+  "public/tray-icon-white.png": { size: 16, source: SOURCE_TRAY_WHITE, bg: false },
+  "public/tray-icon-white@2x.png": { size: 32, source: SOURCE_TRAY_WHITE, bg: false },
 } satisfies Record<string, LogoTargetConfig>;
 
 const APP_ICON_PADDING_RATIO = 0.05;
@@ -106,8 +109,11 @@ async function generateRasterIcon({ source, size, bg, format = "png", trim = fal
   if (!bg) {
     // For non-background icons, optionally trim SVG padding first
     if (trim) {
-      // Trim transparent pixels then resize to fill the target size
-      pipeline = sharp(source).trim().resize(size, size, { fit: "contain" });
+      // Trim transparent pixels, resize to fit, then extend with transparent background
+      pipeline = sharp(source)
+        .trim()
+        .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+        .png(); // Ensure PNG output to preserve transparency
     } else {
       pipeline = sharp(source).resize(size, size);
     }
