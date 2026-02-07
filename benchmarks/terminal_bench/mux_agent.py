@@ -190,10 +190,37 @@ class MuxAgent(BaseInstalledAgent):
     def _install_agent_template_path(self) -> Path:
         return Path(__file__).with_name("mux_setup.sh.j2")
 
+    _PROVIDERS_FILE_ENV_KEY = "MUX_PROVIDERS_FILE"
     _TOKEN_FILE_PATH = "/tmp/mux-tokens.json"
+
+    async def _stage_providers_config(
+        self, environment: BaseEnvironment, env: dict[str, str]
+    ) -> None:
+        """Upload host providers.jsonc into the sandbox when explicitly requested."""
+        providers_file_raw = os.environ.get(self._PROVIDERS_FILE_ENV_KEY)
+        if not providers_file_raw:
+            return
+
+        providers_path = Path(providers_file_raw).expanduser().resolve()
+        if not providers_path.is_file():
+            raise RuntimeError(
+                f"{self._PROVIDERS_FILE_ENV_KEY}={providers_path} is not a readable file"
+            )
+
+        mux_config_root = (
+            env.get("MUX_CONFIG_ROOT") or "/root/.mux"
+        ).strip() or "/root/.mux"
+        target_path = f"{mux_config_root.rstrip('/')}/providers.jsonc"
+
+        await environment.upload_file(
+            source_path=providers_path,
+            target_path=target_path,
+        )
 
     async def setup(self, environment: BaseEnvironment) -> None:
         """Override setup to stage payload first, then run install template."""
+        env = self._env
+
         # Create /installed-agent directory (normally done by super().setup(),
         # but we need it to exist before uploading files)
         await environment.exec(command="mkdir -p /installed-agent")
@@ -222,6 +249,10 @@ class MuxAgent(BaseInstalledAgent):
         # Now run parent setup which executes mux_setup.sh.j2 template
         # (extracts archive, installs bun/deps, chmod +x runner)
         await super().setup(environment)
+
+        # Optionally seed the sandbox with providers.jsonc from the host machine.
+        # This is required for OAuth-only configs where env var API keys are absent.
+        await self._stage_providers_config(environment, env)
 
         # Store environment reference for token extraction later
         self._last_environment = environment

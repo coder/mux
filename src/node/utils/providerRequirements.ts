@@ -9,6 +9,7 @@
 
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import type { ProviderConfig, ProvidersConfig } from "@/node/config";
+import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 
 // ============================================================================
 // Environment variable mappings - single source of truth
@@ -238,11 +239,44 @@ export function buildProvidersFromEnv(
 }
 
 /**
- * Check if any provider in the config has an API key configured.
+ * Check whether any provider is configured well enough for the CLI to start.
+ *
+ * This intentionally mirrors runtime/provider status checks instead of only
+ * looking for API keys so keyless providers (e.g. Ollama) and OpenAI Codex
+ * OAuth-only setups are treated as valid.
  */
 export function hasAnyConfiguredProvider(providers: ProvidersConfig | null | undefined): boolean {
   if (!providers) return false;
-  return Object.values(providers).some(
-    (config) => config && typeof config.apiKey === "string" && config.apiKey.trim().length > 0
-  );
+
+  for (const [providerKey, rawConfig] of Object.entries(providers)) {
+    if (!rawConfig || typeof rawConfig !== "object") {
+      continue;
+    }
+
+    // OpenAI Codex OAuth is a valid credential path even without apiKey.
+    if (
+      providerKey === "openai" &&
+      parseCodexOauthAuth((rawConfig as { codexOauth?: unknown }).codexOauth) !== null
+    ) {
+      return true;
+    }
+
+    if (!(providerKey in PROVIDER_DEFINITIONS)) {
+      // Be permissive for unknown providers written by future versions.
+      const apiKey = (rawConfig as { apiKey?: unknown }).apiKey;
+      if (typeof apiKey === "string" && apiKey.trim().length > 0) {
+        return true;
+      }
+      continue;
+    }
+
+    if (
+      checkProviderConfigured(providerKey as ProviderName, rawConfig as ProviderConfigRaw)
+        .isConfigured
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }

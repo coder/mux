@@ -17,6 +17,7 @@ import * as fsSync from "fs";
 import { Config } from "@/node/config";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { AgentSession, type AgentSessionChatEvent } from "@/node/services/agentSession";
+import { CodexOauthService } from "@/node/services/codexOauthService";
 import { createCoreServices } from "@/node/services/coreServices";
 import {
   isCaughtUpMessage,
@@ -420,6 +421,7 @@ async function main(): Promise<number> {
     initStateManager,
     backgroundProcessManager,
     mcpServerManager,
+    providerService,
     workspaceService,
   } = createCoreServices({
     config,
@@ -430,6 +432,12 @@ async function main(): Promise<number> {
       ignoreConfigFile: !opts.mcpConfig,
     },
   });
+
+  // `mux run` uses createCoreServices directly (without ServiceContainer), so wire
+  // Codex OAuth explicitly to ensure Codex-routed OpenAI requests can load/refresh
+  // OAuth tokens from providers.jsonc.
+  const codexOauthService = new CodexOauthService(config, providerService);
+  aiService.setCodexOauthService(codexOauthService);
 
   // CLI-only exit code control: allows agent to set the process exit code
   // Useful for CI workflows where the agent should block merge on failure
@@ -1059,6 +1067,7 @@ async function main(): Promise<number> {
     unsubscribe();
     session.dispose();
     mcpServerManager.dispose();
+    await codexOauthService.dispose();
     await backgroundProcessManager.terminateAll();
   }
 
