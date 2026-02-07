@@ -235,5 +235,4 @@ export class MuxGatewayOauthService {
       return Err(`Mux Gateway exchange failed: ${message}`);
     }
   }
-
 }
