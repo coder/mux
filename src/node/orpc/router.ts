@@ -3435,6 +3435,11 @@ export const router = (authToken?: string) => {
                       continue;
                     }
 
+                    // Periodically refresh the allowlist so workspaces created
+                    // after this subscription started aren't permanently dropped.
+                    let lastAllowlistRefresh = Date.now();
+                    const ALLOWLIST_REFRESH_INTERVAL_MS = 30_000;
+
                     const iterator = await client.workspace.activity.subscribe(undefined, {
                       signal: controller.signal,
                     });
@@ -3444,6 +3449,36 @@ export const router = (authToken?: string) => {
                     for await (const event of iterator) {
                       if (controller.signal.aborted) {
                         break;
+                      }
+
+                      // Best-effort: pick up newly created workspaces by
+                      // re-fetching the workspace list on a timer.  We only
+                      // *add* to the set so existing entries are never lost.
+                      if (Date.now() - lastAllowlistRefresh > ALLOWLIST_REFRESH_INTERVAL_MS) {
+                        try {
+                          const freshWorkspaces = await client.workspace.list(undefined);
+                          for (const metadata of freshWorkspaces) {
+                            const normalizedPath = stripTrailingSlashes(
+                              metadata.projectPath.trim()
+                            );
+                            if (remoteProjectPathMap.has(normalizedPath)) {
+                              allowedWorkspaceIds.add(metadata.id);
+                            }
+                          }
+
+                          const freshArchived = await client.workspace.list({ archived: true });
+                          for (const metadata of freshArchived) {
+                            const normalizedPath = stripTrailingSlashes(
+                              metadata.projectPath.trim()
+                            );
+                            if (remoteProjectPathMap.has(normalizedPath)) {
+                              allowedWorkspaceIds.add(metadata.id);
+                            }
+                          }
+                        } catch {
+                          // Best-effort refresh — don't disrupt the stream.
+                        }
+                        lastAllowlistRefresh = Date.now();
                       }
 
                       const remoteWorkspaceId = event.workspaceId.trim();
