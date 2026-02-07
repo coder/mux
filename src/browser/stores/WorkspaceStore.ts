@@ -843,26 +843,55 @@ export class WorkspaceStore {
 
     const activity = this.client.workspace.activity;
     void (async () => {
-      try {
-        // Seed cached sidebar state from the current activity snapshot
-        const initial = await activity.list();
-        if (controller.signal.aborted) return;
-        for (const [workspaceId, snapshot] of Object.entries(initial)) {
-          this.updateCachedSidebarFromActivity(workspaceId, snapshot);
+      let retryMs = 1000;
+      const maxRetryMs = 30_000;
+
+      while (!controller.signal.aborted) {
+        try {
+          // Subscribe FIRST so no events are missed, then seed initial state.
+          // Events arriving between subscribe and list are deduplicated by
+          // updateCachedSidebarFromActivity's change detection.
+          const stream = await activity.subscribe(undefined, {
+            signal: controller.signal,
+          });
+
+          // Seed cached sidebar state from the current snapshot
+          const initial = await activity.list();
+          if (controller.signal.aborted) return;
+          for (const [workspaceId, snapshot] of Object.entries(initial)) {
+            this.updateCachedSidebarFromActivity(workspaceId, snapshot);
+          }
+
+          // Reset backoff on successful connection
+          retryMs = 1000;
+
+          // Stream ongoing activity updates
+          for await (const event of stream) {
+            if (event.activity) {
+              this.updateCachedSidebarFromActivity(event.workspaceId, event.activity);
+            }
+          }
+
+          // Stream ended normally — reconnect
+        } catch (error: unknown) {
+          if (controller.signal.aborted) return;
+          console.warn("[WorkspaceStore] Activity stream error, retrying:", error);
         }
 
-        // Stream ongoing activity updates
-        const stream = await activity.subscribe(undefined, {
-          signal: controller.signal,
-        });
-        for await (const event of stream) {
-          if (event.activity) {
-            this.updateCachedSidebarFromActivity(event.workspaceId, event.activity);
-          }
-        }
-      } catch (error: unknown) {
+        // Exponential backoff before retrying
         if (!controller.signal.aborted) {
-          console.warn("[WorkspaceStore] Activity stream error:", error);
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, retryMs);
+            controller.signal.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+          retryMs = Math.min(retryMs * 2, maxRetryMs);
         }
       }
     })();
