@@ -542,6 +542,30 @@ interface ToolSchema {
 }
 
 /**
+ * Schema for a single keep-range item in the system1_keep_ranges tool.
+ * Extracted as a named export so internal code can derive the type via z.infer<>
+ * instead of maintaining a hand-written interface.
+ *
+ * Note: the tool schema applies .passthrough() on top of this to tolerate extra
+ * keys from models, but the inferred type is the strict shape.
+ */
+export const System1KeepRangeSchema = z.object({
+  start: z.coerce
+    .number()
+    .finite()
+    .min(1)
+    .describe("1-based start line (inclusive) in the numbered output"),
+  end: z.coerce
+    .number()
+    .finite()
+    .min(1)
+    .describe("1-based end line (inclusive) in the numbered output"),
+  // .nullish() accepts both null and undefined, so the preprocess
+  // hack that mapped null→undefined is no longer needed.
+  reason: z.string().nullish().describe("Optional short reason for keeping this range"),
+});
+
+/**
  * Tool definitions: single source of truth
  * Key = tool name, Value = { description, schema }
  */
@@ -835,25 +859,7 @@ export const TOOL_DEFINITIONS = {
       .object({
         keep_ranges: z
           .array(
-            z
-              .object({
-                start: z.coerce
-                  .number()
-                  .finite()
-                  .min(1)
-                  .describe("1-based start line (inclusive) in the numbered output"),
-                end: z.coerce
-                  .number()
-                  .finite()
-                  .min(1)
-                  .describe("1-based end line (inclusive) in the numbered output"),
-                // .nullish() accepts both null and undefined, so the preprocess
-                // hack that mapped null→undefined is no longer needed.
-                reason: z
-                  .string()
-                  .nullish()
-                  .describe("Optional short reason for keeping this range"),
-              })
+            System1KeepRangeSchema
               // Providers/models sometimes include extra keys in tool arguments; be permissive and
               // ignore them rather than failing the whole compaction call.
               .passthrough()

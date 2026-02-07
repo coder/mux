@@ -120,10 +120,10 @@ function formatFileReadStart(_toolName: string, args: unknown): string | null {
   if (!readArgs?.file_path) return null;
 
   let suffix = "";
-  if (readArgs.offset !== undefined || readArgs.limit !== undefined) {
+  if (readArgs.offset != null || readArgs.limit != null) {
     const parts: string[] = [];
-    if (readArgs.offset !== undefined) parts.push(`L${readArgs.offset}`);
-    if (readArgs.limit !== undefined) parts.push(`+${readArgs.limit}`);
+    if (readArgs.offset != null) parts.push(`L${readArgs.offset}`);
+    if (readArgs.limit != null) parts.push(`+${readArgs.limit}`);
     suffix = chalk.dim(` (${parts.join(", ")})`);
   }
 

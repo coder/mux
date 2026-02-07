@@ -28,10 +28,7 @@ interface InsertOperationFailure {
   note?: string;
 }
 
-interface InsertContentOptions {
-  insert_before?: string | null;
-  insert_after?: string | null;
-}
+type InsertContentOptions = Pick<FileEditInsertToolArgs, "insert_before" | "insert_after">;
 
 interface GuardResolutionSuccess {
   success: true;
