@@ -25,6 +25,8 @@ export const CompactionBoundaryMessage: React.FC<CompactionBoundaryMessageProps>
         className
       )}
       data-testid="compaction-boundary"
+      role="separator"
+      aria-orientation="horizontal"
       aria-label={label}
     >
       <span className="bg-border h-px flex-1" />

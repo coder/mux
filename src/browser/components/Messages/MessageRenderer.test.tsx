@@ -28,7 +28,11 @@ describe("MessageRenderer compaction boundary rows", () => {
 
     const { getByTestId, getByText } = render(<MessageRenderer message={message} />);
 
-    expect(getByTestId("compaction-boundary")).toBeDefined();
+    const boundary = getByTestId("compaction-boundary");
+    expect(boundary).toBeDefined();
+    expect(boundary.getAttribute("role")).toBe("separator");
+    expect(boundary.getAttribute("aria-orientation")).toBe("horizontal");
+    expect(boundary.getAttribute("aria-label")).toBe("Compaction boundary #4");
     expect(getByText("Compaction boundary #4")).toBeDefined();
   });
 
@@ -41,8 +45,10 @@ describe("MessageRenderer compaction boundary rows", () => {
       compactionEpoch: 4,
     };
 
-    const { getByText } = render(<MessageRenderer message={message} />);
+    const { getByTestId, getByText } = render(<MessageRenderer message={message} />);
 
+    const boundary = getByTestId("compaction-boundary");
+    expect(boundary.getAttribute("aria-label")).toBe("Resume after compaction #4");
     expect(getByText("Resume after compaction #4")).toBeDefined();
   });
 });

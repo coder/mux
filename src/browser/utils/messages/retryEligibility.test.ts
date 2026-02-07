@@ -1,5 +1,6 @@
 import { describe, it, expect } from "@jest/globals";
 import {
+  getLastNonDecorativeMessage,
   hasInterruptedStream,
   isEligibleForAutoRetry,
   isNonRetryableSendError,
@@ -7,6 +8,60 @@ import {
 } from "./retryEligibility";
 import type { DisplayedMessage } from "@/common/types/message";
 import type { SendMessageError } from "@/common/types/errors";
+
+describe("getLastNonDecorativeMessage", () => {
+  it("returns the latest actionable row when transcript ends with boundaries", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "stream-error",
+        id: "error-1",
+        historyId: "assistant-1",
+        error: "Context length exceeded",
+        errorType: "context_exceeded",
+        historySequence: 2,
+      },
+      {
+        type: "compaction-boundary",
+        id: "boundary-end",
+        historySequence: 2,
+        position: "end",
+      },
+    ];
+
+    const lastMessage = getLastNonDecorativeMessage(messages);
+    expect(lastMessage?.id).toBe("error-1");
+  });
+
+  it("returns undefined when all rows are decorative", () => {
+    const messages: DisplayedMessage[] = [
+      {
+        type: "history-hidden",
+        id: "history-hidden-1",
+        hiddenCount: 10,
+        historySequence: 3,
+      },
+      {
+        type: "workspace-init",
+        id: "workspace-init-1",
+        historySequence: -1,
+        status: "running",
+        hookPath: ".mux/init",
+        lines: [],
+        exitCode: null,
+        timestamp: Date.now(),
+        durationMs: null,
+      },
+      {
+        type: "compaction-boundary",
+        id: "boundary-1",
+        historySequence: 4,
+        position: "start",
+      },
+    ];
+
+    expect(getLastNonDecorativeMessage(messages)).toBeUndefined();
+  });
+});
 
 describe("hasInterruptedStream", () => {
   it("returns false for empty messages", () => {
@@ -458,6 +513,35 @@ describe("isEligibleForAutoRetry", () => {
           historySequence: 2,
         },
       ];
+      expect(isEligibleForAutoRetry(messages)).toBe(false);
+    });
+
+    it("keeps context_exceeded non-retryable when decorative boundaries are trailing", () => {
+      const messages: DisplayedMessage[] = [
+        {
+          type: "user",
+          id: "user-1",
+          historyId: "user-1",
+          content: "Hello",
+          historySequence: 1,
+        },
+        {
+          type: "stream-error",
+          id: "error-1",
+          historyId: "assistant-1",
+          error: "Context length exceeded",
+          errorType: "context_exceeded",
+          historySequence: 2,
+        },
+        {
+          type: "compaction-boundary",
+          id: "boundary-end",
+          historySequence: 2,
+          position: "end",
+        },
+      ];
+
+      expect(hasInterruptedStream(messages)).toBe(true);
       expect(isEligibleForAutoRetry(messages)).toBe(false);
     });
 
