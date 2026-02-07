@@ -104,13 +104,13 @@ export const FileReadToolCall: React.FC<FileReadToolCallProps> = ({
                 <span className="text-secondary font-medium">Path:</span>
                 <span className="text-text font-monospace break-all">{filePath}</span>
               </div>
-              {args.offset !== undefined && (
+              {args.offset != null && (
                 <div className="flex gap-1.5">
                   <span className="text-secondary font-medium">Offset:</span>
                   <span className="text-text font-monospace break-all">line {args.offset}</span>
                 </div>
               )}
-              {args.limit !== undefined && (
+              {args.limit != null && (
                 <div className="flex gap-1.5">
                   <span className="text-secondary font-medium">Limit:</span>
                   <span className="text-text font-monospace break-all">{args.limit} lines</span>

@@ -87,6 +87,13 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - **Avoid `setTimeout` for component coordination** - racy and fragile; use callbacks or effects.
 - **Keyboard event propagation** - React's `e.stopPropagation()` only stops synthetic event bubbling; native `window` listeners still fire. Use `stopKeyboardPropagation(e)` from `@/browser/utils/events` to stop both React and native propagation when blocking global handlers (like stream interrupt on Escape).
 
+
+## Tool Schema Conventions
+
+- **Use `.nullish()` for optional tool input parameters** — never `.optional()` alone. OpenAI's Responses API normalizes tool schemas into strict mode, which forces every field into `required` and expects optional fields to accept `null`. `.nullish()` (= `.optional().nullable()`) satisfies strict-mode providers (OpenAI) while remaining compatible with non-strict providers (Anthropic, Google). See the module doc comment in `src/common/utils/tools/toolDefinitions.ts` for details.
+- Implementation handlers should use `!= null` (loose equality) instead of `!== undefined` to treat both `null` and `undefined` as "not provided".
+- This applies only to tool **input** schemas (parameters the model provides), not to tool **output/result** schemas (constructed by our backend).
+
 ## Component State & Storage
 
 - Prefer **self-contained components** over utility functions + hook proliferation. A component that takes `workspaceId` and computes everything internally is better than one that requires 10 props drilled from parent hooks.
