@@ -156,6 +156,17 @@ const TaskToolAgentArgsSchema = z
       });
       return;
     }
+
+    // GPT models often send both fields with identical values — allow that.
+    // Only reject when they conflict, since the handler silently prefers agentId.
+    if (hasAgentId && hasSubagentType && args.agentId !== args.subagent_type) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agentId and subagent_type must match when both are provided",
+        path: ["agentId"],
+      });
+      return;
+    }
   });
 
 export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
