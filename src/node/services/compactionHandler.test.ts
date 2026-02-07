@@ -165,6 +165,19 @@ const createStreamEndEvent = (
   },
 });
 
+const getEmittedStreamEndEvent = (events: EmittedEvent[]): StreamEndEvent | undefined => {
+  return events
+    .map((event) => event.data.message)
+    .find((message): message is StreamEndEvent => {
+      return (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        (message as { type?: unknown }).type === "stream-end"
+      );
+    });
+};
+
 // DRY helper to set up successful compaction scenario
 const setupSuccessfulCompaction = (
   mockHistoryService: ReturnType<typeof createMockHistoryService>,
@@ -556,11 +569,10 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary", { duration: 1234 });
       await handler.handleCompletion(event);
 
-      const streamEndEvent = emittedEvents.find((_e) => _e.data.message === event);
-      expect(streamEndEvent).toBeDefined();
-      expect(streamEndEvent?.data.workspaceId).toBe(workspaceId);
-      const streamMsg = streamEndEvent?.data.message as StreamEndEvent;
-      expect(streamMsg.metadata.duration).toBe(1234);
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect(streamMsg?.workspaceId).toBe(workspaceId);
+      expect(streamMsg?.metadata.duration).toBe(1234);
     });
 
     it("should set boundary metadata and keep historySequence monotonic", async () => {
@@ -684,6 +696,39 @@ describe("CompactionHandler", () => {
         return m?.id === "msg-id" && m?.metadata?.compactionBoundary === true;
       });
       expect(summaryEvent).toBeDefined();
+    });
+
+    it("should strip stale provider metadata from emitted stream-end when reusing streamed summary ID", async () => {
+      const compactionReq = createMuxMessage("req-streamed-sanitize", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+        historySequence: 6,
+        timestamp: Date.now(),
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      mockHistoryService.mockGetHistory(Ok([compactionReq, streamedSummary]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary", {
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
+        contextProviderMetadata: { anthropic: { cacheReadInputTokens: 10_000 } },
+        customField: "preserved",
+      });
+
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect(streamMsg?.messageId).toBe("msg-id");
+      expect(streamMsg?.metadata.providerMetadata).toBeUndefined();
+      expect(streamMsg?.metadata.contextProviderMetadata).toBeUndefined();
+      expect((streamMsg?.metadata as Record<string, unknown> | undefined)?.customField).toBe(
+        "preserved"
+      );
     });
 
     it("should skip malformed compaction boundary markers when deriving next epoch", async () => {
@@ -942,10 +987,11 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary", { customField: "test" });
       await handler.handleCompletion(event);
 
-      const streamEndEvent = emittedEvents.find((_e) => _e.data.message === event);
-      expect(streamEndEvent).toBeDefined();
-      const streamMsg = streamEndEvent?.data.message as StreamEndEvent;
-      expect((streamMsg.metadata as Record<string, unknown>).customField).toBe("test");
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect((streamMsg?.metadata as Record<string, unknown> | undefined)?.customField).toBe(
+        "test"
+      );
     });
   });
 
