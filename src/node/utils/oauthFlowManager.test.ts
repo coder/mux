@@ -179,6 +179,7 @@ describe("OAuthFlowManager", () => {
     it("clears the timeout handle", async () => {
       const entry = createFlowEntry();
       // Simulate a stored timeout handle.
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
       entry.timeoutHandle = setTimeout(() => {}, 60_000);
       manager.register("f1", entry);
 
