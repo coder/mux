@@ -54,7 +54,7 @@
     "@ai-sdk/openai-compatible": "^2.0.27",
     "@ai-sdk/xai": "^3.0.47",
     "@aws-sdk/credential-providers": "^3.940.0",
-    "@coder/mux-md-client": "^0.1.0-main.28",
+    "@coder/mux-md-client": "0.1.0-main.29",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
