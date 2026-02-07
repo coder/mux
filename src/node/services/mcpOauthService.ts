@@ -21,6 +21,12 @@ import type {
 } from "@/common/types/mcpOauth";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+import {
+  closeServer,
+  createDeferred,
+  escapeHtml,
+  renderOAuthCallbackHtml,
+} from "@/node/utils/oauthUtils";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -113,20 +119,6 @@ interface DesktopFlow extends OAuthFlowBase {
 }
 
 type ServerFlow = OAuthFlowBase;
-
-function closeServer(server: http.Server): Promise<void> {
-  return new Promise((resolve) => {
-    server.close(() => resolve());
-  });
-}
-
-function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -1132,29 +1124,20 @@ export class McpOauthService {
       errorDescription: input.errorDescription,
     });
 
-    const title = result.success ? "Login complete" : "Login failed";
-    const description = result.success
-      ? "You can return to Mux. You may now close this tab."
-      : escapeHtml(result.error);
-
     input.res.setHeader("Content-Type", "text/html");
     if (!result.success) {
       input.res.statusCode = 400;
     }
 
-    input.res.end(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <title>${title}</title>
-  </head>
-  <body>
-    <h1>${title}</h1>
-    <p>${description}</p>
-  </body>
-</html>`);
+    input.res.end(
+      renderOAuthCallbackHtml({
+        title: result.success ? "Login complete" : "Login failed",
+        message: result.success
+          ? "You can return to Mux. You may now close this tab."
+          : escapeHtml(result.error),
+        success: result.success,
+      })
+    );
 
     await this.finishDesktopFlow(input.flowId, result);
   }
@@ -1480,13 +1463,4 @@ export class McpOauthService {
       mode: 0o600,
     });
   }
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
