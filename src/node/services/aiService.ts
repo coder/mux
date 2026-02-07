@@ -3,14 +3,9 @@ import * as os from "os";
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 
-import { convertToModelMessages, type LanguageModel, type ModelMessage, type Tool } from "ai";
-import { applyToolOutputRedaction } from "@/browser/utils/messages/applyToolOutputRedaction";
-import { sanitizeToolInputs } from "@/browser/utils/messages/sanitizeToolInput";
+import { type LanguageModel, type Tool } from "ai";
 
 import { linkAbortSignal } from "@/node/utils/abort";
-import { inlineSvgAsTextForProvider } from "@/node/utils/messages/inlineSvgAsTextForProvider";
-import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToolMediaAsUserMessages";
-import { sanitizeAnthropicPdfFilenames } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
@@ -37,19 +32,12 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
 import { log } from "./log";
-import { injectFileAtMentions } from "./fileAtMentions";
 import {
-  transformModelMessages,
-  validateAnthropicCompliance,
   addInterruptedSentinel,
   filterEmptyAssistantMessages,
-  injectAgentTransition,
-  injectFileChangeNotifications,
-  injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { normalizeGatewayModel } from "@/common/utils/ai/models";
-import { applyCacheControl } from "@/common/utils/ai/cacheStrategy";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 import { createErrorEvent } from "./utils/sendMessageError";
@@ -86,6 +74,7 @@ import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { ProviderModelFactory, parseModelString, modelCostsIncluded } from "./providerModelFactory";
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
+import { prepareMessagesForProvider } from "./messagePipeline";
 import { getTaskDepthFromConfig } from "./taskUtils";
 import { hasStartHerePlanSummary } from "@/common/utils/messages/startHerePlanSummary";
 import { getPlanFilePath } from "@/common/utils/planStorage";
@@ -944,147 +933,25 @@ export class AIService extends EventEmitter {
         );
       }
 
-      // Now inject agent transition context with plan content (runtime is now available)
-      const messagesWithAgentContext = injectAgentTransition(
+      // Run the full message preparation pipeline (inject context, transform, validate).
+      // This is a purely functional pipeline with no service dependencies.
+      const finalMessages = await prepareMessagesForProvider({
         messagesWithSentinel,
         effectiveAgentId,
         toolNamesForSentinel,
         planContentForTransition,
-        planContentForTransition ? planFilePath : undefined
-      );
-
-      // Inject file change notifications as user messages (preserves system message cache)
-      const messagesWithFileChanges = injectFileChangeNotifications(
-        messagesWithAgentContext,
-        changedFileAttachments
-      );
-
-      // Inject post-compaction attachments (plan file, edited files) after compaction summary
-      const messagesWithPostCompaction = injectPostCompactionAttachments(
-        messagesWithFileChanges,
-        postCompactionAttachments
-      );
-
-      // Expand @file mentions (e.g. @src/foo.ts#L1-20) into an in-memory synthetic user message.
-      // This keeps chat history clean while giving the model immediate file context.
-      const messagesWithFileAtMentions = await injectFileAtMentions(messagesWithPostCompaction, {
+        planFilePath,
+        changedFileAttachments,
+        postCompactionAttachments,
         runtime,
         workspacePath,
         abortSignal: combinedAbortSignal,
+        providerForMessages,
+        effectiveThinkingLevel,
+        modelString,
+        canonicalModelId,
+        workspaceId,
       });
-
-      // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages
-      // This keeps the persisted/UI history intact while trimming heavy fields for the request
-      const redactedForProvider = applyToolOutputRedaction(messagesWithFileAtMentions);
-      log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
-
-      // Sanitize tool inputs to ensure they are valid objects (not strings or arrays)
-      // This fixes cases where corrupted data in history has malformed tool inputs
-      // that would cause API errors like "Input should be a valid dictionary"
-      const sanitizedMessages = sanitizeToolInputs(redactedForProvider);
-      log.debug_obj(`${workspaceId}/2b_sanitized_messages.json`, sanitizedMessages);
-
-      // Inline SVG user attachments as text (providers generally don't accept image/svg+xml as an image input).
-      // This is request-only (does not mutate persisted history).
-      const messagesWithInlinedSvg = inlineSvgAsTextForProvider(sanitizedMessages);
-
-      // Sanitize PDF filenames for Anthropic (request-only, preserves original in UI/history).
-      // Anthropic rejects document names containing periods, underscores, etc.
-      const messagesWithSanitizedPdf =
-        providerForMessages === "anthropic"
-          ? sanitizeAnthropicPdfFilenames(messagesWithInlinedSvg)
-          : messagesWithInlinedSvg;
-
-      // Some MCP tools return images as base64 in tool results.
-      // Providers can treat tool-result payloads as text/JSON, which can blow up context.
-      // Rewrite those tool outputs to small text placeholders and attach the images as file parts.
-      const messagesWithToolMediaExtracted =
-        extractToolMediaAsUserMessages(messagesWithSanitizedPdf);
-
-      // Convert MuxMessage to ModelMessage format using Vercel AI SDK utility
-      // Type assertion needed because MuxMessage has custom tool parts for interrupted tools
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument
-      const rawModelMessages = await convertToModelMessages(messagesWithToolMediaExtracted as any, {
-        // Drop unfinished tool calls (input-streaming/input-available) so downstream
-        // transforms only see tool calls that actually produced outputs.
-        ignoreIncompleteToolCalls: true,
-      });
-
-      // Self-healing: Filter out any empty ModelMessages that could brick the request.
-      // The SDK's ignoreIncompleteToolCalls can drop all parts from a message, leaving
-      // an assistant with empty content array. The API rejects these with "all messages
-      // must have non-empty content except for the optional final assistant message".
-      // Self-healing: sanitize assistant message content blocks.
-      //
-      // Anthropic rejects text content blocks that contain only whitespace (e.g. "\n\n").
-      // This can happen after an interrupted stream where we persisted a whitespace-only
-      // text delta (often the first text after thinking).
-      //
-      // Keep this provider-agnostic and request-only (does not mutate persisted history).
-      const sanitizedModelMessages = rawModelMessages.flatMap<ModelMessage>(
-        (msg): ModelMessage[] => {
-          if (msg.role !== "assistant") {
-            return [msg];
-          }
-
-          if (typeof msg.content === "string") {
-            return msg.content.trim().length > 0 ? [msg] : [];
-          }
-
-          if (!Array.isArray(msg.content)) {
-            return [];
-          }
-
-          const filteredContent = msg.content.filter(
-            (part) => part.type !== "text" || part.text.trim().length > 0
-          );
-
-          if (filteredContent.length === 0) {
-            return [];
-          }
-
-          // Avoid mutating the original message (which can be reused in debug logging).
-          if (filteredContent.length === msg.content.length) {
-            return [msg];
-          }
-
-          return [{ ...msg, content: filteredContent }];
-        }
-      );
-
-      if (sanitizedModelMessages.length < rawModelMessages.length) {
-        log.debug(
-          `Self-healing: Filtered ${rawModelMessages.length - sanitizedModelMessages.length} empty ModelMessage(s)`
-        );
-      }
-      log.debug_obj(`${workspaceId}/2_model_messages.json`, sanitizedModelMessages);
-
-      const modelMessages = sanitizedModelMessages;
-
-      // Apply ModelMessage transforms based on provider requirements
-      const transformedMessages = transformModelMessages(modelMessages, providerForMessages, {
-        anthropicThinkingEnabled:
-          providerForMessages === "anthropic" && effectiveThinkingLevel !== "off",
-        // Opus 4.6 doesn't support assistant message prefill (returns 400 error).
-        // Append a [CONTINUE] user sentinel if conversation ends with assistant.
-        noPrefill: canonicalModelId?.includes("opus-4-6") ?? false,
-      });
-
-      // Apply cache control for Anthropic models AFTER transformation
-      const finalMessages = applyCacheControl(transformedMessages, modelString);
-
-      log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
-
-      // Validate the messages meet Anthropic requirements (Anthropic only)
-      if (providerForMessages === "anthropic") {
-        const validation = validateAnthropicCompliance(finalMessages);
-        if (!validation.valid) {
-          log.error(
-            `Anthropic compliance validation failed: ${validation.error ?? "unknown error"}`
-          );
-          // Continue anyway, as the API might be more lenient
-        }
-      }
 
       // Construct effective agent system prompt
       // 1. Resolve the body with inheritance (prompt.append merges with base)
