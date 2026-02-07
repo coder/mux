@@ -7,7 +7,7 @@ import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
 
 import type { StreamEndEvent } from "@/common/types/stream";
-import type { WorkspaceChatMessage, DeleteMessage } from "@/common/orpc/types";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -126,6 +126,56 @@ function coercePersistedPostCompactionState(value: unknown): PersistedPostCompac
   };
 }
 
+function isCompactedSummaryMessage(message: MuxMessage): boolean {
+  const compacted = message.metadata?.compacted;
+  return compacted !== undefined && compacted !== false;
+}
+
+function getNextCompactionEpoch(messages: MuxMessage[]): number {
+  let epochCursor = 0;
+
+  for (const message of messages) {
+    const metadata = message.metadata;
+    if (!metadata) {
+      continue;
+    }
+
+    if (metadata.compactionBoundary === true) {
+      assert(
+        isCompactedSummaryMessage(message),
+        "compactionBoundary can only be set on compacted summary messages"
+      );
+      assert(
+        typeof metadata.compactionEpoch === "number" &&
+          Number.isInteger(metadata.compactionEpoch) &&
+          metadata.compactionEpoch > 0,
+        "compactionBoundary messages must include a positive integer compactionEpoch"
+      );
+    }
+
+    if (!isCompactedSummaryMessage(message)) {
+      continue;
+    }
+
+    const epoch = metadata.compactionEpoch;
+    if (epoch === undefined) {
+      // Legacy compacted summaries predate compactionEpoch metadata.
+      epochCursor += 1;
+      continue;
+    }
+
+    assert(
+      Number.isInteger(epoch) && epoch > 0,
+      "compactionEpoch must be a positive integer when present"
+    );
+    epochCursor = Math.max(epochCursor, epoch);
+  }
+
+  const nextEpoch = epochCursor + 1;
+  assert(nextEpoch > 0, "next compaction epoch must be positive");
+  return nextEpoch;
+}
+
 interface CompactionHandlerOptions {
   workspaceId: string;
   historyService: HistoryService;
@@ -142,7 +192,7 @@ interface CompactionHandlerOptions {
  *
  * Responsible for:
  * - Detecting compaction requests in stream events
- * - Replacing chat history with compacted summaries
+ * - Appending compacted summaries as durable history boundaries
  * - Preserving cumulative usage across compactions
  */
 export class CompactionHandler {
@@ -160,7 +210,7 @@ export class CompactionHandler {
 
   /** Flag indicating post-compaction attachments should be generated on next turn */
   private postCompactionAttachmentsPending = false;
-  /** Cached file diffs extracted before history was cleared */
+  /** Cached file diffs extracted from history before appending compaction summary */
   private cachedFileDiffs: FileEditDiff[] = [];
 
   constructor(options: CompactionHandlerOptions) {
@@ -310,7 +360,7 @@ export class CompactionHandler {
    * Handle compaction stream completion
    *
    * Detects when a compaction stream finishes, extracts the summary,
-   * and performs history replacement atomically.
+   * and appends a durable compaction boundary message.
    */
   async handleCompletion(event: StreamEndEvent): Promise<boolean> {
     // Check if the last user message is a compaction-request
@@ -420,12 +470,12 @@ export class CompactionHandler {
   }
 
   /**
-   * Perform history compaction by replacing all messages with a summary
+   * Perform history compaction by appending a durable summary boundary.
    *
    * Steps:
-   * 1. Clear entire history and get deleted sequence numbers
-   * 2. Append summary message with metadata
-   * 3. Emit delete event for old messages
+   * 1. Delete partial state to avoid stale partial replay
+   * 2. Persist post-compaction attachment state
+   * 3. Append summary message with boundary metadata
    * 4. Emit summary message to frontend
    */
   private async performCompaction(
@@ -441,9 +491,12 @@ export class CompactionHandler {
     isIdleCompaction = false,
     pendingFollowUp?: CompactionFollowUpRequest
   ): Promise<Result<void, string>> {
-    // CRITICAL: Delete partial.json BEFORE clearing history
+    assert(summary.trim().length > 0, "performCompaction requires a non-empty summary");
+    assert(metadata.model.trim().length > 0, "Compaction summary requires a model");
+
+    // CRITICAL: Delete partial.json BEFORE appending compaction summary.
     // This prevents a race condition where:
-    // 1. CompactionHandler clears history and appends summary
+    // 1. CompactionHandler appends summary
     // 2. sendQueuedMessages triggers commitToHistory
     // 3. commitToHistory finds stale partial.json and appends it to history
     // By deleting partial first, commitToHistory becomes a no-op
@@ -453,25 +506,24 @@ export class CompactionHandler {
       // Continue anyway - the partial may not exist, which is fine
     }
 
-    // Extract diffs BEFORE clearing history (they'll be gone after clear)
+    // Extract diffs from current history before appending the boundary summary.
     this.cachedFileDiffs = extractEditedFileDiffs(messages);
 
-    // Persist pending state BEFORE clearing history so pre-compaction diffs survive crashes/restarts.
+    // Persist pending state before append so pre-compaction diffs survive crashes/restarts.
     // Best-effort: compaction must not fail just because persistence fails.
     await this.persistPendingStateBestEffort(this.cachedFileDiffs);
 
-    // Clear entire history and get deleted sequences
-    const clearResult = await this.historyService.clearHistory(this.workspaceId);
-    if (!clearResult.success) {
-      // We persist post-compaction state before clearing history for crash safety.
-      // If clearHistory fails, the pre-compaction messages are still intact, so keeping the
-      // persisted snapshot would cause redundant injection on the next send.
-      this.cachedFileDiffs = [];
-      await this.deletePersistedPendingStateBestEffort();
+    const nextCompactionEpoch = getNextCompactionEpoch(messages);
+    assert(Number.isInteger(nextCompactionEpoch), "next compaction epoch must be an integer");
 
-      return Err(`Failed to clear history: ${clearResult.error}`);
-    }
-    const deletedSequences = clearResult.data;
+    const maxExistingHistorySequence = messages.reduce((maxSeq, message) => {
+      const sequence = message.metadata?.historySequence;
+      if (sequence === undefined) {
+        return maxSeq;
+      }
+      assert(Number.isInteger(sequence) && sequence >= 0, "historySequence must be non-negative");
+      return Math.max(maxSeq, sequence);
+    }, -1);
 
     // For idle compaction, preserve the original recency timestamp so the workspace
     // doesn't appear "recently used" in the sidebar. Use the shared recency utility
@@ -506,6 +558,8 @@ export class CompactionHandler {
       {
         timestamp,
         compacted: isIdleCompaction ? "idle" : "user",
+        compactionEpoch: nextCompactionEpoch,
+        compactionBoundary: true,
         model: metadata.model,
         usage: metadata.usage,
         duration: metadata.duration,
@@ -513,27 +567,43 @@ export class CompactionHandler {
         muxMetadata: summaryMuxMetadata,
       }
     );
+    assert(
+      summaryMessage.metadata?.compactionBoundary === true,
+      "Compaction summary must be marked as a compaction boundary"
+    );
+    assert(
+      summaryMessage.metadata?.compactionEpoch === nextCompactionEpoch,
+      "Compaction summary must persist the computed compaction epoch"
+    );
 
-    // Append summary to history
+    // TODO(Approach B): Consider a sidecar compaction index so request slicing can skip
+    // scanning chat.jsonl for boundary markers on every load.
     const appendResult = await this.historyService.appendToHistory(
       this.workspaceId,
       summaryMessage
     );
     if (!appendResult.success) {
+      this.cachedFileDiffs = [];
+      await this.deletePersistedPendingStateBestEffort();
       return Err(`Failed to append summary: ${appendResult.error}`);
+    }
+
+    const appendedSequence = summaryMessage.metadata?.historySequence;
+    assert(
+      typeof appendedSequence === "number" &&
+        Number.isInteger(appendedSequence) &&
+        appendedSequence >= 0,
+      "Compaction summary append must assign a non-negative historySequence"
+    );
+    if (maxExistingHistorySequence >= 0) {
+      assert(
+        appendedSequence > maxExistingHistorySequence,
+        "Compaction summary historySequence must remain monotonic"
+      );
     }
 
     // Set flag to trigger post-compaction attachment injection on next turn
     this.postCompactionAttachmentsPending = true;
-
-    // Emit delete event for old messages
-    if (deletedSequences.length > 0) {
-      const deleteMessage: DeleteMessage = {
-        type: "delete",
-        historySequences: deletedSequences,
-      };
-      this.emitChatEvent(deleteMessage);
-    }
 
     // Emit summary message to frontend (add type: "message" for discriminated union)
     this.emitChatEvent({ ...summaryMessage, type: "message" });
