@@ -8,6 +8,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
+import { findLatestCompactionBoundaryIndex } from "@/common/utils/messages/compactionBoundary";
 import { renderAttachmentsToContentWithBudget } from "./attachmentRenderer";
 
 /**
@@ -320,8 +321,8 @@ export function injectPostCompactionAttachments(
     return messages;
   }
 
-  // Find the compaction summary message (marked with metadata.compacted)
-  const compactionIndex = messages.findIndex((msg) => msg.metadata?.compacted);
+  // Find the latest durable compaction boundary summary.
+  const compactionIndex = findLatestCompactionBoundaryIndex(messages);
 
   if (compactionIndex === -1) {
     // No compaction message found - this shouldn't happen if attachments are provided,

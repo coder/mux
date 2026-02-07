@@ -1803,7 +1803,12 @@ describe("injectPostCompactionAttachments", () => {
         id: "compaction-summary",
         role: "assistant",
         parts: [{ type: "text", text: "Compacted summary" }],
-        metadata: { timestamp: 1000, compacted: "user" },
+        metadata: {
+          timestamp: 1000,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        },
       },
       {
         id: "user-1",
@@ -1839,5 +1844,66 @@ describe("injectPostCompactionAttachments", () => {
     const text = (injected.parts[0] as { type: "text"; text: string }).text;
     expect(text.length).toBeLessThanOrEqual(MAX_POST_COMPACTION_INJECTION_CHARS);
     expect(text).toContain("post-compaction context truncated");
+  });
+
+  it("inserts after the latest compaction boundary when multiple summaries exist", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "summary-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Older summary" }],
+        metadata: {
+          timestamp: 1000,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        },
+      },
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Between summaries" }],
+        metadata: { timestamp: 1100 },
+      },
+      {
+        id: "summary-2",
+        role: "assistant",
+        parts: [{ type: "text", text: "Latest summary" }],
+        metadata: {
+          timestamp: 2000,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 2,
+        },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+        metadata: { timestamp: 2100 },
+      },
+    ];
+
+    const attachments = [
+      {
+        type: "plan_file_reference" as const,
+        planFilePath: "PLAN.md",
+        planContent: "Latest plan",
+      },
+    ];
+
+    const result = injectPostCompactionAttachments(messages, attachments);
+
+    expect(result).toHaveLength(5);
+    expect(result[0].id).toBe("summary-1");
+    expect(result[1].id).toBe("user-1");
+    expect(result[2].id).toBe("summary-2");
+
+    const injected = result[3];
+    expect(injected.metadata?.synthetic).toBe(true);
+    const text = (injected.parts[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("<system-update>");
+
+    expect(result[4].id).toBe("user-2");
   });
 });
