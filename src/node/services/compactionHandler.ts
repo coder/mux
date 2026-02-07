@@ -131,6 +131,10 @@ function isCompactedSummaryMessage(message: MuxMessage): boolean {
   return compacted !== undefined && compacted !== false;
 }
 
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
 function getNextCompactionEpoch(messages: MuxMessage[]): number {
   let epochCursor = 0;
 
@@ -140,34 +144,52 @@ function getNextCompactionEpoch(messages: MuxMessage[]): number {
       continue;
     }
 
-    if (metadata.compactionBoundary === true) {
-      assert(
-        isCompactedSummaryMessage(message),
-        "compactionBoundary can only be set on compacted summary messages"
-      );
-      assert(
-        typeof metadata.compactionEpoch === "number" &&
-          Number.isInteger(metadata.compactionEpoch) &&
-          metadata.compactionEpoch > 0,
-        "compactionBoundary messages must include a positive integer compactionEpoch"
-      );
-    }
+    const isCompactedSummary = isCompactedSummaryMessage(message);
+    const hasBoundaryMarker = metadata.compactionBoundary === true;
+    const epoch = metadata.compactionEpoch;
 
-    if (!isCompactedSummaryMessage(message)) {
+    if (hasBoundaryMarker && !isCompactedSummary) {
+      // Self-healing read path: skip malformed persisted boundary markers.
+      // Boundary markers are only valid on compacted summaries.
+      log.warn("Skipping malformed compaction boundary while deriving next epoch", {
+        messageId: message.id,
+        reason: "compactionBoundary set on non-compacted message",
+      });
       continue;
     }
 
-    const epoch = metadata.compactionEpoch;
+    if (!isCompactedSummary) {
+      continue;
+    }
+
+    if (hasBoundaryMarker) {
+      if (!isPositiveInteger(epoch)) {
+        // Self-healing read path: invalid boundary metadata should not brick compaction.
+        log.warn("Skipping malformed compaction boundary while deriving next epoch", {
+          messageId: message.id,
+          reason: "compactionBoundary missing positive integer compactionEpoch",
+        });
+        continue;
+      }
+      epochCursor = Math.max(epochCursor, epoch);
+      continue;
+    }
+
     if (epoch === undefined) {
       // Legacy compacted summaries predate compactionEpoch metadata.
       epochCursor += 1;
       continue;
     }
 
-    assert(
-      Number.isInteger(epoch) && epoch > 0,
-      "compactionEpoch must be a positive integer when present"
-    );
+    if (!isPositiveInteger(epoch)) {
+      // Self-healing read path: malformed compactionEpoch should not crash compaction.
+      log.warn("Skipping malformed compactionEpoch while deriving next epoch", {
+        messageId: message.id,
+        reason: "compactionEpoch must be a positive integer when present",
+      });
+      continue;
+    }
+
     epochCursor = Math.max(epochCursor, epoch);
   }
 
@@ -435,6 +457,7 @@ export class CompactionHandler {
       summary,
       event.metadata,
       messages,
+      event.messageId,
       isIdleCompaction,
       pendingFollowUp
     );
@@ -469,13 +492,54 @@ export class CompactionHandler {
     return true;
   }
 
+  private findPersistedStreamSummaryMessage(
+    messages: MuxMessage[],
+    streamedSummaryMessageId: string
+  ): MuxMessage | null {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const candidate = messages[i];
+      if (candidate.id !== streamedSummaryMessageId) {
+        continue;
+      }
+
+      if (candidate.role !== "assistant") {
+        // Self-healing read path: persisted message IDs can be corrupted.
+        log.warn("Cannot reuse streamed compaction summary with non-assistant role", {
+          workspaceId: this.workspaceId,
+          messageId: candidate.id,
+          role: candidate.role,
+        });
+        return null;
+      }
+
+      const historySequence = candidate.metadata?.historySequence;
+      if (
+        typeof historySequence !== "number" ||
+        !Number.isInteger(historySequence) ||
+        historySequence < 0
+      ) {
+        // Self-healing read path: invalid sequence means we cannot safely update in-place.
+        log.warn("Cannot reuse streamed compaction summary without valid historySequence", {
+          workspaceId: this.workspaceId,
+          messageId: candidate.id,
+          historySequence,
+        });
+        return null;
+      }
+
+      return candidate;
+    }
+
+    return null;
+  }
+
   /**
-   * Perform history compaction by appending a durable summary boundary.
+   * Perform history compaction by persisting a durable summary boundary.
    *
    * Steps:
    * 1. Delete partial state to avoid stale partial replay
    * 2. Persist post-compaction attachment state
-   * 3. Append summary message with boundary metadata
+   * 3. Prefer updating the streamed summary in-place, otherwise append a fallback summary
    * 4. Emit summary message to frontend
    */
   private async performCompaction(
@@ -488,15 +552,20 @@ export class CompactionHandler {
       systemMessageTokens?: number;
     },
     messages: MuxMessage[],
+    streamedSummaryMessageId: string,
     isIdleCompaction = false,
     pendingFollowUp?: CompactionFollowUpRequest
   ): Promise<Result<void, string>> {
     assert(summary.trim().length > 0, "performCompaction requires a non-empty summary");
     assert(metadata.model.trim().length > 0, "Compaction summary requires a model");
+    assert(
+      streamedSummaryMessageId.trim().length > 0,
+      "performCompaction requires streamed summary message ID"
+    );
 
-    // CRITICAL: Delete partial.json BEFORE appending compaction summary.
+    // CRITICAL: Delete partial.json BEFORE persisting compaction summary.
     // This prevents a race condition where:
-    // 1. CompactionHandler appends summary
+    // 1. CompactionHandler persists summary
     // 2. sendQueuedMessages triggers commitToHistory
     // 3. commitToHistory finds stale partial.json and appends it to history
     // By deleting partial first, commitToHistory becomes a no-op
@@ -551,11 +620,22 @@ export class CompactionHandler {
       type: "compaction-summary",
       pendingFollowUp,
     };
+
+    // StreamManager persists the final assistant message before stream-end.
+    // Prefer updating that streamed summary in-place so append-only mode keeps
+    // exactly one durable summary message per /compact cycle.
+    const persistedStreamSummary = this.findPersistedStreamSummaryMessage(
+      messages,
+      streamedSummaryMessageId
+    );
+    const persistedSummaryHistorySequence = persistedStreamSummary?.metadata?.historySequence;
+
     const summaryMessage = createMuxMessage(
-      createCompactionSummaryMessageId(),
+      persistedStreamSummary?.id ?? createCompactionSummaryMessageId(),
       "assistant",
       summary,
       {
+        ...(persistedStreamSummary?.metadata ?? {}),
         timestamp,
         compacted: isIdleCompaction ? "idle" : "user",
         compactionEpoch: nextCompactionEpoch,
@@ -567,6 +647,13 @@ export class CompactionHandler {
         muxMetadata: summaryMuxMetadata,
       }
     );
+    if (persistedSummaryHistorySequence !== undefined) {
+      summaryMessage.metadata = {
+        ...(summaryMessage.metadata ?? {}),
+        historySequence: persistedSummaryHistorySequence,
+      };
+    }
+
     assert(
       summaryMessage.metadata?.compactionBoundary === true,
       "Compaction summary must be marked as a compaction boundary"
@@ -578,26 +665,32 @@ export class CompactionHandler {
 
     // TODO(Approach B): Persist/update a sidecar compaction index so provider-request
     // assembly can avoid rescanning/parsing full chat.jsonl to find the latest boundary.
-    const appendResult = await this.historyService.appendToHistory(
-      this.workspaceId,
-      summaryMessage
-    );
-    if (!appendResult.success) {
+    const persistenceResult = persistedStreamSummary
+      ? await this.historyService.updateHistory(this.workspaceId, summaryMessage)
+      : await this.historyService.appendToHistory(this.workspaceId, summaryMessage);
+    if (!persistenceResult.success) {
       this.cachedFileDiffs = [];
       await this.deletePersistedPendingStateBestEffort();
-      return Err(`Failed to append summary: ${appendResult.error}`);
+      const operation = persistedStreamSummary ? "update streamed summary" : "append summary";
+      return Err(`Failed to ${operation}: ${persistenceResult.error}`);
     }
 
-    const appendedSequence = summaryMessage.metadata?.historySequence;
+    const persistedSequence = summaryMessage.metadata?.historySequence;
     assert(
-      typeof appendedSequence === "number" &&
-        Number.isInteger(appendedSequence) &&
-        appendedSequence >= 0,
-      "Compaction summary append must assign a non-negative historySequence"
+      typeof persistedSequence === "number" &&
+        Number.isInteger(persistedSequence) &&
+        persistedSequence >= 0,
+      "Compaction summary persistence must produce a non-negative historySequence"
     );
-    if (maxExistingHistorySequence >= 0) {
+    if (persistedStreamSummary) {
       assert(
-        appendedSequence > maxExistingHistorySequence,
+        persistedSummaryHistorySequence !== undefined &&
+          persistedSequence === persistedSummaryHistorySequence,
+        "Compaction summary update must preserve existing historySequence"
+      );
+    } else if (maxExistingHistorySequence >= 0) {
+      assert(
+        persistedSequence > maxExistingHistorySequence,
         "Compaction summary historySequence must remain monotonic"
       );
     }

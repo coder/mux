@@ -57,7 +57,7 @@ const createMockHistoryService = () => {
     }
     return Promise.resolve(appendToHistoryResult);
   });
-  const updateHistory = mock(() => Promise.resolve(Ok(undefined)));
+  const updateHistory = mock((_, __: MuxMessage) => Promise.resolve(Ok(undefined)));
   const truncateAfterMessage = mock(() => Promise.resolve(Ok(undefined)));
 
   return {
@@ -493,6 +493,103 @@ describe("CompactionHandler", () => {
       expect(appendedMsg.metadata?.compactionEpoch).toBe(2);
       expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
       expect(appendedMsg.metadata?.historySequence).toBe(4);
+    });
+
+    it("should update the streamed summary in-place instead of appending a duplicate boundary", async () => {
+      const compactionReq = createMuxMessage("req-streamed", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+        historySequence: 6,
+        timestamp: Date.now(),
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      mockHistoryService.mockGetHistory(Ok([compactionReq, streamedSummary]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.updateHistory.mock.calls).toHaveLength(1);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(0);
+
+      const updatedSummary = mockHistoryService.updateHistory.mock.calls[0][1];
+      expect(updatedSummary.id).toBe("msg-id");
+      expect(updatedSummary.metadata?.historySequence).toBe(6);
+      expect(updatedSummary.metadata?.compactionBoundary).toBe(true);
+      expect(updatedSummary.metadata?.compactionEpoch).toBe(1);
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.id === "msg-id" && m?.metadata?.compactionBoundary === true;
+      });
+      expect(summaryEvent).toBeDefined();
+    });
+
+    it("should skip malformed compaction boundary markers when deriving next epoch", async () => {
+      const validBoundary = createMuxMessage("summary-valid", "assistant", "Valid summary", {
+        historySequence: 1,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 3,
+      });
+      const malformedBoundaryMissingEpoch = createMuxMessage(
+        "summary-malformed-1",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 2,
+          compacted: "user",
+          compactionBoundary: true,
+        }
+      );
+      const malformedBoundaryMissingCompacted = createMuxMessage(
+        "summary-malformed-2",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 3,
+          compactionBoundary: true,
+          compactionEpoch: 99,
+        }
+      );
+      const malformedBoundaryInvalidEpoch = createMuxMessage(
+        "summary-malformed-3",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 4,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 0,
+        }
+      );
+      const compactionReq = createMuxMessage("req-malformed", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      mockHistoryService.mockGetHistory(
+        Ok([
+          validBoundary,
+          malformedBoundaryMissingEpoch,
+          malformedBoundaryMissingCompacted,
+          malformedBoundaryInvalidEpoch,
+          compactionReq,
+        ])
+      );
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const result = await handler.handleCompletion(createStreamEndEvent("Summary"));
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
+      expect(appendedMsg.metadata?.compactionEpoch).toBe(4);
+      expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
     });
   });
 
