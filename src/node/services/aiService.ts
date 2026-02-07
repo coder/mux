@@ -11,7 +11,7 @@ import type { SendMessageOptions } from "@/common/orpc/types";
 
 import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 
-import type { MuxMessage, MuxTextPart } from "@/common/types/message";
+import type { MuxMessage } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { StreamManager } from "./streamManager";
@@ -52,64 +52,21 @@ import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
-import type {
-  StreamAbortEvent,
-  StreamAbortReason,
-  StreamDeltaEvent,
-  StreamEndEvent,
-  StreamStartEvent,
-} from "@/common/types/stream";
-import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
-// PTC types only - modules lazy-loaded to avoid loading typescript/prettier at startup
-import type {
-  PTCEventWithParent,
-  createCodeExecutionTool as CreateCodeExecutionToolFn,
-} from "@/node/services/tools/code_execution";
-import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
-import type { ToolBridge } from "@/node/services/ptc/toolBridge";
+import type { StreamAbortEvent, StreamAbortReason, StreamEndEvent } from "@/common/types/stream";
+import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { ProviderModelFactory, parseModelString, modelCostsIncluded } from "./providerModelFactory";
 import { wrapToolsWithSystem1 } from "./system1ToolWrapper";
 import { prepareMessagesForProvider } from "./messagePipeline";
 import { resolveAgentForStream } from "./agentResolution";
 import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
-
-// Lazy-loaded PTC modules (only loaded when experiment is enabled)
-// This avoids loading typescript/prettier at startup which causes issues:
-// - Integration tests fail without --experimental-vm-modules (prettier uses dynamic imports)
-// - Smoke tests fail if typescript isn't in production bundle
-// Dynamic imports are justified: PTC pulls in ~10MB of dependencies that would slow startup.
-interface PTCModules {
-  createCodeExecutionTool: typeof CreateCodeExecutionToolFn;
-  QuickJSRuntimeFactory: typeof QuickJSRuntimeFactory;
-  ToolBridge: typeof ToolBridge;
-  runtimeFactory: QuickJSRuntimeFactory | null;
-}
-let ptcModules: PTCModules | null = null;
-
-async function getPTCModules(): Promise<PTCModules> {
-  if (ptcModules) return ptcModules;
-
-  /* eslint-disable no-restricted-syntax -- Dynamic imports required here to avoid loading
-     ~10MB of typescript/prettier/quickjs at startup (causes CI failures) */
-  const [codeExecution, quickjs, toolBridge] = await Promise.all([
-    import("@/node/services/tools/code_execution"),
-    import("@/node/services/ptc/quickjsRuntime"),
-    import("@/node/services/ptc/toolBridge"),
-  ]);
-  /* eslint-enable no-restricted-syntax */
-
-  ptcModules = {
-    createCodeExecutionTool: codeExecution.createCodeExecutionTool,
-    QuickJSRuntimeFactory: quickjs.QuickJSRuntimeFactory,
-    ToolBridge: toolBridge.ToolBridge,
-    runtimeFactory: null,
-  };
-  return ptcModules;
-}
-
-// Re-export for backwards compatibility (tests import from aiService.ts)
-export { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
+import {
+  simulateContextLimitError,
+  simulateToolPolicyNoop,
+  type SimulationContext,
+} from "./streamSimulation";
+import { applyToolPolicyAndExperiments } from "./toolAssembly";
 
 export class AIService extends EventEmitter {
   private readonly streamManager: StreamManager;
@@ -201,8 +158,22 @@ export class AIService extends EventEmitter {
    * Forward all stream events from StreamManager to AIService consumers
    */
   private setupStreamEventForwarding(): void {
-    this.streamManager.on("stream-start", (data) => this.emit("stream-start", data));
-    this.streamManager.on("stream-delta", (data) => this.emit("stream-delta", data));
+    // Simple one-to-one event forwarding from StreamManager → AIService consumers
+    for (const event of [
+      "stream-start",
+      "stream-delta",
+      "error",
+      "tool-call-start",
+      "tool-call-delta",
+      "tool-call-end",
+      "reasoning-delta",
+      "reasoning-end",
+      "usage-delta",
+    ] as const) {
+      this.streamManager.on(event, (data) => this.emit(event, data));
+    }
+
+    // stream-end needs extra logic: capture provider response for debug modal
     this.streamManager.on("stream-end", (data: StreamEndEvent) => {
       // Best-effort capture of the provider response for the "Last LLM request" debug modal.
       // Must never break live streaming.
@@ -257,16 +228,6 @@ export class AIService extends EventEmitter {
         this.emit("stream-abort", data);
       })();
     });
-
-    this.streamManager.on("error", (data) => this.emit("error", data));
-    // Forward tool events
-    this.streamManager.on("tool-call-start", (data) => this.emit("tool-call-start", data));
-    this.streamManager.on("tool-call-delta", (data) => this.emit("tool-call-delta", data));
-    this.streamManager.on("tool-call-end", (data) => this.emit("tool-call-end", data));
-    // Forward reasoning events
-    this.streamManager.on("reasoning-delta", (data) => this.emit("reasoning-delta", data));
-    this.streamManager.on("reasoning-end", (data) => this.emit("reasoning-end", data));
-    this.streamManager.on("usage-delta", (data) => this.emit("usage-delta", data));
   }
 
   private async ensureSessionsDir(): Promise<void> {
@@ -781,66 +742,20 @@ export class AIService extends EventEmitter {
         mcpTools
       );
 
-      // Merge in extra tools (e.g., CLI-specific tools like set_exit_code)
-      // These bypass policy filtering since they're injected by the runtime, not user config
-      const allToolsWithExtra = this.extraTools ? { ...allTools, ...this.extraTools } : allTools;
-
-      // NOTE: effectiveToolPolicy is derived from the selected agent definition (plus hard-denies).
-
-      // Apply tool policy FIRST - this must happen before PTC to ensure sandbox
-      // respects allow/deny filters. The policy-filtered tools are passed to
-      // ToolBridge so the mux.* API only exposes policy-allowed tools.
-      const policyFilteredTools = applyToolPolicy(allToolsWithExtra, effectiveToolPolicy);
-
-      // Handle PTC experiments - add or replace tools with code_execution
-      let toolsForModel = policyFilteredTools;
-      if (experiments?.programmaticToolCalling || experiments?.programmaticToolCallingExclusive) {
-        try {
-          // Lazy-load PTC modules only when experiments are enabled
-          const ptc = await getPTCModules();
-
-          // Create emit callback that forwards nested events to stream
-          // Only forward tool-call-start/end events, not console events
-          const emitNestedEvent = (event: PTCEventWithParent): void => {
-            if (event.type === "tool-call-start" || event.type === "tool-call-end") {
-              this.streamManager.emitNestedToolEvent(workspaceId, assistantMessageId, event);
-            }
-            // Console events are not streamed (appear in final result only)
-          };
-
-          // ToolBridge uses policy-filtered tools - sandbox only exposes allowed tools
-          const toolBridge = new ptc.ToolBridge(policyFilteredTools);
-
-          // Singleton runtime factory (WASM module is expensive to load)
-          ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();
-
-          const codeExecutionTool = await ptc.createCodeExecutionTool(
-            ptc.runtimeFactory,
-            toolBridge,
-            emitNestedEvent
-          );
-
-          if (experiments?.programmaticToolCallingExclusive) {
-            // Exclusive mode: code_execution is mandatory — it's the only way to use bridged
-            // tools. The experiment flag is the opt-in; policy cannot disable it here since
-            // that would leave no way to access tools. nonBridgeable is already policy-filtered.
-            const nonBridgeable = toolBridge.getNonBridgeableTools();
-            toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
-          } else {
-            // Supplement mode: add code_execution, then apply policy to determine final set.
-            // This correctly handles all policy combinations (require, enable, disable).
-            toolsForModel = applyToolPolicy(
-              { ...policyFilteredTools, code_execution: codeExecutionTool },
-              effectiveToolPolicy
-            );
+      // Apply tool policy and PTC experiments (lazy-loads PTC dependencies only when needed).
+      const tools = await applyToolPolicyAndExperiments({
+        allTools,
+        extraTools: this.extraTools,
+        effectiveToolPolicy,
+        experiments,
+        // Forward nested PTC tool events to the stream (tool-call-start/end only,
+        // not console events which appear in final result only).
+        emitNestedToolEvent: (event: PTCEventWithParent) => {
+          if (event.type === "tool-call-start" || event.type === "tool-call-end") {
+            this.streamManager.emitNestedToolEvent(workspaceId, assistantMessageId, event);
           }
-        } catch (error) {
-          // Fall back to policy-filtered tools if PTC creation fails
-          log.error("Failed to create code_execution tool, falling back to base tools", { error });
-        }
-      }
-
-      const tools = toolsForModel;
+        },
+      });
 
       const effectiveMcpStats: MCPWorkspaceStats =
         mcpStats ??
@@ -916,141 +831,39 @@ export class AIService extends EventEmitter {
       // Get the assigned historySequence
       const historySequence = assistantMessage.metadata?.historySequence ?? 0;
 
+      // Handle simulated stream scenarios (OpenAI SDK testing features).
+      // These emit synthetic stream events without calling an AI provider.
       const forceContextLimitError =
         modelString.startsWith("openai:") &&
         effectiveMuxProviderOptions.openai?.forceContextLimitError === true;
-      const simulateToolPolicyNoop =
+      const simulateToolPolicyNoopFlag =
         modelString.startsWith("openai:") &&
         effectiveMuxProviderOptions.openai?.simulateToolPolicyNoop === true;
 
-      if (forceContextLimitError) {
-        const errorMessage =
-          "Context length exceeded: the conversation is too long to send to this OpenAI model. Please shorten the history and try again.";
-
-        const errorPartialMessage: MuxMessage = {
-          id: assistantMessageId,
-          role: "assistant",
-          metadata: {
-            historySequence,
-            timestamp: Date.now(),
-            model: canonicalModelString,
-            routedThroughGateway,
-            systemMessageTokens,
-            agentId: effectiveAgentId,
-            thinkingLevel: effectiveThinkingLevel,
-            partial: true,
-            error: errorMessage,
-            errorType: "context_exceeded",
-          },
-          parts: [],
-        };
-
-        await this.partialService.writePartial(workspaceId, errorPartialMessage);
-
-        const streamStartEvent: StreamStartEvent = {
-          type: "stream-start",
+      if (forceContextLimitError || simulateToolPolicyNoopFlag) {
+        const simulationCtx: SimulationContext = {
           workspaceId,
-          messageId: assistantMessageId,
-          model: canonicalModelString,
+          assistantMessageId,
+          canonicalModelString,
           routedThroughGateway,
           historySequence,
-          startTime: Date.now(),
-          agentId: effectiveAgentId,
-          mode: effectiveMode,
-          thinkingLevel: effectiveThinkingLevel,
-        };
-        this.emit("stream-start", streamStartEvent);
-
-        this.emit(
-          "error",
-          createErrorEvent(workspaceId, {
-            messageId: assistantMessageId,
-            error: errorMessage,
-            errorType: "context_exceeded",
-          })
-        );
-
-        return Ok(undefined);
-      }
-
-      if (simulateToolPolicyNoop) {
-        const noopMessage = createMuxMessage(assistantMessageId, "assistant", "", {
-          timestamp: Date.now(),
-          model: canonicalModelString,
-          routedThroughGateway,
           systemMessageTokens,
-          agentId: effectiveAgentId,
-          thinkingLevel: effectiveThinkingLevel,
-          toolPolicy: effectiveToolPolicy,
-        });
-
-        const parts: StreamEndEvent["parts"] = [
-          {
-            type: "text",
-            text: "Tool execution skipped because the requested tool is disabled by policy.",
-          },
-        ];
-
-        const streamStartEvent: StreamStartEvent = {
-          type: "stream-start",
-          workspaceId,
-          messageId: assistantMessageId,
-          model: canonicalModelString,
-          routedThroughGateway,
-          historySequence,
-          startTime: Date.now(),
-          agentId: effectiveAgentId,
-          mode: effectiveMode,
-          thinkingLevel: effectiveThinkingLevel,
+          effectiveAgentId,
+          effectiveMode,
+          effectiveThinkingLevel,
+          emit: (event, data) => this.emit(event, data),
         };
-        this.emit("stream-start", streamStartEvent);
 
-        const textParts = parts.filter((part): part is MuxTextPart => part.type === "text");
-        if (textParts.length === 0) {
-          throw new Error("simulateToolPolicyNoop requires at least one text part");
+        if (forceContextLimitError) {
+          await simulateContextLimitError(simulationCtx, this.partialService);
+        } else {
+          await simulateToolPolicyNoop(
+            simulationCtx,
+            effectiveToolPolicy,
+            this.historyService,
+            this.partialService
+          );
         }
-
-        for (const textPart of textParts) {
-          if (textPart.text.length === 0) {
-            continue;
-          }
-
-          const streamDeltaEvent: StreamDeltaEvent = {
-            type: "stream-delta",
-            workspaceId,
-            messageId: assistantMessageId,
-            delta: textPart.text,
-            tokens: 0, // Mock scenario - actual tokenization happens in streamManager
-            timestamp: Date.now(),
-          };
-          this.emit("stream-delta", streamDeltaEvent);
-        }
-
-        const streamEndEvent: StreamEndEvent = {
-          type: "stream-end",
-          workspaceId,
-          messageId: assistantMessageId,
-          metadata: {
-            model: canonicalModelString,
-            thinkingLevel: effectiveThinkingLevel,
-            routedThroughGateway,
-            systemMessageTokens,
-          },
-          parts,
-        };
-        this.emit("stream-end", streamEndEvent);
-
-        const finalAssistantMessage: MuxMessage = {
-          ...noopMessage,
-          metadata: {
-            ...noopMessage.metadata,
-            historySequence,
-          },
-          parts,
-        };
-
-        await this.partialService.deletePartial(workspaceId);
-        await this.historyService.updateHistory(workspaceId, finalAssistantMessage);
         return Ok(undefined);
       }
 

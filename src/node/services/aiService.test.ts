@@ -7,7 +7,8 @@ import * as path from "node:path";
 
 import { describe, it, expect, beforeEach } from "bun:test";
 
-import { AIService, discoverAvailableSubagentsForToolContext } from "./aiService";
+import { AIService } from "./aiService";
+import { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
 import {
   normalizeAnthropicBaseURL,
   buildAnthropicHeaders,
