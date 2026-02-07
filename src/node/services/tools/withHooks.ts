@@ -12,8 +12,8 @@
  * Legacy model (tool_hook): single hook with marker protocol (echo $MUX_EXEC)
  */
 
-import assert from "@/common/utils/assert";
 import type { Tool } from "ai";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { WithHookOutput, MayHaveHookOutput } from "@/common/types/tools";
 import {
@@ -46,21 +46,6 @@ function truncateHookOutput(output: string): string {
     return output;
   }
   return output.slice(0, HOOK_OUTPUT_MAX_CHARS) + "\n\n[hook_output truncated]";
-}
-
-function cloneToolPreservingDescriptors(tool: unknown): Tool {
-  assert(tool && typeof tool === "object", "tool must be an object");
-
-  // Clone the tool without invoking getters (important for some dynamic tools).
-  const prototype = Object.getPrototypeOf(tool) as unknown;
-  assert(
-    prototype === null || typeof prototype === "object",
-    "tool prototype must be an object or null"
-  );
-
-  const clone = Object.create(prototype) as object;
-  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(tool));
-  return clone as Tool;
 }
 
 /**

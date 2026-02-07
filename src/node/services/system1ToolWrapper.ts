@@ -6,7 +6,6 @@
  * Extracted from the ~660-line IIFE that lived inside AIService.streamMessage().
  */
 import * as path from "path";
-import assert from "@/common/utils/assert";
 import type { LanguageModel, Tool } from "ai";
 import {
   applySystem1KeepRangesToOutput,
@@ -33,6 +32,7 @@ import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
+import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { log } from "./log";
 
 // ---------------------------------------------------------------------------
@@ -162,21 +162,8 @@ export function wrapToolsWithSystem1(opts: System1WrapOptions): Record<string, T
 // Tool helpers (moved from module-level in aiService.ts)
 // ---------------------------------------------------------------------------
 
-/** Shallow-clone a Tool preserving property descriptors (getters, etc.). */
-export function cloneToolPreservingDescriptors(tool: Tool): Tool {
-  assert(tool && typeof tool === "object", "tool must be an object");
-  const prototype = Object.getPrototypeOf(tool) as unknown;
-  assert(
-    prototype === null || typeof prototype === "object",
-    "tool prototype must be an object or null"
-  );
-  const clone = Object.create(prototype) as object;
-  Object.defineProperties(clone, Object.getOwnPropertyDescriptors(tool));
-  return clone as Tool;
-}
-
 /** Concatenate an extra note onto a tool result's existing note. */
-export function appendToolNote(existing: string | undefined, extra: string): string {
+function appendToolNote(existing: string | undefined, extra: string): string {
   return existing ? `${existing}\n\n${extra}` : extra;
 }
 
