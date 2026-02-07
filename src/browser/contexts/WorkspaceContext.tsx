@@ -805,12 +805,19 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   selectedWorkspaceRef.current = selectedWorkspace;
 
-  // Keep the WorkspaceStore in sync with the selected workspace. When the user
-  // navigates to a different workspace (URL changes), tell the store so it can
-  // subscribe to the new workspace's onChat and suspend the old one.
-  useEffect(() => {
-    workspaceStore.setSelectedWorkspaceId(selectedWorkspace?.workspaceId ?? null);
-  }, [selectedWorkspace?.workspaceId, workspaceStore]);
+  // Keep the WorkspaceStore in sync with the selected workspace. Must run
+  // synchronously during render (not in a useEffect) because child components
+  // call useWorkspaceState() which requires the aggregator to exist.
+  // If deferred to useEffect, there's a render gap where WorkspaceShell tries
+  // to access the aggregator before it's created → assertion failure.
+  // This follows the same pattern as setWorkspaceMetadata (line 531) which
+  // also calls store methods synchronously inside a React state updater.
+  const prevSelectedIdRef = useRef<string | null>(null);
+  const currentSelectedId = selectedWorkspace?.workspaceId ?? null;
+  if (prevSelectedIdRef.current !== currentSelectedId) {
+    prevSelectedIdRef.current = currentSelectedId;
+    workspaceStore.setSelectedWorkspaceId(currentSelectedId);
+  }
 
   // setSelectedWorkspace navigates to the workspace URL (or clears if null)
   const setSelectedWorkspace = useCallback(

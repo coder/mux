@@ -156,6 +156,12 @@ export interface SessionTimingStats {
 }
 
 /**
+ * Shared empty array for suspended workspace sidebar state.
+ * Using a stable reference prevents useSyncExternalStore from detecting false changes.
+ */
+const EMPTY_SKILLS: LoadedSkill[] = [];
+
+/**
  * Subset of WorkspaceState needed for sidebar display.
  * Subscribing to only these fields prevents re-renders when messages update.
  *
@@ -902,7 +908,7 @@ export class WorkspaceStore {
         awaitingUserQuestion: false,
         currentModel: activity.lastModel,
         recencyTimestamp: activity.recency,
-        loadedSkills: [],
+        loadedSkills: EMPTY_SKILLS,
         agentStatus: undefined,
       });
     }
@@ -1264,21 +1270,24 @@ export class WorkspaceStore {
    * cache up to date.
    */
   getWorkspaceSidebarState(workspaceId: string): WorkspaceSidebarState {
-    // Suspended workspace — no aggregator, return cached state or default
+    // Suspended workspace — no aggregator, return cached state.
+    // IMPORTANT: Must return a referentially stable object for useSyncExternalStore.
+    // If no cache exists yet, seed it now so subsequent calls return the same reference.
     if (!this.aggregators.has(workspaceId)) {
-      const cached = this.cachedSidebarState.get(workspaceId);
-      if (cached) return cached;
-
-      // No cache available — return a safe default
-      return {
-        canInterrupt: false,
-        isStarting: false,
-        awaitingUserQuestion: false,
-        currentModel: null,
-        recencyTimestamp: this.recencyCache.get(workspaceId) ?? null,
-        loadedSkills: [],
-        agentStatus: undefined,
-      };
+      let cached = this.cachedSidebarState.get(workspaceId);
+      if (!cached) {
+        cached = {
+          canInterrupt: false,
+          isStarting: false,
+          awaitingUserQuestion: false,
+          currentModel: null,
+          recencyTimestamp: this.recencyCache.get(workspaceId) ?? null,
+          loadedSkills: EMPTY_SKILLS,
+          agentStatus: undefined,
+        };
+        this.cachedSidebarState.set(workspaceId, cached);
+      }
+      return cached;
     }
 
     const fullState = this.getWorkspaceState(workspaceId);
