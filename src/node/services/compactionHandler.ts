@@ -499,9 +499,29 @@ export class CompactionHandler {
     // Notify that compaction completed (clears idle compaction pending state)
     this.onCompactionComplete?.();
 
-    // Emit stream-end to frontend so UI knows compaction is complete
-    this.emitChatEvent(event);
+    // Emit a sanitized stream-end so UI can close streaming state without
+    // re-introducing stale provider metadata from the pre-compaction row.
+    this.emitChatEvent(this.sanitizeCompactionStreamEndEvent(event));
     return true;
+  }
+
+  private sanitizeCompactionStreamEndEvent(event: StreamEndEvent): StreamEndEvent {
+    const sanitizedEvent: StreamEndEvent = {
+      ...event,
+      metadata: {
+        ...event.metadata,
+        providerMetadata: undefined,
+        contextProviderMetadata: undefined,
+      },
+    };
+
+    assert(
+      sanitizedEvent.metadata.providerMetadata === undefined &&
+        sanitizedEvent.metadata.contextProviderMetadata === undefined,
+      "Compaction stream-end event must not carry stale provider metadata"
+    );
+
+    return sanitizedEvent;
   }
 
   private findPersistedStreamSummaryMessage(
