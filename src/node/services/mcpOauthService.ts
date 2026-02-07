@@ -21,12 +21,7 @@ import type {
 } from "@/common/types/mcpOauth";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
-import {
-  closeServer,
-  createDeferred,
-  escapeHtml,
-  renderOAuthCallbackHtml,
-} from "@/node/utils/oauthUtils";
+import { closeServer, createDeferred, renderOAuthCallbackHtml } from "@/node/utils/oauthUtils";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -1134,7 +1129,7 @@ export class McpOauthService {
         title: result.success ? "Login complete" : "Login failed",
         message: result.success
           ? "You can return to Mux. You may now close this tab."
-          : escapeHtml(result.error),
+          : result.error,
         success: result.success,
       })
     );

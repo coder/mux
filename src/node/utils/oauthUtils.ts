@@ -65,7 +65,7 @@ export interface RenderOAuthCallbackHtmlOptions {
  */
 export function renderOAuthCallbackHtml(options: RenderOAuthCallbackHtmlOptions): string {
   const title = escapeHtml(options.title);
-  const message = options.success ? escapeHtml(options.message) : options.message;
+  const message = escapeHtml(options.message);
 
   return `<!doctype html>
 <html lang="en">

@@ -148,13 +148,13 @@ describe("renderOAuthCallbackHtml", () => {
     expect(html).toContain("&lt;img onerror=&quot;hack&quot;&gt;");
   });
 
-  it("does NOT escape message when success is false (allows HTML error detail)", () => {
+  it("escapes message when success is false", () => {
     const html = renderOAuthCallbackHtml({
       title: "Failed",
       message: "<b>Error detail</b>",
       success: false,
     });
-    expect(html).toContain("<p><b>Error detail</b></p>");
+    expect(html).toContain("<p>&lt;b&gt;Error detail&lt;/b&gt;</p>");
   });
 
   it("includes extraHead when provided", () => {

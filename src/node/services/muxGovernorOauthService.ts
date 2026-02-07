@@ -85,7 +85,11 @@ export class MuxGovernorOauthService {
     this.desktopFlows.register(flowId, {
       server: loopback.server,
       resultDeferred,
-      timeoutHandle: null,
+      // Keep server-side timeout tied to flow lifetime so abandoned flows
+      // (e.g. callers that never invoke waitForDesktopFlow) still self-clean.
+      timeoutHandle: setTimeout(() => {
+        void this.desktopFlows.finish(flowId, Err("Timed out waiting for OAuth callback"));
+      }, DEFAULT_DESKTOP_TIMEOUT_MS),
     });
 
     // Wire the loopback result to drive token exchange + finish.
