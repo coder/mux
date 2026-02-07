@@ -732,6 +732,47 @@ describe("StreamingMessageAggregator", () => {
         expect(endBoundary.historySequence).toBe(2);
       }
     });
+
+    test("omits malformed compaction epoch values instead of crashing transcript rendering", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const before = createMuxMessage("user-before", "user", "Before compaction", {
+        historySequence: 1,
+        timestamp: 1,
+      });
+      const summaryWithMalformedEpoch = createMuxMessage(
+        "summary-malformed",
+        "assistant",
+        "Compacted summary",
+        {
+          historySequence: 2,
+          timestamp: 2,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 0,
+          muxMetadata: { type: "compaction-summary" },
+        }
+      );
+      const after = createMuxMessage("user-after", "user", "After compaction", {
+        historySequence: 3,
+        timestamp: 3,
+      });
+
+      aggregator.loadHistoricalMessages([before, summaryWithMalformedEpoch, after], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const boundaries = displayed.filter((message) => message.type === "compaction-boundary");
+
+      expect(boundaries).toHaveLength(2);
+
+      for (const boundary of boundaries) {
+        if (boundary.type !== "compaction-boundary") {
+          throw new Error("Expected compaction boundary message");
+        }
+        expect(boundary.compactionEpoch).toBeUndefined();
+        expect(boundary.historySequence).toBe(2);
+      }
+    });
   });
 
   describe("compaction detection", () => {
