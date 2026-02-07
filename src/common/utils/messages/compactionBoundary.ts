@@ -2,10 +2,29 @@ import assert from "node:assert";
 
 import type { MuxMessage } from "@/common/types/message";
 
+function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boolean {
+  if (message?.metadata?.compactionBoundary !== true) {
+    return false;
+  }
+
+  // Self-healing read path: malformed persisted boundary metadata should be ignored,
+  // not crash request assembly.
+  if (message.metadata.compacted === undefined || message.metadata.compacted === false) {
+    return false;
+  }
+
+  const epoch = message.metadata.compactionEpoch;
+  if (epoch !== undefined && (!Number.isInteger(epoch) || epoch <= 0)) {
+    return false;
+  }
+
+  return true;
+}
+
 /**
  * Locate the latest durable compaction boundary in reverse chronological order.
  *
- * Returns the index of the newest message tagged with `metadata.compactionBoundary === true`,
+ * Returns the index of the newest message tagged with valid boundary metadata,
  * or `-1` when no durable boundary exists in the provided history.
  */
 export function findLatestCompactionBoundaryIndex(messages: MuxMessage[]): number {
@@ -14,25 +33,9 @@ export function findLatestCompactionBoundaryIndex(messages: MuxMessage[]): numbe
   // TODO(Approach B): Consider persisting a sidecar compaction index so provider-request
   // slicing can skip reverse-scanning chat history on every request.
   for (let i = messages.length - 1; i >= 0; i -= 1) {
-    const candidate = messages[i];
-    if (candidate?.metadata?.compactionBoundary !== true) {
-      continue;
+    if (isDurableCompactionBoundaryMarker(messages[i])) {
+      return i;
     }
-
-    assert(
-      candidate.metadata.compacted !== undefined && candidate.metadata.compacted !== false,
-      "compactionBoundary markers must be attached to compacted summary messages"
-    );
-
-    const epoch = candidate.metadata.compactionEpoch;
-    if (epoch !== undefined) {
-      assert(
-        Number.isInteger(epoch) && epoch > 0,
-        "compactionBoundary markers must use positive integer compactionEpoch values"
-      );
-    }
-
-    return i;
   }
 
   return -1;
@@ -57,8 +60,8 @@ export function sliceMessagesFromLatestCompactionBoundary(messages: MuxMessage[]
   const sliced = messages.slice(boundaryIndex);
   assert(sliced.length > 0, "compaction boundary slicing must retain at least one message");
   assert(
-    sliced[0]?.metadata?.compactionBoundary === true,
-    "compaction boundary slicing must start on a compaction boundary message"
+    isDurableCompactionBoundaryMarker(sliced[0]),
+    "compaction boundary slicing must start on a durable compaction boundary message"
   );
 
   return sliced;

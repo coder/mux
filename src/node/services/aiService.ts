@@ -588,6 +588,8 @@ export class AIService extends EventEmitter {
           : undefined;
 
       // Build plan-aware instructions and determine plan→exec transition content.
+      // IMPORTANT: Derive this from the same boundary-sliced message payload that is sent to
+      // the model so plan hints/handoffs cannot be suppressed by pre-boundary history.
       const { effectiveAdditionalInstructions, planFilePath, planContentForTransition } =
         await buildPlanInstructions({
           runtime,
@@ -602,7 +604,7 @@ export class AIService extends EventEmitter {
           shouldDisableTaskToolsForDepth,
           taskDepth,
           taskSettings,
-          filteredMessages,
+          requestPayloadMessages: providerRequestMessages,
         });
 
       // Run the full message preparation pipeline (inject context, transform, validate).
