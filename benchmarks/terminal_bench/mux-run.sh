@@ -30,6 +30,7 @@ MUX_THINKING_LEVEL="${MUX_THINKING_LEVEL:-high}"
 MUX_MODE="${MUX_MODE:-exec}"
 MUX_RUNTIME="${MUX_RUNTIME:-}"
 MUX_EXPERIMENTS="${MUX_EXPERIMENTS:-}"
+MUX_EXPLORE_MODEL="${MUX_EXPLORE_MODEL:-}"
 
 resolve_project_path() {
   if [[ -n "${MUX_PROJECT_PATH}" ]]; then
@@ -79,6 +80,11 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
       cmd+=(--experiment "${exp}")
     fi
   done
+fi
+
+# Set explore sub-agent model (fast/cheap model for read-only investigation)
+if [[ -n "${MUX_EXPLORE_MODEL}" ]]; then
+  cmd+=(--explore-model "${MUX_EXPLORE_MODEL}")
 fi
 
 MUX_OUTPUT_FILE="/tmp/mux-output.jsonl"

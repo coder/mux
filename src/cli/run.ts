@@ -263,6 +263,10 @@ program
   .option("--mcp <server>", "MCP server as name=command (can be repeated)", collectMcpServers, [])
   .option("--no-mcp-config", "ignore global + repo MCP config files (use only --mcp servers)")
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
+  .option(
+    "--explore-model <model>",
+    "model for explore sub-agents (fast/cheap recommended, e.g. anthropic:claude-haiku-3-5)"
+  )
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
   .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority", "auto")
   .addHelpText(
@@ -297,6 +301,7 @@ interface CLIOptions {
   mcp: MCPServerEntry[];
   mcpConfig: boolean;
   experiment: string[];
+  exploreModel?: string;
   budget?: number;
   serviceTier: "auto" | "default" | "flex" | "priority";
 }
@@ -349,6 +354,23 @@ async function main(): Promise<number> {
   if (Object.keys(existingSecrets).length > 0) {
     const secretsFile = path.join(config.rootDir, "secrets.json");
     fsSync.writeFileSync(secretsFile, JSON.stringify(existingSecrets, null, 2));
+  }
+
+  // Set per-agent model defaults (e.g., --explore-model uses a fast model for explore sub-agents)
+  if (opts.exploreModel) {
+    const configFile = path.join(config.rootDir, "config.json");
+    const existing: Record<string, unknown> = fsSync.existsSync(configFile)
+      ? (JSON.parse(fsSync.readFileSync(configFile, "utf-8")) as Record<string, unknown>)
+      : {};
+    const prevDefaults =
+      existing.agentAiDefaults && typeof existing.agentAiDefaults === "object"
+        ? (existing.agentAiDefaults as Record<string, unknown>)
+        : {};
+    existing.agentAiDefaults = {
+      ...prevDefaults,
+      explore: { modelString: resolveModelAlias(opts.exploreModel) },
+    };
+    fsSync.writeFileSync(configFile, JSON.stringify(existing, null, 2));
   }
 
   const workspaceId = generateWorkspaceId();
