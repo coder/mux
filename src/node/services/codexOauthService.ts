@@ -1,5 +1,4 @@
 import * as crypto from "crypto";
-import * as http from "http";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import {
@@ -24,25 +23,13 @@ import {
   parseCodexOauthAuth,
   type CodexOauthAuth,
 } from "@/node/utils/codexOauthAuth";
+import { createDeferred } from "@/node/utils/oauthUtils";
+import { startLoopbackServer } from "@/node/utils/oauthLoopbackServer";
+import { OAuthFlowManager } from "@/node/utils/oauthFlowManager";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_TIMEOUT_MS = 15 * 60 * 1000;
 const COMPLETED_FLOW_TTL_MS = 60 * 1000;
-
-interface DesktopFlow {
-  flowId: string;
-  authorizeUrl: string;
-  redirectUri: string;
-  codeVerifier: string;
-
-  server: http.Server;
-  timeout: ReturnType<typeof setTimeout>;
-  cleanupTimeout: ReturnType<typeof setTimeout> | null;
-
-  resultPromise: Promise<Result<void, string>>;
-  resolveResult: (result: Result<void, string>) => void;
-  settled: boolean;
-}
 
 interface DeviceFlow {
   flowId: string;
@@ -63,20 +50,6 @@ interface DeviceFlow {
   settled: boolean;
 }
 
-function closeServer(server: http.Server): Promise<void> {
-  return new Promise((resolve) => {
-    server.close(() => resolve());
-  });
-}
-
-function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 function sha256Base64Url(value: string): string {
   return crypto.createHash("sha256").update(value).digest().toString("base64url");
 }
@@ -87,17 +60,6 @@ function randomBase64Url(bytes = 32): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isLoopbackAddress(address: string | undefined): boolean {
-  if (!address) return false;
-
-  // Node may normalize IPv4 loopback to an IPv6-mapped address.
-  if (address === "::ffff:127.0.0.1") {
-    return true;
-  }
-
-  return address === "127.0.0.1" || address === "::1";
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -133,7 +95,7 @@ function isInvalidGrantError(errorText: string): boolean {
 }
 
 export class CodexOauthService {
-  private readonly desktopFlows = new Map<string, DesktopFlow>();
+  private readonly desktopFlows = new OAuthFlowManager();
   private readonly deviceFlows = new Map<string, DeviceFlow>();
 
   private readonly refreshMutex = new AsyncMutex();
@@ -159,58 +121,29 @@ export class CodexOauthService {
 
     const codeVerifier = randomBase64Url();
     const codeChallenge = sha256Base64Url(codeVerifier);
-
-    const { promise: resultPromise, resolve: resolveResult } =
-      createDeferred<Result<void, string>>();
-
     const redirectUri = CODEX_OAUTH_BROWSER_REDIRECT_URI;
 
-    const server = http.createServer((req, res) => {
-      if (!isLoopbackAddress(req.socket.remoteAddress)) {
-        res.statusCode = 403;
-        res.end("Forbidden");
-        return;
-      }
-
-      const reqUrl = req.url ?? "/";
-      const url = new URL(reqUrl, "http://localhost");
-
-      if (req.method !== "GET" || url.pathname !== "/auth/callback") {
-        res.statusCode = 404;
-        res.end("Not found");
-        return;
-      }
-
-      const state = url.searchParams.get("state");
-      if (!state || state !== flowId) {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "text/html");
-        res.end("<h1>Invalid OAuth state</h1>");
-        return;
-      }
-
-      const code = url.searchParams.get("code");
-      const error = url.searchParams.get("error");
-      const errorDescription = url.searchParams.get("error_description") ?? undefined;
-
-      void this.handleDesktopCallback({
-        flowId,
-        code,
-        error,
-        errorDescription,
-        res,
-      });
-    });
-
+    let loopback: Awaited<ReturnType<typeof startLoopbackServer>>;
     try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(1455, "localhost", () => resolve());
+      loopback = await startLoopbackServer({
+        port: 1455,
+        host: "localhost",
+        callbackPath: "/auth/callback",
+        validateLoopback: true,
+        expectedState: flowId,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
+
+    const resultDeferred = createDeferred<Result<void, string>>();
+
+    this.desktopFlows.register(flowId, {
+      server: loopback.server,
+      resultDeferred,
+      timeoutHandle: null,
+    });
 
     const authorizeUrl = buildCodexAuthorizeUrl({
       redirectUri,
@@ -218,22 +151,34 @@ export class CodexOauthService {
       codeChallenge,
     });
 
-    const timeout = setTimeout(() => {
-      void this.finishDesktopFlow(flowId, Err("Timed out waiting for OAuth callback"));
-    }, DEFAULT_DESKTOP_TIMEOUT_MS);
+    // Background task: wait for the loopback callback, exchange code for tokens,
+    // then finish the flow. Races against resultDeferred (which resolves on
+    // cancel/timeout) so the task exits cleanly if the flow is cancelled.
+    void (async () => {
+      const callbackResult = await Promise.race([
+        loopback.result,
+        resultDeferred.promise.then(() => null),
+      ]);
 
-    this.desktopFlows.set(flowId, {
-      flowId,
-      authorizeUrl,
-      redirectUri,
-      codeVerifier,
-      server,
-      timeout,
-      cleanupTimeout: null,
-      resultPromise,
-      resolveResult,
-      settled: false,
-    });
+      // null means the flow was finished externally (cancel/timeout).
+      if (!callbackResult) return;
+
+      if (!callbackResult.success) {
+        await this.desktopFlows.finish(flowId, Err(callbackResult.error));
+        return;
+      }
+
+      const exchangeResult = await this.handleDesktopCallbackAndExchange({
+        flowId,
+        redirectUri,
+        codeVerifier,
+        code: callbackResult.data.code,
+        error: null,
+        errorDescription: undefined,
+      });
+
+      await this.desktopFlows.finish(flowId, exchangeResult);
+    })();
 
     log.debug(`[Codex OAuth] Desktop flow started (flowId=${flowId})`);
 
@@ -244,40 +189,12 @@ export class CodexOauthService {
     flowId: string,
     opts?: { timeoutMs?: number }
   ): Promise<Result<void, string>> {
-    const flow = this.desktopFlows.get(flowId);
-    if (!flow) {
-      return Err("OAuth flow not found");
-    }
-
-    const timeoutMs = opts?.timeoutMs ?? DEFAULT_DESKTOP_TIMEOUT_MS;
-
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<Result<void, string>>((resolve) => {
-      timeoutHandle = setTimeout(() => {
-        resolve(Err("Timed out waiting for OAuth callback"));
-      }, timeoutMs);
-    });
-
-    const result = await Promise.race([flow.resultPromise, timeoutPromise]);
-
-    if (timeoutHandle !== null) {
-      clearTimeout(timeoutHandle);
-    }
-
-    if (!result.success) {
-      // Ensure listener is closed on timeout/errors.
-      void this.finishDesktopFlow(flowId, result);
-    }
-
-    return result;
+    return this.desktopFlows.waitFor(flowId, opts?.timeoutMs ?? DEFAULT_DESKTOP_TIMEOUT_MS);
   }
 
   async cancelDesktopFlow(flowId: string): Promise<void> {
-    const flow = this.desktopFlows.get(flowId);
-    if (!flow) return;
-
     log.debug(`[Codex OAuth] Desktop flow cancelled (flowId=${flowId})`);
-    await this.finishDesktopFlow(flowId, Err("OAuth flow cancelled"));
+    await this.desktopFlows.cancel(flowId);
   }
 
   async startDeviceFlow(): Promise<
@@ -414,18 +331,10 @@ export class CodexOauthService {
   }
 
   async dispose(): Promise<void> {
-    const desktopIds = [...this.desktopFlows.keys()];
-    await Promise.all(desktopIds.map((id) => this.finishDesktopFlow(id, Err("App shutting down"))));
+    await this.desktopFlows.shutdownAll();
 
     const deviceIds = [...this.deviceFlows.keys()];
     await Promise.all(deviceIds.map((id) => this.finishDeviceFlow(id, Err("App shutting down"))));
-
-    for (const flow of this.desktopFlows.values()) {
-      clearTimeout(flow.timeout);
-      if (flow.cleanupTimeout !== null) {
-        clearTimeout(flow.cleanupTimeout);
-      }
-    }
 
     for (const flow of this.deviceFlows.values()) {
       clearTimeout(flow.timeout);
@@ -434,7 +343,6 @@ export class CodexOauthService {
       }
     }
 
-    this.desktopFlows.clear();
     this.deviceFlows.clear();
   }
 
@@ -456,67 +364,6 @@ export class CodexOauthService {
     // failures) and we want the next read to be authoritative.
     this.cachedAuth = null;
     return result;
-  }
-
-  private async handleDesktopCallback(input: {
-    flowId: string;
-    code: string | null;
-    error: string | null;
-    errorDescription?: string;
-    res: http.ServerResponse;
-  }): Promise<void> {
-    const flow = this.desktopFlows.get(input.flowId);
-    if (!flow || flow.settled) {
-      input.res.statusCode = 409;
-      input.res.setHeader("Content-Type", "text/html");
-      input.res.end("<h1>OAuth flow already completed</h1>");
-      return;
-    }
-
-    log.debug(`[Codex OAuth] Desktop callback received (flowId=${input.flowId})`);
-
-    const result = await this.handleDesktopCallbackAndExchange({
-      flowId: input.flowId,
-      redirectUri: flow.redirectUri,
-      codeVerifier: flow.codeVerifier,
-      code: input.code,
-      error: input.error,
-      errorDescription: input.errorDescription,
-    });
-
-    const title = result.success ? "Login complete" : "Login failed";
-    const description = result.success
-      ? "You can return to Mux. You may now close this tab."
-      : escapeHtml(result.error);
-
-    input.res.setHeader("Content-Type", "text/html");
-    if (!result.success) {
-      input.res.statusCode = 400;
-    }
-
-    input.res.end(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <title>${title}</title>
-  </head>
-  <body>
-    <h1>${title}</h1>
-    <p>${description}</p>
-    <script>
-      (() => {
-        const ok = ${result.success ? "true" : "false"};
-        if (!ok) return;
-        try { window.close(); } catch {}
-        setTimeout(() => { try { window.close(); } catch {} }, 50);
-      })();
-    </script>
-  </body>
-</html>`);
-
-    await this.finishDesktopFlow(input.flowId, result);
   }
 
   private async handleDesktopCallbackAndExchange(input: {
@@ -845,28 +692,6 @@ export class CodexOauthService {
     }
   }
 
-  private async finishDesktopFlow(flowId: string, result: Result<void, string>): Promise<void> {
-    const flow = this.desktopFlows.get(flowId);
-    if (!flow || flow.settled) return;
-
-    flow.settled = true;
-    clearTimeout(flow.timeout);
-
-    try {
-      flow.resolveResult(result);
-      await closeServer(flow.server);
-    } catch (error) {
-      log.debug("[Codex OAuth] Failed to close OAuth callback listener:", error);
-    } finally {
-      if (flow.cleanupTimeout !== null) {
-        clearTimeout(flow.cleanupTimeout);
-      }
-      flow.cleanupTimeout = setTimeout(() => {
-        this.desktopFlows.delete(flowId);
-      }, COMPLETED_FLOW_TTL_MS);
-    }
-  }
-
   private finishDeviceFlow(flowId: string, result: Result<void, string>): Promise<void> {
     const flow = this.deviceFlows.get(flowId);
     if (!flow || flow.settled) {
@@ -921,11 +746,4 @@ async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+
