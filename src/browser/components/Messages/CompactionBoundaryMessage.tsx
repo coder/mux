@@ -13,10 +13,7 @@ export const CompactionBoundaryMessage: React.FC<CompactionBoundaryMessageProps>
 }) => {
   const epochLabel =
     typeof message.compactionEpoch === "number" ? ` #${message.compactionEpoch}` : "";
-  const label =
-    message.position === "start"
-      ? `Compaction boundary${epochLabel}`
-      : `Resume after compaction${epochLabel}`;
+  const label = `Compaction boundary${epochLabel}`;
 
   return (
     <div
