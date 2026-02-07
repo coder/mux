@@ -28,6 +28,7 @@ import { createTestRuntime, TestWorkspace, type RuntimeType } from "./test-fixtu
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { RuntimeError } from "@/node/runtime/Runtime";
+import type { SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { createSSHTransport } from "@/node/runtime/transports";
 import { runFullInit } from "@/node/runtime/runtimeFactory";
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
@@ -1194,6 +1195,377 @@ describeIntegration("Runtime integration tests", () => {
         expect(result.success).toBe(true);
       });
     });
+  });
+
+  /**
+   * SSHRuntime worktree-based workspace operations
+   *
+   * Tests the shared bare base repo + git worktree approach for SSH workspaces.
+   * When a base repo (.mux-base.git) exists, fork/init/delete/rename use git worktree
+   * commands instead of full directory copies. Legacy workspaces (no base repo) still work.
+   */
+  describe("SSHRuntime worktree operations", () => {
+    const srcBaseDir = "/home/testuser/workspace";
+    const createSSHRuntime = (): SSHRuntime =>
+      createTestRuntime("ssh", srcBaseDir, sshConfig) as SSHRuntime;
+
+    const noopInitLogger = {
+      logStep: () => {},
+      logStdout: () => {},
+      logStderr: () => {},
+      logComplete: () => {},
+    };
+
+    test("getBaseRepoPath returns correct path", async () => {
+      const runtime = createSSHRuntime();
+      const result = runtime.getBaseRepoPath("/some/path/my-project");
+      expect(result).toBe(`${srcBaseDir}/my-project/.mux-base.git`);
+    }, 10000);
+
+    test("forkWorkspace uses worktree when base repo exists", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `wt-fork-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+      const sourceWorkspacePath = `${srcBaseDir}/${projectName}/source`;
+      const newWorkspaceName = "forked-wt";
+      const newWorkspacePath = `${srcBaseDir}/${projectName}/${newWorkspaceName}`;
+
+      try {
+        // 1. Create a bare base repo and populate it with a commit.
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${srcBaseDir}/${projectName}"`,
+            `git init --bare "${baseRepoPath}"`,
+            // Create a temp repo, commit, and push to the bare repo.
+            `TMPCLONE=$(mktemp -d)`,
+            `git clone "${baseRepoPath}" "$TMPCLONE/work"`,
+            `cd "$TMPCLONE/work"`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "base content" > base.txt`,
+            `git add base.txt`,
+            `git commit -m "initial"`,
+            `git push origin HEAD:main`,
+            `rm -rf "$TMPCLONE"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // 2. Create the source workspace as a worktree of the base repo.
+        await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" worktree add "${sourceWorkspacePath}" -b source main`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Verify source workspace has the content.
+        const sourceCheck = await execBuffered(
+          runtime,
+          `test -f "${sourceWorkspacePath}/base.txt" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(sourceCheck.stdout.trim()).toBe("exists");
+
+        // 3. Fork the workspace — should use the fast worktree path.
+        const forkResult = await runtime.forkWorkspace({
+          projectPath,
+          sourceWorkspaceName: "source",
+          newWorkspaceName,
+          initLogger: noopInitLogger,
+        });
+
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+        expect(forkResult.workspacePath).toBe(newWorkspacePath);
+        expect(forkResult.sourceBranch).toBe("source");
+
+        // 4. Verify the forked workspace is a worktree (.git is a file, not directory).
+        const gitTypeCheck = await execBuffered(
+          runtime,
+          `test -f "${newWorkspacePath}/.git" && echo "file" || (test -d "${newWorkspacePath}/.git" && echo "dir" || echo "missing")`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(gitTypeCheck.stdout.trim()).toBe("file");
+
+        // 5. Verify the worktree has the correct branch and files.
+        const branchCheck = await execBuffered(
+          runtime,
+          `git -C "${newWorkspacePath}" branch --show-current`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(branchCheck.stdout.trim()).toBe(newWorkspaceName);
+
+        const fileCheck = await execBuffered(runtime, `cat "${newWorkspacePath}/base.txt"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+        expect(fileCheck.stdout.trim()).toBe("base content");
+
+        // 6. Verify the worktree is listed in the base repo.
+        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+        expect(worktreeList.stdout).toContain(newWorkspaceName);
+      } finally {
+        // Cleanup: remove all worktrees and the project directory.
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 60000);
+
+    test("forkWorkspace falls back to cp -R -P when no base repo exists (legacy)", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `wt-legacy-fork-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const sourceWorkspacePath = `${srcBaseDir}/${projectName}/legacy-source`;
+      const newWorkspaceName = "legacy-forked";
+      const newWorkspacePath = `${srcBaseDir}/${projectName}/${newWorkspaceName}`;
+
+      try {
+        // Create a legacy workspace (standalone git clone, no base repo).
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${sourceWorkspacePath}"`,
+            `cd "${sourceWorkspacePath}"`,
+            `git init`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "legacy content" > legacy.txt`,
+            `git add legacy.txt`,
+            `git commit -m "legacy initial"`,
+            `git checkout -b legacy-branch`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Verify no base repo exists.
+        const baseCheck = await execBuffered(
+          runtime,
+          `test -d "${srcBaseDir}/${projectName}/.mux-base.git" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(baseCheck.stdout.trim()).toBe("missing");
+
+        // Fork should use the legacy cp -R -P path.
+        const forkResult = await runtime.forkWorkspace({
+          projectPath,
+          sourceWorkspaceName: "legacy-source",
+          newWorkspaceName,
+          initLogger: noopInitLogger,
+        });
+
+        expect(forkResult.success).toBe(true);
+        if (!forkResult.success) return;
+        expect(forkResult.sourceBranch).toBe("legacy-branch");
+
+        // Verify the forked workspace is a full clone (.git is a directory, not a file).
+        const gitTypeCheck = await execBuffered(
+          runtime,
+          `test -d "${newWorkspacePath}/.git" && echo "dir" || echo "not-dir"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(gitTypeCheck.stdout.trim()).toBe("dir");
+
+        // Verify content was copied.
+        const fileCheck = await execBuffered(runtime, `cat "${newWorkspacePath}/legacy.txt"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+        expect(fileCheck.stdout.trim()).toBe("legacy content");
+      } finally {
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 60000);
+
+    test("deleteWorkspace removes worktree and cleans up base repo metadata", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `wt-delete-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+      const workspaceName = "to-delete";
+      const workspacePath = `${srcBaseDir}/${projectName}/${workspaceName}`;
+
+      try {
+        // Create bare base repo with a commit.
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${srcBaseDir}/${projectName}"`,
+            `git init --bare "${baseRepoPath}"`,
+            `TMPCLONE=$(mktemp -d)`,
+            `git clone "${baseRepoPath}" "$TMPCLONE/work"`,
+            `cd "$TMPCLONE/work"`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
+            `git push origin HEAD:main`,
+            `rm -rf "$TMPCLONE"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Create a worktree workspace.
+        await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" worktree add "${workspacePath}" -b ${workspaceName} main`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Verify it exists as a worktree.
+        const beforeCheck = await execBuffered(
+          runtime,
+          `test -f "${workspacePath}/.git" && echo "worktree" || echo "not-worktree"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(beforeCheck.stdout.trim()).toBe("worktree");
+
+        // Delete the workspace.
+        const deleteResult = await runtime.deleteWorkspace(
+          projectPath,
+          workspaceName,
+          true // force
+        );
+
+        expect(deleteResult.success).toBe(true);
+
+        // Verify directory is gone.
+        const afterCheck = await execBuffered(
+          runtime,
+          `test -d "${workspacePath}" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(afterCheck.stdout.trim()).toBe("missing");
+
+        // Verify worktree metadata is cleaned up in the base repo.
+        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+        expect(worktreeList.stdout).not.toContain(workspaceName);
+      } finally {
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 60000);
+
+    test("deleteWorkspace still works for legacy full-clone workspaces", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `wt-del-legacy-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const workspacePath = `${srcBaseDir}/${projectName}/legacy-ws`;
+
+      try {
+        // Create a legacy workspace (standalone git clone, .git is a directory).
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${workspacePath}"`,
+            `cd "${workspacePath}"`,
+            `git init`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        const deleteResult = await runtime.deleteWorkspace(projectPath, "legacy-ws", true);
+        expect(deleteResult.success).toBe(true);
+
+        const afterCheck = await execBuffered(
+          runtime,
+          `test -d "${workspacePath}" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(afterCheck.stdout.trim()).toBe("missing");
+      } finally {
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 60000);
+
+    test("renameWorkspace uses git worktree move for worktree-based workspaces", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `wt-rename-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const projectPath = `/some/path/${projectName}`;
+      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+      const oldWorkspacePath = `${srcBaseDir}/${projectName}/old-name`;
+      const newWorkspacePath = `${srcBaseDir}/${projectName}/new-name`;
+
+      try {
+        // Set up bare base repo with a commit.
+        await execBuffered(
+          runtime,
+          [
+            `mkdir -p "${srcBaseDir}/${projectName}"`,
+            `git init --bare "${baseRepoPath}"`,
+            `TMPCLONE=$(mktemp -d)`,
+            `git clone "${baseRepoPath}" "$TMPCLONE/work"`,
+            `cd "$TMPCLONE/work"`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "x" > x.txt && git add x.txt && git commit -m "init"`,
+            `git push origin HEAD:main`,
+            `rm -rf "$TMPCLONE"`,
+          ].join(" && "),
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Create a worktree workspace.
+        await execBuffered(
+          runtime,
+          `git -C "${baseRepoPath}" worktree add "${oldWorkspacePath}" -b old-name main`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+
+        // Rename the workspace.
+        const result = await runtime.renameWorkspace(projectPath, "old-name", "new-name");
+
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        // Verify old path doesn't exist and new path does.
+        const oldCheck = await execBuffered(
+          runtime,
+          `test -d "${oldWorkspacePath}" && echo "exists" || echo "missing"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(oldCheck.stdout.trim()).toBe("missing");
+
+        const newCheck = await execBuffered(
+          runtime,
+          `test -f "${newWorkspacePath}/.git" && echo "worktree" || echo "not-worktree"`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(newCheck.stdout.trim()).toBe("worktree");
+
+        // Verify the worktree is still tracked by the base repo at the new location.
+        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+        expect(worktreeList.stdout).toContain("new-name");
+        expect(worktreeList.stdout).not.toContain("old-name");
+      } finally {
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 60000);
   });
 
   /**

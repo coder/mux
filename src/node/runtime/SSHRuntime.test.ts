@@ -4,10 +4,11 @@ import { SSHRuntime } from "./SSHRuntime";
 import { createSSHTransport } from "./transports";
 
 /**
- * SSHRuntime constructor tests (run with bun test)
+ * SSHRuntime unit tests (run with bun test)
  *
- * Note: SSH workspace operation tests (renameWorkspace, deleteWorkspace) require Docker
- * and are in ssh-workspace.jest-test.ts - run with: TEST_INTEGRATION=1 bun x jest
+ * Integration tests for workspace operations (renameWorkspace, deleteWorkspace, forkWorkspace,
+ * worktree-based operations) require Docker and are in tests/runtime/runtime.test.ts.
+ * Run with: TEST_INTEGRATION=1 bun x jest tests/runtime/runtime.test.ts
  */
 describe("SSHRuntime constructor", () => {
   it("should accept tilde in srcBaseDir", () => {
@@ -98,5 +99,24 @@ describe("SSHRuntime.ensureReady repository checks", () => {
     if (!result.ready) {
       expect(result.errorType).toBe("runtime_start_failed");
     }
+  });
+});
+describe("SSHRuntime.getBaseRepoPath", () => {
+  it("computes the correct bare repo path", () => {
+    const config = { host: "example.com", srcBaseDir: "~/mux" };
+    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
+
+    // getBaseRepoPath uses getProjectName (basename) to compute:
+    // <srcBaseDir>/<projectName>/.mux-base.git
+    const result = runtime.getBaseRepoPath("/Users/me/code/my-project");
+    expect(result).toBe("~/mux/my-project/.mux-base.git");
+  });
+
+  it("handles absolute srcBaseDir", () => {
+    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
+    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
+
+    const result = runtime.getBaseRepoPath("/code/repo");
+    expect(result).toBe("/home/user/src/repo/.mux-base.git");
   });
 });
