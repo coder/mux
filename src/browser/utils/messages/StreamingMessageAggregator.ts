@@ -2012,12 +2012,15 @@ export class StreamingMessageAggregator {
       "compaction boundaries must belong to assistant summaries"
     );
 
-    const compactionEpoch = message.metadata?.compactionEpoch;
-    assert(
-      compactionEpoch === undefined || (Number.isInteger(compactionEpoch) && compactionEpoch > 0),
-      "compactionEpoch must be a positive integer when present"
-    );
+    const rawCompactionEpoch = message.metadata?.compactionEpoch;
+    const compactionEpoch =
+      typeof rawCompactionEpoch === "number" &&
+      Number.isInteger(rawCompactionEpoch) &&
+      rawCompactionEpoch > 0
+        ? rawCompactionEpoch
+        : undefined;
 
+    // Self-healing read path: malformed persisted compactionEpoch should not crash transcript rendering.
     return {
       type: "compaction-boundary",
       id: `${message.id}-compaction-boundary-${position}`,

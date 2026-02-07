@@ -590,7 +590,20 @@ export class CompactionHandler {
       if (sequence === undefined) {
         return maxSeq;
       }
-      assert(Number.isInteger(sequence) && sequence >= 0, "historySequence must be non-negative");
+
+      if (!Number.isInteger(sequence) || sequence < 0) {
+        // Self-healing read path: malformed persisted historySequence should not brick compaction.
+        log.warn(
+          "Ignoring malformed historySequence while deriving compaction monotonicity bound",
+          {
+            workspaceId: this.workspaceId,
+            messageId: message.id,
+            historySequence: sequence,
+          }
+        );
+        return maxSeq;
+      }
+
       return Math.max(maxSeq, sequence);
     }, -1);
 

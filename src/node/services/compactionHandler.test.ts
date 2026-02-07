@@ -473,6 +473,40 @@ describe("CompactionHandler", () => {
       expect(appendedMsg.metadata?.compactionEpoch).toBe(1);
       expect(appendedMsg.metadata?.historySequence).toBe(6);
     });
+    it("should ignore malformed persisted historySequence values when deriving monotonic bounds", async () => {
+      const malformedPersistedMessage = createMuxMessage(
+        "assistant-malformed-sequence",
+        "assistant",
+        "Corrupted persisted metadata",
+        {
+          historySequence: -7,
+        }
+      );
+      const priorMessage = createMuxMessage("user-1", "user", "Earlier", {
+        historySequence: 4,
+      });
+      const compactionReq = createMuxMessage("req-1", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      mockHistoryService.mockGetHistory(
+        Ok([malformedPersistedMessage, priorMessage, compactionReq])
+      );
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
+
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
+      expect(appendedMsg.metadata?.historySequence).toBe(6);
+      expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
+      expect(appendedMsg.metadata?.compactionEpoch).toBe(1);
+    });
+
     it("should derive next compaction epoch from legacy compacted summaries", async () => {
       const legacySummary = createMuxMessage("summary-legacy", "assistant", "Older summary", {
         historySequence: 2,
