@@ -46,6 +46,8 @@ export class HistoryService {
     try {
       const chatHistoryPath = this.getChatHistoryPath(workspaceId);
       const data = await fs.readFile(chatHistoryPath, "utf-8");
+      // TODO(Approach B): keep append-only chat.jsonl, but add a sidecar compaction index so
+      // latest-boundary request assembly can avoid full-file scans/parsing on long histories.
       const lines = data.split("\n").filter((line) => line.trim());
       const messages: MuxMessage[] = [];
 
@@ -77,6 +79,8 @@ export class HistoryService {
     try {
       // Read chat history from disk
       // Note: partial.json is NOT merged here - it's managed by PartialService
+      // TODO(Approach B): add a boundary-aware read path (backed by the sidecar compaction
+      // index) for provider-request assembly while keeping this full replay read for debug/replay.
       const messages = await this.readChatHistory(workspaceId);
       return Ok(messages);
     } catch (error) {

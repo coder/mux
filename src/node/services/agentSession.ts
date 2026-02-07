@@ -911,6 +911,9 @@ export class AgentSession {
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
+    // TODO(Approach B): streamMessage still receives full replay history from chat.jsonl.
+    // Latest-boundary slicing happens downstream; a sidecar compaction index could let this
+    // call path load only the newest compaction epoch for provider requests.
 
     if (historyResult.data.length === 0) {
       return Err(

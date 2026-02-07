@@ -576,8 +576,8 @@ export class CompactionHandler {
       "Compaction summary must persist the computed compaction epoch"
     );
 
-    // TODO(Approach B): Consider a sidecar compaction index so request slicing can skip
-    // scanning chat.jsonl for boundary markers on every load.
+    // TODO(Approach B): Persist/update a sidecar compaction index so provider-request
+    // assembly can avoid rescanning/parsing full chat.jsonl to find the latest boundary.
     const appendResult = await this.historyService.appendToHistory(
       this.workspaceId,
       summaryMessage
