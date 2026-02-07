@@ -30,6 +30,7 @@ MUX_THINKING_LEVEL="${MUX_THINKING_LEVEL:-high}"
 MUX_MODE="${MUX_MODE:-exec}"
 MUX_RUNTIME="${MUX_RUNTIME:-}"
 MUX_EXPERIMENTS="${MUX_EXPERIMENTS:-}"
+MUX_EXPLORE_MODEL="${MUX_EXPLORE_MODEL:-}"
 
 resolve_project_path() {
   if [[ -n "${MUX_PROJECT_PATH}" ]]; then
@@ -81,6 +82,11 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
   done
 fi
 
+# Set explore sub-agent model (fast/cheap model for read-only investigation)
+if [[ -n "${MUX_EXPLORE_MODEL}" ]]; then
+  cmd+=(--explore-model "${MUX_EXPLORE_MODEL}")
+fi
+
 MUX_OUTPUT_FILE="/tmp/mux-output.jsonl"
 MUX_TOKEN_FILE="/tmp/mux-tokens.json"
 
@@ -91,9 +97,13 @@ if [[ -n "${MUX_TIMEOUT_MS}" ]]; then
 fi
 
 # Terminal-bench enforces timeouts via --global-agent-timeout-sec
-# Capture output to file while streaming to terminal for token extraction
+# Capture output to file while streaming to terminal for token extraction.
+# Don't exit on failure — always fall through to token extraction so timed-out
+# or crashed runs still get usage data captured.
+mux_exit_code=0
 if ! printf '%s' "${instruction}" | "${cmd[@]}" | tee "${MUX_OUTPUT_FILE}"; then
-  fatal "mux agent session failed"
+  mux_exit_code=$?
+  log "WARNING: mux agent session exited with code ${mux_exit_code}"
 fi
 
 # Extract usage and cost from the JSONL output.
@@ -145,3 +155,7 @@ result["input"] += subagent_input
 result["output"] += subagent_output
 print(json.dumps(result))
 ' "${MUX_OUTPUT_FILE}" > "${MUX_TOKEN_FILE}" 2>/dev/null || true
+
+# Propagate the agent's exit code so the harness can detect failures
+exit "${mux_exit_code}"
+
