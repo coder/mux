@@ -39,6 +39,20 @@ export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: stri
 }
 
 /**
+ * UI option label for thinking levels.
+ *
+ * Settings dropdowns use lowercase labels for most levels, but xhigh/max should
+ * remain provider-aware to match the model's terminology.
+ */
+export function getThinkingOptionLabel(level: ThinkingLevel, modelString?: string): string {
+  if (level !== "xhigh" && level !== "max") {
+    return level;
+  }
+
+  return getThinkingDisplayLabel(level, modelString) === "XHIGH" ? "xhigh" : "max";
+}
+
+/**
  * Reverse mapping from display labels/aliases to internal ThinkingLevel values.
  * Accepts both canonical names and shorthand aliases (e.g., "med" → "medium").
  */

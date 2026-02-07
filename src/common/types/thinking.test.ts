@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   coerceThinkingLevel,
   getThinkingDisplayLabel,
-  parseThinkingInput,
+  getThinkingOptionLabel,
   MAX_THINKING_INDEX,
+  parseThinkingInput,
 } from "./thinking";
 
 describe("getThinkingDisplayLabel", () => {
@@ -31,6 +32,21 @@ describe("getThinkingDisplayLabel", () => {
     expect(getThinkingDisplayLabel("low", "anthropic:claude-opus-4-6")).toBe("LOW");
     expect(getThinkingDisplayLabel("medium", "anthropic:claude-opus-4-6")).toBe("MED");
     expect(getThinkingDisplayLabel("high", "anthropic:claude-opus-4-6")).toBe("HIGH");
+  });
+});
+
+describe("getThinkingOptionLabel", () => {
+  test("renders max for xhigh on Anthropic models", () => {
+    expect(getThinkingOptionLabel("xhigh", "anthropic:claude-opus-4-6")).toBe("max");
+  });
+
+  test("renders xhigh for xhigh/max on OpenAI models", () => {
+    expect(getThinkingOptionLabel("xhigh", "openai:gpt-5.2")).toBe("xhigh");
+    expect(getThinkingOptionLabel("max", "openai:gpt-5.2")).toBe("xhigh");
+  });
+
+  test("preserves non-xhigh labels", () => {
+    expect(getThinkingOptionLabel("medium", "anthropic:claude-opus-4-6")).toBe("medium");
   });
 });
 
