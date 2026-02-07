@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   RUNTIME_MODE,
   type CoderWorkspaceConfig,
@@ -21,6 +21,9 @@ import {
 } from "../ui/select";
 import { Loader2, Wand2, X } from "lucide-react";
 import { PlatformPaths } from "@/common/utils/paths";
+import { useAPI } from "@/browser/contexts/API";
+import { useExperimentValue } from "@/browser/hooks/useExperiments";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { useProjectContext } from "@/browser/contexts/ProjectContext";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { cn } from "@/common/lib/utils";
@@ -34,7 +37,7 @@ import {
 } from "@/browser/utils/runtimeUi";
 import type { WorkspaceNameState } from "@/browser/hooks/useWorkspaceName";
 import type { CoderInfo } from "@/common/orpc/schemas/coder";
-import type { SectionConfig } from "@/common/types/project";
+import type { RemoteMuxServerConfig, SectionConfig } from "@/common/types/project";
 import { resolveSectionColor } from "@/common/constants/ui";
 import {
   CoderAvailabilityMessage,
@@ -104,6 +107,17 @@ function CredentialSharingCheckbox(props: {
   );
 }
 
+interface RemoteMuxServerListEntry {
+  config: RemoteMuxServerConfig;
+  hasAuthToken: boolean;
+}
+
+function formatRemoteServerLabel(config: RemoteMuxServerConfig): string {
+  const label = config.label.trim().length > 0 ? config.label.trim() : config.id;
+  const baseUrl = config.baseUrl.trim();
+  return baseUrl.length > 0 ? `${label} — ${baseUrl}` : label;
+}
+
 interface CreationControlsProps {
   branches: string[];
   /** Whether branches have finished loading (to distinguish loading vs non-git repo) */
@@ -129,6 +143,12 @@ interface CreationControlsProps {
   nameState: WorkspaceNameState;
   /** Runtime availability state for each mode */
   runtimeAvailabilityState: RuntimeAvailabilityState;
+  /** Whether to create the workspace on a remote mux server (vs locally). */
+  createOnRemote: boolean;
+  onCreateOnRemoteChange: (createOnRemote: boolean) => void;
+  /** Selected remote mux server id (only used when createOnRemote is true). */
+  remoteServerId: string | null;
+  onRemoteServerIdChange: (remoteServerId: string | null) => void;
   /** Available sections for this project */
   sections?: SectionConfig[];
   /** Currently selected section ID */
@@ -492,7 +512,121 @@ function RuntimeButtonGroup(props: RuntimeButtonGroupProps) {
 export function CreationControls(props: CreationControlsProps) {
   const { projects } = useProjectContext();
   const { beginWorkspaceCreation } = useWorkspaceContext();
-  const { nameState, runtimeAvailabilityState } = props;
+  const {
+    nameState,
+    runtimeAvailabilityState,
+    createOnRemote,
+    remoteServerId,
+    onCreateOnRemoteChange,
+    onRemoteServerIdChange,
+  } = props;
+  const { api } = useAPI();
+  const remoteMuxServersEnabled = useExperimentValue(EXPERIMENT_IDS.REMOTE_MUX_SERVERS);
+
+  const [remoteServers, setRemoteServers] = useState<RemoteMuxServerListEntry[]>([]);
+  const [remoteServersStatus, setRemoteServersStatus] = useState<"loading" | "loaded" | "error">(
+    "loading"
+  );
+  const [remoteServersError, setRemoteServersError] = useState<string | null>(null);
+  const remoteServersRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    // Bump requestId so in-flight results are ignored when the experiment/API toggles.
+    const requestId = remoteServersRequestIdRef.current + 1;
+    remoteServersRequestIdRef.current = requestId;
+
+    if (!remoteMuxServersEnabled || !api) {
+      setRemoteServers([]);
+      setRemoteServersStatus("loaded");
+      setRemoteServersError(null);
+      return;
+    }
+
+    setRemoteServersStatus("loading");
+    setRemoteServersError(null);
+
+    try {
+      api.remoteServers
+        .list()
+        .then((result) => {
+          if (remoteServersRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          setRemoteServers(result as RemoteMuxServerListEntry[]);
+          setRemoteServersStatus("loaded");
+        })
+        .catch((error: unknown) => {
+          if (remoteServersRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          setRemoteServers([]);
+          setRemoteServersStatus("error");
+          setRemoteServersError(error instanceof Error ? error.message : String(error));
+        });
+    } catch {
+      // Storybook mocks (and older backends) may not expose remoteServers yet.
+      // Treat "remote servers unsupported" the same as "no remote servers configured":
+      // empty list + disable remote creation option.
+      if (remoteServersRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setRemoteServers([]);
+      setRemoteServersStatus("loaded");
+      setRemoteServersError(null);
+    }
+  }, [api, remoteMuxServersEnabled]);
+
+  const enabledRemoteServers = remoteServers.filter((entry) => entry.config.enabled !== false);
+  const hasRemoteServers = enabledRemoteServers.length > 0;
+  const firstRemoteServerId = hasRemoteServers ? enabledRemoteServers[0].config.id : null;
+
+  const shouldRenderCreateTargetGroup = hasRemoteServers;
+
+  // If no remotes are configured, force creation back to local so the user can't
+  // get stuck in a hidden `createOnRemote=true` state.
+  useEffect(() => {
+    if (remoteServersStatus === "loading") {
+      return;
+    }
+
+    if (hasRemoteServers) {
+      return;
+    }
+
+    if (createOnRemote) {
+      onCreateOnRemoteChange(false);
+    }
+
+    if (remoteServerId !== null) {
+      onRemoteServerIdChange(null);
+    }
+  }, [
+    remoteServersStatus,
+    hasRemoteServers,
+    createOnRemote,
+    remoteServerId,
+    onCreateOnRemoteChange,
+    onRemoteServerIdChange,
+  ]);
+
+  useEffect(() => {
+    if (!createOnRemote) {
+      return;
+    }
+
+    if (typeof remoteServerId === "string" && remoteServerId.trim().length > 0) {
+      return;
+    }
+
+    if (!firstRemoteServerId) {
+      return;
+    }
+
+    onRemoteServerIdChange(firstRemoteServerId);
+  }, [createOnRemote, remoteServerId, firstRemoteServerId, onRemoteServerIdChange]);
 
   // Extract mode from discriminated union for convenience
   const runtimeMode = props.selectedRuntime.mode;
@@ -678,6 +812,67 @@ export function CreationControls(props: CreationControlsProps) {
         )}
       </div>
 
+      {/* Create target - local vs remote mux server */}
+      {shouldRenderCreateTargetGroup && (
+        <div className="flex flex-col gap-1.5" data-component="CreateTargetGroup">
+          <label className="text-muted-foreground text-xs font-medium">Create on</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <RadixSelect
+              value={createOnRemote ? "remote" : "local"}
+              onValueChange={(value) => onCreateOnRemoteChange(value === "remote")}
+              disabled={props.disabled}
+            >
+              <SelectTrigger className="h-7 w-[140px]" aria-label="Create on">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">Local</SelectItem>
+                <SelectItem
+                  value="remote"
+                  disabled={
+                    remoteServersStatus === "error" ||
+                    (remoteServersStatus === "loaded" && !hasRemoteServers)
+                  }
+                >
+                  Remote
+                </SelectItem>
+              </SelectContent>
+            </RadixSelect>
+
+            {createOnRemote && (
+              <>
+                {remoteServersStatus === "loading" && (
+                  <Skeleton className="h-7 w-[280px] rounded-md" />
+                )}
+                {remoteServersStatus === "loaded" && hasRemoteServers && (
+                  <RadixSelect
+                    value={remoteServerId ?? undefined}
+                    onValueChange={(value) => onRemoteServerIdChange(value)}
+                    disabled={props.disabled}
+                  >
+                    <SelectTrigger className="h-7 w-[280px]" aria-label="Remote server">
+                      <SelectValue placeholder="Select remote server" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {enabledRemoteServers.map((entry) => (
+                        <SelectItem key={entry.config.id} value={entry.config.id}>
+                          {formatRemoteServerLabel(entry.config)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </RadixSelect>
+                )}
+              </>
+            )}
+          </div>
+
+          {remoteServersStatus === "error" && (
+            <p className="text-xs text-red-500">
+              Failed to load remote servers{remoteServersError ? `: ${remoteServersError}` : "."}
+            </p>
+          )}
+        </div>
+      )}
       {/* Runtime type - button group */}
       <div className="flex flex-col gap-1.5" data-component="RuntimeTypeGroup">
         <label className="text-muted-foreground text-xs font-medium">Workspace Type</label>

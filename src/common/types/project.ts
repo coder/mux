@@ -21,6 +21,26 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export type FeatureFlagOverride = "default" | "on" | "off";
 
+export interface RemoteMuxServerProjectMapping {
+  localProjectPath: string;
+  remoteProjectPath: string;
+}
+
+/**
+ * RemoteMuxServerConfig - configuration for a remote mux API server.
+ *
+ * NOTE: auth tokens are stored in ~/.mux/secrets.json (not in config.json).
+ */
+export interface RemoteMuxServerConfig {
+  /** Stable, filesystem-safe identifier (used for secrets lookup). */
+  id: string;
+  label: string;
+  /** Base URL for the remote mux server (no trailing slash). */
+  baseUrl: string;
+  enabled?: boolean;
+  projectMappings: RemoteMuxServerProjectMapping[];
+}
+
 export interface ProjectsConfig {
   projects: Map<string, ProjectConfig>;
   /**
@@ -52,6 +72,11 @@ export interface ProjectsConfig {
   mdnsServiceName?: string;
   /** SSH hostname/alias for this machine (used for editor deep links in browser mode) */
   serverSshHost?: string;
+  /**
+   * Registry of remote mux API servers (shared via ~/.mux/config.json).
+   * Auth tokens are stored separately in ~/.mux/secrets.json.
+   */
+  remoteServers?: RemoteMuxServerConfig[];
   /** IDs of splash screens that have been viewed */
   viewedSplashScreens?: string[];
   /** Cross-client feature flag overrides (shared via ~/.mux/config.json). */

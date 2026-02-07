@@ -8,6 +8,7 @@ import { appMeta, AppWithMocks, type AppStory } from "./meta.js";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { expandProjects } from "./storyHelpers";
 import { createArchivedWorkspace, NOW } from "./mockFactory";
+import { EXPERIMENT_IDS, getExperimentKey } from "@/common/constants/experiments";
 import type { ProjectConfig } from "@/node/config";
 
 /** Helper to create session usage data with a specific total cost */
@@ -87,6 +88,167 @@ export const CreateWorkspace: AppStory = {
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
     await openFirstProjectCreationView(storyRoot);
+  },
+};
+
+const REMOTE_MUX_SERVERS_STORY_PROJECT_PATH = "/Users/dev/my-project";
+
+const WORK_REMOTE_MUX_SERVER = {
+  config: {
+    id: "server-work",
+    label: "Work desktop",
+    baseUrl: "https://mux-work.example.com",
+    enabled: true,
+    projectMappings: [
+      {
+        localProjectPath: REMOTE_MUX_SERVERS_STORY_PROJECT_PATH,
+        remoteProjectPath: "/home/dev/my-project",
+      },
+    ],
+  },
+  hasAuthToken: true,
+};
+
+function setupCreateWorkspaceWithRemoteMuxServer() {
+  expandProjects([REMOTE_MUX_SERVERS_STORY_PROJECT_PATH]);
+  window.localStorage.setItem(
+    getExperimentKey(EXPERIMENT_IDS.REMOTE_MUX_SERVERS),
+    JSON.stringify(true)
+  );
+
+  return createMockORPCClient({
+    projects: new Map([projectWithNoWorkspaces(REMOTE_MUX_SERVERS_STORY_PROJECT_PATH)]),
+    workspaces: [],
+    remoteServers: [WORK_REMOTE_MUX_SERVER],
+  });
+}
+
+/** Creation view - remote mux server available (experiment gated) */
+export const CreateWorkspaceRemoteServerAvailable: AppStory = {
+  render: () => <AppWithMocks setup={setupCreateWorkspaceWithRemoteMuxServer} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openFirstProjectCreationView(storyRoot);
+
+    const canvas = within(storyRoot);
+    const body = within(storyRoot.ownerDocument.body);
+
+    // Wait for the create target group to render (remote servers loaded + enabled).
+    const createOn = await canvas.findByRole("combobox", { name: "Create on" }, { timeout: 10000 });
+
+    // Switch to Remote so the snapshot captures the remote server selector,
+    // but keep dropdowns closed.
+    await userEvent.click(createOn);
+    const remoteOption = await body.findByRole("option", { name: "Remote" });
+    await userEvent.click(remoteOption);
+
+    if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+      // Ensure the Radix Select overlay is fully dismissed before we query for the remote server selector.
+      await userEvent.keyboard("{Escape}");
+    }
+
+    // Radix Select updates can take a tick to commit; wait for the trigger to reflect
+    // the selection before looking for the remote server selector (helps CI/Chromatic stability).
+    await waitFor(() => {
+      const createOnAfter = canvas.getByRole("combobox", { name: "Create on" });
+      if (!/Remote/i.test(createOnAfter.textContent ?? "")) {
+        throw new Error("Create on not set to Remote");
+      }
+      if (createOnAfter.getAttribute("aria-expanded") === "true") {
+        throw new Error("Create on dropdown still open");
+      }
+    });
+
+    await body.findByRole("combobox", { name: "Remote server" }, { timeout: 10000 });
+
+    await waitFor(() => {
+      const createOnAfter = canvas.getByRole("combobox", { name: "Create on" });
+      if (createOnAfter.getAttribute("aria-expanded") === "true") {
+        throw new Error("Create on dropdown still open");
+      }
+
+      const remoteServerAfter = body.getByRole("combobox", { name: "Remote server" });
+      if (remoteServerAfter.getAttribute("aria-expanded") === "true") {
+        throw new Error("Remote server dropdown still open");
+      }
+
+      if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+        throw new Error("Scroll lock still active");
+      }
+    });
+  },
+};
+
+/** Creation view - remote server dropdown open for Chromatic snapshot */
+export const CreateWorkspaceRemoteServerDropdownOpen: AppStory = {
+  render: () => <AppWithMocks setup={setupCreateWorkspaceWithRemoteMuxServer} />,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openFirstProjectCreationView(storyRoot);
+
+    const canvas = within(storyRoot);
+    const body = within(storyRoot.ownerDocument.body);
+
+    // Wait for the create target group to render (remote servers loaded + enabled).
+    const createOn = await canvas.findByRole("combobox", { name: "Create on" }, { timeout: 10000 });
+
+    // Select Remote in the "Create on" Radix Select.
+    await userEvent.click(createOn);
+    const remoteOption = await body.findByRole("option", { name: "Remote" });
+    await userEvent.click(remoteOption);
+
+    if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+      // Ensure the Radix Select overlay is fully dismissed before we query for the remote server selector.
+      await userEvent.keyboard("{Escape}");
+    }
+
+    await waitFor(
+      () => {
+        const createOnAfter = canvas.getByRole("combobox", { name: "Create on" });
+        if (!/Remote/i.test(createOnAfter.textContent ?? "")) {
+          throw new Error("Create on not set to Remote");
+        }
+        if (createOnAfter.getAttribute("aria-expanded") === "true") {
+          throw new Error("Create on dropdown still open");
+        }
+
+        // Radix Select uses scroll locking / aria-hiding while the dropdown is open.
+        // Wait for the lock to clear so the remote server control is visible to role queries.
+        if (storyRoot.ownerDocument.body.hasAttribute("data-scroll-locked")) {
+          throw new Error("Scroll lock still active");
+        }
+      },
+      { timeout: 10000 }
+    );
+
+    const remoteServerTrigger = await waitFor(
+      () => {
+        const el = storyRoot.querySelector('[aria-label="Remote server"]');
+        if (!(el instanceof HTMLElement)) {
+          throw new Error("Remote server trigger not found");
+        }
+
+        return el;
+      },
+      { timeout: 10000 }
+    );
+
+    // Open the remote server dropdown and keep it open for the snapshot.
+    // Use a native click to avoid userEvent's pointer-events checks while Radix is
+    // toggling scroll-lock / aria-hiding.
+    remoteServerTrigger.click();
+
+    await body.findByRole("option", { name: /Work desktop/i });
+
+    await waitFor(() => {
+      const remoteServerAfter = storyRoot.querySelector('[aria-label="Remote server"]');
+      if (!(remoteServerAfter instanceof HTMLElement)) {
+        throw new Error("Remote server trigger not found");
+      }
+      if (remoteServerAfter.getAttribute("aria-expanded") !== "true") {
+        throw new Error("Remote server dropdown not open");
+      }
+    });
   },
 };
 

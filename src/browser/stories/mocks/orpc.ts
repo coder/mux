@@ -11,6 +11,8 @@ import type {
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
+import type { RemoteMuxServerConfig } from "@/common/types/project";
+import { encodeRemoteWorkspaceId } from "@/common/utils/remoteMuxIds";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   normalizeLayoutPresetsConfig,
@@ -83,11 +85,18 @@ export interface MockSessionUsage {
   version: 1;
 }
 
+export interface RemoteMuxServerListEntry {
+  config: RemoteMuxServerConfig;
+  hasAuthToken: boolean;
+}
+
 export interface MockORPCClientOptions {
   /** Layout presets config for Settings → Layouts stories */
   layoutPresets?: LayoutPresetsConfig;
   projects?: Map<string, ProjectConfig>;
   workspaces?: FrontendWorkspaceMetadata[];
+  /** Remote mux API servers for Settings → Remote Servers + remote workspace creation */
+  remoteServers?: RemoteMuxServerListEntry[];
   /** Initial task settings for config.getConfig (e.g., Settings → Tasks section) */
   taskSettings?: Partial<TaskSettings>;
   /** Initial unified AI defaults for agents (plan/exec/compact + subagents) */
@@ -256,6 +265,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   const {
     projects = new Map<string, ProjectConfig>(),
     workspaces: inputWorkspaces = [],
+    remoteServers: initialRemoteServers = [],
     onChat,
     executeBash,
     providersConfig = { anthropic: { apiKeySet: true, isConfigured: true } },
@@ -335,6 +345,14 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
   let createdWorkspaceCounter = 0;
+
+  let remoteServers: RemoteMuxServerListEntry[] = initialRemoteServers.map((entry) => ({
+    config: {
+      ...entry.config,
+      projectMappings: entry.config.projectMappings.map((mapping) => ({ ...mapping })),
+    },
+    hasAuthToken: entry.hasAuthToken,
+  }));
 
   const agentDefinitions: AgentDefinitionDescriptor[] =
     initialAgentDefinitions ??
@@ -977,6 +995,129 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           }
           return Promise.resolve({ success: true, data: undefined });
         },
+      },
+    },
+    remoteServers: {
+      list: () => Promise.resolve(remoteServers),
+      upsert: (input: { config: RemoteMuxServerConfig; authToken?: string }) => {
+        const nextConfig: RemoteMuxServerConfig = {
+          ...input.config,
+          projectMappings: input.config.projectMappings.map((mapping) => ({ ...mapping })),
+        };
+
+        const token = typeof input.authToken === "string" ? input.authToken.trim() : undefined;
+
+        const existingIndex = remoteServers.findIndex((entry) => entry.config.id === nextConfig.id);
+        const previous = existingIndex >= 0 ? remoteServers[existingIndex] : null;
+
+        const hasAuthToken =
+          token === undefined ? (previous?.hasAuthToken ?? false) : token.trim().length > 0;
+
+        const nextEntry: RemoteMuxServerListEntry = {
+          config: nextConfig,
+          hasAuthToken,
+        };
+
+        if (existingIndex >= 0) {
+          remoteServers = remoteServers.map((entry, index) =>
+            index === existingIndex ? nextEntry : entry
+          );
+        } else {
+          remoteServers = [...remoteServers, nextEntry];
+        }
+
+        return Promise.resolve({ success: true, data: undefined });
+      },
+      remove: (input: { id: string }) => {
+        const existingIndex = remoteServers.findIndex((entry) => entry.config.id === input.id);
+        if (existingIndex === -1) {
+          return Promise.resolve({
+            success: false,
+            error: `Remote server not found: ${input.id}`,
+          });
+        }
+
+        remoteServers = remoteServers.filter((entry) => entry.config.id !== input.id);
+        return Promise.resolve({ success: true, data: undefined });
+      },
+      clearAuthToken: (input: { id: string }) => {
+        const existingIndex = remoteServers.findIndex((entry) => entry.config.id === input.id);
+        if (existingIndex === -1) {
+          return Promise.resolve({
+            success: false,
+            error: `Remote server not found: ${input.id}`,
+          });
+        }
+
+        remoteServers = remoteServers.map((entry) =>
+          entry.config.id === input.id ? { ...entry, hasAuthToken: false } : entry
+        );
+
+        return Promise.resolve({ success: true, data: undefined });
+      },
+      ping: (input: { id: string }) => {
+        const server = remoteServers.find((entry) => entry.config.id === input.id) ?? null;
+        if (!server) {
+          return Promise.resolve({
+            success: false,
+            error: `Remote server not found: ${input.id}`,
+          });
+        }
+
+        return Promise.resolve({
+          success: true,
+          data: {
+            version: {
+              mux: "mock",
+              version: "0.0.0-mock",
+            },
+          },
+        });
+      },
+      workspaceCreate: (input: {
+        serverId: string;
+        localProjectPath: string;
+        branchName: string;
+        title?: string;
+        sectionId?: string;
+      }) => {
+        const serverId = input.serverId.trim();
+        if (!serverId) {
+          return Promise.resolve({ success: false, error: "Remote server id is required" });
+        }
+
+        const server = remoteServers.find((entry) => entry.config.id === serverId) ?? null;
+        if (!server) {
+          return Promise.resolve({
+            success: false,
+            error: `Remote server not found: ${serverId}`,
+          });
+        }
+
+        if (server.config.enabled === false) {
+          return Promise.resolve({
+            success: false,
+            error: `Remote server is disabled: ${serverId}`,
+          });
+        }
+
+        createdWorkspaceCounter += 1;
+        const remoteId = `ws-remote-${createdWorkspaceCounter}`;
+        const encodedId = encodeRemoteWorkspaceId(serverId, remoteId);
+
+        return Promise.resolve({
+          success: true,
+          metadata: {
+            id: encodedId,
+            name: input.branchName,
+            title: input.title,
+            projectPath: input.localProjectPath,
+            projectName: input.localProjectPath.split("/").pop() ?? "project",
+            namedWorkspacePath: `/mock/remote/${serverId}/${input.branchName}`,
+            runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+            sectionId: input.sectionId,
+          },
+        });
       },
     },
     workspace: {

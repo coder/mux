@@ -193,6 +193,7 @@ export {
   policy,
   providers,
   ProvidersConfigMapSchema,
+  remoteServers,
   server,
   splashScreens,
   tasks,
