@@ -57,7 +57,13 @@ export interface BuildPlanInstructionsOptions {
   shouldDisableTaskToolsForDepth: boolean;
   taskDepth: number;
   taskSettings: TaskSettings;
-  filteredMessages: MuxMessage[];
+  /**
+   * Message history that will be sent to the provider (after request-time slicing/filtering).
+   *
+   * Plan-context derivation must stay aligned with the request payload to avoid pre-boundary
+   * history (e.g., old Start Here summaries) suppressing required plan hints.
+   */
+  requestPayloadMessages: MuxMessage[];
 }
 
 /** Result of plan instructions assembly. */
@@ -96,7 +102,7 @@ export async function buildPlanInstructions(
     shouldDisableTaskToolsForDepth,
     taskDepth,
     taskSettings,
-    filteredMessages,
+    requestPayloadMessages,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -110,7 +116,7 @@ export async function buildPlanInstructions(
   // Read plan file (handles legacy migration transparently)
   const planResult = await readPlanFile(runtime, metadata.name, metadata.projectName, workspaceId);
 
-  const chatHasStartHerePlanSummary = hasStartHerePlanSummary(filteredMessages);
+  const chatHasStartHerePlanSummary = hasStartHerePlanSummary(requestPayloadMessages);
 
   if (effectiveMode === "plan") {
     const planModeInstruction = getPlanModeInstruction(planFilePath, planResult.exists);
@@ -153,7 +159,7 @@ export async function buildPlanInstructions(
   let planContentForTransition: string | undefined;
   const isPlanHandoffAgent = effectiveAgentId === "exec" || effectiveAgentId === "orchestrator";
   if (isPlanHandoffAgent && !chatHasStartHerePlanSummary) {
-    const lastAssistantMessage = [...filteredMessages]
+    const lastAssistantMessage = [...requestPayloadMessages]
       .reverse()
       .find((m) => m.role === "assistant");
     const lastAgentId = lastAssistantMessage?.metadata?.agentId;

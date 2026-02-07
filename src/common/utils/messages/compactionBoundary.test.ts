@@ -39,6 +39,27 @@ describe("findLatestCompactionBoundaryIndex", () => {
 
     expect(findLatestCompactionBoundaryIndex(messages)).toBe(-1);
   });
+
+  it("skips malformed boundary markers and keeps scanning for the latest durable boundary", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("summary-valid", "assistant", "valid summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+      createMuxMessage("u1", "user", "middle"),
+      createMuxMessage("summary-malformed", "assistant", "malformed summary", {
+        // Corrupted persisted metadata: looks like a boundary but is not a compacted summary.
+        compacted: false,
+        compactionBoundary: true,
+        compactionEpoch: 2,
+      }),
+      createMuxMessage("u2", "user", "after"),
+    ];
+
+    expect(findLatestCompactionBoundaryIndex(messages)).toBe(1);
+  });
 });
 
 describe("sliceMessagesFromLatestCompactionBoundary", () => {
@@ -79,5 +100,23 @@ describe("sliceMessagesFromLatestCompactionBoundary", () => {
 
     expect(sliced).toBe(messages);
     expect(sliced.map((msg) => msg.id)).toEqual(["u0", "legacy-summary", "u1"]);
+  });
+
+  it("treats malformed boundary markers as non-boundaries instead of crashing", () => {
+    const messages = [
+      createMuxMessage("u0", "user", "before"),
+      createMuxMessage("summary-malformed", "assistant", "malformed summary", {
+        compacted: "user",
+        compactionBoundary: true,
+        // Corrupted persisted metadata: invalid epoch should not brick request assembly.
+        compactionEpoch: 0,
+      }),
+      createMuxMessage("u1", "user", "after"),
+    ];
+
+    const sliced = sliceMessagesFromLatestCompactionBoundary(messages);
+
+    expect(sliced).toBe(messages);
+    expect(sliced.map((msg) => msg.id)).toEqual(["u0", "summary-malformed", "u1"]);
   });
 });
