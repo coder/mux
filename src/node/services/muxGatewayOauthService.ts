@@ -1,5 +1,4 @@
 import * as crypto from "crypto";
-import * as http from "http";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import {
@@ -10,44 +9,20 @@ import {
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { createDeferred, renderOAuthCallbackHtml } from "@/node/utils/oauthUtils";
+import { startLoopbackServer } from "@/node/utils/oauthLoopbackServer";
+import { OAuthFlowManager } from "@/node/utils/oauthFlowManager";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
-const COMPLETED_DESKTOP_FLOW_TTL_MS = 60 * 1000;
-
-interface DesktopFlow {
-  flowId: string;
-  authorizeUrl: string;
-  redirectUri: string;
-  server: http.Server;
-  timeout: ReturnType<typeof setTimeout>;
-  cleanupTimeout: ReturnType<typeof setTimeout> | null;
-  resultPromise: Promise<Result<void, string>>;
-  resolveResult: (result: Result<void, string>) => void;
-  settled: boolean;
-}
 
 interface ServerFlow {
   state: string;
   expiresAtMs: number;
 }
 
-function closeServer(server: http.Server): Promise<void> {
-  return new Promise((resolve) => {
-    server.close(() => resolve());
-  });
-}
-
-function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 export class MuxGatewayOauthService {
-  private readonly desktopFlows = new Map<string, DesktopFlow>();
+  private readonly desktopFlows = new OAuthFlowManager();
   private readonly serverFlows = new Map<string, ServerFlow>();
 
   constructor(
@@ -59,118 +34,80 @@ export class MuxGatewayOauthService {
     Result<{ flowId: string; authorizeUrl: string; redirectUri: string }, string>
   > {
     const flowId = crypto.randomUUID();
+    const resultDeferred = createDeferred<Result<void, string>>();
 
-    const { promise: resultPromise, resolve: resolveResult } =
-      createDeferred<Result<void, string>>();
-
-    const server = http.createServer((req, res) => {
-      const reqUrl = req.url ?? "/";
-      const url = new URL(reqUrl, "http://localhost");
-
-      if (req.method !== "GET" || url.pathname !== "/callback") {
-        res.statusCode = 404;
-        res.end("Not found");
-        return;
-      }
-
-      const state = url.searchParams.get("state");
-      if (!state || state !== flowId) {
-        res.statusCode = 400;
-        res.setHeader("Content-Type", "text/html");
-        res.end("<h1>Invalid OAuth state</h1>");
-        return;
-      }
-
-      const code = url.searchParams.get("code");
-      const error = url.searchParams.get("error");
-      const errorDescription = url.searchParams.get("error_description") ?? undefined;
-
-      void this.handleDesktopCallback({
-        flowId,
-        code,
-        error,
-        errorDescription,
-        res,
-      });
-    });
-
+    let loopback;
     try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", () => resolve());
+      loopback = await startLoopbackServer({
+        expectedState: flowId,
+        renderHtml: (r) =>
+          renderOAuthCallbackHtml({
+            title: r.success ? "Login complete" : "Login failed",
+            message: r.success
+              ? "You can return to Mux. You may now close this tab."
+              : (r.error ?? "Unknown error"),
+            success: r.success,
+            extraHead:
+              '<meta name="theme-color" content="#0e0e0e" />\n    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />',
+          }),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
 
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      return Err("Failed to determine OAuth callback listener port");
-    }
+    const authorizeUrl = buildAuthorizeUrl({ redirectUri: loopback.redirectUri, state: flowId });
 
-    const redirectUri = `http://127.0.0.1:${address.port}/callback`;
-    const authorizeUrl = buildAuthorizeUrl({ redirectUri, state: flowId });
-
-    const timeout = setTimeout(() => {
-      void this.finishDesktopFlow(flowId, Err("Timed out waiting for OAuth callback"));
-    }, DEFAULT_DESKTOP_TIMEOUT_MS);
-
-    this.desktopFlows.set(flowId, {
-      flowId,
-      authorizeUrl,
-      redirectUri,
-      server,
-      timeout,
-      cleanupTimeout: null,
-      resultPromise,
-      resolveResult,
-      settled: false,
+    this.desktopFlows.register(flowId, {
+      server: loopback.server,
+      resultDeferred,
+      timeoutHandle: null,
     });
+
+    // Background task: await loopback callback, do token exchange, finish flow.
+    // Race against resultDeferred so that if the flow is cancelled/timed out
+    // externally, this task exits cleanly instead of dangling on loopback.result.
+    void (async () => {
+      const callbackOrDone = await Promise.race([
+        loopback.result,
+        resultDeferred.promise.then((): null => null),
+      ]);
+
+      // Flow was already finished externally (timeout or cancel).
+      if (callbackOrDone === null) return;
+
+      log.debug(`Mux Gateway OAuth callback received (flowId=${flowId})`);
+
+      let result: Result<void, string>;
+      if (callbackOrDone.success) {
+        result = await this.handleCallbackAndExchange({
+          state: callbackOrDone.data.state,
+          code: callbackOrDone.data.code,
+          error: null,
+        });
+      } else {
+        result = Err(`Mux Gateway OAuth error: ${callbackOrDone.error}`);
+      }
+
+      await this.desktopFlows.finish(flowId, result);
+    })();
 
     log.debug(`Mux Gateway OAuth desktop flow started (flowId=${flowId})`);
 
-    return Ok({ flowId, authorizeUrl, redirectUri });
+    return Ok({ flowId, authorizeUrl, redirectUri: loopback.redirectUri });
   }
 
   async waitForDesktopFlow(
     flowId: string,
     opts?: { timeoutMs?: number }
   ): Promise<Result<void, string>> {
-    const flow = this.desktopFlows.get(flowId);
-    if (!flow) {
-      return Err("OAuth flow not found");
-    }
-
-    const timeoutMs = opts?.timeoutMs ?? DEFAULT_DESKTOP_TIMEOUT_MS;
-
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<Result<void, string>>((resolve) => {
-      timeoutHandle = setTimeout(() => {
-        resolve(Err("Timed out waiting for OAuth callback"));
-      }, timeoutMs);
-    });
-
-    const result = await Promise.race([flow.resultPromise, timeoutPromise]);
-
-    if (timeoutHandle !== null) {
-      clearTimeout(timeoutHandle);
-    }
-
-    if (!result.success) {
-      // Ensure listener is closed on timeout/errors.
-      void this.finishDesktopFlow(flowId, result);
-    }
-
-    return result;
+    return this.desktopFlows.waitFor(flowId, opts?.timeoutMs ?? DEFAULT_DESKTOP_TIMEOUT_MS);
   }
 
   async cancelDesktopFlow(flowId: string): Promise<void> {
-    const flow = this.desktopFlows.get(flowId);
-    if (!flow) return;
-
+    if (!this.desktopFlows.has(flowId)) return;
     log.debug(`Mux Gateway OAuth desktop flow cancelled (flowId=${flowId})`);
-    await this.finishDesktopFlow(flowId, Err("OAuth flow cancelled"));
+    await this.desktopFlows.cancel(flowId);
   }
 
   startServerFlow(input: { redirectUri: string }): { authorizeUrl: string; state: string } {
@@ -228,116 +165,8 @@ export class MuxGatewayOauthService {
   }
 
   async dispose(): Promise<void> {
-    // Best-effort: cancel all in-flight flows.
-    const flowIds = [...this.desktopFlows.keys()];
-    await Promise.all(flowIds.map((id) => this.finishDesktopFlow(id, Err("App shutting down"))));
-
-    for (const flow of this.desktopFlows.values()) {
-      clearTimeout(flow.timeout);
-      if (flow.cleanupTimeout !== null) {
-        clearTimeout(flow.cleanupTimeout);
-      }
-    }
-
-    this.desktopFlows.clear();
+    await this.desktopFlows.shutdownAll();
     this.serverFlows.clear();
-  }
-
-  private async handleDesktopCallback(input: {
-    flowId: string;
-    code: string | null;
-    error: string | null;
-    errorDescription?: string;
-    res: http.ServerResponse;
-  }): Promise<void> {
-    const flow = this.desktopFlows.get(input.flowId);
-    if (!flow || flow.settled) {
-      input.res.statusCode = 409;
-      input.res.setHeader("Content-Type", "text/html");
-      input.res.end("<h1>OAuth flow already completed</h1>");
-      return;
-    }
-
-    log.debug(`Mux Gateway OAuth callback received (flowId=${input.flowId})`);
-
-    const result = await this.handleCallbackAndExchange({
-      state: input.flowId,
-      code: input.code,
-      error: input.error,
-      errorDescription: input.errorDescription,
-    });
-
-    const title = result.success ? "Login complete" : "Login failed";
-    const description = result.success
-      ? "You can return to Mux. You may now close this tab."
-      : escapeHtml(result.error);
-
-    const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0e0e0e" />
-    <title>${title}</title>
-    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />
-  </head>
-  <body>
-    <div class="page">
-      <header class="site-header">
-        <div class="container">
-          <div class="header-title">mux</div>
-        </div>
-      </header>
-
-      <main class="site-main">
-        <div class="container">
-          <div class="content-surface">
-            <h1>${title}</h1>
-            <p>${description}</p>
-            ${
-              result.success
-                ? '<p class="muted">Mux should now be in the foreground. You can close this tab.</p>'
-                : '<p class="muted">You can close this tab.</p>'
-            }
-          </div>
-        </div>
-      </main>
-    </div>
-
-    <script>
-      (() => {
-        const ok = ${result.success ? "true" : "false"};
-        if (!ok) {
-          return;
-        }
-
-        try {
-          window.close();
-        } catch {
-          // Ignore close failures.
-        }
-
-        setTimeout(() => {
-          try {
-            window.close();
-          } catch {
-            // Ignore close failures.
-          }
-        }, 50);
-      })();
-    </script>
-  </body>
-</html>`;
-
-    input.res.setHeader("Content-Type", "text/html");
-    if (!result.success) {
-      input.res.statusCode = 400;
-    }
-
-    input.res.end(html);
-
-    await this.finishDesktopFlow(input.flowId, result);
   }
 
   private async handleCallbackAndExchange(input: {
@@ -407,37 +236,4 @@ export class MuxGatewayOauthService {
     }
   }
 
-  private async finishDesktopFlow(flowId: string, result: Result<void, string>): Promise<void> {
-    const flow = this.desktopFlows.get(flowId);
-    if (!flow || flow.settled) return;
-
-    flow.settled = true;
-    clearTimeout(flow.timeout);
-
-    try {
-      flow.resolveResult(result);
-
-      // Stop accepting new connections.
-      await closeServer(flow.server);
-    } catch (error) {
-      log.debug("Failed to close OAuth callback listener:", error);
-    } finally {
-      // Keep the completed flow around briefly so callers can still await the result.
-      if (flow.cleanupTimeout !== null) {
-        clearTimeout(flow.cleanupTimeout);
-      }
-      flow.cleanupTimeout = setTimeout(() => {
-        this.desktopFlows.delete(flowId);
-      }, COMPLETED_DESKTOP_FLOW_TTL_MS);
-    }
-  }
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
