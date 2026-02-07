@@ -1072,12 +1072,12 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       createMuxMessage("latest-user", "user", "continue"),
     ];
 
-    const result = await harness.service.streamMessage(
+    const result = await harness.service.streamMessage({
       messages,
       workspaceId,
-      "openai:gpt-5.2",
-      "medium"
-    );
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+    });
 
     expect(result.success).toBe(true);
     expect(harness.planPayloadMessageIds).toEqual([["boundary-2", "latest-user"]]);
@@ -1122,12 +1122,12 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       createMuxMessage("latest-user", "user", "continue"),
     ];
 
-    const result = await harness.service.streamMessage(
+    const result = await harness.service.streamMessage({
       messages,
       workspaceId,
-      "openai:gpt-5.2",
-      "medium"
-    );
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+    });
 
     expect(result.success).toBe(true);
     expect(harness.planPayloadMessageIds).toEqual([
