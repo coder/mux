@@ -69,9 +69,10 @@ function createMockDeps(): MockDeps {
 
 function createMockConfig(deps: MockDeps): Pick<Config, "editConfig"> {
   return {
-    editConfig: async (fn: (config: ProjectsConfig) => ProjectsConfig) => {
+    editConfig: (fn: (config: ProjectsConfig) => ProjectsConfig) => {
       deps.configState = fn(deps.configState);
       deps.editConfigCalls++;
+      return Promise.resolve();
     },
   };
 }
@@ -86,9 +87,9 @@ function createMockWindowService(deps: MockDeps): Pick<WindowService, "focusMain
 
 function createMockPolicyService(deps: MockDeps): Pick<PolicyService, "refreshNow"> {
   return {
-    refreshNow: async () => {
+    refreshNow: () => {
       deps.refreshCalls++;
-      return deps.refreshResult;
+      return Promise.resolve(deps.refreshResult);
     },
   };
 }
@@ -149,11 +150,14 @@ describe("MuxGovernorOauthService", () => {
       let capturedBody = "";
 
       mockFetch((input, init) => {
-        capturedUrl = String(input);
+        capturedUrl =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
         capturedBody =
-          init?.body instanceof URLSearchParams
-            ? init.body.toString()
-            : String(init?.body ?? "");
+          typeof init?.body === "string"
+            ? init.body
+            : init?.body instanceof URLSearchParams
+              ? init.body.toString()
+              : "";
         return jsonResponse({ access_token: "governor-token" });
       });
 
@@ -169,7 +173,10 @@ describe("MuxGovernorOauthService", () => {
       const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
       const callbackResponsePromise = httpGet(callbackUrl);
 
-      const [waitResult, callbackResponse] = await Promise.all([waitPromise, callbackResponsePromise]);
+      const [waitResult, callbackResponse] = await Promise.all([
+        waitPromise,
+        callbackResponsePromise,
+      ]);
 
       expect(waitResult).toEqual(Ok(undefined));
       expect(callbackResponse.status).toBe(200);
@@ -186,10 +193,10 @@ describe("MuxGovernorOauthService", () => {
     });
 
     it("callback with code + failed exchange resolves waitFor error and renders failure HTML", async () => {
-      let releaseExchange: (() => void) | null = null;
+      let releaseExchange!: () => void;
       const exchangeStarted = new Promise<void>((resolveStarted) => {
         const exchangeBlocked = new Promise<void>((resolveBlocked) => {
-          releaseExchange = resolveBlocked;
+          releaseExchange = () => resolveBlocked();
         });
 
         mockFetch(async () => {
@@ -219,9 +226,12 @@ describe("MuxGovernorOauthService", () => {
       ]);
       expect(callbackState).toBe("pending");
 
-      releaseExchange?.();
+      releaseExchange();
 
-      const [waitResult, callbackResponse] = await Promise.all([waitPromise, callbackResponsePromise]);
+      const [waitResult, callbackResponse] = await Promise.all([
+        waitPromise,
+        callbackResponsePromise,
+      ]);
 
       expect(waitResult.success).toBe(false);
       if (!waitResult.success) {
@@ -230,7 +240,9 @@ describe("MuxGovernorOauthService", () => {
 
       expect(callbackResponse.status).toBe(400);
       expect(callbackResponse.body).toContain("Enrollment failed");
-      expect(callbackResponse.body).toContain("Mux Governor exchange failed (502): governor unavailable");
+      expect(callbackResponse.body).toContain(
+        "Mux Governor exchange failed (502): governor unavailable"
+      );
 
       expect(deps.editConfigCalls).toBe(0);
       expect(deps.focusCalls).toBe(0);
