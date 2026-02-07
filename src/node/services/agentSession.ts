@@ -901,6 +901,9 @@ export class AgentSession {
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
+    // TODO(Approach B): streamMessage still receives full replay history from chat.jsonl.
+    // Latest-boundary slicing happens downstream; a sidecar compaction index could let this
+    // call path load only the newest compaction epoch for provider requests.
     // Capture the current user message id so retries are stable across assistant message ids.
     const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
     this.activeStreamUserMessageId = lastUserMessage?.id;
