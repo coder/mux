@@ -53,6 +53,7 @@ type RasterTargetConfig = {
   source: string;
   bg: boolean;
   format?: "png" | "webp";
+  trim?: boolean;
 };
 
 type SvgTargetConfig = {
@@ -89,19 +90,27 @@ const LOGO_TARGETS = {
   //
   // Naming convention: macOS expects "@2x" suffix for Retina assets. The 1x
   // icon is 16x16 (menu bar point size) and 2x is 32x32 pixels.
-  "public/tray-icon-black.png": { size: 16, ...MONO_ICON },
-  "public/tray-icon-black@2x.png": { size: 32, ...MONO_ICON },
-  "public/tray-icon-white.png": { size: 16, source: SOURCE_WHITE, bg: false },
-  "public/tray-icon-white@2x.png": { size: 32, source: SOURCE_WHITE, bg: false },
+  //
+  // Note: trim: true removes internal SVG padding for maximum icon size.
+  "public/tray-icon-black.png": { size: 16, ...MONO_ICON, trim: true },
+  "public/tray-icon-black@2x.png": { size: 32, ...MONO_ICON, trim: true },
+  "public/tray-icon-white.png": { size: 16, source: SOURCE_WHITE, bg: false, trim: true },
+  "public/tray-icon-white@2x.png": { size: 32, source: SOURCE_WHITE, bg: false, trim: true },
 } satisfies Record<string, LogoTargetConfig>;
 
 const APP_ICON_PADDING_RATIO = 0.05;
 
-async function generateRasterIcon({ source, size, bg, format = "png" }: RasterTargetConfig) {
+async function generateRasterIcon({ source, size, bg, format = "png", trim = false }: RasterTargetConfig) {
   let pipeline;
 
   if (!bg) {
-    pipeline = sharp(source).resize(size, size);
+    // For non-background icons, optionally trim SVG padding first
+    if (trim) {
+      // Trim transparent pixels then resize to fill the target size
+      pipeline = sharp(source).trim().resize(size, size, { fit: "contain" });
+    } else {
+      pipeline = sharp(source).resize(size, size);
+    }
   } else {
     // White on Black composite
     const padding = Math.round(size * APP_ICON_PADDING_RATIO);
