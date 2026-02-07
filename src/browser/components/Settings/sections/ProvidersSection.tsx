@@ -246,6 +246,17 @@ export function ProvidersSection() {
     null
   );
 
+  const [codexOauthCodeCopied, setCodexOauthCodeCopied] = useState(false);
+  const codexOauthCopiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (codexOauthCopiedTimeoutRef.current !== null) {
+        clearTimeout(codexOauthCopiedTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const codexOauthIsConnected = config?.openai?.codexOauthSet === true;
   const openaiApiKeySet = config?.openai?.apiKeySet === true;
   const codexOauthDefaultAuth =
@@ -1466,20 +1477,46 @@ export function ProvidersSection() {
                     </div>
 
                     {codexOauthDeviceFlow && (
-                      <div className="space-y-1">
-                        <div className="text-muted text-xs">User code</div>
-                        <div className="text-foreground font-mono text-xs">
-                          {codexOauthDeviceFlow.userCode}
+                      <div className="bg-background-tertiary space-y-2 rounded-md p-3">
+                        <p className="text-muted text-xs">
+                          Enter this code on the OpenAI verification page:
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <code className="text-accent text-lg font-bold tracking-widest">
+                            {codexOauthDeviceFlow.userCode}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label="Copy verification code"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(codexOauthDeviceFlow.userCode);
+                              setCodexOauthCodeCopied(true);
+                              if (codexOauthCopiedTimeoutRef.current !== null) {
+                                clearTimeout(codexOauthCopiedTimeoutRef.current);
+                              }
+                              codexOauthCopiedTimeoutRef.current = setTimeout(
+                                () => setCodexOauthCodeCopied(false),
+                                2000
+                              );
+                            }}
+                            className="text-muted hover:text-foreground h-auto px-1 py-0 text-xs"
+                          >
+                            {codexOauthCodeCopied ? "Copied!" : "Copy"}
+                          </Button>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            window.open(codexOauthDeviceFlow.verifyUrl, "_blank", "noopener");
-                          }}
-                        >
-                          Open verification page
-                        </Button>
+                        <p className="text-muted text-xs">
+                          If the browser didn&apos;t open,{" "}
+                          <a
+                            href={codexOauthDeviceFlow.verifyUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-accent hover:text-accent-light underline"
+                          >
+                            open the verification page
+                          </a>
+                          .
+                        </p>
                       </div>
                     )}
 
