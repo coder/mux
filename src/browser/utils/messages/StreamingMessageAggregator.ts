@@ -1952,7 +1952,6 @@ export class StreamingMessageAggregator {
 
   private createCompactionBoundaryRow(
     message: MuxMessage,
-    position: "start" | "end",
     historySequence: number
   ): Extract<DisplayedMessage, { type: "compaction-boundary" }> {
     assert(
@@ -1971,9 +1970,9 @@ export class StreamingMessageAggregator {
     // Self-healing read path: malformed persisted compactionEpoch should not crash transcript rendering.
     return {
       type: "compaction-boundary",
-      id: `${message.id}-compaction-boundary-${position}`,
+      id: `${message.id}-compaction-boundary`,
       historySequence,
-      position,
+      position: "start",
       compactionEpoch,
     };
   }
@@ -2110,7 +2109,7 @@ export class StreamingMessageAggregator {
 
       const isCompactionBoundarySummary = this.isCompactionBoundarySummaryMessage(message);
       if (isCompactionBoundarySummary) {
-        displayedMessages.push(this.createCompactionBoundaryRow(message, "start", historySequence));
+        displayedMessages.push(this.createCompactionBoundaryRow(message, historySequence));
       }
 
       mergedParts.forEach((part, partIndex) => {
@@ -2241,10 +2240,6 @@ export class StreamingMessageAggregator {
           routedThroughGateway: message.metadata?.routedThroughGateway,
           timestamp: baseTimestamp,
         });
-      }
-
-      if (isCompactionBoundarySummary) {
-        displayedMessages.push(this.createCompactionBoundaryRow(message, "end", historySequence));
       }
     }
 

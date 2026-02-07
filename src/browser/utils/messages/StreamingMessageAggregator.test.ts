@@ -683,7 +683,7 @@ describe("StreamingMessageAggregator", () => {
   });
 
   describe("compaction boundary rows", () => {
-    test("inserts boundary rows around compaction summary messages", () => {
+    test("inserts a boundary row before compaction summary messages", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
 
       const before = createMuxMessage("user-before", "user", "Before compaction", {
@@ -710,26 +710,16 @@ describe("StreamingMessageAggregator", () => {
         "user",
         "compaction-boundary",
         "assistant",
-        "compaction-boundary",
         "user",
       ]);
 
-      const startBoundary = displayed[1];
-      const endBoundary = displayed[3];
+      const boundary = displayed[1];
+      expect(boundary?.type).toBe("compaction-boundary");
 
-      expect(startBoundary?.type).toBe("compaction-boundary");
-      expect(endBoundary?.type).toBe("compaction-boundary");
-
-      if (startBoundary?.type === "compaction-boundary") {
-        expect(startBoundary.position).toBe("start");
-        expect(startBoundary.compactionEpoch).toBe(3);
-        expect(startBoundary.historySequence).toBe(2);
-      }
-
-      if (endBoundary?.type === "compaction-boundary") {
-        expect(endBoundary.position).toBe("end");
-        expect(endBoundary.compactionEpoch).toBe(3);
-        expect(endBoundary.historySequence).toBe(2);
+      if (boundary?.type === "compaction-boundary") {
+        expect(boundary.position).toBe("start");
+        expect(boundary.compactionEpoch).toBe(3);
+        expect(boundary.historySequence).toBe(2);
       }
     });
 
@@ -763,15 +753,14 @@ describe("StreamingMessageAggregator", () => {
       const displayed = aggregator.getDisplayedMessages();
       const boundaries = displayed.filter((message) => message.type === "compaction-boundary");
 
-      expect(boundaries).toHaveLength(2);
+      expect(boundaries).toHaveLength(1);
 
-      for (const boundary of boundaries) {
-        if (boundary.type !== "compaction-boundary") {
-          throw new Error("Expected compaction boundary message");
-        }
-        expect(boundary.compactionEpoch).toBeUndefined();
-        expect(boundary.historySequence).toBe(2);
+      const boundary = boundaries[0];
+      if (boundary?.type !== "compaction-boundary") {
+        throw new Error("Expected compaction boundary message");
       }
+      expect(boundary.compactionEpoch).toBeUndefined();
+      expect(boundary.historySequence).toBe(2);
     });
   });
 

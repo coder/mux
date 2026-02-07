@@ -36,7 +36,7 @@ describe("MessageRenderer compaction boundary rows", () => {
     expect(getByText("Compaction boundary #4")).toBeDefined();
   });
 
-  test("renders end compaction boundary rows", () => {
+  test("renders compaction boundary label for legacy end rows", () => {
     const message: DisplayedMessage = {
       type: "compaction-boundary",
       id: "boundary-end",
@@ -48,7 +48,7 @@ describe("MessageRenderer compaction boundary rows", () => {
     const { getByTestId, getByText } = render(<MessageRenderer message={message} />);
 
     const boundary = getByTestId("compaction-boundary");
-    expect(boundary.getAttribute("aria-label")).toBe("Resume after compaction #4");
-    expect(getByText("Resume after compaction #4")).toBeDefined();
+    expect(boundary.getAttribute("aria-label")).toBe("Compaction boundary #4");
+    expect(getByText("Compaction boundary #4")).toBeDefined();
   });
 });
