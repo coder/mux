@@ -72,7 +72,8 @@ export class CopilotOauthService {
         return Err("Invalid response from GitHub device code endpoint");
       }
 
-      const { promise: resultPromise, resolve: resolveResult } = createDeferred<Result<void, string>>();
+      const { promise: resultPromise, resolve: resolveResult } =
+        createDeferred<Result<void, string>>();
 
       const timeout = setTimeout(() => {
         void this.finishFlow(flowId, Err("Timed out waiting for GitHub authorization"));
