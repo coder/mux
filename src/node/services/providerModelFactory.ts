@@ -640,6 +640,7 @@ export class ProviderModelFactory {
                     "parallel_tool_calls",
                     "stream",
                     "store",
+                    "prompt_cache_key",
                     "reasoning",
                     "temperature",
                     "top_p",
