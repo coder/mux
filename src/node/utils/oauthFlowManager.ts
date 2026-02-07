@@ -52,12 +52,13 @@ export class OAuthFlowManager {
   }
 
   /**
-   * Wait for a flow to complete, with a timeout.
+   * Wait for a flow to complete with a caller-facing timeout race.
    *
    * Mirrors the `waitForDesktopFlow` pattern shared across all four services:
-   * - Sets up a timeout that races against the deferred promise.
-   * - Stores the timeout handle in the entry for cleanup.
-   * - On timeout/error, calls `finish` to close the server and clean up.
+   * - Creates a local timeout promise for this wait call only.
+   * - Races that local timeout against `flow.resultDeferred.promise`.
+   * - Registration-time timeout remains on `flow.timeoutHandle` and is cleared in `finish`.
+   * - On any error result (caller timeout or flow error), calls `finish` for shared cleanup.
    */
   async waitFor(flowId: string, timeoutMs: number): Promise<Result<void, string>> {
     const flow = this.flows.get(flowId);
