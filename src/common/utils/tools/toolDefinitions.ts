@@ -156,15 +156,6 @@ const TaskToolAgentArgsSchema = z
       });
       return;
     }
-
-    if (hasAgentId && hasSubagentType) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Provide only one of agentId or subagent_type (not both)",
-        path: ["agentId"],
-      });
-      return;
-    }
   });
 
 export const TaskToolArgsSchema = TaskToolAgentArgsSchema;
