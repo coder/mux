@@ -161,13 +161,6 @@ export const OPENAI_REASONING_EFFORT: Record<ThinkingLevel, string | undefined> 
 };
 
 /**
- * OpenRouter reasoning effort mapping
- *
- * Maps our unified levels to OpenRouter's reasoning.effort parameter
- * (used by Claude Sonnet Thinking and other reasoning models via OpenRouter)
- */
-
-/**
  * Thinking budgets for Gemini 2.5 models (in tokens)
  */
 export const GEMINI_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
@@ -178,6 +171,13 @@ export const GEMINI_THINKING_BUDGETS: Record<ThinkingLevel, number> = {
   xhigh: 16384, // Same as high - Gemini doesn't support xhigh
   max: 16384,
 } as const;
+
+/**
+ * OpenRouter reasoning effort mapping
+ *
+ * Maps our unified levels to OpenRouter's reasoning.effort parameter
+ * (used by Claude Sonnet Thinking and other reasoning models via OpenRouter)
+ */
 export const OPENROUTER_REASONING_EFFORT: Record<
   ThinkingLevel,
   "low" | "medium" | "high" | undefined
