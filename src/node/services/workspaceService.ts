@@ -67,7 +67,7 @@ import {
   isSSHRuntime,
   isDockerRuntime,
 } from "@/common/types/runtime";
-import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
@@ -78,6 +78,12 @@ import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
+import {
+  normalizeSendMessageAgentId as normalizeAgentId,
+  maybePersistAISettingsFromOptions as maybePersistAISettings,
+  updateAgentAISettings as updateAgentAISettingsFn,
+  type EmitMetadataFn,
+} from "@/node/services/workspaceAISettings";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -1644,164 +1650,32 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private normalizeWorkspaceAISettings(
-    aiSettings: WorkspaceAISettings
-  ): Result<WorkspaceAISettings, string> {
-    const rawModel = aiSettings.model;
-    const model = normalizeGatewayModel(rawModel).trim();
-    if (!model) {
-      return Err("Model is required");
+  /** Callback that routes metadata emission through active sessions or fallback event. */
+  private readonly emitWorkspaceMetadata: EmitMetadataFn = (workspaceId, metadata) => {
+    const session = this.sessions.get(workspaceId);
+    if (session) {
+      session.emitMetadata(metadata);
+    } else {
+      this.emit("metadata", { workspaceId, metadata });
     }
-    if (!isValidModelFormat(model)) {
-      return Err(`Invalid model format: ${rawModel}`);
-    }
-
-    return Ok({
-      model,
-      thinkingLevel: aiSettings.thinkingLevel,
-    });
-  }
+  };
 
   private normalizeSendMessageAgentId(options: SendMessageOptions): SendMessageOptions {
-    // agentId is required by the schema, so this just normalizes the value.
-    const rawAgentId = options.agentId;
-    const normalizedAgentId =
-      typeof rawAgentId === "string" && rawAgentId.trim().length > 0
-        ? rawAgentId.trim().toLowerCase()
-        : WORKSPACE_DEFAULTS.agentId;
-
-    if (normalizedAgentId === options.agentId) {
-      return options;
-    }
-
-    return {
-      ...options,
-      agentId: normalizedAgentId,
-    };
+    return normalizeAgentId(options);
   }
 
-  private extractWorkspaceAISettingsFromSendOptions(
-    options: SendMessageOptions | undefined
-  ): WorkspaceAISettings | null {
-    const rawModel = options?.model;
-    if (typeof rawModel !== "string" || rawModel.trim().length === 0) {
-      return null;
-    }
-
-    const model = normalizeGatewayModel(rawModel).trim();
-    if (!isValidModelFormat(model)) {
-      return null;
-    }
-
-    const requestedThinking = options?.thinkingLevel;
-    // Be defensive: if a (very) old client doesn't send thinkingLevel, don't overwrite
-    // any existing workspace-scoped value.
-    if (requestedThinking === undefined) {
-      return null;
-    }
-
-    const thinkingLevel = requestedThinking;
-
-    return { model, thinkingLevel };
-  }
-
-  /**
-   * Best-effort persist AI settings from send/resume options.
-   * Skips requests explicitly marked to avoid persistence.
-   */
   private async maybePersistAISettingsFromOptions(
     workspaceId: string,
     options: SendMessageOptions | undefined,
     context: "send" | "resume"
   ): Promise<void> {
-    if (options?.skipAiSettingsPersistence) {
-      // One-shot/compaction sends shouldn't overwrite workspace defaults.
-      return;
-    }
-
-    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
-    if (!extractedSettings) return;
-
-    const rawAgentId = options?.agentId;
-    const agentId =
-      typeof rawAgentId === "string" && rawAgentId.trim().length > 0
-        ? rawAgentId.trim().toLowerCase()
-        : WORKSPACE_DEFAULTS.agentId;
-
-    const persistResult = await this.persistWorkspaceAISettingsForAgent(
+    return maybePersistAISettings(
+      this.config,
+      this.emitWorkspaceMetadata,
       workspaceId,
-      agentId,
-      extractedSettings,
-      {
-        emitMetadata: false,
-      }
+      options,
+      context
     );
-    if (!persistResult.success) {
-      log.debug(`Failed to persist workspace AI settings from ${context} options`, {
-        workspaceId,
-        error: persistResult.error,
-      });
-    }
-  }
-
-  private async persistWorkspaceAISettingsForAgent(
-    workspaceId: string,
-    agentId: string,
-    aiSettings: WorkspaceAISettings,
-    options?: { emitMetadata?: boolean }
-  ): Promise<Result<boolean, string>> {
-    const found = this.config.findWorkspace(workspaceId);
-    if (!found) {
-      return Err("Workspace not found");
-    }
-
-    const { projectPath, workspacePath } = found;
-
-    const config = this.config.loadConfigOrDefault();
-    const projectConfig = config.projects.get(projectPath);
-    if (!projectConfig) {
-      return Err(`Project not found: ${projectPath}`);
-    }
-
-    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
-    const workspaceEntryWithFallback =
-      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
-    if (!workspaceEntryWithFallback) {
-      return Err("Workspace not found");
-    }
-
-    const normalizedAgentId = agentId.trim().toLowerCase();
-    if (!normalizedAgentId) {
-      return Err("Agent ID is required");
-    }
-
-    const prev = workspaceEntryWithFallback.aiSettingsByAgent?.[normalizedAgentId];
-    const changed =
-      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
-    if (!changed) {
-      return Ok(false);
-    }
-
-    workspaceEntryWithFallback.aiSettingsByAgent = {
-      ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
-      [normalizedAgentId]: aiSettings,
-    };
-
-    await this.config.saveConfig(config);
-
-    if (options?.emitMetadata !== false) {
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
-
-      const session = this.sessions.get(workspaceId);
-      if (session) {
-        session.emitMetadata(updatedMetadata);
-      } else {
-        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
-      }
-    }
-
-    return Ok(true);
   }
 
   async updateModeAISettings(
@@ -1818,29 +1692,13 @@ export class WorkspaceService extends EventEmitter {
     agentId: string,
     aiSettings: WorkspaceAISettings
   ): Promise<Result<void, string>> {
-    try {
-      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
-      if (!normalized.success) {
-        return Err(normalized.error);
-      }
-
-      const persistResult = await this.persistWorkspaceAISettingsForAgent(
-        workspaceId,
-        agentId,
-        normalized.data,
-        {
-          emitMetadata: true,
-        }
-      );
-      if (!persistResult.success) {
-        return Err(persistResult.error);
-      }
-
-      return Ok(undefined);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      return Err(`Failed to update workspace AI settings: ${message}`);
-    }
+    return updateAgentAISettingsFn(
+      this.config,
+      this.emitWorkspaceMetadata,
+      workspaceId,
+      agentId,
+      aiSettings
+    );
   }
 
   async fork(
