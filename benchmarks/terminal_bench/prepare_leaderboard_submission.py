@@ -3,19 +3,27 @@
 Prepare Terminal-Bench results for leaderboard submission.
 
 This script:
-1. Downloads the latest nightly benchmark results from GitHub Actions
+1. Downloads nightly benchmark results from GitHub Actions
 2. Constructs the submission folder structure required by the leaderboard
 3. Prints instructions to submit via `hf` CLI
 
+The leaderboard computes pass@k from multiple attempts per task. Provide
+multiple runs (via --run-id or --n-runs) so each becomes its own job folder
+inside the submission. For example, 5 separate 1×89-trial runs produce the
+same structure as a single n_attempts=5 run with 445 trials.
+
 Usage:
-    # Download latest successful nightly run and prepare submission
+    # Download latest 5 successful nightly runs (recommended for submission)
+    python prepare_leaderboard_submission.py --n-runs 5
+
+    # Use specific run IDs (each becomes a job folder)
+    python prepare_leaderboard_submission.py --run-id 111 222 333 444 555
+
+    # Use existing downloaded artifacts directories
+    python prepare_leaderboard_submission.py --artifacts-dir ./run1 ./run2 ./run3
+
+    # Download latest single run (quick iteration)
     python prepare_leaderboard_submission.py
-
-    # Use specific run ID
-    python prepare_leaderboard_submission.py --run-id 20939412042
-
-    # Use existing downloaded artifacts
-    python prepare_leaderboard_submission.py --artifacts-dir ./downloads
 
     # Then submit with hf CLI:
     hf upload alexgshaw/terminal-bench-2-leaderboard \\
@@ -25,21 +33,21 @@ Usage:
 Output structure (per leaderboard requirements):
     submissions/terminal-bench/2.0/Mux__<Model>/
         metadata.yaml
-        <job-folder>/               # Timestamp-named (e.g., 2026-01-16__00-15-05)
+        <job-folder-1>/             # From run 1 (e.g., 2026-02-01__00-15-05)
             config.json
             result.json
-            <trial-1>/              # e.g., chess-best-move__ABC123
+            <trial-1>/             # e.g., chess-best-move__ABC123
                 config.json
                 result.json
                 agent/
                 verifier/
-            <trial-2>/
-                ...
+            ...
+        <job-folder-2>/             # From run 2
+            ...
 """
 
 import argparse
 import json
-import os
 import shutil
 import sys
 import tempfile
@@ -51,16 +59,12 @@ try:
         download_run_artifacts,
         list_artifacts_for_run,
         list_nightly_runs,
-        run_command,
-        SMOKE_TEST_MODEL,
     )
 except ImportError:
     from tbench_utils import (  # type: ignore[import-not-found,no-redef]
         download_run_artifacts,
         list_artifacts_for_run,
         list_nightly_runs,
-        run_command,
-        SMOKE_TEST_MODEL,
     )
 
 # HuggingFace leaderboard repo
@@ -168,15 +172,35 @@ def get_model_from_config(config_path: Path) -> str | None:
         return None
 
 
+def _is_job_folder(path: Path) -> bool:
+    """Check if a directory looks like a job folder (contains trial dirs with config.json)."""
+    if not path.is_dir():
+        return False
+    # A job folder has trial subdirs named <task>__<hash> and/or a config.json
+    if (path / "config.json").exists():
+        return True
+    # Check if any child looks like a trial directory
+    return any(
+        child.is_dir() and "__" in child.name and (child / "result.json").exists()
+        for child in path.iterdir()
+    )
+
+
 def find_job_folders(artifacts_dir: Path) -> list[Path]:
     """
     Find all job folders (containing trial directories) in the artifacts.
 
-    Handles two structures:
-    1. Direct: artifacts_dir/jobs/YYYY-MM-DD__HH-MM-SS/trials/
-    2. Per-artifact: artifacts_dir/<artifact-name>/jobs/YYYY-MM-DD__HH-MM-SS/trials/
+    Handles multiple structures:
+    1. Direct job folder: artifacts_dir itself contains trials (e.g., extracted tar)
+    2. Jobs parent: artifacts_dir/jobs/YYYY-MM-DD__HH-MM-SS/
+    3. Per-artifact: artifacts_dir/<artifact-name>/jobs/YYYY-MM-DD__HH-MM-SS/
     """
     job_folders = []
+
+    # Check if artifacts_dir itself is a job folder (common when pointing at an
+    # extracted tarball or a raw job directory like /path/to/2026-02-08__19-57-27/)
+    if _is_job_folder(artifacts_dir):
+        return [artifacts_dir]
 
     # Check for direct jobs/ folder
     direct_jobs = artifacts_dir / "jobs"
@@ -313,6 +337,7 @@ def prepare_submission(
                     ignore=shutil.ignore_patterns(
                         "mux-app.tar.gz",  # Large agent binary (~5MB each)
                         "mux-tokens.json",  # Token usage (not needed for leaderboard)
+                        "*.log",  # Log files trigger HF LFS and cause upload timeouts
                     ),
                 )
                 total_trials += 1
@@ -323,6 +348,46 @@ def prepare_submission(
     return submissions
 
 
+def download_run_to_dir(
+    run_id: int,
+    models_filter: list[str] | None,
+    verbose: bool = True,
+) -> tuple[Path, str]:
+    """Download artifacts for a single GH Actions run.
+
+    Returns (artifacts_dir, run_date).
+    """
+    run_info = {"databaseId": run_id, "createdAt": datetime.now().isoformat()}
+
+    run_date = run_info["createdAt"][:10]
+    print(f"Using run {run_id} from {run_date}")
+
+    artifacts = list_artifacts_for_run(run_id, verbose=verbose)
+    if not artifacts:
+        print(f"No terminal-bench artifacts found for run {run_id}")
+        sys.exit(1)
+
+    print(f"Found {len(artifacts)} artifact(s)")
+
+    if models_filter:
+        artifacts = [
+            a
+            for a in artifacts
+            if any(m.replace("/", "-") in a["name"] for m in models_filter)
+        ]
+        print(f"Filtered to {len(artifacts)} artifact(s) for specified models")
+
+    artifacts_dir = Path(tempfile.mkdtemp(prefix="tbench-"))
+    artifact_names = [a["name"] for a in artifacts]
+    if not download_run_artifacts(
+        run_id, artifacts_dir, artifact_names, verbose=verbose
+    ):
+        print(f"Failed to download artifacts for run {run_id}")
+        sys.exit(1)
+
+    return artifacts_dir, run_date
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Prepare Terminal-Bench results for leaderboard submission"
@@ -330,12 +395,20 @@ def main():
     parser.add_argument(
         "--run-id",
         type=int,
-        help="Specific GitHub Actions run ID to download (default: latest successful nightly)",
+        nargs="+",
+        help="One or more GitHub Actions run IDs (each becomes a job folder)",
     )
     parser.add_argument(
         "--artifacts-dir",
         type=Path,
-        help="Use existing downloaded artifacts instead of downloading",
+        nargs="+",
+        help="One or more existing artifact directories",
+    )
+    parser.add_argument(
+        "--n-runs",
+        type=int,
+        default=None,
+        help="Automatically fetch the latest N successful nightly runs (e.g., --n-runs 5)",
     )
     parser.add_argument(
         "--output-dir",
@@ -350,57 +423,82 @@ def main():
     )
     args = parser.parse_args()
 
-    # Determine what artifacts to use
+    # Collect all artifact directories to merge into one submission.
+    # Each source (run-id, artifacts-dir, or auto-discovered nightly run) is
+    # downloaded/validated independently, then all are fed into
+    # prepare_submission() which preserves each job folder as a separate entry.
+    artifacts_dirs: list[Path] = []
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    temp_dirs: list[Path] = []
+
     if args.artifacts_dir:
-        if not args.artifacts_dir.exists():
-            print(f"Error: Artifacts directory {args.artifacts_dir} does not exist")
-            sys.exit(1)
-        artifacts_dir = args.artifacts_dir
-        run_date = datetime.now().strftime("%Y-%m-%d")
-    else:
-        # Download from GitHub Actions
-        if args.run_id:
-            run_id = args.run_id
-            run_info = {"databaseId": run_id, "createdAt": datetime.now().isoformat()}
-        else:
-            run_info = get_latest_successful_nightly_run()
-            if not run_info:
-                print("Could not find a successful nightly run")
+        for d in args.artifacts_dir:
+            if not d.exists():
+                print(f"Error: Artifacts directory {d} does not exist")
                 sys.exit(1)
-            run_id = run_info["databaseId"]
+            artifacts_dirs.append(d)
 
-        run_date = run_info["createdAt"][:10]  # YYYY-MM-DD
-        print(f"Using run {run_id} from {run_date}")
+    if args.run_id:
+        for rid in args.run_id:
+            ad, rd = download_run_to_dir(rid, args.models)
+            artifacts_dirs.append(ad)
+            temp_dirs.append(ad)
+            run_date = rd
 
-        # List artifacts for this run
-        artifacts = list_artifacts_for_run(run_id, verbose=True)
-        if not artifacts:
-            print("No terminal-bench artifacts found for this run")
+    if args.n_runs is not None:
+        # Auto-discover latest N successful nightly runs
+        n = args.n_runs
+        print(f"Fetching latest {n} successful nightly run(s)...")
+        runs = list_nightly_runs(limit=n, status="success", verbose=True)
+        if len(runs) < n:
+            print(
+                f"Warning: only found {len(runs)} successful nightly run(s) "
+                f"(requested {n})"
+            )
+        if not runs:
+            print("No successful nightly runs found")
             sys.exit(1)
+        run_date = runs[0]["createdAt"][:10]
+        for run_info in runs:
+            rid = run_info["databaseId"]
+            ad, _ = download_run_to_dir(rid, args.models)
+            artifacts_dirs.append(ad)
+            temp_dirs.append(ad)
 
-        print(f"Found {len(artifacts)} artifact(s)")
-
-        # Filter by model if specified
-        if args.models:
-            artifacts = [
-                a
-                for a in artifacts
-                if any(m.replace("/", "-") in a["name"] for m in args.models)
-            ]
-            print(f"Filtered to {len(artifacts)} artifact(s) for specified models")
-
-        # Download artifacts
-        artifacts_dir = Path(tempfile.mkdtemp(prefix="tbench-"))
-        artifact_names = [a["name"] for a in artifacts]
-        if not download_run_artifacts(
-            run_id, artifacts_dir, artifact_names, verbose=True
-        ):
-            print("Failed to download artifacts")
+    # Default: latest single nightly run
+    if not artifacts_dirs:
+        run_info = get_latest_successful_nightly_run()
+        if not run_info:
+            print("Could not find a successful nightly run")
             sys.exit(1)
+        rid = run_info["databaseId"]
+        ad, run_date = download_run_to_dir(rid, args.models)
+        artifacts_dirs.append(ad)
+        temp_dirs.append(ad)
+
+    # Merge all artifact sources into a combined staging directory.  Each
+    # source may have its own jobs/ subdirectory tree — we link them all under
+    # one root so prepare_submission sees every job folder.
+    if len(artifacts_dirs) == 1:
+        combined_dir = artifacts_dirs[0]
+    else:
+        combined_dir = Path(tempfile.mkdtemp(prefix="tbench-combined-"))
+        temp_dirs.append(combined_dir)
+        combined_jobs = combined_dir / "jobs"
+        combined_jobs.mkdir(parents=True, exist_ok=True)
+        for ad in artifacts_dirs:
+            for jf in find_job_folders(ad):
+                dest = combined_jobs / jf.name
+                if dest.exists():
+                    # Unlikely name collision — append a suffix
+                    dest = combined_jobs / f"{jf.name}__dup{id(jf)}"
+                # Symlink to avoid copying gigabytes of trial data
+                dest.symlink_to(jf)
 
     # Prepare submission
-    print(f"\nPreparing submission in {args.output_dir}...")
-    submissions = prepare_submission(artifacts_dir, args.output_dir, args.models)
+    n_sources = len(artifacts_dirs)
+    print(f"\nPreparing submission from {n_sources} source(s) in {args.output_dir}...")
+    submissions = prepare_submission(combined_dir, args.output_dir, args.models)
 
     if not submissions:
         print("No valid submissions created")
@@ -408,19 +506,26 @@ def main():
 
     print(f"\n✅ Created {len(submissions)} submission(s):")
     for model, path in submissions.items():
-        print(f"  - {model}: {path}")
+        # Count job folders and total trials
+        job_dirs = [d for d in path.iterdir() if d.is_dir() and d.name != "__pycache__"]
+        total_trials = sum(
+            1 for jd in job_dirs for t in jd.iterdir() if t.is_dir() and "__" in t.name
+        )
+        print(f"  - {model}: {len(job_dirs)} job(s), {total_trials} trial(s)")
 
     # Print next steps
-    print(f"\nNext steps - submit with hf CLI:")
+    print("\nNext steps - submit with hf CLI:")
     print(f"  hf upload {LEADERBOARD_REPO} \\")
     print(f"    {args.output_dir}/submissions submissions \\")
-    print(f"    --repo-type dataset --create-pr \\")
+    print("    --repo-type dataset --create-pr \\")
     print(f'    --commit-message "Mux submission ({run_date})"')
 
-    # Clean up temp directory if we created one
-    if not args.artifacts_dir and artifacts_dir.exists():
-        print(f"\nNote: Downloaded artifacts are in {artifacts_dir}")
-        print("      Delete with: rm -rf " + str(artifacts_dir))
+    # Clean up temp directories if we created any
+    if temp_dirs:
+        print(f"\nNote: Temp artifacts in {len(temp_dirs)} director(ies):")
+        for td in temp_dirs:
+            print(f"  {td}")
+        print("      Delete with: rm -rf " + " ".join(str(td) for td in temp_dirs))
 
 
 if __name__ == "__main__":

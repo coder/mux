@@ -136,15 +136,24 @@ To submit mux results to the [Terminal-Bench 2.0 leaderboard](https://tbench.ai/
 
 ### Step 1: Prepare Submission
 
+The leaderboard computes pass@k from multiple attempts per task. Provide
+multiple runs so each becomes its own job folder inside the submission.
+
 ```bash
-# Download latest successful nightly run and prepare submission folder
+# Download latest 5 successful nightly runs (recommended for submission)
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --n-runs 5
+
+# Use specific run IDs (each becomes a separate job folder)
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --run-id 111 222 333 444 555
+
+# Use multiple existing artifact directories
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --artifacts-dir ./run1 ./run2
+
+# Download latest single run (quick iteration)
 python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py
 
-# Use a specific run ID
-python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --run-id 20939412042
-
 # Only prepare specific models
-python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --models anthropic/claude-opus-4-5
+python3 benchmarks/terminal_bench/prepare_leaderboard_submission.py --n-runs 5 --models anthropic/claude-opus-4-5
 ```
 
 This creates a properly structured submission folder at `leaderboard_submission/` containing:
@@ -152,7 +161,7 @@ This creates a properly structured submission folder at `leaderboard_submission/
 ```
 submissions/terminal-bench/2.0/Mux__<model>/
   metadata.yaml       # Agent and model info
-  <job-folder>/       # Results from the run
+  <job-folder-1>/     # Results from run 1
     config.json
     result.json
     <trial-1>/
@@ -161,27 +170,52 @@ submissions/terminal-bench/2.0/Mux__<model>/
       agent/
       verifier/
     ...
+  <job-folder-2>/     # Results from run 2
+    ...
 ```
 
-### Step 2: Submit via HuggingFace CLI
+### Step 2: Submit via HuggingFace Python API
+
+The `hf upload` CLI tends to timeout on large submissions due to LFS file handling.
+Use the Python API with an extended timeout instead:
 
 ```bash
-# Install hf CLI (via uv or pip)
-uv tool install huggingface_hub
-# or: pip install huggingface_hub
+# Install huggingface_hub (via uv or pip)
+pip install huggingface_hub
 
 # Authenticate (one-time setup)
 hf auth login
+```
 
-# Upload and create PR
-hf upload alexgshaw/terminal-bench-2-leaderboard \
-  ./leaderboard_submission/submissions submissions \
-  --repo-type dataset \
-  --create-pr \
-  --commit-message "Mux submission (YYYY-MM-DD)"
+```python
+import httpx
+from huggingface_hub import HfApi
+from huggingface_hub.utils import configure_http_backend
+
+configure_http_backend(
+    backend_factory=lambda: httpx.Client(timeout=httpx.Timeout(300.0, connect=60.0))
+)
+
+api = HfApi()
+api.upload_folder(
+    repo_id="alexgshaw/terminal-bench-2-leaderboard",
+    folder_path="./leaderboard_submission/submissions",
+    path_in_repo="submissions",
+    repo_type="dataset",
+    create_pr=True,
+    commit_message="Add Mux + <Model> submission",
+    commit_description="- Agent: Mux (Coder)\n- Model: <model>\n- <N> tasks × <K> attempts",
+)
 ```
 
 The PR will be automatically validated by the leaderboard bot. Once merged, results appear on the leaderboard.
+
+**Tips from past submissions:**
+
+- The prepare script already strips `*.log` files (they trigger HF LFS and cause timeouts)
+- `--artifacts-dir` accepts raw job folders directly (e.g., an extracted tarball root)
+- To update an existing PR, pass `revision="refs/pr/<N>"` instead of `create_pr=True`
+- To remove stale files from a PR, use `api.delete_folder(..., revision="refs/pr/<N>")`
 
 ## Files
 
