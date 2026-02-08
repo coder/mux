@@ -1,6 +1,13 @@
 import type { MuxMessage, MuxToolPart } from "@/common/types/message";
 import type { NestedToolCall } from "@/common/orpc/schemas/message";
 
+function isFailedOutput(output: unknown): boolean {
+  if (typeof output !== "object" || output === null) return false;
+  if ("success" in output && output.success === false) return true;
+  if ("error" in output && output.error) return true;
+  return false;
+}
+
 export interface BuildChatJsonlForSharingOptions {
   /** Defaults to true */
   includeToolOutput?: boolean;
@@ -105,10 +112,12 @@ function stripNestedToolCallOutput(call: NestedToolCall): NestedToolCall {
     return call;
   }
 
+  const failed = isFailedOutput(call.output);
   const { output: _output, ...rest } = call;
   return {
     ...rest,
     state: "output-redacted",
+    ...(failed && { failed }),
   };
 }
 
@@ -134,10 +143,12 @@ function stripToolPartOutput(part: MuxToolPart): MuxToolPart {
     return nestedCalls ? { ...part, nestedCalls } : part;
   }
 
+  const failed = isFailedOutput(part.output);
   const { output: _output, ...rest } = part;
   return {
     ...rest,
     state: "output-redacted",
+    ...(failed && { failed }),
     nestedCalls,
   };
 }
