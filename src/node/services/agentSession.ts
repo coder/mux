@@ -149,6 +149,8 @@ interface AgentSessionOptions {
   initStateManager: InitStateManager;
   telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
+  /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
+  keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
   onCompactionComplete?: () => void;
   /** Called when post-compaction context state may have changed (plan/file edits) */
@@ -163,6 +165,7 @@ export class AgentSession {
   private readonly aiService: AIService;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
+  private readonly keepBackgroundProcesses: boolean;
   private readonly onCompactionComplete?: () => void;
   private readonly onPostCompactionStateChange?: () => void;
   private readonly emitter = new EventEmitter();
@@ -245,6 +248,7 @@ export class AgentSession {
       initStateManager,
       telemetryService,
       backgroundProcessManager,
+      keepBackgroundProcesses,
       onCompactionComplete,
       onPostCompactionStateChange,
     } = options;
@@ -260,6 +264,7 @@ export class AgentSession {
     this.aiService = aiService;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
+    this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
     this.onCompactionComplete = onCompactionComplete;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
 
@@ -285,8 +290,10 @@ export class AgentSession {
 
     // Stop any active stream (fire and forget - disposal shouldn't block)
     void this.aiService.stopStream(this.workspaceId, { abandonPartial: true });
-    // Terminate background processes for this workspace
-    void this.backgroundProcessManager.cleanup(this.workspaceId);
+    // Terminate background processes for this workspace (skip when flagged for bench/CI)
+    if (!this.keepBackgroundProcesses) {
+      void this.backgroundProcessManager.cleanup(this.workspaceId);
+    }
 
     for (const { event, handler } of this.aiListeners) {
       this.aiService.off(event, handler as never);
@@ -767,7 +774,7 @@ export class AgentSession {
     try {
       // If this is a compaction request, terminate background processes first
       // They won't be included in the summary, so continuing with orphaned processes would be confusing
-      if (isCompactionRequest) {
+      if (isCompactionRequest && !this.keepBackgroundProcesses) {
         await this.backgroundProcessManager.cleanup(this.workspaceId);
 
         if (this.disposed) {

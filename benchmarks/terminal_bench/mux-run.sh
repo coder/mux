@@ -69,6 +69,7 @@ cmd=(bun src/cli/run.ts
   --model "${MUX_MODEL}"
   --mode "${MUX_MODE}"
   --thinking "${MUX_THINKING_LEVEL}"
+  --keep-background-processes
   --json)
 
 if [[ -n "${MUX_RUNTIME}" ]]; then
