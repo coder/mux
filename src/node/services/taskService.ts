@@ -32,7 +32,11 @@ import { Ok, Err, type Result } from "@/common/types/result";
 import type { TaskSettings } from "@/common/types/tasks";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import {
+  createMuxMessage,
+  isCompactionSummaryMetadata,
+  type MuxMessage,
+} from "@/common/types/message";
 import { createTaskReportMessageId } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeGatewayModel } from "@/common/utils/ai/models";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -2045,6 +2049,20 @@ export class TaskService {
       return;
     }
 
+    // Snapshot queue state synchronously before any await — AgentSession's stream-end
+    // handler drains the queue concurrently, so checking later would race.
+    const hadQueuedMessages = this.workspaceService.hasQueuedMessages(workspaceId);
+
+    // Don't send the agent_report reminder if a follow-up message is incoming:
+    // 1. Compaction with follow-up: the original message will be re-dispatched after compaction.
+    if (await this.isCompactionStreamWithFollowUp(workspaceId)) {
+      return;
+    }
+    // 2. Queued user message: will be sent after stream-end processing.
+    if (hadQueuedMessages) {
+      return;
+    }
+
     // If a task stream ends without agent_report, request it once.
     if (status === "awaiting_report" && this.remindedAwaitingReport.has(workspaceId)) {
       await this.fallbackReportMissingAgentReport(entry);
@@ -2066,6 +2084,43 @@ export class TaskService {
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
       }
     );
+  }
+
+  /**
+   * Check if the stream was a compaction request that still has a follow-up message incoming.
+   *
+   * `pendingFollowUp` is intentionally never cleared from the compaction summary message (it is
+   * stored for crash-safe dispatch), so we must *not* treat historical summaries as active.
+   */
+  private async isCompactionStreamWithFollowUp(workspaceId: string): Promise<boolean> {
+    const historyResult = await this.historyService.getHistory(workspaceId);
+    if (!historyResult.success || historyResult.data.length === 0) return false;
+
+    // Find the most recent compaction summary that still has a pending follow-up.
+    // A historical summary should not suppress the agent_report reminder on later turns.
+    let summaryIndex = -1;
+    for (let i = historyResult.data.length - 1; i >= 0; i--) {
+      const muxMeta = historyResult.data[i].metadata?.muxMetadata;
+      if (isCompactionSummaryMetadata(muxMeta) && muxMeta.pendingFollowUp !== undefined) {
+        summaryIndex = i;
+        break;
+      }
+    }
+    if (summaryIndex === -1) return false;
+
+    // After compaction, dispatchPendingFollowUp() sends a follow-up user message.
+    // AIService appends an assistant placeholder to history immediately; it stays empty
+    // until the follow-up stream ends and StreamManager updates history with final parts.
+    //
+    // Only treat the follow-up as "incoming" until we see an assistant message *after*
+    // the summary with output parts.
+    for (let i = summaryIndex + 1; i < historyResult.data.length; i++) {
+      const msg = historyResult.data[i];
+      if (msg.role === "assistant" && msg.parts.length > 0) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private async fallbackReportMissingAgentReport(entry: {

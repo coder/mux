@@ -1761,6 +1761,10 @@ export class AgentSession {
     this.backgroundProcessManager.setMessageQueued(this.workspaceId, true);
   }
 
+  hasQueuedMessages(): boolean {
+    return !this.messageQueue.isEmpty();
+  }
+
   clearQueue(): void {
     this.assertNotDisposed("clearQueue");
     this.messageQueue.clear();
