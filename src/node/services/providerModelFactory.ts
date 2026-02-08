@@ -278,19 +278,6 @@ export function buildAppAttributionHeaders(
 }
 
 /**
- * Preload AI SDK provider modules to avoid race conditions in concurrent test environments.
- * This function loads @ai-sdk/anthropic, @ai-sdk/openai, and ollama-ai-provider-v2 eagerly
- * so that subsequent dynamic imports in createModel() hit the module cache instead of racing.
- *
- * In production, providers are lazy-loaded on first use to optimize startup time.
- * In tests, we preload them once during setup to ensure reliable concurrent execution.
- */
-export async function preloadAISDKProviders(): Promise<void> {
-  // Preload providers to ensure they're in the module cache before concurrent tests run
-  await Promise.all(Object.values(PROVIDER_REGISTRY).map((importFn) => importFn()));
-}
-
-/**
  * Parse provider and model ID from model string.
  * Handles model IDs with colons (e.g., "ollama:gpt-oss:20b").
  * Only splits on the first colon to support Ollama model naming convention.

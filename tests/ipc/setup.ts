@@ -187,11 +187,15 @@ export { shouldRunIntegrationTests, validateApiKeys, getApiKey };
  * Call this in beforeAll hooks to prevent Jest sandbox race conditions.
  */
 export async function preloadTestModules(): Promise<void> {
-  const [{ loadTokenizerModules }, { preloadAISDKProviders }] = await Promise.all([
+  const [{ loadTokenizerModules }, { PROVIDER_REGISTRY }] = await Promise.all([
     import("../../src/node/utils/main/tokenizer"),
-    import("../../src/node/services/providerModelFactory"),
+    import("../../src/common/constants/providers"),
   ]);
-  await Promise.all([loadTokenizerModules(), preloadAISDKProviders()]);
+  await Promise.all([
+    loadTokenizerModules(),
+    // Preload providers to ensure they're in the module cache before concurrent tests run
+    ...Object.values(PROVIDER_REGISTRY).map((importFn) => importFn()),
+  ]);
 }
 
 /**

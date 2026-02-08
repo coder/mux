@@ -51,11 +51,6 @@ const MOCK_MARKER_PREFIX = "[mock:";
 /** Marker to trigger the mock stream-start gate (holds stream until released). */
 export const MOCK_STREAM_START_GATE_MARKER = "[mock:wait-start]";
 
-/** Build a message that triggers the mock stream-start gate. */
-export function buildMockStreamStartGateMessage(text: string): string {
-  return `${MOCK_STREAM_START_GATE_MARKER} ${text}`.trim();
-}
-
 function normalizeText(text: string): string {
   return text.trim().toLowerCase();
 }

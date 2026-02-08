@@ -10,7 +10,7 @@ import {
   createStreamCollector,
 } from "./helpers";
 import { isMuxMessage } from "@/common/orpc/types";
-import { buildMockStreamStartGateMessage } from "@/node/services/mock/mockAiRouter";
+import { MOCK_STREAM_START_GATE_MARKER } from "@/node/services/mock/mockAiRouter";
 
 describe("Queued messages during stream start", () => {
   let env: TestEnvironment | null = null;
@@ -52,7 +52,7 @@ describe("Queued messages during stream start", () => {
     try {
       await collector.waitForSubscription(5000);
 
-      const gatedMessage = buildMockStreamStartGateMessage("First message");
+      const gatedMessage = `${MOCK_STREAM_START_GATE_MARKER} First message`;
       const aiService = env.services.aiService;
       const session = env.services.workspaceService.getOrCreateSession(workspaceId);
       const firstSendPromise = sendMessageWithModel(env, workspaceId, gatedMessage, HAIKU_MODEL);

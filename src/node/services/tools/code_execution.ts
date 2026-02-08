@@ -28,16 +28,6 @@ export function clearTypeCaches(): void {
   clearTypeCache();
 }
 
-/**
- * Pre-generate type definitions for the given tools.
- * Call during workspace initialization to avoid first-call latency.
- * Integration with workspace initialization is handled in Phase 6.
- */
-export async function preGenerateMuxTypes(tools: Record<string, Tool>): Promise<void> {
-  const toolBridge = new ToolBridge(tools);
-  await getCachedMuxTypes(toolBridge.getBridgeableTools());
-}
-
 /** PTC event with parentToolCallId attached by code_execution */
 export type PTCEventWithParent = PTCEvent & { parentToolCallId: string };
 
