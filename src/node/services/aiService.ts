@@ -912,6 +912,7 @@ export class AIService extends EventEmitter {
                 this.providerModelFactory.resolveGatewayModelString(ms, dm, eg),
               createModel: (ms, o) => this.createModel(ms, o),
               emitBashOutput: (ev) => this.emit("bash-output", ev),
+              sessionUsageService: this.sessionUsageService,
             })
           : tools;
 

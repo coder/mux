@@ -1,6 +1,7 @@
 import assert from "@/common/utils/assert";
 
 import { generateText, type LanguageModel, type Tool } from "ai";
+import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 
@@ -9,9 +10,11 @@ import { createSystem1KeepRangesTool } from "@/node/services/tools/system1_keep_
 import type { System1KeepRange } from "@/node/services/system1/bashOutputFiltering";
 import { linkAbortSignal } from "@/node/utils/abort";
 
-export type GenerateTextLike = (
-  args: Parameters<typeof generateText>[0]
-) => Promise<{ finishReason?: string }>;
+export type GenerateTextLike = (args: Parameters<typeof generateText>[0]) => Promise<{
+  finishReason?: string;
+  usage?: LanguageModelV2Usage;
+  providerMetadata?: Record<string, unknown>;
+}>;
 export interface RunSystem1KeepRangesParams {
   runtime: Runtime;
   agentDiscoveryPath: string;
@@ -40,7 +43,14 @@ export interface RunSystem1KeepRangesParams {
 export async function runSystem1KeepRangesForBashOutput(
   params: RunSystem1KeepRangesParams
 ): Promise<
-  { keepRanges: System1KeepRange[]; finishReason?: string; timedOut: boolean } | undefined
+  | {
+      keepRanges: System1KeepRange[];
+      finishReason?: string;
+      timedOut: boolean;
+      usage?: LanguageModelV2Usage;
+      providerMetadata?: Record<string, unknown>;
+    }
+  | undefined
 > {
   assert(params, "params is required");
   assert(params.runtime, "runtime is required");
@@ -131,6 +141,13 @@ export async function runSystem1KeepRangesForBashOutput(
   ];
 
   const generate = params.generateTextImpl ?? generateText;
+  let responseWithUsage:
+    | {
+        finishReason?: string;
+        usage: LanguageModelV2Usage;
+        providerMetadata?: Record<string, unknown>;
+      }
+    | undefined;
 
   try {
     for (const messages of attemptMessages) {
@@ -179,8 +196,28 @@ export async function runSystem1KeepRangesForBashOutput(
           keepRanges,
           finishReason: response.finishReason,
           timedOut,
+          usage: response.usage,
+          providerMetadata: response.providerMetadata,
         };
       }
+
+      if (response.usage) {
+        responseWithUsage = {
+          finishReason: response.finishReason,
+          usage: response.usage,
+          providerMetadata: response.providerMetadata,
+        };
+      }
+    }
+
+    if (responseWithUsage) {
+      return {
+        keepRanges: [],
+        finishReason: responseWithUsage.finishReason,
+        timedOut,
+        usage: responseWithUsage.usage,
+        providerMetadata: responseWithUsage.providerMetadata,
+      };
     }
 
     return undefined;
