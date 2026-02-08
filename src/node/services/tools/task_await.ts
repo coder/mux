@@ -12,6 +12,7 @@ import {
   requireTaskService,
   requireWorkspaceId,
 } from "./toolUtils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
   if (typeof timeoutSecs !== "number" || !Number.isFinite(timeoutSecs)) return undefined;
@@ -186,7 +187,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 ...(gitFormatPatch ? { artifacts: { gitFormatPatch } } : {}),
               };
             } catch (error: unknown) {
-              const message = error instanceof Error ? error.message : String(error);
+              const message = getErrorMessage(error);
               if (/not found/i.test(message)) {
                 return { status: "not_found" as const, taskId };
               }
@@ -214,7 +215,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               return { status: "error" as const, taskId, error: "Interrupted" };
             }
 
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             if (/not found/i.test(message)) {
               return { status: "not_found" as const, taskId };
             }

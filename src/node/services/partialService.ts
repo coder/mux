@@ -9,6 +9,7 @@ import type { HistoryService } from "./historyService";
 import { workspaceFileLocks } from "@/node/utils/concurrency/workspaceFileLocks";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * PartialService - Manages partial message persistence for interrupted streams
@@ -87,7 +88,7 @@ export class PartialService {
         await writeFileAtomic(partialPath, JSON.stringify(partialMessage, null, 2));
         return Ok(undefined);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to write partial: ${message}`);
       }
     });
@@ -106,7 +107,7 @@ export class PartialService {
         if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
           return Ok(undefined); // Already deleted
         }
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return Err(`Failed to delete partial: ${message}`);
       }
     });
@@ -205,7 +206,7 @@ export class PartialService {
       // Delete partial.json after successful commit (or if already finalized)
       return await this.deletePartial(workspaceId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to commit partial: ${message}`);
     }
   }

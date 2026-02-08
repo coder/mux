@@ -16,6 +16,7 @@ import type { CoderService } from "@/node/services/coderService";
 import { Config } from "@/node/config";
 import { checkDevcontainerCliVersion } from "./devcontainerCli";
 import { buildDevcontainerConfigInfo, scanDevcontainerConfigs } from "./devcontainerConfigs";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Re-export for backward compatibility with existing imports
 export { isIncompatibleRuntimeConfig };
@@ -62,7 +63,7 @@ export function runBackgroundInit(
     try {
       await runFullInit(runtime, params);
     } catch (error: unknown) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       logger?.error(`Workspace init failed for ${workspaceId}:`, { error });
       params.initLogger.logStderr(`Initialization failed: ${errorMsg}`);
       params.initLogger.logComplete(-1);

@@ -37,6 +37,7 @@ import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsServ
 import { buildSystemMessage } from "./systemMessage";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { log } from "./log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // Plan & Instructions Assembly
@@ -179,7 +180,7 @@ export async function buildPlanInstructions(
         } catch (error) {
           workspaceLog.warn("Failed to resolve last agent definition for plan handoff", {
             lastAgentId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
         }
       }
@@ -277,7 +278,7 @@ export async function buildStreamSystemContext(
     } catch (error: unknown) {
       workspaceLog.debug("Failed to resolve agent frontmatter for subagent append_prompt", {
         agentId: agentDefinition.id,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

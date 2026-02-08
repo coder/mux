@@ -26,6 +26,7 @@ import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCod
 import { DisposableProcess, killProcessTree } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
 import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -215,7 +216,7 @@ export abstract class LocalBaseRuntime implements Runtime {
         } catch (err) {
           controller.error(
             new RuntimeErrorClass(
-              `Failed to read file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+              `Failed to read file ${filePath}: ${getErrorMessage(err)}`,
               "file_io",
               err instanceof Error ? err : undefined
             )
@@ -272,7 +273,7 @@ export abstract class LocalBaseRuntime implements Runtime {
           await fsPromises.rename(tempPath, resolvedPath);
         } catch (err) {
           throw new RuntimeErrorClass(
-            `Failed to write file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+            `Failed to write file ${filePath}: ${getErrorMessage(err)}`,
             "file_io",
             err instanceof Error ? err : undefined
           );
@@ -307,7 +308,7 @@ export abstract class LocalBaseRuntime implements Runtime {
       };
     } catch (err) {
       throw new RuntimeErrorClass(
-        `Failed to stat ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to stat ${filePath}: ${getErrorMessage(err)}`,
         "file_io",
         err instanceof Error ? err : undefined
       );
@@ -320,7 +321,7 @@ export abstract class LocalBaseRuntime implements Runtime {
       await fsPromises.mkdir(expandedPath, { recursive: true });
     } catch (err) {
       throw new RuntimeErrorClass(
-        `Failed to create directory ${dirPath}: ${err instanceof Error ? err.message : String(err)}`,
+        `Failed to create directory ${dirPath}: ${getErrorMessage(err)}`,
         "file_io",
         err instanceof Error ? err : undefined
       );

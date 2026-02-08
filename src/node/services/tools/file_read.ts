@@ -5,6 +5,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { validateFileSize, validateAndCorrectPath } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * File read tool factory for AI assistant
@@ -178,7 +179,7 @@ export const createFileReadTool: ToolFactory = (config: ToolConfiguration) => {
         }
 
         // Generic error
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `Failed to read file: ${message}`,

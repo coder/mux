@@ -14,6 +14,7 @@ import { tool } from "ai";
 import type { ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { NotifyToolResult } from "@/common/types/tools";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Maximum notification body length (macOS limit is 256 bytes) */
 const MAX_NOTIFICATION_BODY_LENGTH = 200;
@@ -94,7 +95,7 @@ async function sendElectronNotification(
 
     return { success: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return {
       success: false,
       error: `Failed to send notification: ${message}`,

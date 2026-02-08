@@ -15,6 +15,7 @@ import crypto from "crypto";
 import type { IJSRuntime, IJSRuntimeFactory, RuntimeLimits } from "./runtime";
 import type { PTCEvent, PTCExecutionResult, PTCToolCallRecord, PTCConsoleRecord } from "./types";
 import { UNAVAILABLE_IDENTIFIERS } from "./staticAnalysis";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Default limits
 const DEFAULT_MEMORY_BYTES = 64 * 1024 * 1024; // 64MB
@@ -126,7 +127,7 @@ export class QuickJSRuntime implements IJSRuntime {
       } catch (error) {
         const endTime = Date.now();
         const duration_ms = endTime - startTime;
-        const errorStr = error instanceof Error ? error.message : String(error);
+        const errorStr = getErrorMessage(error);
 
         // Record failed tool call
         this.toolCalls.push({
@@ -208,7 +209,7 @@ export class QuickJSRuntime implements IJSRuntime {
         } catch (error) {
           const endTime = Date.now();
           const duration_ms = endTime - startTime;
-          const errorStr = error instanceof Error ? error.message : String(error);
+          const errorStr = getErrorMessage(error);
 
           this.toolCalls.push({
             toolName: methodName,

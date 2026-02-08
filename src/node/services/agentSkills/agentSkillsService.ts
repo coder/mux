@@ -22,6 +22,7 @@ import { log } from "@/node/services/log";
 import { validateFileSize } from "@/node/services/tools/fileCommon";
 import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const GLOBAL_SKILLS_ROOT = "~/.mux/skills";
 
@@ -45,7 +46,7 @@ export function getDefaultAgentSkillsRoots(
 }
 
 function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }
 
 async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> {

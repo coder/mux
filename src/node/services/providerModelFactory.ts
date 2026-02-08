@@ -30,6 +30,7 @@ import {
   normalizeGatewayGenerateResult,
 } from "@/node/utils/gatewayStreamNormalization";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // Undici agent with unlimited timeouts for AI streaming requests.
@@ -1127,7 +1128,7 @@ export class ProviderModelFactory {
         provider: providerName,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       return Err({ type: "unknown", raw: `Failed to create model: ${errorMessage}` });
     }
   }

@@ -15,6 +15,7 @@ import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommo
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function readContentWithFileReadLimits(input: {
   fullContent: string;
@@ -92,7 +93,7 @@ function readContentWithFileReadLimits(input: {
   };
 }
 function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }
 
 /**

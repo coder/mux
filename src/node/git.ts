@@ -5,6 +5,7 @@ import type { RuntimeConfig } from "@/common/types/runtime";
 import { execAsync } from "@/node/utils/disposableExec";
 import { createRuntime } from "./runtime/runtimeFactory";
 import { log } from "./services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Remove stale .git/index.lock file if it exists and is old.
@@ -187,7 +188,7 @@ export async function createWorktree(
 
     return { success: true, path: workspacePath };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return { success: false, error: message };
   }
 }
@@ -233,7 +234,7 @@ export async function removeWorktree(
     await proc.result;
     return { success: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return { success: false, error: message };
   }
 }
@@ -247,7 +248,7 @@ export async function pruneWorktrees(projectPath: string): Promise<WorktreeResul
     await proc.result;
     return { success: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return { success: false, error: message };
   }
 }

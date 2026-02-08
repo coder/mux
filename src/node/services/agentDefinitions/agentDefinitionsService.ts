@@ -26,6 +26,7 @@ import {
   AgentDefinitionParseError,
   parseAgentDefinitionMarkdown,
 } from "./parseAgentDefinitionMarkdown";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export const MAX_INHERITANCE_DEPTH = 10;
 
@@ -104,7 +105,7 @@ export function getDefaultAgentDefinitionsRoots(
 }
 
 function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }
 
 async function listAgentFilesFromLocalFs(root: string): Promise<string[]> {

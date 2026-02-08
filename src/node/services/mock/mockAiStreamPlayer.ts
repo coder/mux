@@ -25,6 +25,7 @@ import type { ToolCallStartEvent, ToolCallEndEvent } from "@/common/types/stream
 import type { ReasoningDeltaEvent } from "@/common/types/stream";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const MOCK_TOKENIZER_MODEL = KNOWN_MODELS.GPT.id;
 const TOKENIZE_TIMEOUT_MS = 150;
@@ -71,7 +72,7 @@ async function tokenizeWithMockModel(text: string, context: string): Promise<num
       );
       return tokens;
     } catch (error) {
-      tokenizerErrorMessage = error instanceof Error ? error.message : String(error);
+      tokenizerErrorMessage = getErrorMessage(error);
       return approximateTokens;
     }
   })();

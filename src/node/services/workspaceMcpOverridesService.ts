@@ -9,6 +9,7 @@ import { type createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const MCP_OVERRIDES_DIR = ".mux";
 const MCP_OVERRIDES_JSONC = "mcp.local.jsonc";
@@ -236,7 +237,7 @@ export class WorkspaceMcpOverridesService {
     try {
       await runtime.ensureDir(overridesDirPath);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       throw new Error(`Failed to create ${MCP_OVERRIDES_DIR} directory: ${msg}`);
     }
   }

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, spyOn } from "bun:test
 import { CoderService, compareVersions } from "./coderService";
 import * as childProcess from "child_process";
 import * as disposableExec from "@/node/utils/disposableExec";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
 const noop = () => {};
@@ -662,9 +663,7 @@ describe("CoderService", () => {
       }
 
       expect(thrown).toBeTruthy();
-      expect(thrown instanceof Error ? thrown.message : String(thrown)).toBe(
-        "coder ssh --wait failed (exit 1): Connection refused"
-      );
+      expect(getErrorMessage(thrown)).toBe("coder ssh --wait failed (exit 1): Connection refused");
     });
   });
 
@@ -1013,9 +1012,7 @@ describe("CoderService", () => {
       }
 
       expect(thrown).toBeTruthy();
-      expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain(
-        "coder create failed (exit 42)"
-      );
+      expect(getErrorMessage(thrown)).toContain("coder create failed (exit 42)");
     });
 
     it("aborts before spawn when already aborted", async () => {
@@ -1037,7 +1034,7 @@ describe("CoderService", () => {
       }
 
       expect(thrown).toBeTruthy();
-      expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("aborted");
+      expect(getErrorMessage(thrown)).toContain("aborted");
     });
 
     it("throws when required param has no default and is not covered by preset", async () => {
@@ -1054,7 +1051,7 @@ describe("CoderService", () => {
       }
 
       expect(thrown).toBeTruthy();
-      expect(thrown instanceof Error ? thrown.message : String(thrown)).toContain("required-param");
+      expect(getErrorMessage(thrown)).toContain("required-param");
     });
   });
 });

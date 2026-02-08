@@ -12,6 +12,7 @@ import {
 } from "./fileCommon";
 import { RuntimeError } from "@/node/runtime/Runtime";
 import { readFileString, writeFileString } from "@/node/utils/runtime/helpers";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type FileEditOperationResult<TMetadata> =
   | {
@@ -174,7 +175,7 @@ export async function executeFileEditOperation<TMetadata>({
       }
     }
 
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     return {
       success: false,
       error: `Failed to edit file: ${message}`,

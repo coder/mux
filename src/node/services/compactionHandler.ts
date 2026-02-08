@@ -29,6 +29,7 @@ import {
   extractEditedFileDiffs,
   type FileEditDiff,
 } from "@/common/utils/messages/extractEditedFiles";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Check if a string is just a raw JSON object, which suggests the model
@@ -289,7 +290,7 @@ export class CompactionHandler {
     } catch (error) {
       log.warn("Failed to persist post-compaction state", {
         workspaceId: this.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
   }

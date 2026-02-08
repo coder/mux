@@ -5,6 +5,7 @@ import { tool } from "ai";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function getMuxHomeFromWorkspaceSessionDir(config: ToolConfiguration): string {
   if (!config.workspaceSessionDir) {
@@ -68,7 +69,7 @@ export const createMuxGlobalAgentsReadTool: ToolFactory = (config: ToolConfigura
           throw error;
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `Failed to read global AGENTS.md: ${message}`,

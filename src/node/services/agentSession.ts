@@ -74,6 +74,7 @@ import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Tracked file state for detecting external edits.
@@ -719,9 +720,7 @@ export class AgentSession {
         options?.disableWorkspaceAgents
       );
     } catch (error) {
-      return Err(
-        createUnknownSendMessageError(error instanceof Error ? error.message : String(error))
-      );
+      return Err(createUnknownSendMessageError(getErrorMessage(error)));
     }
 
     // Persist snapshots (if any) BEFORE the user message so they precede it in the prompt.
@@ -1236,7 +1235,7 @@ export class AgentSession {
     } catch (error) {
       log.warn("Failed to discard pending post-compaction state", {
         workspaceId: this.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
 
@@ -1431,7 +1430,7 @@ export class AgentSession {
     } catch (error) {
       log.warn("Failed to discard pending post-compaction state before hard restart", {
         workspaceId: this.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
     }
 
@@ -1691,7 +1690,7 @@ export class AgentSession {
           } catch (error) {
             log.warn("Failed to ack pending post-compaction state", {
               workspaceId: this.workspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
           this.onPostCompactionStateChange?.();

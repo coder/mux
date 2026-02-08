@@ -3,6 +3,7 @@ import { parentPort } from "node:worker_threads";
 import { Tokenizer, models } from "ai-tokenizer";
 import type { ModelName } from "ai-tokenizer";
 import * as encoding from "ai-tokenizer/encoding";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface CountTokensInput {
   modelName: ModelName;
@@ -65,7 +66,7 @@ if (parentPort) {
       parentPort!.postMessage({
         messageId: message.messageId,
         error: {
-          message: error instanceof Error ? error.message : String(error),
+          message: getErrorMessage(error),
           stack: error instanceof Error ? error.stack : undefined,
         },
       });
