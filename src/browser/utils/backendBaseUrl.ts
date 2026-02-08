@@ -6,7 +6,7 @@
  *
  *   /@user/<workspace>/apps/<slug>
  *
- * In those cases, backend routes (ORPC WebSocket + /auth/*) also live under that
+ * In those cases, backend routes (ORPC + /auth/*) also live under that
  * prefix, so the frontend must include it when constructing URLs.
  */
 
