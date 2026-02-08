@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { cn } from "@/common/lib/utils";
+import { menuItemBaseClassName, menuSurfaceClassName } from "./ui/menuStyles";
 
 export interface KebabMenuItem {
   label: string;
@@ -97,7 +98,10 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
         createPortal(
           <div
             ref={menuRef}
-            className="bg-dark border-border-light pointer-events-auto fixed z-[10000] min-w-40 overflow-hidden rounded-[3px] border shadow-[0_4px_16px_rgba(0,0,0,0.8)]"
+            className={cn(
+              menuSurfaceClassName,
+              "pointer-events-auto fixed min-w-40 overflow-hidden"
+            )}
             style={{
               top: `${dropdownPosition.top}px`,
               left: `${dropdownPosition.left}px`,
@@ -109,13 +113,11 @@ export const KebabMenu: React.FC<KebabMenuProps> = ({ items, className }) => {
                 onClick={() => handleItemClick(item)}
                 title={item.tooltip}
                 className={cn(
-                  "w-full border-none border-b border-modal-bg text-xs py-2 px-3 text-left transition-all duration-150 font-primary flex items-center gap-2",
+                  !item.disabled && menuItemBaseClassName,
+                  "flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-xs font-primary transition-colors duration-150",
                   "last:border-b-0",
-                  item.disabled
-                    ? "bg-dark text-muted-light cursor-not-allowed opacity-50 hover:bg-dark hover:text-muted-light"
-                    : item.active
-                      ? "bg-white/15 text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
-                      : "bg-dark text-foreground cursor-pointer hover:bg-white/15 hover:text-[var(--color-hover-foreground)]"
+                  item.disabled && "text-muted-light cursor-not-allowed opacity-50",
+                  item.active && "bg-hover"
                 )}
               >
                 {item.emoji && (

@@ -3,6 +3,7 @@ import { cn } from "@/common/lib/utils";
 import { ChevronRight, Pencil, Trash2, Palette } from "lucide-react";
 import type { SectionConfig } from "@/common/types/project";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
+import { menuSurfaceClassName } from "./ui/menuStyles";
 import { resolveSectionColor, SECTION_COLOR_PALETTE } from "@/common/constants/ui";
 import { HexColorPicker } from "react-colorful";
 
@@ -141,7 +142,7 @@ export const SectionHeader: React.FC<SectionHeaderProps> = ({
           </Tooltip>
 
           {showColorPicker && (
-            <div className="bg-background border-border absolute top-full right-0 z-50 mt-1 rounded border p-2 shadow-lg">
+            <div className={cn(menuSurfaceClassName, "absolute top-full right-0 mt-1 p-2")}>
               {/* Preset swatches */}
               <div className="mb-2 grid grid-cols-5 gap-1">
                 {SECTION_COLOR_PALETTE.map(([name, color]) => (
