@@ -7,6 +7,7 @@ import {
   MUX_GATEWAY_CLIENT_ID,
   MUX_GATEWAY_CLIENT_SECRET,
 } from "@/common/constants/muxGatewayOAuth";
+import { rejectUserinfo, isPrivateHost } from "@/common/utils/urlSecurity";
 
 // Re-export gateway credentials for use by governor
 export { MUX_GATEWAY_CLIENT_ID, MUX_GATEWAY_CLIENT_SECRET };
@@ -19,6 +20,12 @@ export function normalizeGovernorUrl(inputUrl: string): string {
   const url = new URL(inputUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`Unsupported URL scheme: ${url.protocol}. Must be http or https.`);
+  }
+  // Reject @-based URL confusion attacks
+  rejectUserinfo(url);
+  // Governor servers should not point to private/internal addresses (SSRF protection)
+  if (isPrivateHost(url.hostname)) {
+    throw new Error(`Governor URL must not point to a private address: ${url.hostname}`);
   }
   return url.origin;
 }
