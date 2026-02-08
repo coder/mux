@@ -98,20 +98,6 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
 }
 
 /**
- * Type guard to check if a message part has a streaming state
- */
-export function isStreamingPart(part: unknown): part is { type: "text"; state: "streaming" } {
-  return (
-    typeof part === "object" &&
-    part !== null &&
-    "type" in part &&
-    part.type === "text" &&
-    "state" in part &&
-    part.state === "streaming"
-  );
-}
-
-/**
  * Merges consecutive stream-error messages with identical content.
  * Returns a new array where consecutive identical errors are represented as a single message
  * with an errorCount field indicating how many times it occurred.
