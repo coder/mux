@@ -1846,6 +1846,47 @@ describe("injectPostCompactionAttachments", () => {
     expect(text).toContain("post-compaction context truncated");
   });
 
+  it("falls back to a legacy compacted summary when durable boundary metadata is missing", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "legacy-summary",
+        role: "assistant",
+        parts: [{ type: "text", text: "Legacy compacted summary" }],
+        metadata: {
+          timestamp: 1000,
+          compacted: true,
+        },
+      },
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+        metadata: { timestamp: 1100 },
+      },
+    ];
+
+    const attachments = [
+      {
+        type: "plan_file_reference" as const,
+        planFilePath: "PLAN.md",
+        planContent: "Legacy plan",
+      },
+    ];
+
+    const result = injectPostCompactionAttachments(messages, attachments);
+
+    expect(result).toHaveLength(3);
+    expect(result[0].id).toBe("legacy-summary");
+
+    const injected = result[1];
+    expect(injected.metadata?.synthetic).toBe(true);
+    expect(injected.metadata?.timestamp).toBe(1000);
+    const text = (injected.parts[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("<system-update>");
+
+    expect(result[2].id).toBe("user-1");
+  });
+
   it("inserts after the latest compaction boundary when multiple summaries exist", () => {
     const messages: MuxMessage[] = [
       {
