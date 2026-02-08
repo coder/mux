@@ -23,6 +23,11 @@ import { extractWsHeaders, safeEq } from "@/node/orpc/authMiddleware";
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
+import {
+  escapeHtml,
+  escapeJsonForHtmlScript,
+  renderOAuthCallbackPage,
+} from "@/node/services/oauthCallbackPage";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
@@ -103,19 +108,6 @@ function injectBaseHref(indexHtml: string, baseHref: string): string {
 
   // Insert immediately after the opening <head> tag (supports <head> and <head ...attrs>).
   return indexHtml.replace(/<head[^>]*>/i, (match) => `${match}\n    <base href="${baseHref}" />`);
-}
-
-function escapeJsonForHtmlScript(value: unknown): string {
-  // Prevent `</script>` injection when embedding untrusted strings in an inline <script>.
-  return JSON.stringify(value).replaceAll("<", "\\u003c");
-}
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 /**
@@ -260,86 +252,12 @@ export async function createOrpcServer({
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
 
-    const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0e0e0e" />
-    <title>${title}</title>
-    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />
-  </head>
-  <body>
-    <div class="page">
-      <header class="site-header">
-        <div class="container">
-          <div class="header-title">mux</div>
-        </div>
-      </header>
-
-      <main class="site-main">
-        <div class="container">
-          <div class="content-surface">
-            <h1>${title}</h1>
-            <p>${description}</p>
-            ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-            <p><a class="btn primary" href="/">Return to Mux</a></p>
-          </div>
-        </div>
-      </main>
-    </div>
-
-    <script>
-      (() => {
-        const payload = ${payloadJson};
-        const ok = payload.ok === true;
-
-        try {
-          if (window.opener && typeof window.opener.postMessage === "function") {
-            window.opener.postMessage(payload, "*");
-          }
-        } catch {
-          // Ignore postMessage failures.
-        }
-
-        if (!ok) {
-          return;
-        }
-
-        try {
-          if (window.opener && typeof window.opener.focus === "function") {
-            window.opener.focus();
-          }
-        } catch {
-          // Ignore focus failures.
-        }
-
-        try {
-          window.close();
-        } catch {
-          // Ignore close failures.
-        }
-
-        setTimeout(() => {
-          try {
-            window.close();
-          } catch {
-            // Ignore close failures.
-          }
-        }, 50);
-
-        setTimeout(() => {
-          try {
-            window.location.replace("/");
-          } catch {
-            // Ignore navigation failures.
-          }
-        }, 150);
-      })();
-    </script>
-  </body>
-</html>`;
+    const html = renderOAuthCallbackPage({
+      title,
+      description,
+      success: result.success,
+      mode: { type: "web", payloadJson, returnUrl: "/" },
+    });
 
     res.status(result.success ? 200 : 400);
     res.setHeader("Content-Type", "text/html");
@@ -431,76 +349,12 @@ export async function createOrpcServer({
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
 
-    const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <title>${title}</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 600px; margin: 4rem auto; padding: 1rem; }
-      h1 { margin-bottom: 1rem; }
-      .muted { color: #666; }
-      .btn { display: inline-block; padding: 0.5rem 1rem; background: #333; color: #fff; text-decoration: none; border-radius: 4px; }
-    </style>
-  </head>
-  <body>
-    <h1>${title}</h1>
-    <p>${description}</p>
-    ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-    <p><a class="btn" href="/">Return to Mux</a></p>
-
-    <script>
-      (() => {
-        const payload = ${payloadJson};
-        const ok = payload.ok === true;
-
-        try {
-          if (window.opener && typeof window.opener.postMessage === "function") {
-            window.opener.postMessage(payload, "*");
-          }
-        } catch {
-          // Ignore postMessage failures.
-        }
-
-        if (!ok) {
-          return;
-        }
-
-        try {
-          if (window.opener && typeof window.opener.focus === "function") {
-            window.opener.focus();
-          }
-        } catch {
-          // Ignore focus failures.
-        }
-
-        try {
-          window.close();
-        } catch {
-          // Ignore close failures.
-        }
-
-        setTimeout(() => {
-          try {
-            window.close();
-          } catch {
-            // Ignore close failures.
-          }
-        }, 50);
-
-        setTimeout(() => {
-          try {
-            window.location.replace("/");
-          } catch {
-            // Ignore navigation failures.
-          }
-        }, 150);
-      })();
-    </script>
-  </body>
-</html>`;
+    const html = renderOAuthCallbackPage({
+      title,
+      description,
+      success: result.success,
+      mode: { type: "web", payloadJson, returnUrl: "/" },
+    });
 
     res.status(result.success ? 200 : 400);
     res.setHeader("Content-Type", "text/html");
@@ -544,86 +398,12 @@ export async function createOrpcServer({
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
 
-    const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0e0e0e" />
-    <title>${title}</title>
-    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />
-  </head>
-  <body>
-    <div class="page">
-      <header class="site-header">
-        <div class="container">
-          <div class="header-title">mux</div>
-        </div>
-      </header>
-
-      <main class="site-main">
-        <div class="container">
-          <div class="content-surface">
-            <h1>${title}</h1>
-            <p>${description}</p>
-            ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-            <p><a class="btn primary" href="/">Return to Mux</a></p>
-          </div>
-        </div>
-      </main>
-    </div>
-
-    <script>
-      (() => {
-        const payload = ${payloadJson};
-        const ok = payload.ok === true;
-
-        try {
-          if (window.opener && typeof window.opener.postMessage === "function") {
-            window.opener.postMessage(payload, "*");
-          }
-        } catch {
-          // Ignore postMessage failures.
-        }
-
-        if (!ok) {
-          return;
-        }
-
-        try {
-          if (window.opener && typeof window.opener.focus === "function") {
-            window.opener.focus();
-          }
-        } catch {
-          // Ignore focus failures.
-        }
-
-        try {
-          window.close();
-        } catch {
-          // Ignore close failures.
-        }
-
-        setTimeout(() => {
-          try {
-            window.close();
-          } catch {
-            // Ignore close failures.
-          }
-        }, 50);
-
-        setTimeout(() => {
-          try {
-            window.location.replace("/");
-          } catch {
-            // Ignore navigation failures.
-          }
-        }, 150);
-      })();
-    </script>
-  </body>
-</html>`;
+    const html = renderOAuthCallbackPage({
+      title,
+      description,
+      success: result.success,
+      mode: { type: "web", payloadJson, returnUrl: "/" },
+    });
 
     res.status(result.success ? 200 : 400);
     res.setHeader("Content-Type", "text/html");

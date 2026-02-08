@@ -9,6 +9,7 @@ import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { WindowService } from "@/node/services/windowService";
 import type { TelemetryService } from "@/node/services/telemetryService";
 import { log } from "@/node/services/log";
+import { escapeHtml, renderOAuthCallbackPage } from "@/node/services/oauthCallbackPage";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { roundToBase2 } from "@/common/telemetry/utils";
@@ -1142,19 +1143,14 @@ export class McpOauthService {
       input.res.statusCode = 400;
     }
 
-    input.res.end(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <title>${title}</title>
-  </head>
-  <body>
-    <h1>${title}</h1>
-    <p>${description}</p>
-  </body>
-</html>`);
+    input.res.end(
+      renderOAuthCallbackPage({
+        title,
+        description,
+        success: result.success,
+        mode: { type: "desktop" },
+      })
+    );
 
     await this.finishDesktopFlow(input.flowId, result);
   }
@@ -1480,13 +1476,4 @@ export class McpOauthService {
       mode: 0o600,
     });
   }
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
