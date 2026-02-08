@@ -99,6 +99,44 @@ describe("OAuthFlowManager", () => {
         expect(result.error).toContain("not found");
       }
     });
+
+
+    it("returns the completed result for late waiters", async () => {
+      const entry = createFlowEntry();
+      manager.register("f1", entry);
+
+      // Simulate the common race where the OAuth callback finishes before the
+      // frontend begins waiting.
+      const finishPromise = manager.finish("f1", Ok(undefined));
+
+      const result = await manager.waitFor("f1", 1_000);
+      expect(result).toEqual(Ok(undefined));
+      expect(manager.has("f1")).toBe(false);
+
+      await finishPromise;
+    });
+
+    it("expires completed results after a short TTL", async () => {
+      const ttlMs = 30;
+      const ttlManager = new OAuthFlowManager(ttlMs);
+
+      const entry = createFlowEntry();
+      ttlManager.register("f1", entry);
+
+      await ttlManager.finish("f1", Ok(undefined));
+
+      const withinTtl = await ttlManager.waitFor("f1", 1_000);
+      expect(withinTtl).toEqual(Ok(undefined));
+      expect(ttlManager.has("f1")).toBe(false);
+
+      await new Promise((resolve) => setTimeout(resolve, ttlMs + 50));
+
+      const afterTtl = await ttlManager.waitFor("f1", 1_000);
+      expect(afterTtl.success).toBe(false);
+      if (!afterTtl.success) {
+        expect(afterTtl.error).toContain("not found");
+      }
+    });
   });
 
   // -----------------------------------------------------------------------

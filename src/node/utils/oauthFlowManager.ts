@@ -29,16 +29,40 @@ export interface OAuthFlowEntry {
   timeoutHandle: ReturnType<typeof setTimeout> | null;
 }
 
+interface CompletedOAuthFlowEntry {
+  result: Result<void, string>;
+  cleanupTimeout: ReturnType<typeof setTimeout> | null;
+}
+
+const DEFAULT_COMPLETED_FLOW_TTL_MS = 60_000;
+
 // ---------------------------------------------------------------------------
 // Manager
 // ---------------------------------------------------------------------------
 
 export class OAuthFlowManager {
   private readonly flows = new Map<string, OAuthFlowEntry>();
+  private readonly completed = new Map<string, CompletedOAuthFlowEntry>();
+
+  constructor(private readonly completedFlowTtlMs = DEFAULT_COMPLETED_FLOW_TTL_MS) {}
 
   /** Register a new in-flight flow. */
   register(flowId: string, entry: OAuthFlowEntry): void {
+    // If a flow ID is re-used before the completed-flow TTL expires, ensure the
+    // old cleanup timer can't delete the new result.
+    this.clearCompleted(flowId);
     this.flows.set(flowId, entry);
+  }
+
+  private clearCompleted(flowId: string): void {
+    const existing = this.completed.get(flowId);
+    if (!existing) return;
+
+    if (existing.cleanupTimeout !== null) {
+      clearTimeout(existing.cleanupTimeout);
+    }
+
+    this.completed.delete(flowId);
   }
 
   /** Get a flow entry by ID, or undefined if not found. */
@@ -63,6 +87,11 @@ export class OAuthFlowManager {
   async waitFor(flowId: string, timeoutMs: number): Promise<Result<void, string>> {
     const flow = this.flows.get(flowId);
     if (!flow) {
+      const completed = this.completed.get(flowId);
+      if (completed) {
+        return completed.result;
+      }
+
       return Err("OAuth flow not found");
     }
 
@@ -116,6 +145,23 @@ export class OAuthFlowManager {
     if (flow.timeoutHandle !== null) {
       clearTimeout(flow.timeoutHandle);
     }
+
+    // Preserve the final result briefly so late waiters can still retrieve it.
+    //
+    // Old per-service DesktopFlow implementations kept completed flows around for
+    // ~60s (cleanupTimeout) to avoid a race where the OAuth callback finishes
+    // before the frontend begins `waitFor`-ing.
+    this.clearCompleted(flowId);
+    const cleanupTimeout = setTimeout(() => {
+      this.completed.delete(flowId);
+    }, this.completedFlowTtlMs);
+
+    // Don't keep the node process alive just to delete old completed entries.
+    if (typeof cleanupTimeout !== "number") {
+      cleanupTimeout.unref?.();
+    }
+
+    this.completed.set(flowId, { result, cleanupTimeout });
 
     try {
       flow.resultDeferred.resolve(result);
