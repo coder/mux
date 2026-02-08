@@ -44,11 +44,16 @@ export interface LoopbackCallbackResult {
 }
 
 export interface LoopbackServer {
-  /** The full redirect URI (http://127.0.0.1:{port}{callbackPath}). */
+  /** The full redirect URI (http://{host}:{port}{callbackPath}). */
   redirectUri: string;
   /** The underlying HTTP server (needed by OAuthFlowManager for cleanup). */
   server: http.Server;
-  /** Resolves when callback received or resolves with Err on invalid state. */
+  /**
+   * Resolves when a valid callback is received (state matches `expectedState`).
+   *
+   * Note: Requests with an invalid/missing `state` respond 400 but are ignored
+   * so unrelated localhost probes/scanners can't break an in-flight OAuth flow.
+   */
   result: Promise<Result<LoopbackCallbackResult, string>>;
   /** Cancel and close the server. */
   cancel: () => Promise<void>;
@@ -81,6 +86,23 @@ function isLoopbackAddress(address: string | undefined): boolean {
   return address === "127.0.0.1" || address === "::1";
 }
 
+/**
+ * Format a `server.listen()` host value for use inside a URL.
+ *
+ * - IPv6 literals must be wrapped in brackets (e.g. "::1" -> "[::1]")
+ * - Zone identifiers must be percent-encoded ("%" -> "%25")
+ */
+function hostForRedirectUri(rawHost: string): string {
+  const host = rawHost.startsWith("[") && rawHost.endsWith("]") ? rawHost.slice(1, -1) : rawHost;
+
+  if (host.includes(":")) {
+    // RFC 6874: zone identifiers use "%25" in URIs.
+    return `[${host.replaceAll("%", "%25")}]`;
+  }
+
+  return host;
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -106,6 +128,9 @@ function isLoopbackAddress(address: string | undefined): boolean {
 export async function startLoopbackServer(options: LoopbackServerOptions): Promise<LoopbackServer> {
   const port = options.port ?? 0;
   const host = options.host ?? "127.0.0.1";
+  // `server.listen()` expects IPv6 hosts without brackets, but callers may pass
+  // "[::1]" since that's what URLs require.
+  const listenHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const callbackPath = options.callbackPath ?? "/callback";
   const validateLoopback = options.validateLoopback ?? false;
   const deferSuccessResponse = options.deferSuccessResponse ?? false;
@@ -174,10 +199,14 @@ export async function startLoopbackServer(options: LoopbackServerOptions): Promi
 
     const state = url.searchParams.get("state");
     if (!state || state !== options.expectedState) {
+      const errorMessage = "Invalid OAuth state";
       res.statusCode = 400;
       res.setHeader("Content-Type", "text/html");
-      res.end("<h1>Invalid OAuth state</h1>");
-      deferred.resolve(Err("Invalid OAuth state"));
+      res.end(render({ success: false, error: errorMessage }));
+
+      // Intentionally ignore invalid state callbacks. Unrelated localhost
+      // probes/scanners can hit this endpoint and shouldn't break an in-flight
+      // OAuth flow.
       return;
     }
 
@@ -235,7 +264,7 @@ export async function startLoopbackServer(options: LoopbackServerOptions): Promi
   // `server.listen(port, host, () => resolve())` pattern.
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, host, () => resolve());
+    server.listen(port, listenHost, () => resolve());
   });
 
   const address = server.address();
@@ -244,7 +273,7 @@ export async function startLoopbackServer(options: LoopbackServerOptions): Promi
     throw new Error("Failed to determine OAuth callback listener port");
   }
 
-  const redirectUri = `http://127.0.0.1:${address.port}${callbackPath}`;
+  const redirectUri = `http://${hostForRedirectUri(listenHost)}:${address.port}${callbackPath}`;
 
   return {
     redirectUri,

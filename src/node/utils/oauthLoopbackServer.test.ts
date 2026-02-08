@@ -51,6 +51,14 @@ describe("startLoopbackServer", () => {
     expect(loopback.server.listening).toBe(true);
   });
 
+  it("honors host when building redirectUri", async () => {
+    loopback = await startLoopbackServer({ expectedState: "s1", host: "localhost" });
+
+    const redirectUrl = new URL(loopback.redirectUri);
+    expect(redirectUrl.hostname).toBe("localhost");
+    expect(loopback.redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
+  });
+
   it("resolves with Ok({code, state}) on a valid callback", async () => {
     loopback = await startLoopbackServer({ expectedState: "state123" });
 
@@ -68,18 +76,31 @@ describe("startLoopbackServer", () => {
     }
   });
 
-  it("resolves with Err on state mismatch", async () => {
+  it("returns 400 on state mismatch but keeps waiting for a valid callback", async () => {
     loopback = await startLoopbackServer({ expectedState: "good" });
 
-    const callbackUrl = `${loopback.redirectUri}?state=bad&code=c`;
-    const res = await httpGet(callbackUrl);
+    const badCallbackUrl = `${loopback.redirectUri}?state=bad&code=c`;
+    const badRes = await httpGet(badCallbackUrl);
 
-    expect(res.status).toBe(400);
+    expect(badRes.status).toBe(400);
+    expect(badRes.body).toContain("Invalid OAuth state");
+
+    const resultState = await Promise.race([
+      loopback.result.then(() => "settled" as const),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 25)),
+    ]);
+    expect(resultState).toBe("pending");
+
+    const goodCallbackUrl = `${loopback.redirectUri}?state=good&code=authcode456`;
+    const goodRes = await httpGet(goodCallbackUrl);
+
+    expect(goodRes.status).toBe(200);
 
     const result = await loopback.result;
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error).toContain("Invalid OAuth state");
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.code).toBe("authcode456");
+      expect(result.data.state).toBe("good");
     }
   });
 
