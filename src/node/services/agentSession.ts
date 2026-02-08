@@ -484,7 +484,8 @@ export class AgentSession {
 
   async sendMessage(
     message: string,
-    options?: SendMessageOptions & { fileParts?: FilePart[] }
+    options?: SendMessageOptions & { fileParts?: FilePart[] },
+    internal?: { synthetic?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
@@ -693,6 +694,8 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        // Auto-resume and other system-generated messages are synthetic + UI-visible
+        ...(internal?.synthetic && { synthetic: true, uiVisible: true }),
       },
       additionalParts
     );

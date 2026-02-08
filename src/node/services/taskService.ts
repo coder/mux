@@ -350,7 +350,8 @@ export class TaskService {
           agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
           thinkingLevel: task.taskThinkingLevel,
           toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-        }
+        },
+        { synthetic: true }
       );
       if (!sendResult.success) {
         log.error("Failed to resume awaiting_report task on startup", {
@@ -384,7 +385,8 @@ export class TaskService {
           agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
           thinkingLevel: task.taskThinkingLevel,
           experiments: task.taskExperiments,
-        }
+        },
+        { synthetic: true }
       );
     }
 
@@ -2045,7 +2047,7 @@ export class TaskService {
           thinkingLevel: parentAiSettings?.thinkingLevel,
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-        { skipAutoResumeReset: true }
+        { skipAutoResumeReset: true, synthetic: true }
       );
       if (!sendResult.success) {
         log.error("Failed to resume parent with active background tasks", {
@@ -2094,7 +2096,8 @@ export class TaskService {
         agentId: entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId,
         thinkingLevel: entry.workspace.taskThinkingLevel,
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      }
+      },
+      { synthetic: true }
     );
   }
 
@@ -2381,7 +2384,7 @@ export class TaskService {
           agentId: WORKSPACE_DEFAULTS.agentId,
         },
         // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
-        { skipAutoResumeReset: true }
+        { skipAutoResumeReset: true, synthetic: true }
       );
       if (!sendResult.success) {
         log.error("Failed to auto-resume parent after agent_report", {

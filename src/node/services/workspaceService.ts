@@ -2492,7 +2492,11 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions & {
       fileParts?: FilePart[];
     },
-    internal?: { allowQueuedAgentTask?: boolean; skipAutoResumeReset?: boolean }
+    internal?: {
+      allowQueuedAgentTask?: boolean;
+      skipAutoResumeReset?: boolean;
+      synthetic?: boolean;
+    }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
       workspaceId,
@@ -2636,7 +2640,9 @@ export class WorkspaceService extends EventEmitter {
       if (!internal?.skipAutoResumeReset) {
         this.taskService?.resetAutoResumeCount(workspaceId);
       }
-      const result = await session.sendMessage(message, normalizedOptions);
+      const result = await session.sendMessage(message, normalizedOptions, {
+        synthetic: internal?.synthetic,
+      });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
           workspaceId,

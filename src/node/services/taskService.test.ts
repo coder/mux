@@ -1188,7 +1188,7 @@ describe("TaskService", () => {
         thinkingLevel: "medium",
       }),
       // Auto-resume skips counter reset
-      expect.objectContaining({ skipAutoResumeReset: true })
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
     );
   });
 
@@ -1341,7 +1341,8 @@ describe("TaskService", () => {
       expect.stringContaining("awaiting its final agent_report"),
       expect.objectContaining({
         toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-      })
+      }),
+      expect.objectContaining({ synthetic: true })
     );
   });
 
@@ -1994,7 +1995,7 @@ describe("TaskService", () => {
       parentId,
       expect.stringContaining("sub-agent task(s) have completed"),
       expect.any(Object),
-      expect.objectContaining({ skipAutoResumeReset: true })
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
     );
     expect(emit).toHaveBeenCalled();
   });
@@ -2498,7 +2499,7 @@ describe("TaskService", () => {
       parentId,
       expect.stringContaining("sub-agent task(s) have completed"),
       expect.any(Object),
-      expect.objectContaining({ skipAutoResumeReset: true })
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
     );
   });
 
@@ -2766,7 +2767,7 @@ describe("TaskService", () => {
       parentId,
       expect.stringContaining("sub-agent task(s) have completed"),
       expect.any(Object),
-      expect.objectContaining({ skipAutoResumeReset: true })
+      expect.objectContaining({ skipAutoResumeReset: true, synthetic: true })
     );
   });
 
