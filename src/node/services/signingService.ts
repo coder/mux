@@ -20,7 +20,6 @@ import {
   type KeyType as MuxMdKeyType,
   type SignatureEnvelope,
 } from "@coder/mux-md-client";
-import { createSshAgentSignatureEnvelope } from "@coder/mux-md-client/ssh-agent";
 import sshpk from "sshpk";
 import { OpenSSHAgent, type KnownPublicKeys, type ParsedKey, type PublicKeyEntry } from "ssh2";
 import { getMuxHome } from "@/common/constants/paths";
@@ -583,6 +582,12 @@ export class SigningService {
       return envelope;
     }
 
+    // Lazy-import the ssh-agent subpath to avoid crashing the server at startup.
+    // This subpath export was missing from @coder/mux-md-client@0.1.0 (stable),
+    // and a top-level import kills the entire process before it can serve requests
+    // when package managers (e.g. bun x) resolve to that version.
+    // eslint-disable-next-line no-restricted-syntax -- not circular-dep hiding; startup resilience
+    const { createSshAgentSignatureEnvelope } = await import("@coder/mux-md-client/ssh-agent");
     const envelope = await createSshAgentSignatureEnvelope(bytes, {
       sshAuthSock: signingKey.sshAuthSock,
       publicKey: signingKey.publicKeyOpenSSH,
