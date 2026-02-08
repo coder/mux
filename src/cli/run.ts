@@ -255,6 +255,10 @@ program
   .option("-e, --experiment <id>", "enable experiment (can be repeated)", collectExperiments, [])
   .option("-b, --budget <usd>", "stop when session cost exceeds budget (USD)", parseFloat)
   .option("--service-tier <tier>", "OpenAI service tier: auto, default, flex, priority", "auto")
+  .option(
+    "--keep-background-processes",
+    "do not terminate background processes on exit (for CI/bench)"
+  )
   .addHelpText(
     "after",
     `
@@ -289,9 +293,12 @@ interface CLIOptions {
   experiment: string[];
   budget?: number;
   serviceTier: "auto" | "default" | "flex" | "priority";
+  keepBackgroundProcesses?: boolean;
 }
 
 const opts = program.opts<CLIOptions>();
+const keepBackgroundProcesses =
+  opts.keepBackgroundProcesses === true || process.env.MUX_KEEP_BACKGROUND_PROCESSES === "1";
 const messageArg = program.args.join(" ");
 
 async function main(): Promise<number> {
@@ -472,6 +479,7 @@ async function main(): Promise<number> {
     aiService,
     initStateManager,
     backgroundProcessManager,
+    keepBackgroundProcesses,
   });
   // Register with WorkspaceService so TaskService operations that target the parent
   // workspace (e.g. resumeStream after sub-agent completion) reuse this session
@@ -1068,7 +1076,9 @@ async function main(): Promise<number> {
     session.dispose();
     mcpServerManager.dispose();
     await codexOauthService.dispose();
-    await backgroundProcessManager.terminateAll();
+    if (!keepBackgroundProcesses) {
+      await backgroundProcessManager.terminateAll();
+    }
   }
 
   // Exit codes: 2 for budget exceeded, agent-specified exit code, or 0 for success
