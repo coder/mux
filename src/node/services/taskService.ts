@@ -110,6 +110,9 @@ type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
 
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
+/** Maximum consecutive auto-resumes before stopping. Prevents infinite loops when descendants are stuck. */
+const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
+
 interface AgentTaskIndex {
   byId: Map<string, AgentTaskWorkspaceEntry>;
   childrenByParent: Map<string, string[]>;
@@ -221,6 +224,8 @@ export class TaskService {
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
   private readonly gitPatchArtifactService: GitPatchArtifactService;
   private readonly remindedAwaitingReport = new Set<string>();
+  /** Tracks consecutive auto-resumes per workspace. Reset when a user message is sent. */
+  private consecutiveAutoResumes = new Map<string, number>();
 
   constructor(
     private readonly config: Config,
@@ -337,18 +342,20 @@ export class TaskService {
       this.remindedAwaitingReport.add(task.id);
 
       const model = task.taskModelString ?? defaultModel;
-      const resumeResult = await this.workspaceService.resumeStream(task.id, {
-        model,
-        agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
-        thinkingLevel: task.taskThinkingLevel,
-        toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
-        additionalSystemInstructions:
-          "This task is awaiting its final agent_report. Call agent_report exactly once now.",
-      });
-      if (!resumeResult.success) {
+      const sendResult = await this.workspaceService.sendMessage(
+        task.id,
+        "This task is awaiting its final agent_report. Call agent_report exactly once now.",
+        {
+          model,
+          agentId: task.agentId ?? WORKSPACE_DEFAULTS.agentId,
+          thinkingLevel: task.taskThinkingLevel,
+          toolPolicy: [{ regex_match: "^agent_report$", action: "require" }],
+        }
+      );
+      if (!sendResult.success) {
         log.error("Failed to resume awaiting_report task on startup", {
           taskId: task.id,
-          error: resumeResult.error,
+          error: sendResult.error,
         });
 
         await this.fallbackReportMissingAgentReport({
@@ -1982,6 +1989,11 @@ export class TaskService {
     }
   }
 
+  /** Reset the auto-resume counter for a workspace (called when user sends a real message). */
+  resetAutoResumeCount(workspaceId: string): void {
+    this.consecutiveAutoResumes.delete(workspaceId);
+  }
+
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const workspaceId = event.workspaceId;
 
@@ -2002,25 +2014,43 @@ export class TaskService {
       }
 
       const activeTaskIds = this.listActiveDescendantAgentTaskIds(workspaceId);
+
+      // Check for auto-resume flood protection
+      const resumeCount = this.consecutiveAutoResumes.get(workspaceId) ?? 0;
+      if (resumeCount >= MAX_CONSECUTIVE_PARENT_AUTO_RESUMES) {
+        log.warn("Auto-resume limit reached for parent workspace with active descendants", {
+          workspaceId,
+          resumeCount,
+          activeTaskIds,
+          limit: MAX_CONSECUTIVE_PARENT_AUTO_RESUMES,
+        });
+        return;
+      }
+      this.consecutiveAutoResumes.set(workspaceId, resumeCount + 1);
+
       const parentAgentId = entry.workspace.agentId ?? WORKSPACE_DEFAULTS.agentId;
       const parentAiSettings = this.resolveWorkspaceAISettings(entry.workspace, parentAgentId);
       const model = parentAiSettings?.model ?? defaultModel;
 
-      const resumeResult = await this.workspaceService.resumeStream(workspaceId, {
-        model,
-        agentId: parentAgentId,
-        thinkingLevel: parentAiSettings?.thinkingLevel,
-        additionalSystemInstructions:
-          `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
+      const sendResult = await this.workspaceService.sendMessage(
+        workspaceId,
+        `You have active background sub-agent task(s) (${activeTaskIds.join(", ")}). ` +
           "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
           "Call task_await now to wait for them to finish (omit timeout_secs to wait up to 10 minutes). " +
           "If any tasks are still queued/running/awaiting_report after that, call task_await again. " +
           "Only once all tasks are completed should you write your final response, integrating their reports.",
-      });
-      if (!resumeResult.success) {
+        {
+          model,
+          agentId: parentAgentId,
+          thinkingLevel: parentAiSettings?.thinkingLevel,
+        },
+        // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
+        { skipAutoResumeReset: true }
+      );
+      if (!sendResult.success) {
         log.error("Failed to resume parent with active background tasks", {
           workspaceId,
-          error: resumeResult.error,
+          error: sendResult.error,
         });
       }
       return;
@@ -2339,15 +2369,24 @@ export class TaskService {
       return;
     }
     const hasActiveDescendants = this.hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
+    if (!hasActiveDescendants) {
+      this.consecutiveAutoResumes.delete(parentWorkspaceId);
+    }
     if (!hasActiveDescendants && !this.aiService.isStreaming(parentWorkspaceId)) {
-      const resumeResult = await this.workspaceService.resumeStream(parentWorkspaceId, {
-        model: latestChildEntry?.workspace.taskModelString ?? defaultModel,
-        agentId: WORKSPACE_DEFAULTS.agentId,
-      });
-      if (!resumeResult.success) {
+      const sendResult = await this.workspaceService.sendMessage(
+        parentWorkspaceId,
+        "Your background sub-agent task(s) have completed. Use task_await to retrieve their reports and integrate the results.",
+        {
+          model: latestChildEntry?.workspace.taskModelString ?? defaultModel,
+          agentId: WORKSPACE_DEFAULTS.agentId,
+        },
+        // Skip auto-resume counter reset — this IS an auto-resume, not a user message.
+        { skipAutoResumeReset: true }
+      );
+      if (!sendResult.success) {
         log.error("Failed to auto-resume parent after agent_report", {
           parentWorkspaceId,
-          error: resumeResult.error,
+          error: sendResult.error,
         });
       }
     }

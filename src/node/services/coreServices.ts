@@ -113,6 +113,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     initStateManager
   );
   aiService.setTaskService(taskService);
+  workspaceService.setTaskService(taskService);
 
   return {
     historyService,
