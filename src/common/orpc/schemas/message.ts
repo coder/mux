@@ -84,6 +84,14 @@ export const MuxFilePartSchema = FilePartSchema.extend({
 export type FilePart = z.infer<typeof FilePartSchema>;
 export type MuxFilePart = z.infer<typeof MuxFilePartSchema>;
 
+const CompactionEpochSchema = z.optional(
+  z.preprocess(
+    (value) =>
+      typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined,
+    z.number().int().positive().or(z.undefined())
+  )
+);
+
 // MuxMessage (simplified)
 export const MuxMessageSchema = z.object({
   id: z.string(),
@@ -114,6 +122,11 @@ export const MuxMessageSchema = z.object({
       cmuxMetadata: z.any().optional(), // Legacy field for backward compatibility
       // Compaction source: "user" (manual), "idle" (auto), or legacy boolean (true)
       compacted: z.union([z.literal("user"), z.literal("idle"), z.boolean()]).optional(),
+      // Monotonic compaction epoch id. Incremented whenever compaction succeeds.
+      // Self-healing read path: malformed persisted compactionEpoch is ignored.
+      compactionEpoch: CompactionEpochSchema,
+      // Durable boundary marker for compaction summaries.
+      compactionBoundary: z.boolean().optional(),
       toolPolicy: z.any().optional(),
       agentId: AgentIdSchema.optional().catch(undefined),
       partial: z.boolean().optional(),

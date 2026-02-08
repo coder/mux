@@ -41,6 +41,7 @@ interface MockApi {
     replaceChatHistory: (args: {
       workspaceId: string;
       summaryMessage: unknown;
+      mode?: "destructive" | "append-compaction-boundary" | null;
       deletePlanFile?: boolean;
     }) => Promise<ResultVoid>;
     sendMessage: (args: SendMessageArgs) => Promise<{ success: true; data: undefined }>;
@@ -251,6 +252,7 @@ describe("ProposePlanToolCall", () => {
     const replaceChatHistoryCalls: Array<{
       workspaceId: string;
       summaryMessage: unknown;
+      mode?: "destructive" | "append-compaction-boundary" | null;
       deletePlanFile?: boolean;
     }> = [];
     const sendMessageCalls: SendMessageArgs[] = [];
@@ -311,6 +313,7 @@ describe("ProposePlanToolCall", () => {
 
     const replaceArgs = replaceChatHistoryCalls[0];
     expect(replaceArgs?.deletePlanFile).toBe(false);
+    expect(replaceArgs?.mode).toBe("append-compaction-boundary");
 
     const summaryMessage = replaceArgs?.summaryMessage as {
       role?: string;
@@ -411,6 +414,7 @@ describe("ProposePlanToolCall", () => {
     const replaceChatHistoryCalls: Array<{
       workspaceId: string;
       summaryMessage: unknown;
+      mode?: "destructive" | "append-compaction-boundary" | null;
       deletePlanFile?: boolean;
     }> = [];
     const sendMessageCalls: SendMessageArgs[] = [];
@@ -476,6 +480,7 @@ describe("ProposePlanToolCall", () => {
 
     const replaceArgs = replaceChatHistoryCalls[0];
     expect(replaceArgs?.deletePlanFile).toBe(false);
+    expect(replaceArgs?.mode).toBe("append-compaction-boundary");
 
     const summaryMessage = replaceArgs?.summaryMessage as {
       role?: string;

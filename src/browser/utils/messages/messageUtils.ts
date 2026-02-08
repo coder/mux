@@ -76,6 +76,7 @@ export function shouldShowInterruptedBarrier(msg: DisplayedMessage): boolean {
   if (
     msg.type === "user" ||
     msg.type === "stream-error" ||
+    msg.type === "compaction-boundary" ||
     msg.type === "history-hidden" ||
     msg.type === "workspace-init" ||
     msg.type === "plan-display"

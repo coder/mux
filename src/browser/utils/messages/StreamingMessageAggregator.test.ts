@@ -682,6 +682,88 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("compaction boundary rows", () => {
+    test("inserts a boundary row before compaction summary messages", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const before = createMuxMessage("user-before", "user", "Before compaction", {
+        historySequence: 1,
+        timestamp: 1,
+      });
+      const summary = createMuxMessage("summary-1", "assistant", "Compacted summary", {
+        historySequence: 2,
+        timestamp: 2,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 3,
+        muxMetadata: { type: "compaction-summary" },
+      });
+      const after = createMuxMessage("user-after", "user", "After compaction", {
+        historySequence: 3,
+        timestamp: 3,
+      });
+
+      aggregator.loadHistoricalMessages([before, summary, after], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      expect(displayed.map((message) => message.type)).toEqual([
+        "user",
+        "compaction-boundary",
+        "assistant",
+        "user",
+      ]);
+
+      const boundary = displayed[1];
+      expect(boundary?.type).toBe("compaction-boundary");
+
+      if (boundary?.type === "compaction-boundary") {
+        expect(boundary.position).toBe("start");
+        expect(boundary.compactionEpoch).toBe(3);
+        expect(boundary.historySequence).toBe(2);
+      }
+    });
+
+    test("omits malformed compaction epoch values instead of crashing transcript rendering", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const before = createMuxMessage("user-before", "user", "Before compaction", {
+        historySequence: 1,
+        timestamp: 1,
+      });
+      const summaryWithMalformedEpoch = createMuxMessage(
+        "summary-malformed",
+        "assistant",
+        "Compacted summary",
+        {
+          historySequence: 2,
+          timestamp: 2,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 0,
+          muxMetadata: { type: "compaction-summary" },
+        }
+      );
+      const after = createMuxMessage("user-after", "user", "After compaction", {
+        historySequence: 3,
+        timestamp: 3,
+      });
+
+      aggregator.loadHistoricalMessages([before, summaryWithMalformedEpoch, after], false);
+
+      const displayed = aggregator.getDisplayedMessages();
+      const boundaries = displayed.filter((message) => message.type === "compaction-boundary");
+
+      expect(boundaries).toHaveLength(1);
+
+      const boundary = boundaries[0];
+      if (boundary?.type !== "compaction-boundary") {
+        throw new Error("Expected compaction boundary message");
+      }
+      expect(boundary.compactionEpoch).toBeUndefined();
+      expect(boundary.historySequence).toBe(2);
+    });
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
