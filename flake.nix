@@ -75,7 +75,7 @@
             '';
 
             outputHashMode = "recursive";
-            outputHash = "sha256-DRMDENMs0/18qjwrQKfWdtBAy2H+JlrKim9kNzpNW44=";
+            outputHash = "sha256-NLycgRQNkS3a9jz6qFsdeOHEUDu373hQ6ntOLtOVK0M=";
           };
 
           configurePhase = ''
@@ -103,27 +103,43 @@
           '';
 
           installPhase = ''
-            mkdir -p $out/lib/mux
-            mkdir -p $out/bin
+                        mkdir -p $out/lib/mux
+                        mkdir -p $out/bin
 
-            # Copy built files and runtime dependencies
-            cp -r dist $out/lib/mux/
-            cp -r node_modules $out/lib/mux/
-            cp package.json $out/lib/mux/
+                        # Copy built files and runtime dependencies
+                        cp -r dist $out/lib/mux/
+                        cp -r node_modules $out/lib/mux/
+                        cp package.json $out/lib/mux/
 
-            # Create wrapper script. When running in Nix, mux doesn't know that
-            # it's packaged. Use MUX_E2E_LOAD_DIST to force using compiled
-            # assets instead of a dev server.
-            makeWrapper ${pkgs.electron}/bin/electron $out/bin/mux \
-              --add-flags "$out/lib/mux/dist/cli/index.js" \
-              --set MUX_E2E_LOAD_DIST "1" \
-              --prefix LD_LIBRARY_PATH : "${pkgs.stdenv.cc.cc.lib}/lib" \
-              --prefix PATH : ${
-                pkgs.lib.makeBinPath [
-                  pkgs.git
-                  pkgs.bash
-                ]
-              }
+                        # Create wrapper script. When running in Nix, mux doesn't know that
+                        # it's packaged. Use MUX_E2E_LOAD_DIST to force using compiled
+                        # assets instead of a dev server.
+                        makeWrapper ${pkgs.electron}/bin/electron $out/bin/mux \
+                          --add-flags "$out/lib/mux/dist/cli/index.js" \
+                          --set MUX_E2E_LOAD_DIST "1" \
+                          --prefix LD_LIBRARY_PATH : "${pkgs.stdenv.cc.cc.lib}/lib" \
+                          --prefix PATH : ${
+                            pkgs.lib.makeBinPath [
+                              pkgs.git
+                              pkgs.bash
+                            ]
+                          }
+
+                        # Install desktop file and icon for launcher integration
+                        install -Dm644 public/icon.png $out/share/icons/hicolor/512x512/apps/mux.png
+                        mkdir -p $out/share/applications
+                        cat > $out/share/applications/mux.desktop << EOF
+            [Desktop Entry]
+            Name=Mux
+            GenericName=Agent Multiplexer
+            Comment=Agent Multiplexer
+            Exec=$out/bin/mux %U
+            Icon=mux
+            Terminal=false
+            Type=Application
+            Categories=Development;
+            StartupWMClass=mux
+            EOF
           '';
 
           meta = with pkgs.lib; {
