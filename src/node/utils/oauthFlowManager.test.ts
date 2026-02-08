@@ -100,7 +100,6 @@ describe("OAuthFlowManager", () => {
       }
     });
 
-
     it("returns the completed result for late waiters", async () => {
       const entry = createFlowEntry();
       manager.register("f1", entry);
