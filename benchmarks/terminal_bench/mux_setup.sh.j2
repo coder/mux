@@ -65,7 +65,8 @@ mkdir -p "${MUX_CONFIG_ROOT}"
 
 # Deploy global AGENTS.md (task execution guidelines) if bundled with the agent.
 # This provides general-purpose instructions that improve reliability across diverse tasks.
-if [[ -f "/installed-agent/AGENTS.md" ]]; then
+# Don't overwrite an existing file — a prior run or user-provided config takes precedence.
+if [[ -f "/installed-agent/AGENTS.md" ]] && [[ ! -f "${MUX_CONFIG_ROOT}/AGENTS.md" ]]; then
   cp /installed-agent/AGENTS.md "${MUX_CONFIG_ROOT}/AGENTS.md"
   log "deployed global AGENTS.md to ${MUX_CONFIG_ROOT}"
 fi
