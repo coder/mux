@@ -46,7 +46,12 @@ export interface RenderOAuthCallbackHtmlOptions {
   message: string;
   /** When true, the page auto-closes via `window.close()`. */
   success: boolean;
-  /** Optional extra content injected into `<head>` (e.g. an external CSS link). */
+  /**
+   * Optional extra content injected into `<head>` (e.g. an external CSS link).
+   *
+   * WARNING: This string is injected unescaped into the returned HTML. Only pass
+   * trusted, static HTML (never user-controlled input).
+   */
   extraHead?: string;
 }
 

@@ -204,7 +204,7 @@ describe("MuxGatewayOauthService", () => {
 
       const callbackState = await Promise.race([
         callbackResponsePromise.then(() => "settled" as const),
-        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 25)),
+        new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 100)),
       ]);
       expect(callbackState).toBe("pending");
 
