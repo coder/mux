@@ -30,7 +30,7 @@ import {
   normalizeTaskSettings,
   type TaskSettings,
 } from "@/common/types/tasks";
-import type { ThinkingLevel } from "@/common/types/thinking";
+import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
 
 const INHERIT = "__inherit__";
@@ -750,7 +750,7 @@ export function TasksSection() {
                 <SelectItem value={INHERIT}>Inherit</SelectItem>
                 {allowedThinkingLevels.map((level) => (
                   <SelectItem key={level} value={level}>
-                    {level}
+                    {getThinkingOptionLabel(level, effectiveModel)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -817,7 +817,7 @@ export function TasksSection() {
                 <SelectItem value={INHERIT}>Inherit</SelectItem>
                 {allowedThinkingLevels.map((level) => (
                   <SelectItem key={level} value={level}>
-                    {level}
+                    {getThinkingOptionLabel(level, effectiveModel)}
                   </SelectItem>
                 ))}
               </SelectContent>
