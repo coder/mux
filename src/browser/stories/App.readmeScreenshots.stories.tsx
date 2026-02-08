@@ -174,7 +174,8 @@ function createMultiModelSessionUsage(totalUsd: number): MockSessionUsage {
   };
 }
 
-// README: docs/img/product-hero.webp
+// Comprehensive "hero" demo state — not referenced in README (replaced by mux-demo.gif)
+// but kept for Storybook browsing and Chromatic regression.
 export const ProductHero: AppStory = {
   render: () => (
     <AppWithMocks

@@ -69,11 +69,8 @@ interface StoryDef {
 }
 
 const STORIES: StoryDef[] = [
-  {
-    exportName: "ProductHero",
-    storyId: `${STORY_ID_PREFIX}product-hero`,
-    outputFile: "product-hero.webp",
-  },
+  // ProductHero is not in the capture list — the README hero is now mux-demo.gif.
+  // The story is kept for Storybook browsing and Chromatic regression.
   {
     exportName: "CodeReview",
     storyId: `${STORY_ID_PREFIX}code-review`,
