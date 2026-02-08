@@ -276,7 +276,7 @@ build/icon.png: docs/img/logo-white.svg scripts/generate-icons.ts
 	@bun scripts/generate-icons.ts png
 
 ## Quality checks (can run in parallel)
-static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck ## Run all static checks (lint + typecheck + fmt-check)
+static-check: lint typecheck fmt-check check-eager-imports check-bench-agent check-docs-links check-code-docs-links lint-shellcheck flake-hash-check ## Run all static checks (lint + typecheck + fmt-check)
 
 check-bench-agent: node_modules/.installed src/version.ts $(BUILTIN_SKILLS_GENERATED) ## Verify terminal-bench agent configuration and imports
 	@./scripts/check-bench-agent.sh
