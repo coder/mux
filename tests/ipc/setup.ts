@@ -13,7 +13,6 @@ import {
   cleanupTempGitRepo,
 } from "./helpers";
 import type { OrpcSource } from "./helpers";
-import type { ORPCContext } from "../../src/node/orpc/context";
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { createOrpcTestClient, type OrpcTestClient } from "./orpcTestClient";
 import { shouldRunIntegrationTests, validateApiKeys, getApiKey } from "../testUtils";
@@ -81,39 +80,7 @@ export async function createTestEnvironment(): Promise<TestEnvironment> {
   // Note: Events are consumed via ORPC subscriptions (StreamCollector), not windowService.send()
   services.windowService.setMainWindow(mockWindow);
 
-  const orpcContext: ORPCContext = {
-    config: services.config,
-    aiService: services.aiService,
-    projectService: services.projectService,
-    workspaceService: services.workspaceService,
-    muxGatewayOauthService: services.muxGatewayOauthService,
-    muxGovernorOauthService: services.muxGovernorOauthService,
-    codexOauthService: services.codexOauthService,
-    copilotOauthService: services.copilotOauthService,
-    taskService: services.taskService,
-    providerService: services.providerService,
-    terminalService: services.terminalService,
-    editorService: services.editorService,
-    windowService: services.windowService,
-    updateService: services.updateService,
-    tokenizerService: services.tokenizerService,
-    serverService: services.serverService,
-    featureFlagService: services.featureFlagService,
-    workspaceMcpOverridesService: services.workspaceMcpOverridesService,
-    sessionTimingService: services.sessionTimingService,
-    mcpConfigService: services.mcpConfigService,
-    mcpOauthService: services.mcpOauthService,
-    mcpServerManager: services.mcpServerManager,
-    menuEventService: services.menuEventService,
-    voiceService: services.voiceService,
-    experimentsService: services.experimentsService,
-    telemetryService: services.telemetryService,
-    sessionUsageService: services.sessionUsageService,
-    signingService: services.signingService,
-    coderService: services.coderService,
-    policyService: services.policyService,
-  };
-  const orpc = createOrpcTestClient(orpcContext);
+  const orpc = createOrpcTestClient(services.toORPCContext());
 
   return {
     config,
