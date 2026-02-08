@@ -1661,6 +1661,219 @@ describeIntegration("Runtime integration tests", () => {
   });
 
   /**
+   * Verify that syncProjectToRemote does NOT import stale refs/remotes/origin/*
+   * from the local machine's bundle into the shared bare base repo.
+   *
+   * This is the root cause of the "1.5k commits behind" bug: the local machine's
+   * tracking refs (e.g. refs/remotes/origin/main) are included in the bundle
+   * and imported into the base repo, giving worktrees a wildly wrong behind count.
+   */
+  describe("SSHRuntime sync does not import stale remote tracking refs", () => {
+    const srcBaseDir = "/home/testuser/workspace";
+    const createSSHRuntime = (): SSHRuntime =>
+      createTestRuntime("ssh", srcBaseDir, sshConfig) as SSHRuntime;
+
+    test("initWorkspace does not populate refs/remotes/origin in the base repo from the bundle", async () => {
+      const runtime = createSSHRuntime();
+
+      // projectName must match the basename of the local project path so that
+      // getBaseRepoPath(localProjectPath) resolves to the expected baseRepoPath.
+      const projectName = `sync-no-remotes-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const tmpDir = await import("os").then((os) => os.tmpdir());
+      const localProjectPath = `${tmpDir}/${projectName}`;
+      const branchName = "test-ws";
+      const workspacePath = `${srcBaseDir}/${projectName}/${branchName}`;
+      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+
+      const { execSync } = await import("child_process");
+      try {
+        // Create a local git repo with a stale refs/remotes/origin/main.
+        // This simulates a developer's local project that hasn't fetched in a while.
+        execSync(
+          [
+            `mkdir -p "${localProjectPath}"`,
+            `cd "${localProjectPath}"`,
+            `git init -b main`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "content" > file.txt`,
+            `git add file.txt`,
+            `git commit -m "initial"`,
+            // Create a fake stale origin/main tracking ref.
+            // In a real project this comes from `git fetch origin`.
+            `git update-ref refs/remotes/origin/main HEAD`,
+            `git update-ref refs/remotes/origin/stale-branch HEAD`,
+          ].join(" && "),
+          { stdio: "pipe" }
+        );
+
+        // Verify the local repo has remote tracking refs.
+        const localRefs = execSync(`git -C "${localProjectPath}" for-each-ref refs/remotes/`, {
+          encoding: "utf8",
+        });
+        expect(localRefs).toContain("refs/remotes/origin/main");
+        expect(localRefs).toContain("refs/remotes/origin/stale-branch");
+
+        const noopInitLogger = {
+          logStep: () => {},
+          logStdout: () => {},
+          logStderr: () => {},
+          logComplete: () => {},
+        };
+
+        try {
+          // initWorkspace triggers syncProjectToRemote (since workspace doesn't exist yet),
+          // which creates the base repo, bundles the local project, and imports refs.
+          const initResult = await runtime.initWorkspace({
+            projectPath: localProjectPath,
+            branchName,
+            trunkBranch: "main",
+            workspacePath,
+            initLogger: noopInitLogger,
+          });
+          // Show the error message if initWorkspace failed — don't just say true/false.
+          if (!initResult.success) {
+            throw new Error(`initWorkspace failed: ${initResult.error}`);
+          }
+
+          // The base repo should have bundle branches in refs/mux-bundle/* (staging
+          // namespace) and NOT in refs/heads/* (which would collide with worktrees)
+          // or refs/remotes/origin/* (stale local tracking refs).
+          const baseRefs = await execBuffered(
+            runtime,
+            `git -C "${baseRepoPath}" for-each-ref --format='%(refname)' refs/`,
+            { cwd: "/home/testuser", timeout: 30 }
+          );
+
+          // Bundle branches should be in the staging namespace.
+          expect(baseRefs.stdout).toContain("refs/mux-bundle/main");
+
+          // Should NOT have stale remote tracking refs from the bundle.
+          expect(baseRefs.stdout).not.toContain("refs/remotes/origin/main");
+          expect(baseRefs.stdout).not.toContain("refs/remotes/origin/stale-branch");
+        } finally {
+          await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+            cwd: "/home/testuser",
+            timeout: 30,
+          });
+        }
+      } finally {
+        execSync(`rm -rf "${localProjectPath}"`);
+      }
+    }, 120000);
+  });
+
+  /**
+   * Regression test: creating a second workspace must not fail when the
+   * bundle contains a branch that's already checked out in a worktree.
+   *
+   * Before the refs/mux-bundle/* staging namespace fix, syncing the bundle
+   * on the second initWorkspace would fail with:
+   *   "refusing to fetch into branch 'refs/heads/ws-a' checked out at '...'"
+   */
+  describe("SSHRuntime sync does not collide with checked-out worktree branches", () => {
+    const srcBaseDir = "/home/testuser/workspace";
+    const createSSHRuntime = (): SSHRuntime =>
+      createTestRuntime("ssh", srcBaseDir, sshConfig) as SSHRuntime;
+
+    test("second initWorkspace succeeds when first worktree's branch exists in bundle", async () => {
+      const runtime = createSSHRuntime();
+      const projectName = `sync-collision-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const tmpDir = await import("os").then((os) => os.tmpdir());
+      const localProjectPath = `${tmpDir}/${projectName}`;
+      const wsAName = "ws-a";
+      const wsBName = "ws-b";
+      const wsAPath = `${srcBaseDir}/${projectName}/${wsAName}`;
+      const wsBPath = `${srcBaseDir}/${projectName}/${wsBName}`;
+      const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
+
+      const { execSync } = await import("child_process");
+      const noopInitLogger = {
+        logStep: () => {},
+        logStdout: () => {},
+        logStderr: () => {},
+        logComplete: () => {},
+      };
+
+      try {
+        // Create a local git repo with two branches — simulates a project
+        // where the user already has both workspace branches locally.
+        execSync(
+          [
+            `mkdir -p "${localProjectPath}"`,
+            `cd "${localProjectPath}"`,
+            `git init -b main`,
+            `git config user.email "test@test.com"`,
+            `git config user.name "Test"`,
+            `echo "content" > file.txt`,
+            `git add file.txt`,
+            `git commit -m "initial"`,
+            `git branch ${wsAName}`,
+            `git branch ${wsBName}`,
+          ].join(" && "),
+          { stdio: "pipe" }
+        );
+
+        // 1. Init workspace A — creates the base repo, syncs bundle, creates worktree.
+        const initA = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: wsAName,
+          trunkBranch: "main",
+          workspacePath: wsAPath,
+          initLogger: noopInitLogger,
+        });
+        if (!initA.success) {
+          throw new Error(`initWorkspace A failed: ${initA.error}`);
+        }
+
+        // Verify workspace A exists as a worktree with ws-a checked out.
+        const wsACheck = await execBuffered(
+          runtime,
+          `test -f "${wsAPath}/.git" && git -C "${wsAPath}" branch --show-current`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(wsACheck.stdout.trim()).toBe(wsAName);
+
+        // 2. Init workspace B — re-syncs the bundle (which includes refs/heads/ws-a).
+        //    Before the staging namespace fix, this failed with:
+        //    "refusing to fetch into branch 'refs/heads/ws-a' checked out at '<wsAPath>'"
+        const initB = await runtime.initWorkspace({
+          projectPath: localProjectPath,
+          branchName: wsBName,
+          trunkBranch: "main",
+          workspacePath: wsBPath,
+          initLogger: noopInitLogger,
+        });
+        if (!initB.success) {
+          throw new Error(`initWorkspace B failed: ${initB.error}`);
+        }
+
+        // Verify workspace B exists as a worktree with ws-b checked out.
+        const wsBCheck = await execBuffered(
+          runtime,
+          `test -f "${wsBPath}/.git" && git -C "${wsBPath}" branch --show-current`,
+          { cwd: "/home/testuser", timeout: 30 }
+        );
+        expect(wsBCheck.stdout.trim()).toBe(wsBName);
+
+        // Both worktrees should be tracked in the base repo.
+        const worktreeList = await execBuffered(runtime, `git -C "${baseRepoPath}" worktree list`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+        expect(worktreeList.stdout).toContain(wsAName);
+        expect(worktreeList.stdout).toContain(wsBName);
+      } finally {
+        execSync(`rm -rf "${localProjectPath}"`);
+        await execBuffered(runtime, `rm -rf "${srcBaseDir}/${projectName}"`, {
+          cwd: "/home/testuser",
+          timeout: 30,
+        });
+      }
+    }, 120000);
+  });
+
+  /**
    * DockerRuntime-specific workspace operation tests
    *
    * Tests container lifecycle: create, delete, idempotent delete

@@ -373,6 +373,43 @@ export class SSHRuntime extends RemoteRuntime {
     return result.exitCode === 0;
   }
 
+  /**
+   * Resolve the bundle staging ref for the trunk branch.
+   * Returns refs/mux-bundle/<trunkBranch> if it exists, otherwise falls back
+   * to the first available ref under refs/mux-bundle/ (handles main vs master
+   * mismatches). Returns null if no bundle refs exist.
+   */
+  private async resolveBundleTrunkRef(
+    baseRepoPathArg: string,
+    trunkBranch: string,
+    abortSignal?: AbortSignal
+  ): Promise<string | null> {
+    // Preferred: exact match for the expected trunk branch.
+    const preferredRef = `refs/mux-bundle/${trunkBranch}`;
+    const check = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} rev-parse --verify ${shescape.quote(preferredRef)}`,
+      { cwd: "/tmp", timeout: 10, abortSignal }
+    );
+    if (check.exitCode === 0) {
+      return preferredRef;
+    }
+
+    // Fallback: pick the first ref under refs/mux-bundle/ (handles main↔master mismatch).
+    const listResult = await execBuffered(
+      this,
+      `git -C ${baseRepoPathArg} for-each-ref --format='%(refname)' refs/mux-bundle/ --count=1`,
+      { cwd: "/tmp", timeout: 10, abortSignal }
+    );
+    const fallbackRef = listResult.stdout.trim();
+    if (listResult.exitCode === 0 && fallbackRef.length > 0) {
+      log.info(`Bundle trunk ref mismatch: expected ${preferredRef}, using ${fallbackRef}`);
+      return fallbackRef;
+    }
+
+    return null;
+  }
+
   override async ensureReady(options?: EnsureReadyOptions): Promise<EnsureReadyResult> {
     const repoCheck = await this.checkWorkspaceRepo(options);
     if (repoCheck) {
@@ -535,10 +572,18 @@ export class SSHRuntime extends RemoteRuntime {
     }
 
     initLogger.logStep("Creating git bundle...");
-    const gitProc = spawn("git", ["-C", projectPath, "bundle", "create", "-", "--all"], {
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    // Use --branches --tags instead of --all to exclude refs/remotes/origin/*
+    // from the bundle. Those tracking refs are from the local machine's last
+    // fetch and can be arbitrarily stale — importing them into the shared bare
+    // base repo would give worktrees a wrong "commits behind" count.
+    const gitProc = spawn(
+      "git",
+      ["-C", projectPath, "bundle", "create", "-", "--branches", "--tags"],
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      }
+    );
 
     // Handle stderr manually - do NOT use streamProcessToLogger here.
     // It attaches a stdout listener that drains data before pipeReadableToWebWritable
@@ -599,8 +644,10 @@ export class SSHRuntime extends RemoteRuntime {
   /**
    * Sync local project to the shared bare base repo on the remote via git bundle.
    *
-   * Uses `git fetch <bundle> '+refs/*:refs/*'` to import all refs into the bare repo
-   * (idempotent — re-running is a no-op when nothing changed).
+   * Branches land in a staging namespace (refs/mux-bundle/*) to avoid colliding
+   * with branches checked out in existing worktrees. Tags go to refs/tags/*
+   * directly. Remote tracking refs are excluded entirely.
+   * Idempotent — re-running is a no-op when nothing changed.
    */
   protected async syncProjectToRemote(
     projectPath: string,
@@ -618,11 +665,15 @@ export class SSHRuntime extends RemoteRuntime {
     const remoteBundlePathArg = this.quoteForRemote(remoteBundlePath);
 
     try {
-      // Fetch all refs from the bundle into the shared bare repo.
+      // Import branches and tags from the bundle into the shared bare repo.
+      // Branches land in refs/mux-bundle/* (staging namespace) instead of
+      // refs/heads/* to avoid colliding with branches checked out in existing
+      // worktrees — git refuses to update any ref checked out in a worktree.
+      // Tags go directly to refs/tags/* (they're never checked out).
       initLogger.logStep("Importing bundle into shared base repository...");
       const fetchResult = await execBuffered(
         this,
-        `git -C ${baseRepoPathArg} fetch ${remoteBundlePathArg} '+refs/*:refs/*'`,
+        `git -C ${baseRepoPathArg} fetch ${remoteBundlePathArg} '+refs/heads/*:refs/mux-bundle/*' '+refs/tags/*:refs/tags/*'`,
         { cwd: "/tmp", timeout: 300, abortSignal }
       );
       if (fetchResult.exitCode !== 0) {
@@ -824,18 +875,40 @@ export class SSHRuntime extends RemoteRuntime {
           abortSignal
         );
 
+        // Resolve the bundle's staging ref to use as the local fallback start
+        // point. The staging ref is refs/mux-bundle/<trunk> — but the local
+        // project's default branch may differ from what was passed as trunkBranch
+        // (e.g. "master" vs "main"), so probe for the expected ref and fall back
+        // to whatever is available in refs/mux-bundle/.
+        const bundleTrunkRef = await this.resolveBundleTrunkRef(
+          baseRepoPathArg,
+          trunkBranch,
+          abortSignal
+        );
+
         const shouldUseOrigin =
           fetchedOrigin &&
-          (await this.canFastForwardToOrigin(baseRepoPath, trunkBranch, initLogger, abortSignal));
+          bundleTrunkRef != null &&
+          (await this.canFastForwardToOrigin(
+            baseRepoPath,
+            bundleTrunkRef,
+            trunkBranch,
+            initLogger,
+            abortSignal
+          ));
 
-        const newBranchBase = shouldUseOrigin ? `origin/${trunkBranch}` : trunkBranch;
+        // When origin is reachable, branch from the fresh remote tracking ref.
+        // Otherwise, use the bundle's staging ref (or HEAD as last resort).
+        const newBranchBase = shouldUseOrigin
+          ? `origin/${trunkBranch}`
+          : (bundleTrunkRef ?? "HEAD");
 
         // git worktree add creates the directory and checks out the branch in one step.
-        // Use -b to create a new branch, falling back to checkout if branch already exists.
+        // -B creates the branch or resets it to the start point if it already exists
+        // (e.g. orphaned from a previously deleted workspace). Git still prevents
+        // checking out a branch that's active in another worktree.
         initLogger.logStep(`Creating worktree for branch: ${branchName}`);
-        const worktreeCmd =
-          `git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -b ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)} 2>/dev/null || ` +
-          `git -C ${baseRepoPathArg} worktree add ${workspacePathArg} ${shescape.quote(branchName)}`;
+        const worktreeCmd = `git -C ${baseRepoPathArg} worktree add ${workspacePathArg} -B ${shescape.quote(branchName)} ${shescape.quote(newBranchBase)}`;
 
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",
@@ -862,7 +935,13 @@ export class SSHRuntime extends RemoteRuntime {
         );
         const shouldUseOrigin =
           fetchedOrigin &&
-          (await this.canFastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal));
+          (await this.canFastForwardToOrigin(
+            workspacePath,
+            trunkBranch,
+            trunkBranch,
+            initLogger,
+            abortSignal
+          ));
 
         if (shouldUseOrigin) {
           await this.fastForwardToOrigin(workspacePath, trunkBranch, initLogger, abortSignal);
@@ -953,20 +1032,24 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   /**
-   * Check if local trunk can fast-forward to origin/<trunk>.
-   * Returns true if local is behind or equal to origin (safe to use origin).
-   * Returns false if local is ahead or diverged (preserve local state).
+   * Check if a local ref can fast-forward to origin/<originBranch>.
+   * Returns true if localRef is behind or equal to origin (safe to use origin).
+   * Returns false if localRef is ahead or diverged (preserve local state).
+   *
+   * @param localRef - The ref to compare (e.g. "main" or "refs/mux-bundle/main")
+   * @param originBranch - The branch name on origin (e.g. "main")
    */
   private async canFastForwardToOrigin(
     workspacePath: string,
-    trunkBranch: string,
+    localRef: string,
+    originBranch: string,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<boolean> {
     try {
-      // Check if local trunk is an ancestor of origin/trunk
+      // Check if localRef is an ancestor of origin/<originBranch>
       // Exit code 0 = local is ancestor (can fast-forward), non-zero = cannot
-      const checkCmd = `git merge-base --is-ancestor ${shescape.quote(trunkBranch)} origin/${shescape.quote(trunkBranch)}`;
+      const checkCmd = `git merge-base --is-ancestor ${shescape.quote(localRef)} origin/${shescape.quote(originBranch)}`;
       const checkStream = await this.exec(checkCmd, {
         cwd: workspacePath,
         timeout: 30,
@@ -980,7 +1063,7 @@ export class SSHRuntime extends RemoteRuntime {
 
       // Local is ahead or diverged - preserve local state
       initLogger.logStderr(
-        `Note: Local ${trunkBranch} is ahead of or diverged from origin, using local state`
+        `Note: Local ${localRef} is ahead of or diverged from origin/${originBranch}, using local state`
       );
       return false;
     } catch {
