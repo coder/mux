@@ -27,6 +27,20 @@ import {
   tryReadGitHeadCommitSha,
   findWorkspaceEntry,
 } from "@/node/services/taskUtils";
+import {
+  buildAgentTaskIndex,
+  listAgentTaskWorkspaces,
+  countActiveAgentTasks,
+  hasActiveDescendantAgentTasks,
+  listActiveDescendantAgentTaskIds as listActiveDescendantAgentTaskIdsFn,
+  listDescendantAgentTasks as listDescendantAgentTasksFn,
+  listDescendantAgentTaskIdsFromIndex,
+  isDescendantAgentTaskUsingParentById,
+  listAncestorWorkspaceIdsUsingParentById,
+  getTaskDepth,
+  getTaskDepthFromParentById,
+  getAgentTaskStatus as getAgentTaskStatusFn,
+} from "@/node/services/taskHierarchyIndex";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { TaskSettings } from "@/common/types/tasks";
@@ -107,18 +121,10 @@ export interface DescendantAgentTaskInfo {
   depth: number;
 }
 
-type AgentTaskWorkspaceEntry = WorkspaceConfigEntry & { projectPath: string };
-
 const COMPLETED_REPORT_CACHE_MAX_ENTRIES = 128;
 
 /** Maximum consecutive auto-resumes before stopping. Prevents infinite loops when descendants are stuck. */
 const MAX_CONSECUTIVE_PARENT_AUTO_RESUMES = 3;
-
-interface AgentTaskIndex {
-  byId: Map<string, AgentTaskWorkspaceEntry>;
-  childrenByParent: Map<string, string[]>;
-  parentById: Map<string, string>;
-}
 
 interface PendingTaskWaiter {
   createdAt: number;
@@ -323,18 +329,16 @@ export class TaskService {
     await this.maybeStartQueuedTasks();
 
     const config = this.config.loadConfigOrDefault();
-    const awaitingReportTasks = this.listAgentTaskWorkspaces(config).filter(
+    const awaitingReportTasks = listAgentTaskWorkspaces(config).filter(
       (t) => t.taskStatus === "awaiting_report"
     );
-    const runningTasks = this.listAgentTaskWorkspaces(config).filter(
-      (t) => t.taskStatus === "running"
-    );
+    const runningTasks = listAgentTaskWorkspaces(config).filter((t) => t.taskStatus === "running");
 
     for (const task of awaitingReportTasks) {
       if (!task.id) continue;
 
       // Avoid resuming a task while it still has active descendants (it shouldn't report yet).
-      const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
+      const hasActiveDescendants = hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
         continue;
       }
@@ -371,7 +375,7 @@ export class TaskService {
       if (!task.id) continue;
       // Best-effort: if mux restarted mid-stream, nudge the agent to continue and report.
       // Only do this when the task has no running descendants, to avoid duplicate spawns.
-      const hasActiveDescendants = this.hasActiveDescendantAgentTasks(config, task.id);
+      const hasActiveDescendants = hasActiveDescendantAgentTasks(config, task.id);
       if (hasActiveDescendants) {
         continue;
       }
@@ -394,7 +398,7 @@ export class TaskService {
     // Restart-safety for git patch artifacts:
     // - If mux crashed mid-generation, patch artifacts can be left "pending".
     // - Reported tasks are auto-deleted once they're leaves; defer deletion while patches are pending.
-    const reportedTasks = this.listAgentTaskWorkspaces(config).filter(
+    const reportedTasks = listAgentTaskWorkspaces(config).filter(
       (t) => t.taskStatus === "reported" && typeof t.id === "string" && t.id.length > 0
     );
 
@@ -482,7 +486,7 @@ export class TaskService {
       return Err("Task.create: cannot spawn new tasks after agent_report");
     }
 
-    const requestedDepth = this.getTaskDepth(cfg, parentWorkspaceId) + 1;
+    const requestedDepth = getTaskDepth(cfg, parentWorkspaceId) + 1;
     if (requestedDepth > taskSettings.maxTaskNestingDepth) {
       return Err(
         `Task.create: maxTaskNestingDepth exceeded (requestedDepth=${requestedDepth}, max=${taskSettings.maxTaskNestingDepth})`
@@ -490,7 +494,11 @@ export class TaskService {
     }
 
     // Enforce parallelism (global).
-    const activeCount = this.countActiveAgentTasks(cfg);
+    const activeCount = countActiveAgentTasks(
+      cfg,
+      (id) => this.isForegroundAwaiting(id),
+      (id) => this.aiService.isStreaming(id)
+    );
     const shouldQueue = activeCount >= taskSettings.maxParallelAgentTasks;
 
     const taskId = this.config.generateStableId();
@@ -889,22 +897,20 @@ export class TaskService {
         return Err("Task not found");
       }
 
-      const index = this.buildAgentTaskIndex(cfg);
-      if (
-        !this.isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId)
-      ) {
+      const index = buildAgentTaskIndex(cfg);
+      if (!isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId)) {
         return Err("Task is not a descendant of this workspace");
       }
 
       // Terminate the entire subtree to avoid orphaned descendant tasks.
-      const descendants = this.listDescendantAgentTaskIdsFromIndex(index, taskId);
+      const descendants = listDescendantAgentTaskIdsFromIndex(index, taskId);
       const toTerminate = Array.from(new Set([taskId, ...descendants]));
 
       // Delete leaves first to avoid leaving children with missing parents.
       const parentById = index.parentById;
       const depthById = new Map<string, number>();
       for (const id of toTerminate) {
-        depthById.set(id, this.getTaskDepthFromParentById(parentById, id));
+        depthById.set(id, getTaskDepthFromParentById(parentById, id));
       }
       toTerminate.sort((a, b) => (depthById.get(b) ?? 0) - (depthById.get(a) ?? 0));
 
@@ -1225,112 +1231,22 @@ export class TaskService {
   }
 
   getAgentTaskStatus(taskId: string): AgentTaskStatus | null {
-    assert(taskId.length > 0, "getAgentTaskStatus: taskId must be non-empty");
-
-    const cfg = this.config.loadConfigOrDefault();
-    const entry = findWorkspaceEntry(cfg, taskId);
-    const status = entry?.workspace.taskStatus;
-    return status ?? null;
+    return getAgentTaskStatusFn(this.config.loadConfigOrDefault(), taskId);
   }
 
   hasActiveDescendantAgentTasksForWorkspace(workspaceId: string): boolean {
-    assert(
-      workspaceId.length > 0,
-      "hasActiveDescendantAgentTasksForWorkspace: workspaceId must be non-empty"
-    );
-
-    const cfg = this.config.loadConfigOrDefault();
-    return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
+    return hasActiveDescendantAgentTasks(this.config.loadConfigOrDefault(), workspaceId);
   }
 
   listActiveDescendantAgentTaskIds(workspaceId: string): string[] {
-    assert(
-      workspaceId.length > 0,
-      "listActiveDescendantAgentTaskIds: workspaceId must be non-empty"
-    );
-
-    const cfg = this.config.loadConfigOrDefault();
-    const index = this.buildAgentTaskIndex(cfg);
-
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
-    const result: string[] = [];
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
-        result.push(next);
-      }
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        for (const child of children) {
-          stack.push(child);
-        }
-      }
-    }
-    return result;
+    return listActiveDescendantAgentTaskIdsFn(this.config.loadConfigOrDefault(), workspaceId);
   }
 
   listDescendantAgentTasks(
     workspaceId: string,
     options?: { statuses?: AgentTaskStatus[] }
   ): DescendantAgentTaskInfo[] {
-    assert(workspaceId.length > 0, "listDescendantAgentTasks: workspaceId must be non-empty");
-
-    const statuses = options?.statuses;
-    const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
-
-    const cfg = this.config.loadConfigOrDefault();
-    const index = this.buildAgentTaskIndex(cfg);
-
-    const result: DescendantAgentTaskInfo[] = [];
-
-    const stack: Array<{ taskId: string; depth: number }> = [];
-    for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
-      stack.push({ taskId: childTaskId, depth: 1 });
-    }
-
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const entry = index.byId.get(next.taskId);
-      if (!entry) continue;
-
-      assert(
-        entry.parentWorkspaceId,
-        `listDescendantAgentTasks: task ${next.taskId} is missing parentWorkspaceId`
-      );
-
-      const status: AgentTaskStatus = entry.taskStatus ?? "running";
-      if (!statusFilter || statusFilter.has(status)) {
-        result.push({
-          taskId: next.taskId,
-          status,
-          parentWorkspaceId: entry.parentWorkspaceId,
-          agentType: entry.agentType,
-          workspaceName: entry.name,
-          title: entry.title,
-          createdAt: entry.createdAt,
-          modelString: entry.aiSettings?.model,
-          thinkingLevel: entry.aiSettings?.thinkingLevel,
-          depth: next.depth,
-        });
-      }
-
-      for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
-        stack.push({ taskId: childTaskId, depth: next.depth + 1 });
-      }
-    }
-
-    // Stable ordering: oldest first, then depth (ties by taskId for determinism).
-    result.sort((a, b) => {
-      const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
-      const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
-      if (aTime !== bTime) return aTime - bTime;
-      if (a.depth !== b.depth) return a.depth - b.depth;
-      return a.taskId.localeCompare(b.taskId);
-    });
-
-    return result;
+    return listDescendantAgentTasksFn(this.config.loadConfigOrDefault(), workspaceId, options);
   }
 
   async filterDescendantAgentTaskIds(
@@ -1344,7 +1260,7 @@ export class TaskService {
     assert(Array.isArray(taskIds), "filterDescendantAgentTaskIds: taskIds must be an array");
 
     const cfg = this.config.loadConfigOrDefault();
-    const parentById = this.buildAgentTaskIndex(cfg).parentById;
+    const parentById = buildAgentTaskIndex(cfg).parentById;
 
     const result: string[] = [];
     const maybePersisted: string[] = [];
@@ -1352,7 +1268,7 @@ export class TaskService {
     for (const taskId of taskIds) {
       if (typeof taskId !== "string" || taskId.length === 0) continue;
 
-      if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
+      if (isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
         result.push(taskId);
         continue;
       }
@@ -1383,37 +1299,13 @@ export class TaskService {
     return result;
   }
 
-  private listDescendantAgentTaskIdsFromIndex(
-    index: AgentTaskIndex,
-    workspaceId: string
-  ): string[] {
-    assert(
-      workspaceId.length > 0,
-      "listDescendantAgentTaskIdsFromIndex: workspaceId must be non-empty"
-    );
-
-    const result: string[] = [];
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      result.push(next);
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        for (const child of children) {
-          stack.push(child);
-        }
-      }
-    }
-    return result;
-  }
-
   async isDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): Promise<boolean> {
     assert(ancestorWorkspaceId.length > 0, "isDescendantAgentTask: ancestorWorkspaceId required");
     assert(taskId.length > 0, "isDescendantAgentTask: taskId required");
 
     const cfg = this.config.loadConfigOrDefault();
-    const parentById = this.buildAgentTaskIndex(cfg).parentById;
-    if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
+    const parentById = buildAgentTaskIndex(cfg).parentById;
+    if (isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
       return true;
     }
 
@@ -1430,165 +1322,7 @@ export class TaskService {
     return hasAncestorWorkspaceId(entry, ancestorWorkspaceId);
   }
 
-  private isDescendantAgentTaskUsingParentById(
-    parentById: Map<string, string>,
-    ancestorWorkspaceId: string,
-    taskId: string
-  ): boolean {
-    let current = taskId;
-    for (let i = 0; i < 32; i++) {
-      const parent = parentById.get(current);
-      if (!parent) return false;
-      if (parent === ancestorWorkspaceId) return true;
-      current = parent;
-    }
-
-    throw new Error(
-      `isDescendantAgentTaskUsingParentById: possible parentWorkspaceId cycle starting at ${taskId}`
-    );
-  }
-
   // --- Internal orchestration ---
-
-  private listAncestorWorkspaceIdsUsingParentById(
-    parentById: Map<string, string>,
-    taskId: string
-  ): string[] {
-    const ancestors: string[] = [];
-
-    let current = taskId;
-    for (let i = 0; i < 32; i++) {
-      const parent = parentById.get(current);
-      if (!parent) return ancestors;
-      ancestors.push(parent);
-      current = parent;
-    }
-
-    throw new Error(
-      `listAncestorWorkspaceIdsUsingParentById: possible parentWorkspaceId cycle starting at ${taskId}`
-    );
-  }
-
-  private listAgentTaskWorkspaces(
-    config: ReturnType<Config["loadConfigOrDefault"]>
-  ): AgentTaskWorkspaceEntry[] {
-    const tasks: AgentTaskWorkspaceEntry[] = [];
-    for (const [projectPath, project] of config.projects) {
-      for (const workspace of project.workspaces) {
-        if (!workspace.id) continue;
-        if (!workspace.parentWorkspaceId) continue;
-        tasks.push({ ...workspace, projectPath });
-      }
-    }
-    return tasks;
-  }
-
-  private buildAgentTaskIndex(config: ReturnType<Config["loadConfigOrDefault"]>): AgentTaskIndex {
-    const byId = new Map<string, AgentTaskWorkspaceEntry>();
-    const childrenByParent = new Map<string, string[]>();
-    const parentById = new Map<string, string>();
-
-    for (const task of this.listAgentTaskWorkspaces(config)) {
-      const taskId = task.id!;
-      byId.set(taskId, task);
-
-      const parent = task.parentWorkspaceId;
-      if (!parent) continue;
-
-      parentById.set(taskId, parent);
-      const list = childrenByParent.get(parent) ?? [];
-      list.push(taskId);
-      childrenByParent.set(parent, list);
-    }
-
-    return { byId, childrenByParent, parentById };
-  }
-
-  private countActiveAgentTasks(config: ReturnType<Config["loadConfigOrDefault"]>): number {
-    let activeCount = 0;
-    for (const task of this.listAgentTaskWorkspaces(config)) {
-      const status: AgentTaskStatus = task.taskStatus ?? "running";
-      // If this task workspace is blocked in a foreground wait, do not count it towards parallelism.
-      // This prevents deadlocks where a task spawns a nested task in the foreground while
-      // maxParallelAgentTasks is low (e.g. 1).
-      // Note: StreamManager can still report isStreaming() while a tool call is executing, so
-      // isStreaming is not a reliable signal for "actively doing work" here.
-      if (status === "running" && task.id && this.isForegroundAwaiting(task.id)) {
-        continue;
-      }
-      if (status === "running" || status === "awaiting_report") {
-        activeCount += 1;
-        continue;
-      }
-
-      // Defensive: a task may still be streaming even after it transitioned to another status
-      // (e.g. tool-call-end happened but the stream hasn't ended yet). Count it as active so we
-      // never exceed the configured parallel limit.
-      if (task.id && this.aiService.isStreaming(task.id)) {
-        activeCount += 1;
-      }
-    }
-
-    return activeCount;
-  }
-
-  private hasActiveDescendantAgentTasks(
-    config: ReturnType<Config["loadConfigOrDefault"]>,
-    workspaceId: string
-  ): boolean {
-    assert(workspaceId.length > 0, "hasActiveDescendantAgentTasks: workspaceId must be non-empty");
-
-    const index = this.buildAgentTaskIndex(config);
-
-    const activeStatuses = new Set<AgentTaskStatus>(["queued", "running", "awaiting_report"]);
-    const stack: string[] = [...(index.childrenByParent.get(workspaceId) ?? [])];
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const status = index.byId.get(next)?.taskStatus;
-      if (status && activeStatuses.has(status)) {
-        return true;
-      }
-      const children = index.childrenByParent.get(next);
-      if (children) {
-        for (const child of children) {
-          stack.push(child);
-        }
-      }
-    }
-
-    return false;
-  }
-
-  private getTaskDepth(
-    config: ReturnType<Config["loadConfigOrDefault"]>,
-    workspaceId: string
-  ): number {
-    assert(workspaceId.length > 0, "getTaskDepth: workspaceId must be non-empty");
-
-    return this.getTaskDepthFromParentById(
-      this.buildAgentTaskIndex(config).parentById,
-      workspaceId
-    );
-  }
-
-  private getTaskDepthFromParentById(parentById: Map<string, string>, workspaceId: string): number {
-    let depth = 0;
-    let current = workspaceId;
-    for (let i = 0; i < 32; i++) {
-      const parent = parentById.get(current);
-      if (!parent) break;
-      depth += 1;
-      current = parent;
-    }
-
-    if (depth >= 32) {
-      throw new Error(
-        `getTaskDepthFromParentById: possible parentWorkspaceId cycle starting at ${workspaceId}`
-      );
-    }
-
-    return depth;
-  }
 
   async maybeStartQueuedTasks(): Promise<void> {
     await using _lock = await this.mutex.acquire();
@@ -1596,7 +1330,11 @@ export class TaskService {
     const configAtStart = this.config.loadConfigOrDefault();
     const taskSettingsAtStart: TaskSettings = configAtStart.taskSettings ?? DEFAULT_TASK_SETTINGS;
 
-    const activeCount = this.countActiveAgentTasks(configAtStart);
+    const activeCount = countActiveAgentTasks(
+      configAtStart,
+      (id) => this.isForegroundAwaiting(id),
+      (id) => this.aiService.isStreaming(id)
+    );
     const availableSlots = Math.max(0, taskSettingsAtStart.maxParallelAgentTasks - activeCount);
     taskQueueDebug("TaskService.maybeStartQueuedTasks summary", {
       activeCount,
@@ -1605,7 +1343,7 @@ export class TaskService {
     });
     if (availableSlots === 0) return;
 
-    const queuedTaskIds = this.listAgentTaskWorkspaces(configAtStart)
+    const queuedTaskIds = listAgentTaskWorkspaces(configAtStart)
       .filter((t) => t.taskStatus === "queued" && typeof t.id === "string")
       .sort((a, b) => {
         const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
@@ -1628,7 +1366,11 @@ export class TaskService {
         "TaskService.maybeStartQueuedTasks: maxParallelAgentTasks must be a positive number"
       );
 
-      const activeCount = this.countActiveAgentTasks(config);
+      const activeCount = countActiveAgentTasks(
+        config,
+        (id) => this.isForegroundAwaiting(id),
+        (id) => this.aiService.isStreaming(id)
+      );
       if (activeCount >= taskSettings.maxParallelAgentTasks) {
         break;
       }
@@ -1707,7 +1449,11 @@ export class TaskService {
       // another task became active in the meantime.
       const latestConfig = this.config.loadConfigOrDefault();
       const latestTaskSettings: TaskSettings = latestConfig.taskSettings ?? DEFAULT_TASK_SETTINGS;
-      const latestActiveCount = this.countActiveAgentTasks(latestConfig);
+      const latestActiveCount = countActiveAgentTasks(
+        latestConfig,
+        (id) => this.isForegroundAwaiting(id),
+        (id) => this.aiService.isStreaming(id)
+      );
       if (latestActiveCount >= latestTaskSettings.maxParallelAgentTasks) {
         taskQueueDebug("TaskService.maybeStartQueuedTasks became full mid-loop", {
           taskId,
@@ -2007,7 +1753,7 @@ export class TaskService {
     // Parent workspaces must not end while they have active background tasks.
     // Enforce by auto-resuming the stream with a directive to await outstanding tasks.
     if (!entry.workspace.parentWorkspaceId) {
-      const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
+      const hasActiveDescendants = hasActiveDescendantAgentTasks(cfg, workspaceId);
       if (!hasActiveDescendants) {
         return;
       }
@@ -2064,7 +1810,7 @@ export class TaskService {
 
     // Never allow a task to finish/report while it still has active descendant tasks.
     // We'll auto-resume this task once the last descendant reports.
-    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(cfg, workspaceId);
+    const hasActiveDescendants = hasActiveDescendantAgentTasks(cfg, workspaceId);
     if (hasActiveDescendants) {
       if (status === "awaiting_report") {
         await this.setTaskStatus(workspaceId, "running");
@@ -2182,7 +1928,7 @@ export class TaskService {
       return;
     }
 
-    if (this.hasActiveDescendantAgentTasks(cfgBeforeReport, childWorkspaceId)) {
+    if (hasActiveDescendantAgentTasks(cfgBeforeReport, childWorkspaceId)) {
       log.error("agent_report called while task has active descendants; ignoring", {
         childWorkspaceId,
       });
@@ -2296,8 +2042,8 @@ export class TaskService {
       return;
     }
 
-    const parentById = this.buildAgentTaskIndex(cfgAfterReport).parentById;
-    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(
+    const parentById = buildAgentTaskIndex(cfgAfterReport).parentById;
+    const ancestorWorkspaceIds = listAncestorWorkspaceIdsUsingParentById(
       parentById,
       childWorkspaceId
     );
@@ -2372,7 +2118,7 @@ export class TaskService {
       // Parent may have been cleaned up (e.g. it already reported and this was its last descendant).
       return;
     }
-    const hasActiveDescendants = this.hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
+    const hasActiveDescendants = hasActiveDescendantAgentTasks(postCfg, parentWorkspaceId);
     if (!hasActiveDescendants) {
       this.consecutiveAutoResumes.delete(parentWorkspaceId);
     }
@@ -2406,8 +2152,8 @@ export class TaskService {
 
   private resolveWaiters(taskId: string, report: { reportMarkdown: string; title?: string }): void {
     const cfg = this.config.loadConfigOrDefault();
-    const parentById = this.buildAgentTaskIndex(cfg).parentById;
-    const ancestorWorkspaceIds = this.listAncestorWorkspaceIdsUsingParentById(parentById, taskId);
+    const parentById = buildAgentTaskIndex(cfg).parentById;
+    const ancestorWorkspaceIds = listAncestorWorkspaceIdsUsingParentById(parentById, taskId);
 
     this.completedReportsByTaskId.set(taskId, {
       reportMarkdown: report.reportMarkdown,
@@ -2686,7 +2432,7 @@ export class TaskService {
       if (!parentWorkspaceId) return;
       if (ws.taskStatus !== "reported") return;
 
-      const hasChildren = this.listAgentTaskWorkspaces(config).some(
+      const hasChildren = listAgentTaskWorkspaces(config).some(
         (t) => t.parentWorkspaceId === currentWorkspaceId
       );
       const parentSessionDir = this.config.getSessionDir(parentWorkspaceId);
