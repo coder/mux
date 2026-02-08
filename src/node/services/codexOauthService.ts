@@ -17,6 +17,7 @@ import type { Config } from "@/node/config";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { escapeHtml, renderOAuthCallbackPage } from "@/node/services/oauthCallbackPage";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import {
   extractChatGptAccountIdFromTokens,
@@ -494,27 +495,14 @@ export class CodexOauthService {
       input.res.statusCode = 400;
     }
 
-    input.res.end(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <title>${title}</title>
-  </head>
-  <body>
-    <h1>${title}</h1>
-    <p>${description}</p>
-    <script>
-      (() => {
-        const ok = ${result.success ? "true" : "false"};
-        if (!ok) return;
-        try { window.close(); } catch {}
-        setTimeout(() => { try { window.close(); } catch {} }, 50);
-      })();
-    </script>
-  </body>
-</html>`);
+    input.res.end(
+      renderOAuthCallbackPage({
+        title,
+        description,
+        success: result.success,
+        mode: { type: "desktop" },
+      })
+    );
 
     await this.finishDesktopFlow(input.flowId, result);
   }
@@ -919,13 +907,4 @@ async function sleepWithAbort(ms: number, signal: AbortSignal): Promise<void> {
 
     signal.addEventListener("abort", onAbort);
   });
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }

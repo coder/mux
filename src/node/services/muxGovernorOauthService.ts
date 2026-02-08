@@ -20,6 +20,7 @@ import type { Config } from "@/node/config";
 import type { PolicyService } from "@/node/services/policyService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { escapeHtml, renderOAuthCallbackPage } from "@/node/services/oauthCallbackPage";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -324,44 +325,19 @@ export class MuxGovernorOauthService {
       ? "You can return to Mux. You may now close this tab."
       : escapeHtml(result.error);
 
-    const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <title>${title}</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 600px; margin: 4rem auto; padding: 1rem; }
-      h1 { margin-bottom: 1rem; }
-      .muted { color: #666; }
-    </style>
-  </head>
-  <body>
-    <h1>${title}</h1>
-    <p>${description}</p>
-    ${
-      result.success
-        ? '<p class="muted">Mux should now be in the foreground. You can close this tab.</p>'
-        : '<p class="muted">You can close this tab.</p>'
-    }
-    <script>
-      (() => {
-        const ok = ${result.success ? "true" : "false"};
-        if (!ok) return;
-        try { window.close(); } catch {}
-        setTimeout(() => { try { window.close(); } catch {} }, 50);
-      })();
-    </script>
-  </body>
-</html>`;
-
     input.res.setHeader("Content-Type", "text/html");
     if (!result.success) {
       input.res.statusCode = 400;
     }
 
-    input.res.end(html);
+    input.res.end(
+      renderOAuthCallbackPage({
+        title,
+        description,
+        success: result.success,
+        mode: { type: "desktop" },
+      })
+    );
 
     await this.finishDesktopFlow(input.flowId, result);
   }
@@ -472,13 +448,4 @@ export class MuxGovernorOauthService {
       }, COMPLETED_DESKTOP_FLOW_TTL_MS);
     }
   }
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }

@@ -10,6 +10,7 @@ import {
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { escapeHtml, renderOAuthCallbackPage } from "@/node/services/oauthCallbackPage";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -272,70 +273,19 @@ export class MuxGatewayOauthService {
       ? "You can return to Mux. You may now close this tab."
       : escapeHtml(result.error);
 
-    const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#0e0e0e" />
-    <title>${title}</title>
-    <link rel="stylesheet" href="https://gateway.mux.coder.com/static/css/site.css" />
-  </head>
-  <body>
-    <div class="page">
-      <header class="site-header">
-        <div class="container">
-          <div class="header-title">mux</div>
-        </div>
-      </header>
-
-      <main class="site-main">
-        <div class="container">
-          <div class="content-surface">
-            <h1>${title}</h1>
-            <p>${description}</p>
-            ${
-              result.success
-                ? '<p class="muted">Mux should now be in the foreground. You can close this tab.</p>'
-                : '<p class="muted">You can close this tab.</p>'
-            }
-          </div>
-        </div>
-      </main>
-    </div>
-
-    <script>
-      (() => {
-        const ok = ${result.success ? "true" : "false"};
-        if (!ok) {
-          return;
-        }
-
-        try {
-          window.close();
-        } catch {
-          // Ignore close failures.
-        }
-
-        setTimeout(() => {
-          try {
-            window.close();
-          } catch {
-            // Ignore close failures.
-          }
-        }, 50);
-      })();
-    </script>
-  </body>
-</html>`;
-
     input.res.setHeader("Content-Type", "text/html");
     if (!result.success) {
       input.res.statusCode = 400;
     }
 
-    input.res.end(html);
+    input.res.end(
+      renderOAuthCallbackPage({
+        title,
+        description,
+        success: result.success,
+        mode: { type: "desktop" },
+      })
+    );
 
     await this.finishDesktopFlow(input.flowId, result);
   }
@@ -431,13 +381,4 @@ export class MuxGatewayOauthService {
       }, COMPLETED_DESKTOP_FLOW_TTL_MS);
     }
   }
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
