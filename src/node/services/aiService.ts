@@ -409,7 +409,6 @@ export class AIService extends EventEmitter {
         effectiveModelString,
         canonicalModelString,
         canonicalProviderName,
-        canonicalModelId,
         routedThroughGateway,
       } = modelResult.data;
 
@@ -603,7 +602,6 @@ export class AIService extends EventEmitter {
         providerForMessages: canonicalProviderName,
         effectiveThinkingLevel,
         modelString,
-        canonicalModelId,
         workspaceId,
       });
 

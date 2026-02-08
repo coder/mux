@@ -897,13 +897,10 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(commitResult.error));
     }
 
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    let historyResult = await this.historyService.getHistory(this.workspaceId);
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
-    // Capture the current user message id so retries are stable across assistant message ids.
-    const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
-    this.activeStreamUserMessageId = lastUserMessage?.id;
 
     if (historyResult.data.length === 0) {
       return Err(
@@ -912,6 +909,32 @@ export class AgentSession {
         )
       );
     }
+
+    // Structural invariant: API requests must not end with a non-partial assistant message.
+    // Partial assistants are handled by addInterruptedSentinel at transform time.
+    // Non-partial trailing assistants indicate a missing user message upstream — inject a
+    // [CONTINUE] sentinel so the model has a valid conversation to respond to. This is
+    // defense-in-depth; callers should prefer sendMessage() which persists a real user message.
+    const lastMsg = historyResult.data[historyResult.data.length - 1];
+    if (lastMsg?.role === "assistant" && !lastMsg.metadata?.partial) {
+      log.warn("streamWithHistory: trailing non-partial assistant detected, injecting [CONTINUE]", {
+        workspaceId: this.workspaceId,
+        messageId: lastMsg.id,
+      });
+      const sentinelMessage = createMuxMessage(createUserMessageId(), "user", "[CONTINUE]", {
+        timestamp: Date.now(),
+        synthetic: true,
+      });
+      await this.historyService.appendToHistory(this.workspaceId, sentinelMessage);
+      const refreshed = await this.historyService.getHistory(this.workspaceId);
+      if (refreshed.success) {
+        historyResult = refreshed;
+      }
+    }
+
+    // Capture the current user message id so retries are stable across assistant message ids.
+    const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
+    this.activeStreamUserMessageId = lastUserMessage?.id;
 
     this.activeCompactionRequest = this.resolveCompactionRequest(
       historyResult.data,

@@ -77,6 +77,7 @@ import type { SessionTimingService } from "@/node/services/sessionTimingService"
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
+import type { TaskService } from "@/node/services/taskService";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -685,6 +686,7 @@ export class WorkspaceService extends EventEmitter {
   private terminalService?: TerminalService;
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
+  private taskService?: TaskService;
 
   /**
    * Set the MCP server manager for tool access.
@@ -703,6 +705,14 @@ export class WorkspaceService extends EventEmitter {
 
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
     this.workspaceLifecycleHooks = hooks;
+  }
+
+  /**
+   * Set the task service for auto-resume counter resets.
+   * Called after construction due to circular dependency.
+   */
+  setTaskService(taskService: TaskService): void {
+    this.taskService = taskService;
   }
 
   /**
@@ -2482,7 +2492,7 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions & {
       fileParts?: FilePart[];
     },
-    internal?: { allowQueuedAgentTask?: boolean }
+    internal?: { allowQueuedAgentTask?: boolean; skipAutoResumeReset?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
       workspaceId,
@@ -2623,6 +2633,9 @@ export class WorkspaceService extends EventEmitter {
         return Ok(undefined);
       }
 
+      if (!internal?.skipAutoResumeReset) {
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
       const result = await session.sendMessage(message, normalizedOptions);
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
@@ -2751,6 +2764,7 @@ export class WorkspaceService extends EventEmitter {
     options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
   ): Promise<Result<void>> {
     try {
+      this.taskService?.resetAutoResumeCount(workspaceId);
       const session = this.getOrCreateSession(workspaceId);
       const stopResult = await session.interruptStream(options);
       if (!stopResult.success) {
