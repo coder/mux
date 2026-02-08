@@ -138,6 +138,9 @@ describe("buildSystemMessage", () => {
 
     const systemMessage = await buildSystemMessage(metadata, runtime, workspaceDir);
 
+    expect(systemMessage).toContain("<completion-discipline>");
+    expect(systemMessage).toContain("Before finishing, apply strict completion discipline:");
+    expect(systemMessage).toContain("</completion-discipline>");
     expect(systemMessage).toContain("<subagent-reports>");
     expect(systemMessage).toContain("Messages wrapped in <mux_subagent_report>");
     expect(systemMessage).toContain("</subagent-reports>");
