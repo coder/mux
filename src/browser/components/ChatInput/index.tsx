@@ -112,6 +112,7 @@ import { CreationCenterContent } from "./CreationCenterContent";
 import { cn } from "@/common/lib/utils";
 import type { ChatInputProps, ChatInputAPI } from "./types";
 import { CreationControls } from "./CreationControls";
+import { CodexOauthWarningBanner } from "./CodexOauthWarningBanner";
 import { useCreationWorkspace } from "./useCreationWorkspace";
 import { useCoderWorkspace } from "@/browser/hooks/useCoderWorkspace";
 import { useTutorial } from "@/browser/contexts/TutorialContext";
@@ -408,8 +409,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
   // Use current agent's uiColor, or neutral border until agents load
   const focusBorderColor = currentAgent?.uiColor ?? "var(--color-border-light)";
-  const { models, hiddenModels, ensureModelInSettings, defaultModel, setDefaultModel } =
-    useModelsFromSettings();
+  const {
+    models,
+    hiddenModels,
+    ensureModelInSettings,
+    defaultModel,
+    setDefaultModel,
+    codexOauthSet,
+  } = useModelsFromSettings();
 
   const [agentAiDefaults] = usePersistedState<AgentAiDefaults>(
     AGENT_AI_DEFAULTS_KEY,
@@ -2309,6 +2316,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
           {/* Creation header controls - shown above textarea for creation variant */}
           {creationControlsProps && <CreationControls {...creationControlsProps} />}
+
+          <CodexOauthWarningBanner
+            activeModel={baseModel}
+            codexOauthSet={codexOauthSet}
+            onOpenProviders={() => open("providers", { expandProvider: "openai" })}
+          />
 
           {/* File path suggestions (@src/foo.ts) */}
           <CommandSuggestions
