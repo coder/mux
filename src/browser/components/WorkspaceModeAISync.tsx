@@ -68,22 +68,36 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
         ? [normalizedAgentId, fallbackAgentId]
         : [normalizedAgentId];
 
-    const configuredDefaults = fallbackIds
-      .map((id) => agentAiDefaults[id])
-      .find((entry) => entry !== undefined);
+    const hasWorkspaceOverrideForAgent = workspaceByAgent[normalizedAgentId] !== undefined;
+
+    const configuredDefaults = agentAiDefaults[normalizedAgentId];
+    const inheritedConfiguredDefaults =
+      hasWorkspaceOverrideForAgent || configuredDefaults !== undefined
+        ? undefined
+        : fallbackIds
+            .slice(1)
+            .map((id) => agentAiDefaults[id])
+            .find((entry) => entry !== undefined);
     const descriptorDefaults = fallbackIds
       .map((id) => agents.find((entry) => entry.id === id)?.aiDefaults)
       .find((entry) => entry !== undefined);
 
-    const agentModelDefault =
-      configuredDefaults?.modelString ?? descriptorDefaults?.model ?? undefined;
-    const agentThinkingDefault =
-      configuredDefaults?.thinkingLevel ?? descriptorDefaults?.thinkingLevel ?? undefined;
+    const configuredModelDefault =
+      configuredDefaults?.modelString ?? inheritedConfiguredDefaults?.modelString;
+    const configuredThinkingDefault =
+      configuredDefaults?.thinkingLevel ?? inheritedConfiguredDefaults?.thinkingLevel;
+    const descriptorModelDefault = descriptorDefaults?.model;
+    const descriptorThinkingDefault = descriptorDefaults?.thinkingLevel;
 
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
+    // Precedence: explicit Settings override -> workspace by-agent value -> descriptor default
+    // -> current workspace value. "Inherit" removes the explicit override, so it falls through.
+    // For derived agents, inherited (base) Settings defaults are only considered when this agent
+    // has neither a workspace override nor its own Settings entry, matching task creation precedence.
     const candidateModel =
+      configuredModelDefault ??
       fallbackIds.map((id) => workspaceByAgent[id]?.model).find((entry) => entry !== undefined) ??
-      agentModelDefault ??
+      descriptorModelDefault ??
       existingModel;
     const resolvedModel =
       typeof candidateModel === "string" && candidateModel.trim().length > 0
@@ -92,10 +106,11 @@ export function WorkspaceModeAISync(props: { workspaceId: string }): null {
 
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
     const candidateThinking =
+      configuredThinkingDefault ??
       fallbackIds
         .map((id) => workspaceByAgent[id]?.thinkingLevel)
         .find((entry) => entry !== undefined) ??
-      agentThinkingDefault ??
+      descriptorThinkingDefault ??
       existingThinking ??
       "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";

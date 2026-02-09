@@ -5,7 +5,12 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { AgentProvider } from "@/browser/contexts/AgentContext";
 import { consumeWorkspaceModelChange } from "@/browser/utils/modelChange";
 import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { AGENT_AI_DEFAULTS_KEY, getModelKey } from "@/common/constants/storage";
+import {
+  AGENT_AI_DEFAULTS_KEY,
+  getModelKey,
+  getThinkingLevelKey,
+  getWorkspaceAISettingsByAgentKey,
+} from "@/common/constants/storage";
 
 import { WorkspaceModeAISync } from "./WorkspaceModeAISync";
 
@@ -19,6 +24,31 @@ function nextWorkspaceId(): string {
 const noop = () => {
   // intentional noop for tests
 };
+
+function SyncHarness(props: { workspaceId: string; agentId: string }) {
+  return (
+    <AgentProvider
+      value={{
+        agentId: props.agentId,
+        setAgentId: noop,
+        currentAgent: undefined,
+        agents: [],
+        loaded: true,
+        loadFailed: false,
+        refresh: () => Promise.resolve(),
+        refreshing: false,
+        disableWorkspaceAgents: false,
+        setDisableWorkspaceAgents: noop,
+      }}
+    >
+      <WorkspaceModeAISync workspaceId={props.workspaceId} />
+    </AgentProvider>
+  );
+}
+
+function renderSync(props: { workspaceId: string; agentId: string }) {
+  return render(<SyncHarness workspaceId={props.workspaceId} agentId={props.agentId} />);
+}
 
 describe("WorkspaceModeAISync", () => {
   beforeEach(() => {
@@ -49,28 +79,7 @@ describe("WorkspaceModeAISync", () => {
     // Start with a different model so the mount sync performs an update.
     updatePersistedState(getModelKey(workspaceId), "some-legacy-model");
 
-    function Harness(props: { agentId: string }) {
-      return (
-        <AgentProvider
-          value={{
-            agentId: props.agentId,
-            setAgentId: noop,
-            currentAgent: undefined,
-            agents: [],
-            loaded: true,
-            loadFailed: false,
-            refresh: () => Promise.resolve(),
-            refreshing: false,
-            disableWorkspaceAgents: false,
-            setDisableWorkspaceAgents: noop,
-          }}
-        >
-          <WorkspaceModeAISync workspaceId={workspaceId} />
-        </AgentProvider>
-      );
-    }
-
-    const { rerender } = render(<Harness agentId="exec" />);
+    const { rerender } = renderSync({ workspaceId, agentId: "exec" });
 
     // Mount sync should update the model but NOT record an explicit change entry.
     await waitFor(() => {
@@ -79,11 +88,114 @@ describe("WorkspaceModeAISync", () => {
     expect(consumeWorkspaceModelChange(workspaceId, execModel)).toBeNull();
 
     // Switching agents (within the same workspace) should be treated as explicit.
-    rerender(<Harness agentId="plan" />);
+    rerender(<SyncHarness workspaceId={workspaceId} agentId="plan" />);
 
     await waitFor(() => {
       expect(readPersistedState(getModelKey(workspaceId), "")).toBe(planModel);
     });
     expect(consumeWorkspaceModelChange(workspaceId, planModel)).toBe("agent");
+  });
+
+  test("prefers configured agent defaults over workspace-by-agent overrides", async () => {
+    const workspaceId = nextWorkspaceId();
+
+    const configuredModel = "anthropic:claude-haiku-4-5";
+    const configuredThinking = "off";
+    const workspaceModel = "openai:gpt-5.2";
+    const workspaceThinking = "high";
+
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+      exec: { modelString: configuredModel, thinkingLevel: configuredThinking },
+    });
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      exec: { model: workspaceModel, thinkingLevel: workspaceThinking },
+    });
+
+    updatePersistedState(getModelKey(workspaceId), "some-legacy-model");
+    updatePersistedState(getThinkingLevelKey(workspaceId), "medium");
+
+    renderSync({ workspaceId, agentId: "exec" });
+
+    await waitFor(() => {
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(configuredModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "high")).toBe(configuredThinking);
+    });
+  });
+
+  test("falls through to workspace-by-agent values when settings are inherit", async () => {
+    const workspaceId = nextWorkspaceId();
+
+    const workspaceModel = "openai:gpt-5.2";
+    const workspaceThinking = "medium";
+
+    // Inherit in Settings removes explicit per-agent defaults from AGENT_AI_DEFAULTS_KEY.
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {});
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      exec: { model: workspaceModel, thinkingLevel: workspaceThinking },
+    });
+
+    updatePersistedState(getModelKey(workspaceId), "some-legacy-model");
+    updatePersistedState(getThinkingLevelKey(workspaceId), "off");
+
+    renderSync({ workspaceId, agentId: "exec" });
+
+    await waitFor(() => {
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(workspaceModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(workspaceThinking);
+    });
+  });
+
+  test("keeps same-agent workspace override ahead of inherited base settings defaults", async () => {
+    const workspaceId = nextWorkspaceId();
+
+    const baseConfiguredModel = "anthropic:claude-haiku-4-5";
+    const baseConfiguredThinking = "off";
+    const customWorkspaceModel = "openai:gpt-5.2-pro";
+    const customWorkspaceThinking = "medium";
+
+    // No explicit "custom" configured default exists, so this is a base fallback candidate.
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+      exec: { modelString: baseConfiguredModel, thinkingLevel: baseConfiguredThinking },
+    });
+    updatePersistedState(getWorkspaceAISettingsByAgentKey(workspaceId), {
+      custom: { model: customWorkspaceModel, thinkingLevel: customWorkspaceThinking },
+    });
+
+    updatePersistedState(getModelKey(workspaceId), "some-legacy-model");
+    updatePersistedState(getThinkingLevelKey(workspaceId), "high");
+
+    // Unknown non-plan agent IDs fall back to exec defaults unless this agent has workspace overrides.
+    renderSync({ workspaceId, agentId: "custom" });
+
+    await waitFor(() => {
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(customWorkspaceModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe(
+        customWorkspaceThinking
+      );
+    });
+  });
+
+  test("does not inherit base defaults when selected agent has its own partial settings entry", async () => {
+    const workspaceId = nextWorkspaceId();
+
+    const customConfiguredModel = "anthropic:claude-haiku-4-5";
+    const baseConfiguredThinking = "off";
+
+    updatePersistedState(AGENT_AI_DEFAULTS_KEY, {
+      custom: { modelString: customConfiguredModel },
+      exec: { thinkingLevel: baseConfiguredThinking },
+    });
+
+    updatePersistedState(getModelKey(workspaceId), "some-legacy-model");
+    updatePersistedState(getThinkingLevelKey(workspaceId), "high");
+
+    // Unknown non-plan agent IDs still use exec as fallback agent; this verifies
+    // a partial custom settings entry blocks inheriting exec thinking defaults.
+    renderSync({ workspaceId, agentId: "custom" });
+
+    await waitFor(() => {
+      expect(readPersistedState(getModelKey(workspaceId), "")).toBe(customConfiguredModel);
+      expect(readPersistedState(getThinkingLevelKey(workspaceId), "off")).toBe("high");
+    });
   });
 });

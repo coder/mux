@@ -991,6 +991,77 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("off");
   }, 20_000);
 
+  test("agentAiDefaults outrank workspace aiSettingsByAgent for same agent", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    const parentId = "1111111111";
+    await config.saveConfig({
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: projectPath,
+                id: parentId,
+                name: "parent",
+                createdAt: new Date().toISOString(),
+                runtimeConfig: { type: "local" },
+                aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "high" },
+                aiSettingsByAgent: {
+                  explore: { model: "openai:gpt-5.2-pro", thinkingLevel: "medium" },
+                },
+              },
+            ],
+          },
+        ],
+      ]),
+      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      agentAiDefaults: {
+        explore: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      },
+    });
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.create({
+      parentWorkspaceId: parentId,
+      kind: "agent",
+      agentType: "explore",
+      prompt: "run task with same-agent conflicts",
+      title: "Test task",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with same-agent conflicts",
+      {
+        model: "anthropic:claude-haiku-4-5",
+        agentId: "explore",
+        thinkingLevel: "off",
+        experiments: undefined,
+      }
+    );
+
+    const postCfg = config.loadConfigOrDefault();
+    const childEntry = Array.from(postCfg.projects.values())
+      .flatMap((p) => p.workspaces)
+      .find((w) => w.id === created.data.taskId);
+    expect(childEntry).toBeTruthy();
+    expect(childEntry?.aiSettings).toEqual({
+      model: "anthropic:claude-haiku-4-5",
+      thinkingLevel: "off",
+    });
+    expect(childEntry?.taskModelString).toBe("anthropic:claude-haiku-4-5");
+    expect(childEntry?.taskThinkingLevel).toBe("off");
+  }, 20_000);
+
   test("inherits agentAiDefaults from base chain on task create", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
