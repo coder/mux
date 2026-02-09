@@ -125,20 +125,24 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
     setIsDeleting(false);
   }, [clearSharedTranscriptState, props.workspaceId]);
 
-  // Load signing capabilities when the dialog first opens
+  // Load signing capabilities when the dialog first opens.
+  // Defensive: tests and legacy mocks may provide a partial API client without signing endpoints.
   useEffect(() => {
-    if (props.open && !signingCapabilitiesLoaded && api) {
-      void api.signing
-        .capabilities({})
-        .then(setSigningCapabilities)
-        .catch(() => {
-          // Signing unavailable – leave capabilities null
-        })
-        .finally(() => {
-          setSigningCapabilitiesLoaded(true);
-        });
+    const signingApi = api?.signing;
+    if (!props.open || signingCapabilitiesLoaded || !signingApi?.capabilities) {
+      return;
     }
-  }, [props.open, api, signingCapabilitiesLoaded]);
+
+    void signingApi
+      .capabilities({})
+      .then(setSigningCapabilities)
+      .catch(() => {
+        // Signing unavailable – leave capabilities null
+      })
+      .finally(() => {
+        setSigningCapabilitiesLoaded(true);
+      });
+  }, [api, props.open, signingCapabilitiesLoaded]);
 
   useEffect(() => {
     if (!props.open || !shareUrl) {
@@ -149,9 +153,10 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
     urlInputRef.current?.select();
   }, [props.open, shareUrl]);
 
-  // Retry key detection (user may have created a key after app launch)
+  // Retry key detection (user may have created a key after app launch).
+  // Defensive: no-op if signing endpoints are unavailable in the injected API client.
   const handleRetryKeyDetection = async () => {
-    if (!api) return;
+    if (!api?.signing?.clearIdentityCache || !api.signing.capabilities) return;
     try {
       await api.signing.clearIdentityCache({});
       const caps = await api.signing.capabilities({});
@@ -206,7 +211,7 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
 
       // Request a signing envelope when signing is enabled
       let signature: SignatureEnvelope | undefined;
-      if (signingEnabled && signingCapabilities?.publicKey && api) {
+      if (signingEnabled && signingCapabilities?.publicKey && api?.signing?.signMessage) {
         try {
           signature = await api.signing.signMessage({ content: chatJsonl });
         } catch (signErr) {
