@@ -61,4 +61,18 @@ describe("getSendOptionsFromStorage", () => {
     const withThinking = getSendOptionsFromStorage(workspaceId);
     expect(withThinking.system1ThinkingLevel).toBe("high");
   });
+
+  test("includes Anthropic prompt cache TTL from persisted provider options", () => {
+    const workspaceId = "ws-3";
+
+    window.localStorage.setItem(
+      "provider_options_anthropic",
+      JSON.stringify({
+        cacheTtl: "1h",
+      })
+    );
+
+    const options = getSendOptionsFromStorage(workspaceId);
+    expect(options.providerOptions?.anthropic?.cacheTtl).toBe("1h");
+  });
 });

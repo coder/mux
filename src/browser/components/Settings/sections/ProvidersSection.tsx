@@ -21,6 +21,7 @@ import { getStoredAuthToken } from "@/browser/components/AuthTokenModal";
 import { useAPI } from "@/browser/contexts/API";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
+import { useProviderOptions } from "@/browser/hooks/useProviderOptions";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import {
   formatMuxGatewayBalance,
@@ -161,6 +162,7 @@ export function ProvidersSection() {
   );
 
   const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
+  const { options: providerOptions, setAnthropicOptions } = useProviderOptions();
 
   const { api } = useAPI();
   const { config, refresh, updateOptimistically } = useProvidersConfig();
@@ -1467,6 +1469,64 @@ export function ProvidersSection() {
                     </div>
                   );
                 })}
+
+                {/* Anthropic: prompt cache TTL */}
+                {provider === "anthropic" && (
+                  <div className="border-border-light border-t pt-3">
+                    <div className="mb-1 flex items-center gap-1">
+                      <label className="text-muted block text-xs">Prompt cache TTL</label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <HelpIndicator aria-label="Anthropic prompt cache TTL help">
+                              ?
+                            </HelpIndicator>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="max-w-[280px]">
+                              <div className="font-semibold">Prompt cache TTL</div>
+                              <div className="mt-1">
+                                Default is <span className="font-semibold">5m</span>. Use{" "}
+                                <span className="font-semibold">1h</span> for longer workflows at a
+                                higher cache-write cost.
+                              </div>
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+
+                    <Select
+                      value={providerOptions.anthropic?.cacheTtl ?? "default"}
+                      onValueChange={(next) => {
+                        if (next !== "default" && next !== "5m" && next !== "1h") {
+                          return;
+                        }
+
+                        if (next === "default") {
+                          const nextAnthropicOptions = { ...(providerOptions.anthropic ?? {}) };
+                          delete nextAnthropicOptions.cacheTtl;
+                          setAnthropicOptions(nextAnthropicOptions);
+                          return;
+                        }
+
+                        setAnthropicOptions({
+                          ...(providerOptions.anthropic ?? {}),
+                          cacheTtl: next,
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="default">Default (5m)</SelectItem>
+                        <SelectItem value="5m">5 minutes</SelectItem>
+                        <SelectItem value="1h">1 hour</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
                 {/* OpenAI: ChatGPT OAuth + service tier */}
                 {provider === "openai" && (
