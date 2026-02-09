@@ -3471,7 +3471,10 @@ export class WorkspaceService extends EventEmitter {
   }
   async getChatHistory(workspaceId: string): Promise<MuxMessage[]> {
     try {
-      const history = await this.historyService.getFullHistory(workspaceId);
+      // Only return messages from the latest compaction boundary onward.
+      // Pre-boundary messages are summarized in the boundary marker.
+      // TODO: allow users to opt in to viewing full pre-boundary history.
+      const history = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
       return history.success ? history.data : [];
     } catch (error) {
       log.error("Failed to get chat history:", error);
