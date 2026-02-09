@@ -102,6 +102,31 @@ function pascalCase(str: string): string {
 }
 
 /**
+ * Remove fields with "default" values from the "required" array so
+ * json-schema-to-typescript generates optional (`?`) properties.
+ *
+ * Why this is needed: Zod's `.default(value)` makes the *input* optional
+ * (safeParse fills in the default) but z.toJSONSchema() keeps the field in
+ * "required" — JSON Schema treats "required" and "default" as orthogonal
+ * concepts. json-schema-to-typescript then faithfully maps "required" →
+ * non-optional TS property, producing types that don't match runtime behavior.
+ */
+function removeDefaultsFromRequired(schema: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...schema };
+  const properties = result.properties as Record<string, Record<string, unknown>> | undefined;
+  const required = result.required as string[] | undefined;
+
+  if (properties && required) {
+    result.required = required.filter((key) => {
+      const prop = properties[key];
+      return prop == null || !("default" in prop);
+    });
+  }
+
+  return result;
+}
+
+/**
  * Indent each line of a string.
  */
 function indent(str: string, spaces: number): string {
@@ -115,7 +140,7 @@ function indent(str: string, spaces: number): string {
 /**
  * Extract JSON Schema from a tool, handling both Zod schemas and raw JSON Schema.
  */
-function getInputJsonSchema(tool: Tool): object {
+function getInputJsonSchema(tool: Tool): Record<string, unknown> {
   const toolRecord = tool as { inputSchema?: unknown; parameters?: unknown };
   const schema = toolRecord.inputSchema ?? toolRecord.parameters;
 
@@ -125,11 +150,11 @@ function getInputJsonSchema(tool: Tool): object {
 
   // Check if it's a Zod schema (has _def property)
   if (typeof schema === "object" && "_def" in schema) {
-    return z.toJSONSchema(schema as z.ZodType);
+    return z.toJSONSchema(schema as z.ZodType) as Record<string, unknown>;
   }
 
   // Already JSON Schema
-  return schema as object;
+  return schema as Record<string, unknown>;
 }
 
 /**
@@ -204,7 +229,7 @@ export async function generateMuxTypes(tools: Record<string, Tool>): Promise<str
 
     try {
       const argInterface = await compile(
-        inputSchema as Parameters<typeof compile>[0],
+        removeDefaultsFromRequired(inputSchema) as Parameters<typeof compile>[0],
         argsTypeName,
         {
           bannerComment: "",

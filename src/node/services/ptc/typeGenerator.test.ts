@@ -64,12 +64,31 @@ describe("generateMuxTypes", () => {
     expect(types).toContain("content");
   });
 
+  test("generates optional properties for fields with .default()", async () => {
+    const tool = createMockTool(
+      z.object({
+        script: z.string().describe("Required field"),
+        run_in_background: z.boolean().default(false).describe("Has default"),
+        timeout_secs: z.number().default(60).describe("Has default"),
+      })
+    );
+
+    const types = await generateMuxTypes({ my_tool: tool });
+
+    // Fields with .default() should be optional (matching Zod input type)
+    expect(types).toContain("run_in_background?:");
+    expect(types).toContain("timeout_secs?:");
+    // Fields without .default() should remain required
+    expect(types).toMatch(/\bscript: string\b/);
+    expect(types).not.toContain("script?:");
+  });
+
   test("generates discriminated union result types with success: true/false", async () => {
     const bashTool = createMockTool(
       z.object({
         script: z.string(),
         timeout_secs: z.number(),
-        run_in_background: z.boolean(),
+        run_in_background: z.boolean().default(false),
         display_name: z.string(),
       })
     );
