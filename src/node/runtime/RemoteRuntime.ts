@@ -422,9 +422,10 @@ export abstract class RemoteRuntime implements Runtime {
 
   /**
    * Get file statistics via exec.
+   * Uses stat -L to follow symlinks (report target's type, not "symbolic link").
    */
   async stat(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForRemote(filePath)}`, {
+    const stream = await this.exec(`stat -L -c '%s %Y %F' ${this.quoteForRemote(filePath)}`, {
       cwd: this.getBasePath(),
       timeout: 10,
       abortSignal,

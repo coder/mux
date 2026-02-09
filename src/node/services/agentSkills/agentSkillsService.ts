@@ -51,7 +51,10 @@ function formatError(error: unknown): string {
 async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+    // Include symlinks to directories — users commonly symlink skill dirs
+    return entries
+      .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+      .map((entry) => entry.name);
   } catch {
     return [];
   }
@@ -67,9 +70,10 @@ async function listSkillDirectoriesFromRuntime(
   }
 
   const quotedRoot = shellQuote(root);
+  // -L follows symlinks so symlinked skill directories are discovered
   const command =
     `if [ -d ${quotedRoot} ]; then ` +
-    `find ${quotedRoot} -mindepth 1 -maxdepth 1 -type d -exec basename {} \\; ; ` +
+    `find -L ${quotedRoot} -mindepth 1 -maxdepth 1 -type d -exec basename {} \\; ; ` +
     `fi`;
 
   const result = await execBuffered(runtime, command, { cwd: options.cwd, timeout: 10 });
