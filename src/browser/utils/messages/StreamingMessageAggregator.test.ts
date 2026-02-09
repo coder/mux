@@ -764,6 +764,79 @@ describe("StreamingMessageAggregator", () => {
     });
   });
 
+  describe("live compaction boundary pruning", () => {
+    // handleMessage expects ChatMuxMessage (type: "message"), matching how the
+    // backend emits events via emitChatEvent({ ...message, type: "message" }).
+    const asChatMessage = (msg: ReturnType<typeof createMuxMessage>) => ({
+      ...msg,
+      type: "message" as const,
+    });
+
+    test("prunes pre-boundary messages when compaction boundary arrives live", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      // Simulate messages accumulated during a live session
+      const msg1 = asChatMessage(
+        createMuxMessage("user-1", "user", "First message", {
+          historySequence: 0,
+          timestamp: 1,
+        })
+      );
+      const msg2 = asChatMessage(
+        createMuxMessage("assistant-1", "assistant", "Response", {
+          historySequence: 1,
+          timestamp: 2,
+        })
+      );
+      const msg3 = asChatMessage(
+        createMuxMessage("user-2", "user", "Another message", {
+          historySequence: 2,
+          timestamp: 3,
+        })
+      );
+
+      aggregator.handleMessage(msg1);
+      aggregator.handleMessage(msg2);
+      aggregator.handleMessage(msg3);
+
+      // All 3 messages visible before compaction completes
+      expect(aggregator.getAllMessages()).toHaveLength(3);
+
+      // Compaction boundary arrives live (backend emits after compaction stream finishes)
+      const summary = asChatMessage(
+        createMuxMessage("summary-1", "assistant", "Compacted summary", {
+          historySequence: 3,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+          muxMetadata: { type: "compaction-summary" },
+        })
+      );
+      aggregator.handleMessage(summary);
+
+      // Pre-boundary messages pruned, only boundary message remains
+      const remaining = aggregator.getAllMessages();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].id).toBe("summary-1");
+    });
+
+    test("does not prune messages when a non-boundary message arrives", () => {
+      const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);
+
+      const msg1 = asChatMessage(
+        createMuxMessage("user-1", "user", "First message", { historySequence: 0 })
+      );
+      const msg2 = asChatMessage(
+        createMuxMessage("assistant-1", "assistant", "Normal response", { historySequence: 1 })
+      );
+
+      aggregator.handleMessage(msg1);
+      aggregator.handleMessage(msg2);
+
+      expect(aggregator.getAllMessages()).toHaveLength(2);
+    });
+  });
+
   describe("compaction detection", () => {
     test("treats active stream as compacting on reconnect when stream-start has no mode", () => {
       const aggregator = new StreamingMessageAggregator(TEST_CREATED_AT);

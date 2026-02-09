@@ -1954,6 +1954,16 @@ export class StreamingMessageAggregator {
         }
       }
 
+      // When a compaction boundary arrives during a live session, prune all
+      // pre-boundary messages so the UI matches what a fresh load would show
+      // (getHistoryFromLatestBoundary only returns post-boundary messages).
+      // Without this, pre-boundary messages persist until the next page refresh.
+      // TODO: In the future, support paginated history loading so users can
+      // opt-in to viewing pre-boundary (historical) messages on demand.
+      if (this.isCompactionBoundarySummaryMessage(incomingMessage)) {
+        this.prunePreBoundaryMessages(incomingMessage);
+      }
+
       // Now add the new message
       this.addMessage(incomingMessage);
 
@@ -2000,6 +2010,35 @@ export class StreamingMessageAggregator {
       message.role === "assistant" &&
       (message.metadata?.compactionBoundary === true || muxMeta?.type === "compaction-summary")
     );
+  }
+
+  /**
+   * Remove all messages that precede the incoming compaction boundary.
+   *
+   * During a live session, compaction emits the summary as a regular message
+   * event. Without pruning, pre-boundary messages remain visible until the
+   * next page refresh (where getHistoryFromLatestBoundary naturally excludes
+   * them). This method makes the live experience match the refresh experience.
+   */
+  private prunePreBoundaryMessages(boundaryMessage: MuxMessage): void {
+    const boundarySeq = boundaryMessage.metadata?.historySequence;
+    if (boundarySeq === undefined) return;
+
+    const toRemove: string[] = [];
+    for (const [id, msg] of this.messages.entries()) {
+      const seq = msg.metadata?.historySequence;
+      if (seq !== undefined && seq < boundarySeq) {
+        toRemove.push(id);
+      }
+    }
+
+    for (const id of toRemove) {
+      this.deleteMessage(id);
+    }
+
+    if (toRemove.length > 0) {
+      this.invalidateCache();
+    }
   }
 
   private createCompactionBoundaryRow(
