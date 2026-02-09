@@ -15,7 +15,6 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/browser/components/ui/tooltip";
 import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
 import { useAPI } from "@/browser/contexts/API";
-import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import { copyToClipboard } from "@/browser/utils/clipboard";
 import { getSendOptionsFromStorage } from "@/browser/utils/messages/sendOptions";
 import {
@@ -83,7 +82,6 @@ function transcriptContainsProposePlanToolCall(messages: MuxMessage[]): boolean 
 export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
   const store = useWorkspaceStoreRaw();
   const { api } = useAPI();
-  const { workspaceMetadata } = useWorkspaceContext();
 
   const [includeToolOutput, setIncludeToolOutput] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -219,10 +217,9 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
 
       const sendOptions = getSendOptionsFromStorage(workspaceId);
 
-      // Use human-readable workspace title for the filename when available
-      const workspaceTitle = workspaceMetadata.get(props.workspaceId)?.title;
+      // Prefer the user-facing workspace title for uploaded filename when available.
       const fileInfo: FileInfo = {
-        name: getTranscriptFileName(workspaceTitle ?? props.workspaceName),
+        name: getTranscriptFileName(props.workspaceTitle ?? props.workspaceName),
         type: "application/x-ndjson",
         size: new TextEncoder().encode(chatJsonl).length,
         model: workspaceState.currentModel ?? sendOptions.model,
@@ -260,10 +257,10 @@ export function ShareTranscriptDialog(props: ShareTranscriptDialogProps) {
     isBusy,
     props.workspaceId,
     props.workspaceName,
+    props.workspaceTitle,
     signingCapabilities,
     signingEnabled,
     store,
-    workspaceMetadata,
   ]);
 
   const handleUpdateExpiration = async (value: ExpirationValue) => {

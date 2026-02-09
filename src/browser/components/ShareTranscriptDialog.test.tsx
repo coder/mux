@@ -1,33 +1,15 @@
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GlobalWindow } from "happy-dom";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import type { APIClient } from "@/browser/contexts/API";
+import type { WorkspaceStore } from "@/browser/stores/WorkspaceStore";
+import { useWorkspaceStoreRaw } from "@/browser/stores/WorkspaceStore";
+import { APIProvider } from "@/browser/contexts/API";
 import { TooltipProvider } from "@/browser/components/ui/tooltip";
-
-const uploadToMuxMdMock = mock(() =>
-  Promise.resolve({
-    url: "https://mux.md/s/share-1",
-    id: "share-1",
-    mutateKey: "mutate-1",
-    expiresAt: Date.now() + 60_000,
-  })
-);
-
-const deleteFromMuxMdMock = mock(() => Promise.resolve(undefined));
-const updateMuxMdExpirationMock = mock(() => Promise.resolve(Date.now() + 60_000));
-const buildChatJsonlForSharingMock = mock(() => '{"role":"user","parts":[]}');
-const getWorkspaceStateMock = mock(() => ({
-  muxMessages: [],
-  currentModel: null,
-  currentThinkingLevel: null,
-}));
-
-void mock.module("@/common/lib/muxMd", () => ({
-  uploadToMuxMd: uploadToMuxMdMock,
-  deleteFromMuxMd: deleteFromMuxMdMock,
-  updateMuxMdExpiration: updateMuxMdExpirationMock,
-}));
+import * as muxMd from "@/common/lib/muxMd";
+import * as transcriptShare from "@/common/utils/messages/transcriptShare";
+import * as ReactDOM from "react-dom";
+import { GlobalWindow } from "happy-dom";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 
 void mock.module("@/browser/components/ui/dialog", () => ({
   Dialog: (props: { open: boolean; children: ReactNode }) =>
@@ -39,52 +21,40 @@ void mock.module("@/browser/components/ui/dialog", () => ({
   ),
 }));
 
-void mock.module("@/browser/contexts/API", () => ({
-  useAPI: () => ({
-    api: null,
-    status: "connected" as const,
-    error: null,
-    authenticate: () => undefined,
-    retry: () => undefined,
-  }),
-}));
-
-void mock.module("@/browser/contexts/WorkspaceContext", () => ({
-  useWorkspaceContext: () => ({
-    workspaceMetadata: new Map<string, { title?: string }>(),
-  }),
-}));
-
-void mock.module("@/browser/stores/WorkspaceStore", () => ({
-  useWorkspaceStoreRaw: () => ({
-    getWorkspaceState: getWorkspaceStateMock,
-  }),
-}));
-
-void mock.module("@/common/utils/messages/transcriptShare", () => ({
-  buildChatJsonlForSharing: buildChatJsonlForSharingMock,
-}));
-
-void mock.module("@/browser/utils/messages/sendOptions", () => ({
-  getSendOptionsFromStorage: () => ({
-    model: "claude-sonnet-4-20250514",
-    thinkingLevel: "high",
-  }),
-}));
-
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
+
+const TEST_WORKSPACE_ID = "ws-1";
+
+function getStore(): WorkspaceStore {
+  return (useWorkspaceStoreRaw as unknown as () => WorkspaceStore)();
+}
+
+function createApiClient(): APIClient {
+  return {
+    signing: {
+      capabilities: () => Promise.resolve({ publicKey: null, githubUser: null, error: null }),
+      clearIdentityCache: () => Promise.resolve({ success: true }),
+      signMessage: () => Promise.resolve({ sig: "sig", publicKey: "public-key" }),
+    },
+    workspace: {
+      getPlanContent: () => Promise.resolve({ success: false, error: "not-needed" }),
+    },
+  } as unknown as APIClient;
+}
 
 function renderDialog() {
   return render(
-    <TooltipProvider>
-      <ShareTranscriptDialog
-        workspaceId="ws-1"
-        workspaceName="workspace-1"
-        workspaceTitle="Workspace 1"
-        open
-        onOpenChange={() => undefined}
-      />
-    </TooltipProvider>
+    <APIProvider client={createApiClient()}>
+      <TooltipProvider>
+        <ShareTranscriptDialog
+          workspaceId={TEST_WORKSPACE_ID}
+          workspaceName="workspace-1"
+          workspaceTitle="Workspace 1"
+          open
+          onOpenChange={() => undefined}
+        />
+      </TooltipProvider>
+    </APIProvider>
   );
 }
 
@@ -104,64 +74,75 @@ describe("ShareTranscriptDialog", () => {
     originalGetComputedStyle = globalThis.getComputedStyle;
     globalThis.getComputedStyle = globalThis.window.getComputedStyle.bind(globalThis.window);
 
-    uploadToMuxMdMock.mockReset();
-    uploadToMuxMdMock.mockResolvedValue({
+    spyOn(ReactDOM, "createPortal").mockImplementation(
+      (node) => node as unknown as ReturnType<typeof ReactDOM.createPortal>
+    );
+
+    spyOn(console, "error").mockImplementation(() => undefined);
+
+    spyOn(transcriptShare, "buildChatJsonlForSharing").mockReturnValue(
+      '{"role":"user","parts":[]}'
+    );
+
+    spyOn(muxMd, "uploadToMuxMd").mockResolvedValue({
       url: "https://mux.md/s/share-1",
       id: "share-1",
+      key: "encryption-key",
       mutateKey: "mutate-1",
       expiresAt: Date.now() + 60_000,
     });
-
-    deleteFromMuxMdMock.mockReset();
-    deleteFromMuxMdMock.mockResolvedValue(undefined);
-
-    updateMuxMdExpirationMock.mockReset();
-    updateMuxMdExpirationMock.mockResolvedValue(Date.now() + 60_000);
-
-    buildChatJsonlForSharingMock.mockReset();
-    buildChatJsonlForSharingMock.mockReturnValue('{"role":"user","parts":[]}');
-
-    getWorkspaceStateMock.mockReset();
-    getWorkspaceStateMock.mockReturnValue({
-      muxMessages: [],
-      currentModel: null,
-      currentThinkingLevel: null,
+    spyOn(muxMd, "deleteFromMuxMd").mockResolvedValue(undefined);
+    getStore().addWorkspace({
+      id: TEST_WORKSPACE_ID,
+      name: "workspace-1",
+      title: "Workspace 1",
+      projectName: "project",
+      projectPath: "/tmp/project",
+      namedWorkspacePath: "/tmp/project/workspace-1",
+      runtimeConfig: { type: "local" },
+      createdAt: new Date().toISOString(),
     });
   });
 
   afterEach(() => {
+    getStore().removeWorkspace(TEST_WORKSPACE_ID);
     cleanup();
+    mock.restore();
     globalThis.getComputedStyle = originalGetComputedStyle;
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
   });
 
   test("deletes an existing shared transcript link and clears the URL", async () => {
-    const view = renderDialog();
+    renderDialog();
+    const body = within(document.body);
 
-    fireEvent.click(view.getByRole("button", { name: "Generate link" }));
+    fireEvent.click(body.getByRole("button", { name: "Generate link" }));
 
-    await waitFor(() => expect(view.getByTestId("share-transcript-url")).toBeTruthy());
+    await waitFor(() => expect(body.getByTestId("share-transcript-url")).toBeTruthy());
 
-    fireEvent.click(view.getByTestId("delete-share-transcript-url"));
+    fireEvent.click(body.getByTestId("delete-share-transcript-url"));
 
-    await waitFor(() => expect(deleteFromMuxMdMock).toHaveBeenCalledWith("share-1", "mutate-1"));
-    await waitFor(() => expect(view.queryByTestId("share-transcript-url")).toBeNull());
+    await waitFor(() => expect(muxMd.deleteFromMuxMd).toHaveBeenCalledWith("share-1", "mutate-1"));
+    await waitFor(() => expect(body.queryByTestId("share-transcript-url")).toBeNull());
   });
 
   test("keeps shared transcript URL and surfaces an error when delete fails", async () => {
-    deleteFromMuxMdMock.mockImplementationOnce(() => Promise.reject(new Error("Delete failed")));
+    (muxMd.deleteFromMuxMd as unknown as ReturnType<typeof mock>).mockImplementationOnce(() =>
+      Promise.reject(new Error("Delete failed"))
+    );
 
-    const view = renderDialog();
+    renderDialog();
+    const body = within(document.body);
 
-    fireEvent.click(view.getByRole("button", { name: "Generate link" }));
+    fireEvent.click(body.getByRole("button", { name: "Generate link" }));
 
-    await waitFor(() => expect(view.getByTestId("share-transcript-url")).toBeTruthy());
+    await waitFor(() => expect(body.getByTestId("share-transcript-url")).toBeTruthy());
 
-    fireEvent.click(view.getByTestId("delete-share-transcript-url"));
+    fireEvent.click(body.getByTestId("delete-share-transcript-url"));
 
-    await waitFor(() => expect(deleteFromMuxMdMock).toHaveBeenCalledWith("share-1", "mutate-1"));
-    await waitFor(() => expect(view.getByRole("alert").textContent).toContain("Delete failed"));
-    expect(view.getByTestId("share-transcript-url")).toBeTruthy();
+    await waitFor(() => expect(muxMd.deleteFromMuxMd).toHaveBeenCalledWith("share-1", "mutate-1"));
+    await waitFor(() => expect(body.getByRole("alert").textContent).toContain("Delete failed"));
+    expect(body.getByTestId("share-transcript-url")).toBeTruthy();
   });
 });
