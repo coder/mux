@@ -144,6 +144,9 @@ export class CopilotOauthService {
     const flow = this.flows.get(flowId);
     if (!flow) return;
 
+    // Skip if the flow already completed (e.g. unmount cleanup after success)
+    if (flow.cancelled) return;
+
     log.debug(`Copilot OAuth device flow cancelled (flowId=${flowId})`);
     this.finishFlow(flowId, Err("Device flow cancelled"));
   }

@@ -836,14 +836,18 @@ export function ProvidersSection() {
     setCopilotLoginError(null);
   };
 
-  // Cancel any in-flight Copilot login if the component unmounts
+  // Cancel any in-flight Copilot login if the component unmounts.
+  // Use a ref for api so this only fires on true unmount, not on api identity
+  // changes (e.g. reconnection), which would spuriously cancel active flows.
+  const apiRef = useRef(api);
+  apiRef.current = api;
   useEffect(() => {
     return () => {
-      if (copilotFlowIdRef.current && api) {
-        void api.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
+      if (copilotFlowIdRef.current && apiRef.current) {
+        void apiRef.current.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
       }
     };
-  }, [api]);
+  }, []);
 
   const clearCopilotCredentials = () => {
     if (!api) return;
@@ -866,6 +870,13 @@ export function ProvidersSection() {
         setCopilotLoginStatus("error");
         setCopilotLoginError("API not connected.");
         return;
+      }
+
+      // Best-effort: cancel any in-progress flow before starting a new one.
+      if (copilotFlowIdRef.current) {
+        void api.copilotOauth.cancelDeviceFlow({ flowId: copilotFlowIdRef.current });
+        copilotFlowIdRef.current = null;
+        setCopilotFlowId(null);
       }
 
       const startResult = await api.copilotOauth.startDeviceFlow();
