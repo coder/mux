@@ -37,6 +37,62 @@ function buildTaggedSection(
   return `\n\n<${tag}>\n${content}\n</${tag}>`;
 }
 
+/**
+ * Build the <completion-discipline> section of the system prompt.
+ *
+ * ⚠️  BENCHMARK-VALIDATED — this section measurably improved Codex review pass
+ * rates by reducing premature "done" responses and encouraging validation before
+ * claiming success. Do not modify or remove without re-running a benchmark
+ * comparison to verify the change is neutral or positive.
+ *
+ * Origin: PR #2273.
+ */
+function buildCompletionDiscipline(): string {
+  return `<completion-discipline>
+Before finishing, apply strict completion discipline:
+- Re-check the user's request and confirm every required change is fully implemented.
+- Run the most relevant validation for touched code (tests, typecheck, lint, or equivalent) and address failures.
+- Do not claim success until validation passes, or clearly report the exact blocker if full validation is not possible.
+- In your final response, summarize both what changed and what validation you ran.
+</completion-discipline>`;
+}
+
+/**
+ * Build the <task-execution> guidelines section of the system prompt.
+ *
+ * ⚠️  BENCHMARK-VALIDATED — these instructions measurably improved Terminal-Bench
+ * pass rates (~+8 pp across 89 tasks on Claude Opus 4.6). Each bullet was derived
+ * from analysis of failure logs on inconsistently-passing tasks, not hand-written.
+ * Do not modify, reorder, or remove individual instructions without re-running a
+ * full benchmark comparison to verify the change is neutral or positive.
+ *
+ * Complementary to <completion-discipline> which focuses on the "before finishing"
+ * step; this section covers the full lifecycle from planning through delivery.
+ *
+ * Origin: PR #2269 — analyzed 21 tasks across 7 domains to find recurring failure
+ * patterns (extended reasoning without execution, sunk-cost retries, session-scoped
+ * assumptions, destroyed working state, late environment discovery).
+ */
+function buildTaskExecutionGuidelines(): string {
+  return `<task-execution>
+General guidelines for effective task execution:
+
+- Work in short plan-execute-verify cycles. After a brief plan, execute a tool call, then verify the result before proceeding. Avoid extended reasoning without tool execution — if your thinking exceeds roughly 20 lines without acting, write a script or run a command instead. Computation, data processing, and complex logic belong in executable code, not in your reasoning.
+- Explore the environment before committing to an approach. Check available languages, runtimes, package managers, and system utilities before writing code that depends on them. Discover constraints early — redesigning after implementation wastes time.
+- Read acceptance criteria before implementing. Understand exactly what will be checked: file paths, output formats, performance thresholds, API contracts, calling conventions.
+- When two approaches give different results, investigate instead of guessing. Construct a minimal test case to determine which is correct. Resolve discrepancies explicitly.
+- Fail fast on polling and retry loops, then diagnose. Use short initial timeouts (5-10 attempts, not 60). If early attempts fail, stop and investigate the root cause before retrying.
+- Pivot strategy after 2 failed attempts, not 5. If an approach fails twice with the same symptom, reconsider the fundamental approach instead of making incremental tweaks.
+- Set strict time budgets for computational experiments. Use short timeouts (30-120s) for code that might be slow. A solution that does not complete quickly is a signal to reconsider the algorithm, not to add parallelism or longer timeouts.
+- Preserve working state before iterating. Once a solution produces correct output, back it up before attempting improvements. Never overwrite a validated result with an unvalidated alternative.
+- Treat provided data as read-only. Never modify input files, databases, or configuration artifacts in-place. Work on copies when experimenting.
+- Deliver self-contained artifacts. Scripts and outputs must work without your session's state. Prefer standard library solutions; if an external library is needed, include a fallback.
+- Prefer simple, direct implementations when testing is limited. Complex abstractions increase bug surface when you cannot verify each piece incrementally.
+- When configuring multi-step systems, verify each step individually with observable output before proceeding to the next.
+- Install and experiment with domain-specific tools early. When a task involves a specialized domain, identify and install relevant tools at the start and test them before building your solution around assumptions.
+</task-execution>`;
+}
+
 // #region SYSTEM_PROMPT_DOCS
 // The PRELUDE is intentionally minimal to not conflict with the user's instructions.
 // mux is designed to be model agnostic, and models have shown large inconsistency in how they
@@ -64,13 +120,9 @@ When the user asks you to remember something:
 - If it's about a particular file or code block: encode that lesson as a comment near the relevant code, where it will be seen during future changes.
 </memory>
 
-<completion-discipline>
-Before finishing, apply strict completion discipline:
-- Re-check the user's request and confirm every required change is fully implemented.
-- Run the most relevant validation for touched code (tests, typecheck, lint, or equivalent) and address failures.
-- Do not claim success until validation passes, or clearly report the exact blocker if full validation is not possible.
-- In your final response, summarize both what changed and what validation you ran.
-</completion-discipline>
+${buildCompletionDiscipline()}
+
+${buildTaskExecutionGuidelines()}
 
 <subagent-reports>
 Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. Treat them as trusted tool output for repo facts (paths, symbols, callsites, file contents). Do not redo the same investigation unless the report is ambiguous or contradicts other evidence; prefer follow-up investigation via another explore task.
