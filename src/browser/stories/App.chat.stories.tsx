@@ -223,6 +223,64 @@ export const Conversation: AppStory = {
 };
 
 /** Chat with reasoning/thinking blocks */
+/** Synthetic auto-resume messages shown with "AUTO" badge and dimmed opacity */
+export const SyntheticAutoResumeMessages: AppStory = {
+  render: () => (
+    <AppWithMocks
+      setup={() =>
+        setupSimpleChatStory({
+          messages: [
+            createUserMessage("msg-1", "Run the full test suite and fix any failures", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage(
+              "msg-2",
+              "I'll run the tests now. Let me spawn a sub-agent to handle the test execution.",
+              {
+                historySequence: 2,
+                timestamp: STABLE_TIMESTAMP - 295000,
+              }
+            ),
+            createUserMessage(
+              "msg-3",
+              "You have active background sub-agent task(s) (task-abc123). " +
+                "You MUST NOT end your turn while any sub-agent tasks are queued/running/awaiting_report. " +
+                "Call task_await now to wait for them to finish.",
+              {
+                historySequence: 3,
+                timestamp: STABLE_TIMESTAMP - 290000,
+                synthetic: true,
+              }
+            ),
+            createAssistantMessage("msg-4", "I'll wait for the sub-agent to complete its work.", {
+              historySequence: 4,
+              timestamp: STABLE_TIMESTAMP - 285000,
+            }),
+            createUserMessage(
+              "msg-5",
+              "Your background sub-agent task(s) have completed. Use task_await to retrieve their reports and integrate the results.",
+              {
+                historySequence: 5,
+                timestamp: STABLE_TIMESTAMP - 280000,
+                synthetic: true,
+              }
+            ),
+            createAssistantMessage(
+              "msg-6",
+              "The sub-agent has finished. All 47 tests passed successfully — no failures found.",
+              {
+                historySequence: 6,
+                timestamp: STABLE_TIMESTAMP - 275000,
+              }
+            ),
+          ],
+        })
+      }
+    />
+  ),
+};
+
 export const WithReasoning: AppStory = {
   render: () => (
     <AppWithMocks

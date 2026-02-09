@@ -55,7 +55,8 @@ export class OpenSSHTransport implements SSHTransport {
       abortSignal: options.abortSignal,
     });
 
-    const sshArgs: string[] = [options.forcePTY ? "-t" : "-T", ...this.buildSSHArgs()];
+    // Note: use -tt (not -t) so PTY allocation works even when stdin is a pipe.
+    const sshArgs: string[] = [options.forcePTY ? "-tt" : "-T", ...this.buildSSHArgs()];
 
     const connectTimeout =
       options.timeout !== undefined ? Math.min(Math.ceil(options.timeout), 15) : 15;

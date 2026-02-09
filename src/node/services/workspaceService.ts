@@ -77,6 +77,7 @@ import type { SessionTimingService } from "@/node/services/sessionTimingService"
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
+import type { TaskService } from "@/node/services/taskService";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -650,6 +651,12 @@ export class WorkspaceService extends EventEmitter {
   // from waking a dedicated workspace during archive().
   private readonly archivingWorkspaces = new Set<string>();
 
+  // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
+  //
+  // Why this lives here: archive/remove are the user-facing lifecycle operations that should
+  // cancel any fire-and-forget init work to avoid orphaned processes (e.g., SSH sync, .mux/init).
+  private readonly initAbortControllers = new Map<string, AbortController>();
+
   /** Check if a workspace is currently being removed. */
   isRemoving(workspaceId: string): boolean {
     return this.removingWorkspaces.has(workspaceId);
@@ -675,6 +682,7 @@ export class WorkspaceService extends EventEmitter {
     this.experimentsService = experimentsService;
     this.sessionTimingService = sessionTimingService;
     this.setupMetadataListeners();
+    this.setupInitMetadataListeners();
   }
 
   private readonly policyService?: PolicyService;
@@ -685,6 +693,7 @@ export class WorkspaceService extends EventEmitter {
   private terminalService?: TerminalService;
   private readonly sessionTimingService?: SessionTimingService;
   private workspaceLifecycleHooks?: WorkspaceLifecycleHooks;
+  private taskService?: TaskService;
 
   /**
    * Set the MCP server manager for tool access.
@@ -703,6 +712,14 @@ export class WorkspaceService extends EventEmitter {
 
   setWorkspaceLifecycleHooks(hooks: WorkspaceLifecycleHooks): void {
     this.workspaceLifecycleHooks = hooks;
+  }
+
+  /**
+   * Set the task service for auto-resume counter resets.
+   * Called after construction due to circular dependency.
+   */
+  setTaskService(taskService: TaskService): void {
+    this.taskService = taskService;
   }
 
   /**
@@ -752,6 +769,21 @@ export class WorkspaceService extends EventEmitter {
       if (isStreamAbortEvent(data)) {
         void this.updateStreamingStatus(data.workspaceId, false);
       }
+    });
+  }
+
+  private setupInitMetadataListeners(): void {
+    const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+    const isWorkspaceEvent = (v: unknown): v is { workspaceId: string } =>
+      isObj(v) && "workspaceId" in v && typeof v.workspaceId === "string";
+
+    // When init completes, refresh metadata so the UI can clear isInitializing and swap
+    // "Cancel creation" back to the normal archive affordance.
+    this.initStateManager.on("init-end", (event: unknown) => {
+      if (!isWorkspaceEvent(event)) {
+        return;
+      }
+      void this.refreshAndEmitMetadata(event.workspaceId);
     });
   }
 
@@ -817,20 +849,42 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private createInitLogger(workspaceId: string) {
+    const hasInitState = () => this.initStateManager.getInitState(workspaceId) !== undefined;
+
     return {
       logStep: (message: string) => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.appendOutput(workspaceId, message, false);
       },
       logStdout: (line: string) => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.appendOutput(workspaceId, line, false);
       },
       logStderr: (line: string) => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.appendOutput(workspaceId, line, true);
       },
       logComplete: (exitCode: number) => {
+        this.initAbortControllers.delete(workspaceId);
+
+        // WorkspaceService.remove() clears in-memory init state early so waiters/tools can bail out.
+        // If init completes after deletion, avoid noisy logs (endInit() would report missing state).
+        if (!hasInitState()) {
+          return;
+        }
+
         void this.initStateManager.endInit(workspaceId, exitCode);
       },
       enterHookPhase: () => {
+        if (!hasInitState()) {
+          return;
+        }
         this.initStateManager.enterHookPhase(workspaceId);
       },
     };
@@ -1208,6 +1262,12 @@ export class WorkspaceService extends EventEmitter {
 
     const session = this.getOrCreateSession(workspaceId);
     this.initStateManager.startInit(workspaceId, projectPath);
+
+    // Create abort controller immediately so workspace lifecycle operations (e.g., cancel/remove)
+    // can reliably interrupt init even if the UI deletes the workspace during create().
+    const initAbortController = new AbortController();
+    this.initAbortControllers.set(workspaceId, initAbortController);
+
     const initLogger = this.createInitLogger(workspaceId);
 
     try {
@@ -1240,6 +1300,7 @@ export class WorkspaceService extends EventEmitter {
           trunkBranch: normalizedTrunkBranch,
           directoryName: finalBranchName,
           initLogger,
+          abortSignal: initAbortController.signal,
         });
 
         if (createResult.success) break;
@@ -1321,26 +1382,40 @@ export class WorkspaceService extends EventEmitter {
         return Err("Failed to retrieve workspace metadata");
       }
 
-      session.emitMetadata(completeMetadata);
+      session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
 
       // Background init: run postCreateSetup (if present) then initWorkspace
       const secrets = secretsToRecord(this.config.getEffectiveSecrets(projectPath));
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
-      runBackgroundInit(
-        runtime,
-        {
-          projectPath,
-          branchName: finalBranchName,
-          trunkBranch: normalizedTrunkBranch,
-          workspacePath: createResult!.workspacePath,
-          initLogger,
-          env: secrets,
-        },
-        workspaceId,
-        log
-      );
+      //
+      // If the user cancelled creation while create() was still in flight, avoid spawning
+      // additional background work for a workspace that's already being removed.
+      if (!this.removingWorkspaces.has(workspaceId) && !initAbortController.signal.aborted) {
+        runBackgroundInit(
+          runtime,
+          {
+            projectPath,
+            branchName: finalBranchName,
+            trunkBranch: normalizedTrunkBranch,
+            workspacePath: createResult!.workspacePath,
+            initLogger,
+            env: secrets,
+            abortSignal: initAbortController.signal,
+          },
+          workspaceId,
+          log
+        );
+      } else {
+        initAbortController.abort();
+        this.initAbortControllers.delete(workspaceId);
 
-      return Ok({ metadata: completeMetadata });
+        // Background init will never run, so init-end won’t fire.
+        // Clear init state + re-emit metadata so the sidebar doesn’t stay stuck on isInitializing.
+        this.initStateManager.clearInMemoryState(workspaceId);
+        session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
+      }
+
+      return Ok({ metadata: this.enrichFrontendMetadata(completeMetadata) });
     } catch (error) {
       initLogger.logComplete(-1);
       const message = error instanceof Error ? error.message : String(error);
@@ -1358,6 +1433,14 @@ export class WorkspaceService extends EventEmitter {
       return Ok(undefined);
     }
     this.removingWorkspaces.add(workspaceId);
+
+    // If this workspace is mid-init, cancel the fire-and-forget init work (postCreateSetup,
+    // sync/checkout, .mux/init hook, etc.) so removal doesn't leave orphaned background work.
+    const initAbortController = this.initAbortControllers.get(workspaceId);
+    if (initAbortController) {
+      initAbortController.abort();
+      this.initAbortControllers.delete(workspaceId);
+    }
 
     // Try to remove from runtime (filesystem)
     try {
@@ -1522,10 +1605,12 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Avoid leaking init waiters/logs after workspace deletion.
-      // This must happen before deleting the session directory so queued init-status writes
-      // don't recreate ~/.mux/sessions/<workspaceId>/ after removal.
+      // Must happen before deleting the session directory so queued init-status writes don't
+      // recreate ~/.mux/sessions/<workspaceId>/ after removal.
+      //
+      // Intentionally deferred until we're committed to removal: if runtime deletion fails with
+      // force=false we return early and keep init state intact so init-end can refresh metadata.
       this.initStateManager.clearInMemoryState(workspaceId);
-
       // Remove session data
       try {
         const sessionDir = this.config.getSessionDir(workspaceId);
@@ -1580,14 +1665,29 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  private enrichFrontendMetadata(metadata: FrontendWorkspaceMetadata): FrontendWorkspaceMetadata {
+    const isInitializing =
+      this.initStateManager.getInitState(metadata.id)?.status === "running" || undefined;
+    return {
+      ...metadata,
+      isRemoving: this.removingWorkspaces.has(metadata.id) || undefined,
+      isInitializing,
+    };
+  }
+
+  private enrichMaybeFrontendMetadata(
+    metadata: FrontendWorkspaceMetadata | null
+  ): FrontendWorkspaceMetadata | null {
+    if (!metadata) {
+      return null;
+    }
+    return this.enrichFrontendMetadata(metadata);
+  }
+
   async list(): Promise<FrontendWorkspaceMetadata[]> {
     try {
       const workspaces = await this.config.getAllWorkspaceMetadata();
-      // Enrich with isRemoving status for UI to show deletion spinners
-      return workspaces.map((w) => ({
-        ...w,
-        isRemoving: this.removingWorkspaces.has(w.id) || undefined,
-      }));
+      return workspaces.map((w) => this.enrichFrontendMetadata(w));
     } catch (error) {
       log.error("Failed to list workspaces:", error);
       return [];
@@ -1648,7 +1748,8 @@ export class WorkspaceService extends EventEmitter {
   }
   async getInfo(workspaceId: string): Promise<FrontendWorkspaceMetadata | null> {
     const allMetadata = await this.config.getAllWorkspaceMetadata();
-    return allMetadata.find((m) => m.id === workspaceId) ?? null;
+    const found = allMetadata.find((m) => m.id === workspaceId) ?? null;
+    return this.enrichMaybeFrontendMetadata(found);
   }
 
   /**
@@ -1739,11 +1840,13 @@ export class WorkspaceService extends EventEmitter {
         return Err("Failed to retrieve updated workspace metadata");
       }
 
+      const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+
       const session = this.sessions.get(workspaceId);
       if (session) {
-        session.emitMetadata(updatedMetadata);
+        session.emitMetadata(enrichedMetadata);
       } else {
-        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
       }
 
       return Ok({ newWorkspaceId: workspaceId });
@@ -1785,11 +1888,12 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
         const session = this.sessions.get(workspaceId);
         if (session) {
-          session.emitMetadata(updatedMetadata);
+          session.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -1802,7 +1906,10 @@ export class WorkspaceService extends EventEmitter {
 
   /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
-   * but can be viewed on the project page. Safe and reversible.
+   * but can be viewed on the project page.
+   *
+   * If init is still running, we abort it before archiving so we don't leave
+   * orphaned post-create work running in the background.
    */
   async archive(workspaceId: string): Promise<Result<void>> {
     if (workspaceId === MUX_HELP_CHAT_WORKSPACE_ID) {
@@ -1816,6 +1923,40 @@ export class WorkspaceService extends EventEmitter {
       if (!workspace) {
         return Err("Workspace not found");
       }
+      const initState = this.initStateManager.getInitState(workspaceId);
+      if (initState?.status === "running") {
+        // Archiving should not leave post-create setup running in the background.
+        const initAbortController = this.initAbortControllers.get(workspaceId);
+        if (initAbortController) {
+          initAbortController.abort();
+          this.initAbortControllers.delete(workspaceId);
+        }
+
+        this.initStateManager.clearInMemoryState(workspaceId);
+
+        // Clearing init state prevents init-end from firing (createInitLogger.logComplete() bails when
+        // state is missing). If archiving fails before we persist archivedAt (e.g., beforeArchive hook
+        // error), ensure the sidebar doesn't stay stuck on isInitializing/"Cancel creation".
+        try {
+          const allMetadata = await this.config.getAllWorkspaceMetadata();
+          const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+          if (updatedMetadata) {
+            const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+            const session = this.sessions.get(workspaceId);
+            if (session) {
+              session.emitMetadata(enrichedMetadata);
+            } else {
+              this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+            }
+          }
+        } catch (error) {
+          log.debug("Failed to emit metadata after init cancellation during archive", {
+            workspaceId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       const { projectPath, workspacePath } = workspace;
 
       // Lifecycle hooks run *before* we persist archivedAt.
@@ -1870,11 +2011,12 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
         const session = this.sessions.get(workspaceId);
         if (session) {
-          session.emitMetadata(updatedMetadata);
+          session.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -1935,11 +2077,12 @@ export class WorkspaceService extends EventEmitter {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
       if (updatedMetadata) {
+        const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
         const session = this.sessions.get(workspaceId);
         if (session) {
-          session.emitMetadata(updatedMetadata);
+          session.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -2242,12 +2385,13 @@ export class WorkspaceService extends EventEmitter {
     if (options?.emitMetadata !== false) {
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
+      const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
 
       const session = this.sessions.get(workspaceId);
       if (session) {
-        session.emitMetadata(updatedMetadata);
+        session.emitMetadata(enrichedMetadata);
       } else {
-        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
+        this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
       }
     }
 
@@ -2359,6 +2503,9 @@ export class WorkspaceService extends EventEmitter {
       // Run init for forked workspace (fire-and-forget like create())
       // Use sourceBranch as trunk since fork is based on source workspace's branch
       const secrets = secretsToRecord(this.config.getEffectiveSecrets(foundProjectPath));
+
+      const initAbortController = new AbortController();
+      this.initAbortControllers.set(newWorkspaceId, initAbortController);
       runBackgroundInit(
         runtime,
         {
@@ -2368,6 +2515,7 @@ export class WorkspaceService extends EventEmitter {
           workspacePath: forkResult.workspacePath!,
           initLogger,
           env: secrets,
+          abortSignal: initAbortController.signal,
         },
         newWorkspaceId,
         log
@@ -2443,11 +2591,12 @@ export class WorkspaceService extends EventEmitter {
       if (forkResult.sourceRuntimeConfig) {
         const allMetadataUpdated = await this.config.getAllWorkspaceMetadata();
         const updatedMetadata = allMetadataUpdated.find((m) => m.id === sourceWorkspaceId) ?? null;
+        const enrichedMetadata = this.enrichMaybeFrontendMetadata(updatedMetadata);
         const sourceSession = this.sessions.get(sourceWorkspaceId);
         if (sourceSession) {
-          sourceSession.emitMetadata(updatedMetadata);
+          sourceSession.emitMetadata(enrichedMetadata);
         } else {
-          this.emit("metadata", { workspaceId: sourceWorkspaceId, metadata: updatedMetadata });
+          this.emit("metadata", { workspaceId: sourceWorkspaceId, metadata: enrichedMetadata });
         }
       }
 
@@ -2467,9 +2616,11 @@ export class WorkspaceService extends EventEmitter {
       };
 
       await this.config.addWorkspace(foundProjectPath, metadata);
-      session.emitMetadata(metadata);
 
-      return Ok({ metadata, projectPath: foundProjectPath });
+      const enrichedMetadata = this.enrichFrontendMetadata(metadata);
+      session.emitMetadata(enrichedMetadata);
+
+      return Ok({ metadata: enrichedMetadata, projectPath: foundProjectPath });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to fork workspace: ${message}`);
@@ -2482,7 +2633,11 @@ export class WorkspaceService extends EventEmitter {
     options: SendMessageOptions & {
       fileParts?: FilePart[];
     },
-    internal?: { allowQueuedAgentTask?: boolean }
+    internal?: {
+      allowQueuedAgentTask?: boolean;
+      skipAutoResumeReset?: boolean;
+      synthetic?: boolean;
+    }
   ): Promise<Result<void, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
       workspaceId,
@@ -2623,7 +2778,12 @@ export class WorkspaceService extends EventEmitter {
         return Ok(undefined);
       }
 
-      const result = await session.sendMessage(message, normalizedOptions);
+      if (!internal?.skipAutoResumeReset) {
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
+      const result = await session.sendMessage(message, normalizedOptions, {
+        synthetic: internal?.synthetic,
+      });
       if (!result.success) {
         log.error("sendMessage handler: session returned error", {
           workspaceId,
@@ -2751,6 +2911,7 @@ export class WorkspaceService extends EventEmitter {
     options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
   ): Promise<Result<void>> {
     try {
+      this.taskService?.resetAutoResumeCount(workspaceId);
       const session = this.getOrCreateSession(workspaceId);
       const stopResult = await session.interruptStream(options);
       if (!stopResult.success) {

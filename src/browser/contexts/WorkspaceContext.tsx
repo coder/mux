@@ -1010,8 +1010,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
             const updated = new Map(prev);
             const isNewWorkspace = !prev.has(event.workspaceId) && meta !== null;
             const existingMeta = prev.get(event.workspaceId);
-            const wasCreating = existingMeta?.status === "creating";
-            const isNowReady = meta !== null && meta.status !== "creating";
+            const wasInitializing = existingMeta?.isInitializing === true;
+            const isNowReady = meta !== null && meta.isInitializing !== true;
 
             if (meta === null || isNowArchived) {
               // Remove deleted or newly-archived workspaces from active map
@@ -1023,8 +1023,8 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
 
             // Reload projects when:
             // 1. New workspace appears (e.g., from fork)
-            // 2. Workspace transitions from "creating" to ready (now saved to config)
-            if (isNewWorkspace || (wasCreating && isNowReady)) {
+            // 2. Workspace transitions from initializing to ready (init completed)
+            if (isNewWorkspace || (wasInitializing && isNowReady)) {
               void refreshProjects();
             }
 
@@ -1157,6 +1157,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
           // Clean up workspace-specific localStorage keys
           deleteWorkspaceStorage(workspaceId);
 
+          // Optimistically remove from the local metadata map so the sidebar updates immediately.
+          // Relying on the metadata subscription can leave the item visible until the next refresh.
+          setWorkspaceMetadata((prev) => {
+            const updated = new Map(prev);
+            updated.delete(workspaceId);
+            return updated;
+          });
+
           // Backend has already updated the config - reload projects to get updated state
           await refreshProjects();
 
@@ -1181,7 +1189,14 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
         return { success: false, error: errorMessage };
       }
     },
-    [currentWorkspaceId, navigateToProject, refreshProjects, selectedWorkspace, api]
+    [
+      currentWorkspaceId,
+      navigateToProject,
+      refreshProjects,
+      selectedWorkspace,
+      api,
+      setWorkspaceMetadata,
+    ]
   );
 
   /**

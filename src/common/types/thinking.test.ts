@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { coerceThinkingLevel, getThinkingDisplayLabel } from "./thinking";
+import {
+  coerceThinkingLevel,
+  getThinkingDisplayLabel,
+  parseThinkingInput,
+  MAX_THINKING_INDEX,
+} from "./thinking";
 
 describe("getThinkingDisplayLabel", () => {
   test("returns MAX for xhigh/max on Anthropic models", () => {
@@ -47,5 +52,53 @@ describe("coerceThinkingLevel", () => {
     expect(coerceThinkingLevel("invalid")).toBeUndefined();
     expect(coerceThinkingLevel(42)).toBeUndefined();
     expect(coerceThinkingLevel(null)).toBeUndefined();
+  });
+});
+
+describe("parseThinkingInput", () => {
+  test.each([
+    ["off", "off"],
+    ["low", "low"],
+    ["med", "medium"],
+    ["medium", "medium"],
+    ["high", "high"],
+    ["max", "max"],
+    ["xhigh", "xhigh"],
+    ["OFF", "off"],
+    ["MED", "medium"],
+    ["High", "high"],
+  ] as const)("parses named level %s → %s", (input, expected) => {
+    expect(parseThinkingInput(input)).toBe(expected);
+  });
+
+  // Numeric indices are returned as raw numbers (resolved against model policy at send time)
+  test.each([
+    ["0", 0],
+    ["1", 1],
+    ["2", 2],
+    ["3", 3],
+    ["4", 4],
+    ["9", 9],
+  ] as const)("parses numeric level %s → %s", (input, expected) => {
+    expect(parseThinkingInput(input)).toBe(expected);
+  });
+
+  test.each(["-1", "10", "99", "foo", "mediun", "1.5", "", "  "])(
+    "returns undefined for invalid input %j",
+    (input) => {
+      expect(parseThinkingInput(input)).toBeUndefined();
+    }
+  );
+
+  test("trims whitespace", () => {
+    expect(parseThinkingInput("  high  ")).toBe("high");
+    // Numeric with whitespace returns a number
+    expect(parseThinkingInput(" 2 ")).toBe(2);
+  });
+});
+
+describe("MAX_THINKING_INDEX", () => {
+  test("is 9 (generous upper bound for numeric indices)", () => {
+    expect(MAX_THINKING_INDEX).toBe(9);
   });
 });

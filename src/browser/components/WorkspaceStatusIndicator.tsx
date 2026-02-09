@@ -1,7 +1,7 @@
 import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { ModelDisplay } from "@/browser/components/Messages/ModelDisplay";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon";
-import { CircleHelp, ExternalLinkIcon } from "lucide-react";
+import { CircleHelp, ExternalLinkIcon, Loader2 } from "lucide-react";
 import { memo } from "react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { Button } from "./ui/button";
@@ -66,6 +66,9 @@ export const WorkspaceStatusIndicator = memo<{
 
   return (
     <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+      {phase === "starting" && (
+        <Loader2 aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin opacity-70" />
+      )}
       {modelToShow ? (
         <>
           <span className="min-w-0 truncate">

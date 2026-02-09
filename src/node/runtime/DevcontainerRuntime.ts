@@ -337,7 +337,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   private async statViaExec(filePath: string, abortSignal?: AbortSignal): Promise<FileStat> {
-    const stream = await this.exec(`stat -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
+    // -L follows symlinks so symlinked paths report the target's type
+    const stream = await this.exec(`stat -L -c '%s %Y %F' ${this.quoteForContainer(filePath)}`, {
       cwd: this.getContainerBasePath(),
       timeout: 10,
       abortSignal,

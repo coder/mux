@@ -436,6 +436,40 @@ export function ModelsSection() {
           </table>
         </div>
       </div>
+
+      {/* Oneshot Tips */}
+      <div className="space-y-2">
+        <div className="text-muted text-xs font-medium tracking-wide uppercase">
+          Quick Shortcuts
+        </div>
+        <div className="border-border-medium bg-background-secondary/50 rounded-md border px-3 py-2.5 text-xs leading-relaxed">
+          <p className="text-foreground mb-1.5 font-medium">
+            Use model aliases as slash commands for one-shot overrides:
+          </p>
+          <div className="text-muted space-y-0.5 font-mono">
+            <div>
+              <span className="text-accent">/sonnet</span> explain this code
+              <span className="text-muted/60 ml-2">— send one message with Sonnet</span>
+            </div>
+            <div>
+              <span className="text-accent">/opus+high</span> deep review
+              <span className="text-muted/60 ml-2">— Opus with high thinking</span>
+            </div>
+            <div>
+              <span className="text-accent">/haiku+0</span> quick answer
+              <span className="text-muted/60 ml-2">— Haiku with thinking off</span>
+            </div>
+            <div>
+              <span className="text-accent">/+2</span> analyze this
+              <span className="text-muted/60 ml-2">— current model, thinking level 2</span>
+            </div>
+          </div>
+          <p className="text-muted mt-1.5">
+            Numeric levels are relative to each model (0=lowest allowed, 1=next, etc.). Named
+            levels: off, low, med, high, max.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

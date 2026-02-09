@@ -27,14 +27,11 @@ export function buildAutoSelectedTemplateConfig(
     return null;
   }
   const firstTemplate = templates[0];
-  const firstIsDuplicate = templates.some(
-    (t) => t.name === firstTemplate.name && t.organizationName !== firstTemplate.organizationName
-  );
   return {
     ...(currentConfig ?? {}),
     existingWorkspace: false,
     template: firstTemplate.name,
-    templateOrg: firstIsDuplicate ? firstTemplate.organizationName : undefined,
+    templateOrg: firstTemplate.organizationName,
   };
 }
 
@@ -366,17 +363,10 @@ export function useCoderWorkspace({
       if (newEnabled) {
         // Initialize config for new workspace mode (workspaceName omitted; backend derives)
         const firstTemplate = templates[0];
-        const firstIsDuplicate = firstTemplate
-          ? templates.some(
-              (t) =>
-                t.name === firstTemplate.name &&
-                t.organizationName !== firstTemplate.organizationName
-            )
-          : false;
         onCoderConfigChange({
           existingWorkspace: false,
           template: firstTemplate?.name,
-          templateOrg: firstIsDuplicate ? firstTemplate?.organizationName : undefined,
+          templateOrg: firstTemplate?.organizationName,
         });
       } else {
         onCoderConfigChange(null);

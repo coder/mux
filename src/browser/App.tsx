@@ -927,7 +927,7 @@ function AppInner() {
                       namedWorkspacePath={workspacePath}
                       runtimeConfig={currentMetadata.runtimeConfig}
                       incompatibleRuntime={currentMetadata.incompatibleRuntime}
-                      status={currentMetadata.status}
+                      isInitializing={currentMetadata.isInitializing === true}
                     />
                   </ErrorBoundary>
                 );

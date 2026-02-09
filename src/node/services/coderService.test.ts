@@ -473,6 +473,14 @@ describe("CoderService", () => {
       expect(presets).toEqual({ ok: true, presets: [] });
     });
 
+    it("returns empty array when CLI prints info message instead of JSON", async () => {
+      mockExecOk('No presets found for template "my-template" and template-version "v1".\n');
+
+      const presets = await service.listPresets("my-template");
+
+      expect(presets).toEqual({ ok: true, presets: [] });
+    });
+
     it("returns error result on error", async () => {
       mockExecError(new Error("template not found"));
 
@@ -1304,33 +1312,260 @@ describe("non-string parameter defaults", () => {
 });
 
 describe("deleteWorkspace", () => {
-  const service = new CoderService();
-  let mockExec: ReturnType<typeof spyOn<typeof disposableExec, "execAsync">> | null = null;
+  let service: CoderService;
 
   beforeEach(() => {
+    service = new CoderService();
     vi.clearAllMocks();
-    mockExec = spyOn(disposableExec, "execAsync");
   });
 
   afterEach(() => {
-    mockExec?.mockRestore();
-    mockExec = null;
+    service.clearCache();
   });
 
-  it("refuses to delete workspace without mux- prefix", async () => {
-    await service.deleteWorkspace("my-workspace");
+  // deleteWorkspace is a thin wrapper around deleteWorkspaceEventually.
+  // Detailed polling/retry behavior is tested in the deleteWorkspaceEventually suite.
 
-    // Should not call execAsync at all
-    expect(mockExec).not.toHaveBeenCalled();
-  });
-
-  it("deletes workspace with mux- prefix", async () => {
-    mockExec?.mockReturnValue(createMockExecResult(Promise.resolve({ stdout: "", stderr: "" })));
+  it("delegates to deleteWorkspaceEventually with correct options", async () => {
+    const spy = spyOn(service, "deleteWorkspaceEventually").mockResolvedValue({
+      success: true as const,
+      data: undefined,
+    });
 
     await service.deleteWorkspace("mux-my-workspace");
 
-    expect(mockExec).toHaveBeenCalledWith(expect.stringContaining("coder delete"));
-    expect(mockExec).toHaveBeenCalledWith(expect.stringContaining("mux-my-workspace"));
+    expect(spy).toHaveBeenCalledWith("mux-my-workspace", {
+      timeoutMs: 30_000,
+      waitForExistence: false,
+    });
+  });
+
+  it("throws when deleteWorkspaceEventually returns an error", async () => {
+    spyOn(service, "deleteWorkspaceEventually").mockResolvedValue({
+      success: false as const,
+      error: "workspace stuck",
+    });
+
+    let error: unknown;
+    try {
+      await service.deleteWorkspace("mux-my-workspace");
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("workspace stuck");
+  });
+});
+
+describe("deleteWorkspaceEventually", () => {
+  it("polls past initial not_found when waitForExistence=true", async () => {
+    const service = new CoderService();
+
+    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus");
+    const statuses = [
+      { kind: "not_found" as const },
+      { kind: "ok" as const, status: "pending" as const },
+      { kind: "ok" as const, status: "deleting" as const },
+    ];
+    getWorkspaceStatusSpy.mockImplementation(() =>
+      Promise.resolve(statuses.shift() ?? { kind: "ok" as const, status: "deleting" as const })
+    );
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn(() => Promise.resolve());
+
+    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+      timeoutMs: 1_000,
+      waitForExistence: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(getWorkspaceStatusSpy.mock.calls.length).toBeGreaterThan(1);
+    expect(serviceHack.runCoderCommand).toHaveBeenCalled();
+  });
+
+  it("treats sustained not_found as success after timeout when waitForExistence=true", async () => {
+    const service = new CoderService();
+
+    let now = 0;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "not_found" as const,
+    });
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn((ms: number) => {
+      now += ms;
+      return Promise.resolve();
+    });
+
+    try {
+      const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+        timeoutMs: 1_000,
+        waitForExistence: true,
+      });
+
+      expect(result.success).toBe(true);
+      expect(getWorkspaceStatusSpy).toHaveBeenCalled();
+      expect(serviceHack.runCoderCommand).not.toHaveBeenCalled();
+    } finally {
+      // Reset Date.now even if the test fails.
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("short-circuits on waitForExistenceTimeoutMs before overall timeout", async () => {
+    const service = new CoderService();
+
+    let now = 0;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    const getWorkspaceStatusSpy = spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "not_found" as const,
+    });
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn((ms: number) => {
+      now += ms;
+      return Promise.resolve();
+    });
+
+    try {
+      const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+        timeoutMs: 60_000,
+        waitForExistence: true,
+        // Short existence-wait window: succeed after ~5s of only not_found
+        waitForExistenceTimeoutMs: 5_000,
+      });
+
+      expect(result.success).toBe(true);
+      expect(getWorkspaceStatusSpy).toHaveBeenCalled();
+      // Should never attempt `coder delete` since we only saw not_found
+      expect(serviceHack.runCoderCommand).not.toHaveBeenCalled();
+      // Should have returned well before the 60s overall timeout
+      expect(now).toBeLessThan(10_000);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("treats a successful delete as terminal even if status polling errors", async () => {
+    const service = new CoderService();
+
+    spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "error" as const,
+      error: "auth failed",
+    });
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn(() => Promise.resolve());
+
+    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+      timeoutMs: 60_000,
+      waitForExistence: false,
+    });
+
+    expect(result.success).toBe(true);
+    expect(serviceHack.runCoderCommand).toHaveBeenCalledTimes(1);
+    expect(serviceHack.sleep).not.toHaveBeenCalled();
+  });
+
+  it("treats a successful delete as terminal even when waitForExistence=true", async () => {
+    const service = new CoderService();
+
+    spyOn(service, "getWorkspaceStatus").mockResolvedValue({
+      kind: "error" as const,
+      error: "auth failed",
+    });
+
+    const serviceHack = service as unknown as {
+      runCoderCommand: (
+        args: string[],
+        options: { timeoutMs: number; signal?: AbortSignal }
+      ) => Promise<{
+        exitCode: number | null;
+        stdout: string;
+        stderr: string;
+        error?: string;
+      }>;
+      sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+    };
+
+    serviceHack.runCoderCommand = vi.fn(() =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" })
+    );
+    serviceHack.sleep = vi.fn(() => Promise.resolve());
+
+    const result = await service.deleteWorkspaceEventually("mux-my-workspace", {
+      timeoutMs: 60_000,
+      waitForExistence: true,
+    });
+
+    expect(result.success).toBe(true);
+    expect(serviceHack.runCoderCommand).toHaveBeenCalledTimes(1);
+    expect(serviceHack.sleep).not.toHaveBeenCalled();
   });
 });
 

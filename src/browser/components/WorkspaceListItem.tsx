@@ -16,7 +16,11 @@ import { WorkspaceHoverPreview } from "./WorkspaceHoverPreview";
 import { Tooltip, TooltipTrigger, TooltipContent } from "./ui/tooltip";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "./ui/hover-card";
 import { Popover, PopoverContent, PopoverTrigger, PopoverAnchor } from "./ui/popover";
-import { Pencil, Trash2, Ellipsis, Link2 } from "lucide-react";
+import { Pencil, Trash2, Ellipsis, Loader2, Link2 } from "lucide-react";
+import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
+import { Shimmer } from "./ai-elements/shimmer";
+import { ArchiveIcon } from "./icons/ArchiveIcon";
+import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 import { useLinkSharingEnabled } from "@/browser/contexts/TelemetryEnabledContext";
 import { formatKeybind, matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { ShareTranscriptDialog } from "./ShareTranscriptDialog";
@@ -33,10 +37,6 @@ function preventHoverCardDismissForRadixPortals(e: {
     e.preventDefault();
   }
 }
-import { WorkspaceStatusIndicator } from "./WorkspaceStatusIndicator";
-import { Shimmer } from "./ai-elements/shimmer";
-import { ArchiveIcon } from "./icons/ArchiveIcon";
-import { WORKSPACE_DRAG_TYPE, type WorkspaceDragItem } from "./WorkspaceSectionDropZone";
 
 export interface WorkspaceSelection {
   projectPath: string;
@@ -70,10 +70,13 @@ export interface WorkspaceListItemProps extends WorkspaceListItemBaseProps {
   metadata: FrontendWorkspaceMetadata;
   projectName: string;
   isArchiving?: boolean;
+  /** True when deletion is in-flight (optimistic UI while backend removes). */
+  isRemoving?: boolean;
   /** Section ID this workspace belongs to (for drag-drop targeting) */
   sectionId?: string;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
   onArchiveWorkspace: (workspaceId: string, button: HTMLElement) => Promise<void>;
+  onCancelCreation: (workspaceId: string) => Promise<void>;
 }
 
 /** Props for draft (UI-only placeholder) items */
@@ -184,7 +187,9 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
         <Tooltip>
           <TooltipTrigger asChild>
             <button
+              type="button"
               className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+              onKeyDown={stopKeyboardPropagation}
               onClick={(e) => {
                 e.stopPropagation();
                 draft.onDelete();
@@ -223,17 +228,20 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     projectName,
     isSelected,
     isArchiving,
+    isRemoving: isRemovingProp,
     depth,
     sectionId,
     onSelectWorkspace,
     onArchiveWorkspace,
+    onCancelCreation,
   } = props;
 
   // Destructure metadata for convenience
-  const { id: workspaceId, namedWorkspacePath, status } = metadata;
+  const { id: workspaceId, namedWorkspacePath } = metadata;
   const isMuxHelpChat = workspaceId === MUX_HELP_CHAT_WORKSPACE_ID;
-  const isCreating = status === "creating";
-  const isDisabled = isCreating || isArchiving;
+  const isInitializing = metadata.isInitializing === true;
+  const isRemoving = isRemovingProp === true || metadata.isRemoving === true;
+  const isDisabled = isRemoving || isArchiving === true;
 
   const { isUnread } = useWorkspaceUnread(workspaceId);
   const gitStatus = useGitStatus(workspaceId);
@@ -324,12 +332,13 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
 
   const fallbackModel = useWorkspaceFallbackModel(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
-  const hasStatusText = Boolean(agentStatus) || awaitingUserQuestion || isWorking || isCreating;
+  const hasStatusText =
+    Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
-  // "creating" so users can see early streaming/status information immediately.
+  // initializing so users can see early streaming/status information immediately.
   const hasSecondaryRow = isArchiving === true || hasStatusText;
 
-  const showUnreadBar = !isCreating && !isEditing && isUnread && !(isSelected && !isDisabled);
+  const showUnreadBar = !isInitializing && !isEditing && isUnread && !(isSelected && !isDisabled);
   const paddingLeft = getItemPaddingLeft(depth);
 
   // Drag handle for moving workspace between sections
@@ -365,11 +374,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         className={cn(
           LIST_ITEM_BASE_CLASSES,
           isDragging && "opacity-50",
-          isDisabled
-            ? "cursor-default opacity-70"
-            : "cursor-pointer hover:bg-hover [&:hover_button]:opacity-100",
-          isSelected && !isDisabled && "bg-hover",
-          isArchiving && "pointer-events-none"
+          isRemoving && "opacity-70",
+          // Keep hover styles enabled for initializing workspaces so the row feels interactive.
+          !isArchiving && "hover:bg-hover [&:hover_button]:opacity-100",
+          isArchiving && "pointer-events-none opacity-70",
+          isDisabled ? "cursor-default" : "cursor-pointer",
+          isSelected && !isDisabled && "bg-hover"
         )}
         style={{ paddingLeft }}
         onClick={() => {
@@ -405,11 +415,13 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         tabIndex={isDisabled ? -1 : 0}
         aria-current={isSelected ? "true" : undefined}
         aria-label={
-          isCreating
-            ? `Creating workspace ${displayTitle}`
-            : isArchiving
-              ? `Archiving workspace ${displayTitle}`
-              : `Select workspace ${displayTitle}`
+          isRemoving
+            ? `Deleting workspace ${displayTitle}`
+            : isInitializing
+              ? `Initializing workspace ${displayTitle}`
+              : isArchiving
+                ? `Archiving workspace ${displayTitle}`
+                : `Select workspace ${displayTitle}`
         }
         aria-disabled={isDisabled}
         data-workspace-path={namedWorkspacePath}
@@ -419,118 +431,162 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
       >
         <SelectionBar isSelected={isSelected && !isDisabled} showUnread={showUnreadBar} />
 
-        {!isCreating && !isEditing && !isDisabled && (
+        {/* Action button: cancel/delete spinner for initializing workspaces, overflow menu otherwise */}
+        {isInitializing ? (
           <ActionButtonWrapper hasSubtitle={hasStatusText}>
-            {/* Keep the overflow menu in the left action slot to avoid duplicate affordances. */}
-            <Popover
-              open={isTitleMenuOpen}
-              onOpenChange={(open) => {
-                setIsTitleMenuOpen(open);
-                if (!open) setContextMenuPosition(null);
-              }}
-            >
-              {/* When opened via right-click, anchor at click position */}
-              {contextMenuPosition && (
-                <PopoverAnchor asChild>
-                  <span
-                    style={{
-                      position: "fixed",
-                      left: contextMenuPosition.x,
-                      top: contextMenuPosition.y,
-                      width: 0,
-                      height: 0,
-                    }}
-                  />
-                </PopoverAnchor>
-              )}
-              <PopoverTrigger asChild>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <button
+                  type="button"
                   className={cn(
-                    "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
-                    // Hidden until row hover, but remain visible while open.
-                    isTitleMenuOpen ? "opacity-100" : "opacity-0"
+                    "text-muted inline-flex h-4 w-4 items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                    // Keep cancel affordance hidden until row-hover while initializing,
+                    // but force it visible as a spinner once deletion starts.
+                    isRemoving
+                      ? "cursor-default opacity-100"
+                      : "cursor-pointer opacity-0 hover:text-destructive focus-visible:opacity-100"
                   )}
-                  onClick={(e) => e.stopPropagation()}
-                  aria-label={`Workspace actions for ${displayTitle}`}
-                  data-workspace-id={workspaceId}
-                >
-                  <Ellipsis className="h-3 w-3" />
-                </button>
-              </PopoverTrigger>
-
-              <PopoverContent
-                align={contextMenuPosition ? "start" : "end"}
-                side={contextMenuPosition ? "right" : "bottom"}
-                sideOffset={contextMenuPosition ? 0 : 6}
-                className="w-[250px] !min-w-0 p-1"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <button
-                  className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                  disabled={isRemoving}
+                  onKeyDown={stopKeyboardPropagation}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsTitleMenuOpen(false);
-                    startEditing();
+                    if (isRemoving) return;
+                    void onCancelCreation(workspaceId);
                   }}
+                  aria-label={
+                    isRemoving
+                      ? `Deleting workspace ${displayTitle}`
+                      : `Cancel workspace creation ${displayTitle}`
+                  }
+                  data-workspace-id={workspaceId}
                 >
-                  <span className="flex items-center gap-2">
-                    <Pencil className="h-3 w-3 shrink-0" />
-                    Edit chat title
-                  </span>
+                  {isRemoving ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3 w-3" />
+                  )}
                 </button>
-                {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
-                {linkSharingEnabled === true && !isMuxHelpChat && (
-                  <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsTitleMenuOpen(false);
-                      setShareTranscriptOpen(true);
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Link2 className="h-3 w-3 shrink-0" />
-                      Share transcript{" "}
-                      <span className="text-muted text-[10px]">
-                        ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
-                      </span>
-                    </span>
-                  </button>
-                )}
-                {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
-                {!isMuxHelpChat && (
-                  <button
-                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsTitleMenuOpen(false);
-                      void onArchiveWorkspace(workspaceId, e.currentTarget);
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <ArchiveIcon className="h-3 w-3 shrink-0" />
-                      Archive chat{" "}
-                      <span className="text-muted text-[10px]">
-                        ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
-                      </span>
-                    </span>
-                  </button>
-                )}
-              </PopoverContent>
-            </Popover>
-            {/* Share transcript dialog – rendered as a sibling to the overflow menu.
-                Triggered by the menu item above or the Ctrl+Shift+L keybind.
-                Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
-            {linkSharingEnabled === true && (
-              <ShareTranscriptDialog
-                workspaceId={workspaceId}
-                workspaceName={metadata.name}
-                workspaceTitle={displayTitle}
-                open={shareTranscriptOpen}
-                onOpenChange={setShareTranscriptOpen}
-              />
-            )}
+              </TooltipTrigger>
+              <TooltipContent align="start">
+                {isRemoving ? "Deleting..." : "Cancel creation"}
+              </TooltipContent>
+            </Tooltip>
           </ActionButtonWrapper>
+        ) : (
+          !isEditing &&
+          !isDisabled && (
+            <ActionButtonWrapper hasSubtitle={hasStatusText}>
+              {/* Keep the overflow menu in the left action slot to avoid duplicate affordances. */}
+              <Popover
+                open={isTitleMenuOpen}
+                onOpenChange={(open) => {
+                  setIsTitleMenuOpen(open);
+                  if (!open) setContextMenuPosition(null);
+                }}
+              >
+                {/* When opened via right-click, anchor at click position */}
+                {contextMenuPosition && (
+                  <PopoverAnchor asChild>
+                    <span
+                      style={{
+                        position: "fixed",
+                        left: contextMenuPosition.x,
+                        top: contextMenuPosition.y,
+                        width: 0,
+                        height: 0,
+                      }}
+                    />
+                  </PopoverAnchor>
+                )}
+                <PopoverTrigger asChild>
+                  <button
+                    className={cn(
+                      "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
+                      // Hidden until row hover, but remain visible while open.
+                      isTitleMenuOpen ? "opacity-100" : "opacity-0"
+                    )}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`Workspace actions for ${displayTitle}`}
+                    data-workspace-id={workspaceId}
+                  >
+                    <Ellipsis className="h-3 w-3" />
+                  </button>
+                </PopoverTrigger>
+
+                <PopoverContent
+                  align={contextMenuPosition ? "start" : "end"}
+                  side={contextMenuPosition ? "right" : "bottom"}
+                  sideOffset={contextMenuPosition ? 0 : 6}
+                  className="w-[250px] !min-w-0 p-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsTitleMenuOpen(false);
+                      startEditing();
+                    }}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Pencil className="h-3 w-3 shrink-0" />
+                      Edit chat title
+                    </span>
+                  </button>
+                  {/* Share transcript link (gated on telemetry/link-sharing being enabled). */}
+                  {linkSharingEnabled === true && !isMuxHelpChat && (
+                    <button
+                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsTitleMenuOpen(false);
+                        setShareTranscriptOpen(true);
+                      }}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Link2 className="h-3 w-3 shrink-0" />
+                        Share transcript{" "}
+                        <span className="text-muted text-[10px]">
+                          ({formatKeybind(KEYBINDS.SHARE_TRANSCRIPT)})
+                        </span>
+                      </span>
+                    </button>
+                  )}
+                  {/* Archive stays in the overflow menu to keep the sidebar row uncluttered. */}
+                  {!isMuxHelpChat && (
+                    <button
+                      className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs whitespace-nowrap"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsTitleMenuOpen(false);
+                        void onArchiveWorkspace(workspaceId, e.currentTarget);
+                      }}
+                    >
+                      <span className="flex items-center gap-2">
+                        <ArchiveIcon className="h-3 w-3 shrink-0" />
+                        Archive chat{" "}
+                        <span className="text-muted text-[10px]">
+                          ({formatKeybind(KEYBINDS.ARCHIVE_WORKSPACE)})
+                        </span>
+                      </span>
+                    </button>
+                  )}
+                </PopoverContent>
+              </Popover>
+              {/* Share transcript dialog – rendered as a sibling to the overflow menu.
+                  Triggered by the menu item above or the Ctrl+Shift+L keybind.
+                  Uses a Dialog (modal) so it stays visible regardless of popover dismissal. */}
+              {linkSharingEnabled === true && (
+                <ShareTranscriptDialog
+                  workspaceId={workspaceId}
+                  workspaceName={metadata.name}
+                  workspaceTitle={displayTitle}
+                  open={shareTranscriptOpen}
+                  onOpenChange={setShareTranscriptOpen}
+                />
+              )}
+            </ActionButtonWrapper>
+          )
         )}
 
         {/* Split row spacing when there's no secondary line to keep titles centered. */}
@@ -569,7 +625,10 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   >
                     {/* Always render text in same structure; Shimmer just adds animation class */}
                     <Shimmer
-                      className={cn("w-full truncate", !(isWorking || isCreating) && "no-shimmer")}
+                      className={cn(
+                        "w-full truncate",
+                        !(isWorking || isInitializing) && "no-shimmer"
+                      )}
                       colorClass="var(--color-foreground)"
                     >
                       {displayTitle}
@@ -598,7 +657,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
               </HoverCard>
             )}
 
-            {!isCreating && !isEditing && (
+            {!isInitializing && !isEditing && (
               <div className="flex items-center gap-1">
                 <GitStatusIndicator
                   gitStatus={gitStatus}
@@ -612,7 +671,12 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
           </div>
           {hasSecondaryRow && (
             <div className="min-w-0">
-              {isArchiving ? (
+              {isRemoving ? (
+                <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                  <span className="min-w-0 truncate">Deleting...</span>
+                </div>
+              ) : isArchiving ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs">
                   <ArchiveIcon className="h-3 w-3 shrink-0" />
                   <span className="min-w-0 truncate">Archiving...</span>
@@ -621,7 +685,7 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                 <WorkspaceStatusIndicator
                   workspaceId={workspaceId}
                   fallbackModel={fallbackModel}
-                  isCreating={isCreating}
+                  isCreating={isInitializing}
                 />
               )}
             </div>

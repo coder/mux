@@ -117,7 +117,7 @@ describe("getSlashCommandSuggestions", () => {
     const haiku = suggestions.find((s) => s.display === "/haiku");
 
     expect(haiku).toBeTruthy();
-    expect(haiku?.description).toContain("(one message)");
+    expect(haiku?.description).toContain("(one message, +level for thinking)");
     expect(haiku?.replacement).toBe("/haiku ");
   });
 });

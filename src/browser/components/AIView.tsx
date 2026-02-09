@@ -20,8 +20,8 @@ interface AIViewProps {
   className?: string;
   /** If set, workspace is incompatible (from newer mux version) and this error should be displayed */
   incompatibleRuntime?: string;
-  /** If 'creating', workspace is still being set up (git operations in progress) */
-  status?: "creating";
+  /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
+  isInitializing?: boolean;
 }
 
 /**

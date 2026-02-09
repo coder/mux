@@ -183,6 +183,10 @@ export async function runInitHookOnRuntime(
     cwd: workspacePath,
     timeout: 3600, // 1 hour - generous timeout for init hooks
     abortSignal,
+    // When init is cancellable (archive/remove), we want abort to actually stop the remote hook.
+    // With OpenSSH, allocating a PTY ensures the remote process is tied to the session and
+    // receives a hangup when the client disconnects.
+    forcePTY: abortSignal !== undefined,
     env: muxEnv,
   });
 

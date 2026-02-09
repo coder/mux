@@ -313,6 +313,8 @@ export type MuxFrontendMetadata = MuxFrontendMetadataBase &
       }
     | {
         type: "normal"; // Regular messages
+        /** Original user input for one-shot overrides (e.g., "/opus+high do something") — used as display content so the command prefix remains visible. */
+        rawCommand?: string;
       }
   );
 

@@ -9,6 +9,7 @@ import { applyWorkspaceChatEventToAggregator } from "@/browser/utils/messages/ap
 import {
   StreamingMessageAggregator,
   type LoadedSkill,
+  type SkillLoadError,
 } from "@/browser/utils/messages/StreamingMessageAggregator";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { isAbortError } from "@/browser/utils/isAbortError";
@@ -65,6 +66,7 @@ export interface WorkspaceState {
   recencyTimestamp: number | null;
   todos: TodoItem[];
   loadedSkills: LoadedSkill[];
+  skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
   lastAbortReason: StreamAbortReasonSnapshot | null;
   pendingStreamStartTime: number | null;
@@ -166,6 +168,7 @@ export interface WorkspaceSidebarState {
   currentModel: string | null;
   recencyTimestamp: number | null;
   loadedSkills: LoadedSkill[];
+  skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
 }
 
@@ -1032,6 +1035,7 @@ export class WorkspaceStore {
         recencyTimestamp: aggregator.getRecencyTimestamp(),
         todos: aggregator.getCurrentTodos(),
         loadedSkills: aggregator.getLoadedSkills(),
+        skillLoadErrors: aggregator.getSkillLoadErrors(),
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus: aggregator.getAgentStatus(),
         pendingStreamStartTime,
@@ -1076,6 +1080,7 @@ export class WorkspaceStore {
       cached.currentModel === fullState.currentModel &&
       cached.recencyTimestamp === fullState.recencyTimestamp &&
       cached.loadedSkills === fullState.loadedSkills &&
+      cached.skillLoadErrors === fullState.skillLoadErrors &&
       cached.agentStatus === fullState.agentStatus
     ) {
       // Even if we re-use the cached object, mark it as derived from the current
@@ -1092,6 +1097,7 @@ export class WorkspaceStore {
       currentModel: fullState.currentModel,
       recencyTimestamp: fullState.recencyTimestamp,
       loadedSkills: fullState.loadedSkills,
+      skillLoadErrors: fullState.skillLoadErrors,
       agentStatus: fullState.agentStatus,
     };
     this.sidebarStateCache.set(workspaceId, newState);

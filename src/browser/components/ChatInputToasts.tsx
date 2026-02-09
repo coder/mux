@@ -51,6 +51,14 @@ export const createCommandToast = (parsed: ParsedCommand): Toast | null => {
             /haiku explain this code
             <br />
             /opus review my changes
+            <br />
+            <br />
+            <SolutionLabel>With thinking override:</SolutionLabel>
+            /opus+high deep review
+            <br />
+            /haiku+0 quick answer (0=lowest for model)
+            <br />
+            /+2 use current model, thinking level 2
           </>
         ),
       };
