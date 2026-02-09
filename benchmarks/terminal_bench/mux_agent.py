@@ -61,21 +61,19 @@ class MuxAgent(BaseInstalledAgent):
         "MUX_PROJECT_CANDIDATES",
         "MUX_MODEL",
         "MUX_TIMEOUT_MS",
-        "MUX_THINKING_LEVEL",
         "MUX_CONFIG_ROOT",
         "MUX_APP_ROOT",
         "MUX_WORKSPACE_ID",
-        "MUX_MODE",
-        "MUX_RUNTIME",
         "MUX_EXPERIMENTS",
+        # Generic pass-through for arbitrary mux run CLI flags (e.g., --thinking
+        # high --use-1m --budget 5.00). Avoids per-flag plumbing.
+        "MUX_RUN_ARGS",
     )
 
     def __init__(
         self,
         logs_dir: Path,
         model_name: str = "anthropic:claude-sonnet-4-5",
-        mode: str | None = None,
-        thinking_level: str | None = None,
         experiments: str | None = None,
         timeout: int | str | None = None,
         **kwargs: Any,
@@ -100,8 +98,6 @@ class MuxAgent(BaseInstalledAgent):
         self._runner_path = runner_path
         self._repo_root = repo_root
         self._archive_bytes: bytes | None = None
-        self._mode = mode.lower() if mode else None
-        self._thinking_level = thinking_level.lower() if thinking_level else None
         self._model_name = (model_name or "").strip()
         self._experiments = (experiments or "").strip() if experiments else None
         self._last_environment: BaseEnvironment | None = None
@@ -123,8 +119,6 @@ class MuxAgent(BaseInstalledAgent):
         env.setdefault("MUX_CONFIG_ROOT", "/root/.mux")
         env.setdefault("MUX_APP_ROOT", "/opt/mux-app")
         env.setdefault("MUX_WORKSPACE_ID", "mux-bench")
-        env.setdefault("MUX_THINKING_LEVEL", "high")
-        env.setdefault("MUX_MODE", "exec")
         env.setdefault("MUX_PROJECT_CANDIDATES", self._DEFAULT_PROJECT_CANDIDATES)
 
         model_value = self._model_name or env["MUX_MODEL"]
@@ -145,23 +139,6 @@ class MuxAgent(BaseInstalledAgent):
                 "Google models require GOOGLE_GENERATIVE_AI_API_KEY (preferred) or GOOGLE_API_KEY"
             )
         env["MUX_MODEL"] = model_value
-
-        thinking_value = self._thinking_level or env["MUX_THINKING_LEVEL"]
-        normalized_thinking = thinking_value.strip().lower()
-        if normalized_thinking not in {"off", "low", "medium", "high", "xhigh"}:
-            raise ValueError(
-                "MUX_THINKING_LEVEL must be one of off, low, medium, high, xhigh"
-            )
-        env["MUX_THINKING_LEVEL"] = normalized_thinking
-
-        mode_value = self._mode or env["MUX_MODE"]
-        normalized_mode = mode_value.strip().lower()
-        if normalized_mode in {"exec", "execute"}:
-            env["MUX_MODE"] = "exec"
-        elif normalized_mode == "plan":
-            env["MUX_MODE"] = "plan"
-        else:
-            raise ValueError("MUX_MODE must be one of plan, exec, or execute")
 
         # These env vars are all set with defaults above, no need to validate
         for key in (

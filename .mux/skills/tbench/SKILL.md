@@ -58,6 +58,7 @@ make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48 TB_TASK_NAMES="chess-be
 - `TB_ENV`: Environment to run in (`local` or `daytona`)
 - `TB_TASK_NAMES`: Space-separated task names to run (default: all tasks)
 - `TB_ARGS`: Additional arguments passed to harbor
+- `MUX_RUN_ARGS`: CLI flags passed directly to `mux run` inside the container (e.g., `--thinking high --use-1m --budget 5.00`). This is the primary mechanism for all `mux run` flags — avoids per-flag plumbing.
 
 ### Timeout Handling
 
@@ -87,21 +88,35 @@ TB_TIMEOUT=600 make benchmark-terminal TB_SAMPLE_SIZE=5
 
 ## Agent Configuration
 
-The mux agent supports the following kwargs (passed via `--agent-kwarg`):
+The agent adapter accepts a few Harbor kwargs (passed via `--agent-kwarg`):
 
 - `model_name`: Model to use (e.g., `anthropic/claude-sonnet-4-5`, `openai/gpt-5-codex`)
-- `thinking_level`: Thinking level (`off`, `low`, `medium`, `high`)
-- `mode`: Agent mode (`plan`, `exec`)
 - `experiments`: Experiments to enable, comma-separated (e.g., `programmatic-tool-calling`)
 
-**Example:**
+All other `mux run` CLI flags (thinking level, mode, runtime, budget, etc.) are passed via `MUX_RUN_ARGS` — no per-flag plumbing needed.
+
+**CI dispatch (primary method):**
 
 ```bash
-# Run with specific model and thinking level
-make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5-codex --agent-kwarg thinking_level=high"
+# Run with model, thinking, and 1M context
+gh workflow run terminal-bench.yml \
+  -f model_name=anthropic/claude-opus-4-6 \
+  -f mux_run_args="--thinking xhigh --use-1m"
 
-# Run with multiple experiments
-make benchmark-terminal TB_ARGS="--agent-kwarg experiments=programmatic-tool-calling-exclusive,post-compaction-context"
+# Run with budget cap
+gh workflow run terminal-bench.yml \
+  -f model_name=anthropic/claude-opus-4-6 \
+  -f mux_run_args="--thinking high --budget 5.00"
+```
+
+**Local runs:**
+
+```bash
+# Pass flags via MUX_RUN_ARGS env var
+MUX_RUN_ARGS="--thinking high --use-1m" make benchmark-terminal
+
+# Model and experiments via TB_ARGS
+make benchmark-terminal TB_ARGS="--agent-kwarg model_name=openai/gpt-5-codex --agent-kwarg experiments=programmatic-tool-calling"
 ```
 
 ## Results

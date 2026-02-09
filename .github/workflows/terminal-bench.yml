@@ -7,10 +7,6 @@ on:
         description: "Model to use (e.g., anthropic/claude-opus-4-5)"
         required: false
         type: string
-      thinking_level:
-        description: "Thinking level (off, low, medium, high)"
-        required: false
-        type: string
       dataset:
         description: "Terminal-Bench dataset to use"
         required: false
@@ -53,8 +49,8 @@ on:
         required: false
         type: string
         default: ""
-      mux_runtime:
-        description: "Mux runtime override passed to mux-run.sh (e.g., local)"
+      mux_run_args:
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m --budget 5.00)"
         required: false
         type: string
         default: ""
@@ -94,8 +90,8 @@ on:
         description: "Model to use (e.g., anthropic/claude-opus-4-5, openai/gpt-5.2)"
         required: false
         type: string
-      thinking_level:
-        description: "Thinking level (off, low, medium, high)"
+      mux_run_args:
+        description: "Additional CLI flags passed to mux run (e.g., --thinking high --use-1m)"
         required: false
         type: string
       extra_args:
@@ -162,12 +158,11 @@ jobs:
           MUX_MODEL: ${{ inputs.model_name }}
           TB_TIMEOUT: ${{ inputs.timeout }}
           MUX_PROJECT_PATH: ${{ inputs.mux_project_path }}
-          MUX_RUNTIME: ${{ inputs.mux_runtime }}
           TB_ARGS: >-
-            ${{ inputs.thinking_level && format('--agent-kwarg thinking_level={0}', inputs.thinking_level) || '' }}
             ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          MUX_RUN_ARGS: ${{ inputs.mux_run_args }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

@@ -33,9 +33,6 @@ MUX_PROJECT_CANDIDATES="${MUX_PROJECT_CANDIDATES:-/workspace:/app:/workspaces:/r
 MUX_MODEL="${MUX_MODEL:-anthropic:claude-sonnet-4-5}"
 MUX_TIMEOUT_MS="${MUX_TIMEOUT_MS:-}"
 MUX_WORKSPACE_ID="${MUX_WORKSPACE_ID:-mux-bench}"
-MUX_THINKING_LEVEL="${MUX_THINKING_LEVEL:-high}"
-MUX_MODE="${MUX_MODE:-exec}"
-MUX_RUNTIME="${MUX_RUNTIME:-}"
 MUX_EXPERIMENTS="${MUX_EXPERIMENTS:-}"
 
 resolve_project_path() {
@@ -67,14 +64,8 @@ cd "${MUX_APP_ROOT}"
 cmd=(bun src/cli/run.ts
   --dir "${project_path}"
   --model "${MUX_MODEL}"
-  --mode "${MUX_MODE}"
-  --thinking "${MUX_THINKING_LEVEL}"
   --keep-background-processes
   --json)
-
-if [[ -n "${MUX_RUNTIME}" ]]; then
-  cmd+=(--runtime "${MUX_RUNTIME}")
-fi
 
 # Add experiment flags (comma-separated → repeated --experiment flags)
 if [[ -n "${MUX_EXPERIMENTS}" ]]; then
@@ -87,6 +78,13 @@ if [[ -n "${MUX_EXPERIMENTS}" ]]; then
       cmd+=(--experiment "${exp}")
     fi
   done
+fi
+
+# Append arbitrary mux run flags (e.g., --thinking high --mode exec --use-1m --budget 5.00)
+if [[ -n "${MUX_RUN_ARGS:-}" ]]; then
+  # Word-split intentional: MUX_RUN_ARGS contains space-separated CLI flags
+  # shellcheck disable=SC2206
+  cmd+=(${MUX_RUN_ARGS})
 fi
 
 # NOTE: Harbor only automatically collects /logs/agent on timeouts.
