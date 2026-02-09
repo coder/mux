@@ -143,10 +143,11 @@ export class PartialService {
         return Err("Partial message has no historySequence");
       }
 
-      // Check if this partial has already been finalized in chat.jsonl
+      // Check if this partial has already been finalized in chat.jsonl.
       // A partial with MORE parts than what's in history means it's newer and should be committed
-      // (placeholder has empty parts, interrupted stream has accumulated parts)
-      const historyResult = await this.historyService.getFullHistory(workspaceId);
+      // (placeholder has empty parts, interrupted stream has accumulated parts).
+      // Only the current compaction epoch matters — partial messages are always recent.
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
       if (!historyResult.success) {
         return Err(`Failed to read history: ${historyResult.error}`);
       }

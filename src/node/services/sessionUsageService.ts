@@ -79,6 +79,21 @@ export class SessionUsageService {
     this.config = config;
     this.historyService = historyService;
   }
+  /**
+   * Collect all messages from iterateFullHistory into an array.
+   * Usage rebuild needs every epoch for accurate totals.
+   */
+  private async collectFullHistory(workspaceId: string): Promise<MuxMessage[]> {
+    const messages: MuxMessage[] = [];
+    const result = await this.historyService.iterateFullHistory(workspaceId, "forward", (chunk) => {
+      messages.push(...chunk);
+    });
+    if (!result.success) {
+      log.warn(`Failed to iterate history for ${workspaceId}: ${result.error}`);
+      return [];
+    }
+    return messages;
+  }
 
   private getFilePath(workspaceId: string): string {
     return path.join(this.config.getSessionDir(workspaceId), this.SESSION_USAGE_FILE);
@@ -156,9 +171,9 @@ export class SessionUsageService {
         log.warn(
           `session-usage.json unreadable for ${workspaceId}, rebuilding before token stats cache update`
         );
-        const historyResult = await this.historyService.getFullHistory(workspaceId);
-        if (historyResult.success && historyResult.data.length > 0) {
-          await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
+        const messages = await this.collectFullHistory(workspaceId);
+        if (messages.length > 0) {
+          await this.rebuildFromMessagesInternal(workspaceId, messages);
           current = await this.readFile(workspaceId);
         } else {
           current = { byModel: {}, version: 1 };
@@ -210,9 +225,9 @@ export class SessionUsageService {
         log.warn(
           `session-usage.json unreadable for ${parentWorkspaceId}, rebuilding before roll-up`
         );
-        const historyResult = await this.historyService.getFullHistory(parentWorkspaceId);
-        if (historyResult.success && historyResult.data.length > 0) {
-          await this.rebuildFromMessagesInternal(parentWorkspaceId, historyResult.data);
+        const messages = await this.collectFullHistory(parentWorkspaceId);
+        if (messages.length > 0) {
+          await this.rebuildFromMessagesInternal(parentWorkspaceId, messages);
           current = await this.readFile(parentWorkspaceId);
         } else {
           current = { byModel: {}, version: 1 };
@@ -248,18 +263,18 @@ export class SessionUsageService {
       } catch (error) {
         // File missing or corrupted - try to rebuild from messages
         if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-          const historyResult = await this.historyService.getFullHistory(workspaceId);
-          if (historyResult.success && historyResult.data.length > 0) {
-            await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
+          const messages = await this.collectFullHistory(workspaceId);
+          if (messages.length > 0) {
+            await this.rebuildFromMessagesInternal(workspaceId, messages);
             return this.readFile(workspaceId);
           }
           return undefined; // Truly empty session
         }
         // Parse error - try rebuild
         log.warn(`session-usage.json corrupted for ${workspaceId}, rebuilding`);
-        const historyResult = await this.historyService.getFullHistory(workspaceId);
-        if (historyResult.success && historyResult.data.length > 0) {
-          await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
+        const messages = await this.collectFullHistory(workspaceId);
+        if (messages.length > 0) {
+          await this.rebuildFromMessagesInternal(workspaceId, messages);
           return this.readFile(workspaceId);
         }
         return undefined;

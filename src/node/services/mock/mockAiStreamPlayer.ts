@@ -550,9 +550,10 @@ export class MockAiStreamPlayer {
           parts: event.parts,
         };
 
-        // Update history with completed message (mirrors real StreamManager behavior)
-        // Fetch the current message from history to get its historySequence
-        const historyResult = await this.deps.historyService.getFullHistory(workspaceId);
+        // Update history with completed message (mirrors real StreamManager behavior).
+        // The target message is always in the current epoch — use boundary-aware read.
+        const historyResult =
+          await this.deps.historyService.getHistoryFromLatestBoundary(workspaceId);
         if (active.cancelled) return;
         if (historyResult.success) {
           const existingMessage = historyResult.data.find((msg) => msg.id === messageId);
