@@ -154,6 +154,58 @@ describe("buildProviderOptions - Anthropic", () => {
       });
     });
   });
+
+  describe("Anthropic cache TTL overrides", () => {
+    test("should include cacheControl ttl when configured", () => {
+      const result = buildProviderOptions(
+        "anthropic:claude-sonnet-4-5",
+        "off",
+        undefined,
+        undefined,
+        {
+          anthropic: { cacheTtl: "1h" },
+        }
+      );
+
+      expect(result).toEqual({
+        anthropic: {
+          disableParallelToolUse: false,
+          sendReasoning: true,
+          cacheControl: {
+            type: "ephemeral",
+            ttl: "1h",
+          },
+        },
+      });
+    });
+
+    test("should include cacheControl ttl for Opus 4.6 effort models", () => {
+      const result = buildProviderOptions(
+        "anthropic:claude-opus-4-6",
+        "medium",
+        undefined,
+        undefined,
+        {
+          anthropic: { cacheTtl: "5m" },
+        }
+      );
+
+      expect(result).toEqual({
+        anthropic: {
+          disableParallelToolUse: false,
+          sendReasoning: true,
+          thinking: {
+            type: "adaptive",
+          },
+          cacheControl: {
+            type: "ephemeral",
+            ttl: "5m",
+          },
+          effort: "medium",
+        },
+      });
+    });
+  });
 });
 
 describe("buildProviderOptions - OpenAI", () => {

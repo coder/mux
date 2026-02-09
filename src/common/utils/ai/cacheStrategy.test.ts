@@ -146,6 +146,23 @@ describe("cacheStrategy", () => {
         anthropic: { cacheControl: { type: "ephemeral" } },
       }); // Last part has cache control
     });
+
+    it("should include cache TTL when provided", () => {
+      const messages: ModelMessage[] = [{ role: "user", content: "Hello" }];
+      const result = applyCacheControl(messages, "anthropic:claude-3-5-sonnet", "1h");
+
+      expect(result[0]).toEqual({
+        ...messages[0],
+        providerOptions: {
+          anthropic: {
+            cacheControl: {
+              type: "ephemeral",
+              ttl: "1h",
+            },
+          },
+        },
+      });
+    });
   });
 
   describe("createCachedSystemMessage", () => {
@@ -189,6 +206,24 @@ describe("cacheStrategy", () => {
           anthropic: {
             cacheControl: {
               type: "ephemeral",
+            },
+          },
+        },
+      });
+    });
+
+    it("should include cache TTL in cached system message when provided", () => {
+      const systemContent = "You are a helpful assistant";
+      const result = createCachedSystemMessage(systemContent, "anthropic:claude-3-5-sonnet", "1h");
+
+      expect(result).toEqual({
+        role: "system",
+        content: systemContent,
+        providerOptions: {
+          anthropic: {
+            cacheControl: {
+              type: "ephemeral",
+              ttl: "1h",
             },
           },
         },
@@ -269,6 +304,26 @@ describe("cacheStrategy", () => {
       expect(Object.keys(result)).toEqual(Object.keys(mockTools));
     });
 
+    it("should include cache TTL on the cached tool when provided", () => {
+      const result = applyCacheControlToTools(mockTools, "anthropic:claude-3-5-sonnet", "1h");
+      const keys = Object.keys(mockTools);
+      const lastKey = keys[keys.length - 1];
+      const cachedLastTool = result[lastKey] as unknown as {
+        providerOptions?: {
+          anthropic?: {
+            cacheControl?: {
+              type?: string;
+              ttl?: string;
+            };
+          };
+        };
+      };
+
+      expect(cachedLastTool.providerOptions?.anthropic?.cacheControl).toEqual({
+        type: "ephemeral",
+        ttl: "1h",
+      });
+    });
     it("should not modify original tools object", () => {
       const originalTools = { ...mockTools };
       applyCacheControlToTools(mockTools, "anthropic:claude-3-5-sonnet");
