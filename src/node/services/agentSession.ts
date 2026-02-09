@@ -509,9 +509,13 @@ export class AgentSession {
 
     // Edits are implemented as truncate+replace. If the frontend omits fileParts,
     // preserve the original message's attachments.
+    // Only search the current compaction epoch — edits of pre-boundary messages are
+    // blocked (the frontend only shows post-boundary messages).
     let preservedEditFileParts: MuxFilePart[] | undefined;
     if (editMessageId && fileParts === undefined) {
-      const historyResult = await this.historyService.getFullHistory(this.workspaceId);
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+        this.workspaceId
+      );
       if (historyResult.success) {
         const targetMessage: MuxMessage | undefined = historyResult.data.find(
           (msg) => msg.id === editMessageId
@@ -548,8 +552,12 @@ export class AgentSession {
 
       // Find the truncation target: the edited message or any immediately-preceding snapshots.
       // (snapshots are persisted immediately before their corresponding user message)
+      // Only search the current compaction epoch — truncating past a compaction boundary
+      // would destroy the summary. The frontend only shows post-boundary messages.
       let truncateTargetId = editMessageId;
-      const historyResult = await this.historyService.getFullHistory(this.workspaceId);
+      const historyResult = await this.historyService.getHistoryFromLatestBoundary(
+        this.workspaceId
+      );
       if (historyResult.success) {
         const messages = historyResult.data;
         const editIndex = messages.findIndex((m) => m.id === editMessageId);
