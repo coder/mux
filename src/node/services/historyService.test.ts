@@ -1,10 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { HistoryService } from "./historyService";
 import { Config } from "@/node/config";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import assert from "node:assert";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+
+/** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
+async function collectFullHistory(service: HistoryService, workspaceId: string) {
+  const messages: MuxMessage[] = [];
+  const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
+    messages.push(...chunk);
+  });
+  assert(result.success, `collectFullHistory failed: ${result.success ? "" : result.error}`);
+  return messages;
+}
 
 describe("HistoryService", () => {
   let service: HistoryService;
@@ -32,12 +43,8 @@ describe("HistoryService", () => {
 
   describe("getHistory", () => {
     it("should return empty array when no history exists", async () => {
-      const result = await service.getFullHistory("workspace1");
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toEqual([]);
-      }
+      const messages = await collectFullHistory(service, "workspace1");
+      expect(messages).toEqual([]);
     });
 
     it("should read messages from chat.jsonl", async () => {
@@ -59,14 +66,10 @@ describe("HistoryService", () => {
           "\n"
       );
 
-      const result = await service.getFullHistory(workspaceId);
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toHaveLength(2);
-        expect(result.data[0].id).toBe("msg1");
-        expect(result.data[1].id).toBe("msg2");
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(2);
+      expect(messages[0].id).toBe("msg1");
+      expect(messages[1].id).toBe("msg2");
     });
 
     it("should skip malformed JSON lines", async () => {
@@ -89,14 +92,10 @@ describe("HistoryService", () => {
           "\n"
       );
 
-      const result = await service.getFullHistory(workspaceId);
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toHaveLength(2);
-        expect(result.data[0].id).toBe("msg1");
-        expect(result.data[1].id).toBe("msg2");
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(2);
+      expect(messages[0].id).toBe("msg1");
+      expect(messages[1].id).toBe("msg2");
     });
 
     it("hydrates legacy cmuxMetadata entries", async () => {
@@ -112,11 +111,8 @@ describe("HistoryService", () => {
       const chatPath = path.join(workspaceDir, "chat.jsonl");
       await fs.writeFile(chatPath, JSON.stringify({ ...legacyMessage, workspaceId }) + "\n");
 
-      const result = await service.getFullHistory(workspaceId);
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data[0].metadata?.muxMetadata?.type).toBe("normal");
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.muxMetadata?.type).toBe("normal");
     });
     it("should handle empty lines in history file", async () => {
       const workspaceId = "workspace1";
@@ -131,13 +127,9 @@ describe("HistoryService", () => {
         JSON.stringify({ ...msg1, workspaceId }) + "\n\n\n" // Extra empty lines
       );
 
-      const result = await service.getFullHistory(workspaceId);
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data).toHaveLength(1);
-        expect(result.data[0].id).toBe("msg1");
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].id).toBe("msg1");
     });
   });
 
@@ -165,10 +157,8 @@ describe("HistoryService", () => {
 
       expect(result.success).toBe(true);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data[0].metadata?.historySequence).toBe(0);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.historySequence).toBe(0);
     });
 
     it("should assign sequential historySequence numbers", async () => {
@@ -181,13 +171,11 @@ describe("HistoryService", () => {
       await service.appendToHistory(workspaceId, msg2);
       await service.appendToHistory(workspaceId, msg3);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data).toHaveLength(3);
-        expect(history.data[0].metadata?.historySequence).toBe(0);
-        expect(history.data[1].metadata?.historySequence).toBe(1);
-        expect(history.data[2].metadata?.historySequence).toBe(2);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(3);
+      expect(messages[0].metadata?.historySequence).toBe(0);
+      expect(messages[1].metadata?.historySequence).toBe(1);
+      expect(messages[2].metadata?.historySequence).toBe(2);
     });
 
     it("should preserve existing historySequence if provided", async () => {
@@ -198,10 +186,8 @@ describe("HistoryService", () => {
 
       expect(result.success).toBe(true);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data[0].metadata?.historySequence).toBe(5);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.historySequence).toBe(5);
     });
 
     it("should reject malformed provided historySequence values", async () => {
@@ -224,11 +210,9 @@ describe("HistoryService", () => {
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data[0].metadata?.historySequence).toBe(10);
-        expect(history.data[1].metadata?.historySequence).toBe(11);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.historySequence).toBe(10);
+      expect(messages[1].metadata?.historySequence).toBe(11);
     });
 
     it("should preserve other metadata fields", async () => {
@@ -241,13 +225,11 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data[0].metadata?.timestamp).toBe(123456);
-        expect(history.data[0].metadata?.model).toBe("claude-opus-4");
-        expect(history.data[0].metadata?.providerMetadata).toEqual({ test: "data" });
-        expect(history.data[0].metadata?.historySequence).toBeDefined();
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.timestamp).toBe(123456);
+      expect(messages[0].metadata?.model).toBe("claude-opus-4");
+      expect(messages[0].metadata?.providerMetadata).toEqual({ test: "data" });
+      expect(messages[0].metadata?.historySequence).toBeDefined();
     });
 
     it("should include workspaceId in persisted message", async () => {
@@ -278,24 +260,20 @@ describe("HistoryService", () => {
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        const updatedMsg = createMuxMessage("msg1", "user", "Updated Hello", {
-          historySequence: history.data[0].metadata?.historySequence,
-        });
+      const messages = await collectFullHistory(service, workspaceId);
+      const updatedMsg = createMuxMessage("msg1", "user", "Updated Hello", {
+        historySequence: messages[0].metadata?.historySequence,
+      });
 
-        const result = await service.updateHistory(workspaceId, updatedMsg);
-        expect(result.success).toBe(true);
+      const result = await service.updateHistory(workspaceId, updatedMsg);
+      expect(result.success).toBe(true);
 
-        const newHistory = await service.getFullHistory(workspaceId);
-        if (newHistory.success) {
-          expect(newHistory.data[0].parts[0]).toMatchObject({
-            type: "text",
-            text: "Updated Hello",
-          });
-          expect(newHistory.data[0].metadata?.historySequence).toBe(0);
-        }
-      }
+      const newMessages = await collectFullHistory(service, workspaceId);
+      expect(newMessages[0].parts[0]).toMatchObject({
+        type: "text",
+        text: "Updated Hello",
+      });
+      expect(newMessages[0].metadata?.historySequence).toBe(0);
     });
 
     it("should return error if message has no historySequence", async () => {
@@ -331,20 +309,16 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        const originalSequence = history.data[0].metadata?.historySequence;
-        const updatedMsg = createMuxMessage("msg1", "user", "Updated", {
-          historySequence: originalSequence,
-        });
+      const messages = await collectFullHistory(service, workspaceId);
+      const originalSequence = messages[0].metadata?.historySequence;
+      const updatedMsg = createMuxMessage("msg1", "user", "Updated", {
+        historySequence: originalSequence,
+      });
 
-        await service.updateHistory(workspaceId, updatedMsg);
+      await service.updateHistory(workspaceId, updatedMsg);
 
-        const newHistory = await service.getFullHistory(workspaceId);
-        if (newHistory.success) {
-          expect(newHistory.data[0].metadata?.historySequence).toBe(originalSequence);
-        }
-      }
+      const newMessages = await collectFullHistory(service, workspaceId);
+      expect(newMessages[0].metadata?.historySequence).toBe(originalSequence);
     });
 
     it("preserves durable compaction metadata across late in-place rewrites", async () => {
@@ -355,13 +329,9 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, placeholder);
 
-      const historyAfterAppend = await service.getFullHistory(workspaceId);
-      expect(historyAfterAppend.success).toBe(true);
-      if (!historyAfterAppend.success) {
-        return;
-      }
+      const messagesAfterAppend = await collectFullHistory(service, workspaceId);
 
-      const sequence = historyAfterAppend.data[0]?.metadata?.historySequence;
+      const sequence = messagesAfterAppend[0]?.metadata?.historySequence;
       expect(typeof sequence).toBe("number");
       if (typeof sequence !== "number") {
         return;
@@ -392,14 +362,9 @@ describe("HistoryService", () => {
       const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
       expect(lateRewriteResult.success).toBe(true);
 
-      const finalHistory = await service.getFullHistory(workspaceId);
-      expect(finalHistory.success).toBe(true);
-      if (!finalHistory.success) {
-        return;
-      }
-
-      expect(finalHistory.data).toHaveLength(1);
-      const finalMessage = finalHistory.data[0];
+      const finalMessages = await collectFullHistory(service, workspaceId);
+      expect(finalMessages).toHaveLength(1);
+      const finalMessage = finalMessages[0];
       expect(finalMessage.parts[0]).toMatchObject({
         type: "text",
         text: "Tool execution skipped because the requested tool is disabled by policy.",
@@ -418,13 +383,9 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, placeholder);
 
-      const historyAfterAppend = await service.getFullHistory(workspaceId);
-      expect(historyAfterAppend.success).toBe(true);
-      if (!historyAfterAppend.success) {
-        return;
-      }
+      const messagesAfterAppend = await collectFullHistory(service, workspaceId);
 
-      const sequence = historyAfterAppend.data[0]?.metadata?.historySequence;
+      const sequence = messagesAfterAppend[0]?.metadata?.historySequence;
       expect(typeof sequence).toBe("number");
       if (typeof sequence !== "number") {
         return;
@@ -455,13 +416,8 @@ describe("HistoryService", () => {
       const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
       expect(lateRewriteResult.success).toBe(true);
 
-      const finalHistory = await service.getFullHistory(workspaceId);
-      expect(finalHistory.success).toBe(true);
-      if (!finalHistory.success) {
-        return;
-      }
-
-      const finalMessage = finalHistory.data[0];
+      const finalMessages = await collectFullHistory(service, workspaceId);
+      const finalMessage = finalMessages[0];
       expect(finalMessage.metadata?.compactionBoundary).toBeUndefined();
       expect(finalMessage.metadata?.compactionEpoch).toBeUndefined();
     });
@@ -474,13 +430,9 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, placeholder);
 
-      const historyAfterAppend = await service.getFullHistory(workspaceId);
-      expect(historyAfterAppend.success).toBe(true);
-      if (!historyAfterAppend.success) {
-        return;
-      }
+      const messagesAfterAppend = await collectFullHistory(service, workspaceId);
 
-      const sequence = historyAfterAppend.data[0]?.metadata?.historySequence;
+      const sequence = messagesAfterAppend[0]?.metadata?.historySequence;
       expect(typeof sequence).toBe("number");
       if (typeof sequence !== "number") {
         return;
@@ -513,13 +465,8 @@ describe("HistoryService", () => {
       const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
       expect(lateRewriteResult.success).toBe(true);
 
-      const finalHistory = await service.getFullHistory(workspaceId);
-      expect(finalHistory.success).toBe(true);
-      if (!finalHistory.success) {
-        return;
-      }
-
-      const finalMessage = finalHistory.data[0];
+      const finalMessages = await collectFullHistory(service, workspaceId);
+      const finalMessage = finalMessages[0];
       expect(finalMessage.metadata?.compacted).toBeUndefined();
       expect(finalMessage.metadata?.compactionBoundary).toBeUndefined();
       expect(finalMessage.metadata?.compactionEpoch).toBeUndefined();
@@ -540,26 +487,22 @@ describe("HistoryService", () => {
       const result = await service.deleteMessage(workspaceId, "msg2");
       expect(result.success).toBe(true);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data).toHaveLength(2);
-        expect(history.data.map((message) => message.id)).toEqual(["msg1", "msg3"]);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(2);
+      expect(messages.map((message) => message.id)).toEqual(["msg1", "msg3"]);
 
       const msg4 = createMuxMessage("msg4", "assistant", "Fourth");
       await service.appendToHistory(workspaceId, msg4);
 
-      const historyAfterAppend = await service.getFullHistory(workspaceId);
-      if (historyAfterAppend.success) {
-        const msg3Seq = historyAfterAppend.data.find((message) => message.id === "msg3")?.metadata
-          ?.historySequence;
-        const msg4Seq = historyAfterAppend.data.find((message) => message.id === "msg4")?.metadata
-          ?.historySequence;
+      const messagesAfterAppend = await collectFullHistory(service, workspaceId);
+      const msg3Seq = messagesAfterAppend.find((message) => message.id === "msg3")?.metadata
+        ?.historySequence;
+      const msg4Seq = messagesAfterAppend.find((message) => message.id === "msg4")?.metadata
+        ?.historySequence;
 
-        expect(msg3Seq).toBeDefined();
-        expect(msg4Seq).toBeDefined();
-        expect(msg4Seq).toBeGreaterThan(msg3Seq ?? -1);
-      }
+      expect(msg3Seq).toBeDefined();
+      expect(msg4Seq).toBeDefined();
+      expect(msg4Seq).toBeGreaterThan(msg3Seq ?? -1);
     });
 
     it("should return error if message not found", async () => {
@@ -594,11 +537,9 @@ describe("HistoryService", () => {
 
       expect(result.success).toBe(true);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data).toHaveLength(1);
-        expect(history.data[0].id).toBe("msg1");
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].id).toBe("msg1");
     });
 
     it("should update sequence counter after truncation", async () => {
@@ -617,12 +558,10 @@ describe("HistoryService", () => {
       const msg4 = createMuxMessage("msg4", "user", "New message");
       await service.appendToHistory(workspaceId, msg4);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data).toHaveLength(2);
-        expect(history.data[0].metadata?.historySequence).toBe(0);
-        expect(history.data[1].metadata?.historySequence).toBe(1);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(2);
+      expect(messages[0].metadata?.historySequence).toBe(0);
+      expect(messages[1].metadata?.historySequence).toBe(1);
     });
 
     it("should reset sequence counter when truncating all messages", async () => {
@@ -638,11 +577,9 @@ describe("HistoryService", () => {
       const msg3 = createMuxMessage("msg3", "user", "New");
       await service.appendToHistory(workspaceId, msg3);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data).toHaveLength(1);
-        expect(history.data[0].metadata?.historySequence).toBe(0);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].metadata?.historySequence).toBe(0);
     });
 
     it("should return error if message not found", async () => {
@@ -690,10 +627,8 @@ describe("HistoryService", () => {
       const msg2 = createMuxMessage("msg2", "user", "New message");
       await service.appendToHistory(workspaceId, msg2);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data[0].metadata?.historySequence).toBe(0);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.historySequence).toBe(0);
     });
 
     it("should succeed when clearing non-existent history", async () => {
@@ -712,10 +647,8 @@ describe("HistoryService", () => {
       const msg = createMuxMessage("msg1", "user", "First");
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data[0].metadata?.historySequence).toBe(0);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.historySequence).toBe(0);
     });
   });
 
@@ -745,11 +678,9 @@ describe("HistoryService", () => {
       const msg3 = createMuxMessage("msg3", "user", "How are you?");
       await newService.appendToHistory(workspaceId, msg3);
 
-      const history = await newService.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data).toHaveLength(3);
-        expect(history.data[2].metadata?.historySequence).toBe(2);
-      }
+      const messages = await collectFullHistory(newService, workspaceId);
+      expect(messages).toHaveLength(3);
+      expect(messages[2].metadata?.historySequence).toBe(2);
     });
 
     it("should ignore malformed persisted numeric sequences when initializing counters", async () => {
@@ -779,13 +710,10 @@ describe("HistoryService", () => {
       const appendResult = await newService.appendToHistory(workspaceId, msg3);
       expect(appendResult.success).toBe(true);
 
-      const history = await newService.getFullHistory(workspaceId);
-      expect(history.success).toBe(true);
-      if (history.success) {
-        expect(history.data).toHaveLength(3);
-        const appended = history.data.find((msg) => msg.id === "msg3");
-        expect(appended?.metadata?.historySequence).toBe(4);
-      }
+      const messages = await collectFullHistory(newService, workspaceId);
+      expect(messages).toHaveLength(3);
+      const appended = messages.find((msg) => msg.id === "msg3");
+      expect(appended?.metadata?.historySequence).toBe(4);
     });
 
     it("should start from 0 for new workspace", async () => {
@@ -794,10 +722,8 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getFullHistory(workspaceId);
-      if (history.success) {
-        expect(history.data[0].metadata?.historySequence).toBe(0);
-      }
+      const messages = await collectFullHistory(service, workspaceId);
+      expect(messages[0].metadata?.historySequence).toBe(0);
     });
   });
 
