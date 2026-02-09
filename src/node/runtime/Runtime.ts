@@ -242,6 +242,8 @@ export interface WorkspaceForkParams {
   newWorkspaceName: string;
   /** Logger for streaming initialization events */
   initLogger: InitLogger;
+  /** Signal to abort long-running operations (e.g. cp -R -P or git worktree add) */
+  abortSignal?: AbortSignal;
 }
 
 /**

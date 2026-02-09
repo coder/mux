@@ -39,7 +39,7 @@ import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { getProjectName, execBuffered } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { type SSHRuntimeConfig } from "./sshConnectionPool";
-import { execAsync } from "@/node/utils/disposableExec";
+import { getOriginUrlForBundle } from "./gitBundleSync";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
 
@@ -730,19 +730,7 @@ export class SSHRuntime extends RemoteRuntime {
     projectPath: string,
     initLogger: InitLogger
   ): Promise<{ originUrl: string | null }> {
-    try {
-      using proc = execAsync(`git -C "${projectPath}" remote get-url origin`);
-      const { stdout } = await proc.result;
-      const url = stdout.trim();
-      if (url && !url.includes(".bundle") && !url.includes(".mux-bundle")) {
-        return { originUrl: url };
-      }
-      return { originUrl: null };
-    } catch (error) {
-      log.debug("Could not get origin URL", { error: getErrorMessage(error) });
-      initLogger.logStderr(`Note: Could not detect origin URL`);
-      return { originUrl: null };
-    }
+    return getOriginUrlForBundle(projectPath, initLogger, /* logErrors */ false);
   }
 
   async createWorkspace(params: WorkspaceCreationParams): Promise<WorkspaceCreationResult> {
@@ -1297,7 +1285,10 @@ export class SSHRuntime extends RemoteRuntime {
 
       const checkStream = await this.exec(checkScript, {
         cwd: this.config.srcBaseDir,
-        timeout: 10,
+        // Non-force path includes `git fetch origin` (network op) that can
+        // easily exceed 10s on slow SSH connections. Force path only checks
+        // existence, so a short timeout is fine.
+        timeout: force ? 10 : 30,
         abortSignal,
       });
 
@@ -1380,6 +1371,18 @@ export class SSHRuntime extends RemoteRuntime {
             };
           }
         }
+        // Best-effort: delete the orphaned branch ref from the base repo so
+        // that re-forking with the same workspace name can use the fast worktree
+        // path (git worktree add -b fails if the branch already exists).
+        // Skip protected trunk branch names to avoid accidental deletion.
+        const PROTECTED_BRANCHES = ["main", "master", "trunk", "develop", "default"];
+        if (!PROTECTED_BRANCHES.includes(workspaceName)) {
+          await execBuffered(
+            this,
+            `git -C ${baseRepoPathArg} branch -D ${shescape.quote(workspaceName)} 2>/dev/null || true`,
+            { cwd: "/tmp", timeout: 10 }
+          ).catch(() => undefined);
+        }
       } else {
         // Legacy full clone: rm -rf to remove the directory on the remote host.
         const removeCommand = `rm -rf ${shescape.quote(deletedPath)}`;
@@ -1407,7 +1410,7 @@ export class SSHRuntime extends RemoteRuntime {
   }
 
   async forkWorkspace(params: WorkspaceForkParams): Promise<WorkspaceForkResult> {
-    const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger } = params;
+    const { projectPath, sourceWorkspaceName, newWorkspaceName, initLogger, abortSignal } = params;
 
     // Compute workspace paths using canonical method
     const sourceWorkspacePath = this.getWorkspacePath(projectPath, sourceWorkspaceName);
@@ -1423,6 +1426,7 @@ export class SSHRuntime extends RemoteRuntime {
         const exists = await execBuffered(this, `test -e ${newWorkspacePathArg}`, {
           cwd: "/tmp",
           timeout: 10,
+          abortSignal,
         });
         if (exists.exitCode === 0) {
           return { success: false, error: `Workspace already exists at ${newWorkspacePath}` };
@@ -1437,6 +1441,7 @@ export class SSHRuntime extends RemoteRuntime {
         {
           cwd: "/tmp",
           timeout: 30,
+          abortSignal,
         }
       );
       const sourceBranch = branchResult.stdout.trim();
@@ -1452,6 +1457,11 @@ export class SSHRuntime extends RemoteRuntime {
       // Falls back to full directory copy when the base repo is missing OR when
       // worktree creation fails (e.g. forking a legacy workspace whose branch
       // only exists locally and not in the base repo).
+      //
+      // Note: worktree-based fork creates a clean checkout from sourceBranch's
+      // committed HEAD. Uncommitted working-tree changes from the source are NOT
+      // carried over (inherent git worktree limitation). The cp -R -P fallback
+      // preserves full working-tree state including uncommitted changes.
       const baseRepoPath = this.getBaseRepoPath(projectPath);
       const baseRepoPathArg = expandTildeForSSH(baseRepoPath);
       let usedWorktree = false;
@@ -1459,6 +1469,7 @@ export class SSHRuntime extends RemoteRuntime {
       const hasBaseRepo = await execBuffered(this, `test -d ${baseRepoPathArg}`, {
         cwd: "/tmp",
         timeout: 10,
+        abortSignal,
       });
 
       if (hasBaseRepo.exitCode === 0) {
@@ -1470,6 +1481,7 @@ export class SSHRuntime extends RemoteRuntime {
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",
           timeout: 60,
+          abortSignal,
         });
 
         if (worktreeResult.exitCode === 0) {
@@ -1500,6 +1512,7 @@ export class SSHRuntime extends RemoteRuntime {
         const mkdirResult = await execBuffered(this, `mkdir -p ${expandTildeForSSH(parentDir)}`, {
           cwd: "/tmp",
           timeout: 10,
+          abortSignal,
         });
         if (mkdirResult.exitCode !== 0) {
           return {
@@ -1514,7 +1527,7 @@ export class SSHRuntime extends RemoteRuntime {
         const copyResult = await execBuffered(
           this,
           `cp -R -P ${sourceWorkspacePathArg} ${newWorkspacePathArg}`,
-          { cwd: "/tmp", timeout: 300 }
+          { cwd: "/tmp", timeout: 300, abortSignal }
         );
         if (copyResult.exitCode !== 0) {
           try {

@@ -890,11 +890,10 @@ describeIntegration("Workspace deletion integration tests", () => {
       TEST_TIMEOUT_SSH_MS
     );
 
-    // TODO: Investigate — this test creates a workspace with a fake origin, then
-    // tries to echo into a file. After the worktree-based init (refs/mux-bundle),
-    // executeBash returns success=false for the echo redirect. Skipping until
-    // root cause is found; the unpushed-refs detection logic itself is tested
-    // by the non-SSH variant above.
+    // TODO(#2279): deleteResult.success returns false in CI for worktree-based
+    // SSH workspaces. The structurally-identical "unpushed refs" test at line 774
+    // passes, suggesting a timing/state issue specific to serial test execution
+    // in Docker. The non-SSH variant covers the same logic.
     runSshTest.skip(
       "should include commit list in error for unpushed refs",
       async () => {
@@ -954,8 +953,7 @@ describeIntegration("Workspace deletion integration tests", () => {
       TEST_TIMEOUT_SSH_MS
     );
 
-    // TODO: Same root cause as "unpushed refs" skip above — executeBash returns
-    // success=false after worktree-based init. Both tests use fake origin remotes.
+    // TODO(#2279): Same root cause as "unpushed refs" skip above.
     runSshTest.skip(
       "should allow deletion of squash-merged branches without force flag",
       async () => {
