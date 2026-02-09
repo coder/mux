@@ -7,7 +7,7 @@ import { useWorkspaceSidebarState } from "@/browser/stores/WorkspaceStore";
 import { useWorkspaceFallbackModel } from "@/browser/hooks/useWorkspaceFallbackModel";
 import { MUX_HELP_CHAT_WORKSPACE_ID } from "@/common/constants/muxChat";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useDrag } from "react-dnd";
 import { getEmptyImage } from "react-dnd-html5-backend";
 import { GitStatusIndicator } from "./GitStatusIndicator";
@@ -159,6 +159,57 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
   const paddingLeft = getItemPaddingLeft(depth);
   const hasPromptPreview = draft.promptPreview.length > 0;
 
+  // Context menu state for long-press / right-click on mobile
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(
+    null
+  );
+
+  // Long-press support for mobile: opens context menu on touch-and-hold
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      setContextMenuPosition({ x: touch.clientX, y: touch.clientY });
+      setIsMenuOpen(true);
+      longPressTimerRef.current = null;
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    // Cancel long press if finger moves more than 10px (likely scrolling)
+    if (longPressTimerRef.current && touchStartPosRef.current) {
+      const touch = e.touches[0];
+      const dx = touch.clientX - touchStartPosRef.current.x;
+      const dy = touch.clientY - touchStartPosRef.current.y;
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+    }
+  };
+
   return (
     <div
       className={cn(
@@ -167,7 +218,23 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
         isSelected && "bg-hover"
       )}
       style={{ paddingLeft }}
-      onClick={draft.onOpen}
+      onClick={() => {
+        // Suppress click after a long-press triggered the context menu on mobile
+        if (longPressTriggeredRef.current) {
+          longPressTriggeredRef.current = false;
+          return;
+        }
+        draft.onOpen();
+      }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchMove={handleTouchMove}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenuPosition({ x: e.clientX, y: e.clientY });
+        setIsMenuOpen(true);
+      }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -184,11 +251,17 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
       <SelectionBar isSelected={isSelected} isDraft />
 
       <ActionButtonWrapper hasSubtitle={hasPromptPreview}>
+        {/* Desktop: direct-delete button (hidden on touch devices) */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
-              className="text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200"
+              className={cn(
+                "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 opacity-0 transition-colors duration-200",
+                // On touch devices, fully hide so it can't intercept taps.
+                // Long-press opens the context menu instead.
+                "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
+              )}
               onKeyDown={stopKeyboardPropagation}
               onClick={(e) => {
                 e.stopPropagation();
@@ -203,6 +276,49 @@ function DraftWorkspaceListItemInner(props: DraftWorkspaceListItemProps) {
           </TooltipTrigger>
           <TooltipContent align="start">Delete draft</TooltipContent>
         </Tooltip>
+
+        {/* Mobile: context menu opened by long-press / right-click */}
+        <Popover
+          open={isMenuOpen}
+          onOpenChange={(open) => {
+            setIsMenuOpen(open);
+            if (!open) setContextMenuPosition(null);
+          }}
+        >
+          {contextMenuPosition && (
+            <PopoverAnchor asChild>
+              <span
+                style={{
+                  position: "fixed",
+                  left: contextMenuPosition.x,
+                  top: contextMenuPosition.y,
+                  width: 0,
+                  height: 0,
+                }}
+              />
+            </PopoverAnchor>
+          )}
+          <PopoverContent
+            align="start"
+            side="right"
+            className="w-[150px] !min-w-0 p-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="text-foreground bg-background hover:bg-hover w-full rounded-sm px-2 py-1.5 text-left text-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsMenuOpen(false);
+                draft.onDelete();
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <Trash2 className="h-3 w-3" />
+                Delete draft
+              </span>
+            </button>
+          </PopoverContent>
+        </Popover>
       </ActionButtonWrapper>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -266,12 +382,26 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     null
   );
 
+  // Long-press support for mobile: opens context menu on touch-and-hold
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
   useEffect(() => {
     if (isEditing) {
       setIsTitleMenuOpen(false);
       setContextMenuPosition(null);
     }
   }, [isEditing]);
+
+  // Clean up long-press timer on unmount
+  useEffect(() => {
+    return () => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+      }
+    };
+  }, []);
 
   // Keybind for opening transcript share popover (only for the selected workspace)
   useEffect(() => {
@@ -324,6 +454,39 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
     } else if (e.key === "Escape") {
       e.preventDefault();
       handleCancelEdit();
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (isDisabled || isEditing) return;
+    const touch = e.touches[0];
+    touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      setContextMenuPosition({ x: touch.clientX, y: touch.clientY });
+      setIsTitleMenuOpen(true);
+      longPressTimerRef.current = null;
+    }, 500);
+  };
+
+  const handleTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    // Cancel long press if finger moves more than 10px (likely scrolling)
+    if (longPressTimerRef.current && touchStartPosRef.current) {
+      const touch = e.touches[0];
+      const dx = touch.clientX - touchStartPosRef.current.x;
+      const dy = touch.clientY - touchStartPosRef.current.y;
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
     }
   };
 
@@ -384,6 +547,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
         style={{ paddingLeft }}
         onClick={() => {
           if (isDisabled) return;
+          // Suppress click after a long-press triggered the context menu on mobile
+          if (longPressTriggeredRef.current) {
+            longPressTriggeredRef.current = false;
+            return;
+          }
           onSelectWorkspace({
             projectPath,
             projectName,
@@ -391,6 +559,9 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
             workspaceId,
           });
         }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchMove={handleTouchMove}
         onKeyDown={(e) => {
           if (isDisabled || isEditing) return;
           if (e.key === "Enter" || e.key === " ") {
@@ -503,7 +674,11 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                     className={cn(
                       "text-muted hover:text-foreground inline-flex h-4 w-4 cursor-pointer items-center justify-center border-none bg-transparent p-0 transition-colors duration-200",
                       // Hidden until row hover, but remain visible while open.
-                      isTitleMenuOpen ? "opacity-100" : "opacity-0"
+                      isTitleMenuOpen ? "opacity-100" : "opacity-0",
+                      // On touch devices, fully hide the button so it can't intercept taps
+                      // and doesn't flash visible on transient hover states.
+                      // Long-press opens the context menu instead.
+                      "[@media(hover:none)_and_(pointer:coarse)]:invisible [@media(hover:none)_and_(pointer:coarse)]:pointer-events-none"
                     )}
                     onClick={(e) => e.stopPropagation()}
                     aria-label={`Workspace actions for ${displayTitle}`}
