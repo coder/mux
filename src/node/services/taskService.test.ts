@@ -18,12 +18,13 @@ import { WorktreeRuntime } from "@/node/runtime/WorktreeRuntime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { Ok, Err, type Result } from "@/common/types/result";
 import type { StreamEndEvent } from "@/common/types/stream";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import { InitStateManager as RealInitStateManager } from "@/node/services/initStateManager";
+import assert from "node:assert";
 
 function initGitRepo(projectPath: string): void {
   execSync("git init -b main", { cwd: projectPath, stdio: "ignore" });
@@ -34,6 +35,15 @@ function initGitRepo(projectPath: string): void {
   execSync("bash -lc 'echo \"hello\" > README.md'", { cwd: projectPath, stdio: "ignore" });
   execSync("git add README.md", { cwd: projectPath, stdio: "ignore" });
   execSync('git commit -m "init"', { cwd: projectPath, stdio: "ignore" });
+}
+
+async function collectFullHistory(service: HistoryService, workspaceId: string) {
+  const messages: MuxMessage[] = [];
+  const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
+    messages.push(...chunk);
+  });
+  assert(result.success, `collectFullHistory failed: ${result.success ? "" : result.error}`);
+  return messages;
 }
 
 function createNullInitLogger() {
@@ -1988,44 +1998,39 @@ describe("TaskService", () => {
       expect.objectContaining({ abandonPartial: false })
     );
 
-    const childHistory = await historyService.getFullHistory(childId);
-    expect(childHistory.success).toBe(true);
-    if (childHistory.success) {
-      // Ensure the in-flight assistant message (tool calls + agent_report) was committed to history
-      // before workspace cleanup archives the transcript.
-      expect(childHistory.data.length).toBeGreaterThan(1);
+    const childMessages = await collectFullHistory(historyService, childId);
+    // Ensure the in-flight assistant message (tool calls + agent_report) was committed to history
+    // before workspace cleanup archives the transcript.
+    expect(childMessages.length).toBeGreaterThan(1);
 
-      const assistantMsg =
-        childHistory.data.find((m) => m.id === "assistant-child-partial") ?? null;
-      expect(assistantMsg).not.toBeNull();
-      if (assistantMsg) {
-        const toolPart = assistantMsg.parts.find(
-          (p) =>
-            p &&
-            typeof p === "object" &&
-            "type" in p &&
-            (p as { type?: unknown }).type === "dynamic-tool" &&
-            "toolName" in p &&
-            (p as { toolName?: unknown }).toolName === "agent_report"
-        ) as unknown as
-          | {
-              toolName: string;
-              state: string;
-              input?: unknown;
-            }
-          | undefined;
+    const assistantMsg = childMessages.find((m) => m.id === "assistant-child-partial") ?? null;
+    expect(assistantMsg).not.toBeNull();
+    if (assistantMsg) {
+      const toolPart = assistantMsg.parts.find(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          "type" in p &&
+          (p as { type?: unknown }).type === "dynamic-tool" &&
+          "toolName" in p &&
+          (p as { toolName?: unknown }).toolName === "agent_report"
+      ) as unknown as
+        | {
+            toolName: string;
+            state: string;
+            input?: unknown;
+          }
+        | undefined;
 
-        expect(toolPart?.toolName).toBe("agent_report");
-        expect(toolPart?.state).toBe("output-available");
-        expect(JSON.stringify(toolPart?.input)).toContain("Hello from child");
-      }
+      expect(toolPart?.toolName).toBe("agent_report");
+      expect(toolPart?.state).toBe("output-available");
+      expect(JSON.stringify(toolPart?.input)).toContain("Hello from child");
     }
 
     const updatedChildPartial = await partialService.readPartial(childId);
     expect(updatedChildPartial).toBeNull();
 
-    const parentHistory = await historyService.getFullHistory(parentId);
-    expect(parentHistory.success).toBe(true);
+    await collectFullHistory(historyService, parentId);
 
     const updatedParentPartial = await partialService.readPartial(parentId);
     expect(updatedParentPartial).not.toBeNull();
@@ -2531,38 +2536,34 @@ describe("TaskService", () => {
       timestamp: Date.now(),
     });
 
-    const parentHistory = await historyService.getFullHistory(parentId);
-    expect(parentHistory.success).toBe(true);
-    if (parentHistory.success) {
-      // Original task tool call remains immutable ("running"), and a synthetic report message is appended.
-      expect(parentHistory.data.length).toBeGreaterThanOrEqual(2);
+    const parentMessages = await collectFullHistory(historyService, parentId);
+    // Original task tool call remains immutable ("running"), and a synthetic report message is appended.
+    expect(parentMessages.length).toBeGreaterThanOrEqual(2);
 
-      const taskCallMessage =
-        parentHistory.data.find((m) => m.id === "assistant-parent-history") ?? null;
-      expect(taskCallMessage).not.toBeNull();
-      if (taskCallMessage) {
-        const toolPart = taskCallMessage.parts.find(
-          (p) =>
-            p &&
-            typeof p === "object" &&
-            "type" in p &&
-            (p as { type?: unknown }).type === "dynamic-tool"
-        ) as unknown as { output?: unknown } | undefined;
-        expect(JSON.stringify(toolPart?.output)).toContain('"status":"running"');
-        expect(JSON.stringify(toolPart?.output)).toContain(childId);
-      }
+    const taskCallMessage = parentMessages.find((m) => m.id === "assistant-parent-history") ?? null;
+    expect(taskCallMessage).not.toBeNull();
+    if (taskCallMessage) {
+      const toolPart = taskCallMessage.parts.find(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          "type" in p &&
+          (p as { type?: unknown }).type === "dynamic-tool"
+      ) as unknown as { output?: unknown } | undefined;
+      expect(JSON.stringify(toolPart?.output)).toContain('"status":"running"');
+      expect(JSON.stringify(toolPart?.output)).toContain(childId);
+    }
 
-      const syntheticReport = parentHistory.data.find((m) => m.metadata?.synthetic) ?? null;
-      expect(syntheticReport).not.toBeNull();
-      if (syntheticReport) {
-        expect(syntheticReport.role).toBe("user");
-        const text = syntheticReport.parts
-          .filter((p) => p.type === "text")
-          .map((p) => p.text)
-          .join("");
-        expect(text).toContain("Hello from child");
-        expect(text).toContain(childId);
-      }
+    const syntheticReport = parentMessages.find((m) => m.metadata?.synthetic) ?? null;
+    expect(syntheticReport).not.toBeNull();
+    if (syntheticReport) {
+      expect(syntheticReport.role).toBe("user");
+      const text = syntheticReport.parts
+        .filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("");
+      expect(text).toContain("Hello from child");
+      expect(text).toContain(childId);
     }
 
     expect(remove).toHaveBeenCalled();
@@ -2801,8 +2802,7 @@ describe("TaskService", () => {
     });
     expect(metadataEmitsForChild).toHaveLength(2);
 
-    const parentHistory = await historyService.getFullHistory(parentId);
-    expect(parentHistory.success).toBe(true);
+    await collectFullHistory(historyService, parentId);
 
     const updatedParentPartial = await partialService.readPartial(parentId);
     expect(updatedParentPartial).not.toBeNull();
