@@ -8,13 +8,13 @@ import { getKnownModel } from "@/common/constants/knownModels";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 
 /** Small/fast models preferred for name generation */
-const PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
+export const NAME_GEN_PREFERRED_MODELS = [getKnownModel("HAIKU").id, getKnownModel("GPT_MINI").id];
 
 /**
- * Build ordered candidate list respecting gateway prefs.
+ * Build ordered candidate list for name generation, respecting gateway prefs.
  * Takes primitive/stable values to avoid re-computation on every render.
  */
-function buildCandidates(
+function buildNameGenCandidates(
   isGatewayActive: boolean,
   modelUsesGateway: (modelId: string) => boolean,
   userModel: string | undefined
@@ -22,7 +22,7 @@ function buildCandidates(
   const candidates: string[] = [];
 
   // 1. Preferred models with gateway prefs applied
-  for (const modelId of PREFERRED_MODELS) {
+  for (const modelId of NAME_GEN_PREFERRED_MODELS) {
     const transformed =
       isGatewayActive && modelUsesGateway(modelId) ? formatAsGatewayModel(modelId) : modelId;
     if (!candidates.includes(transformed)) {
@@ -144,7 +144,7 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
   // Memoize candidates with stable dependencies (isGatewayActive is primitive,
   // modelUsesGateway is a useCallback that only changes when enabledModels changes)
   const candidates = useMemo(
-    () => buildCandidates(isGatewayActive, modelUsesGateway, userModel),
+    () => buildNameGenCandidates(isGatewayActive, modelUsesGateway, userModel),
     [isGatewayActive, modelUsesGateway, userModel]
   );
 

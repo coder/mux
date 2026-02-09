@@ -861,7 +861,7 @@ export const workspace = {
     ),
   },
   fork: {
-    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string() }),
+    input: z.object({ sourceWorkspaceId: z.string(), newName: z.string().optional() }),
     output: z.discriminatedUnion("success", [
       z.object({
         success: z.literal(true),

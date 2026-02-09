@@ -780,7 +780,8 @@ function RegularWorkspaceListItemInner(props: WorkspaceListItemProps) {
                   <span
                     className={cn(
                       "text-foreground block truncate text-left text-[13px] transition-colors duration-200",
-                      !isDisabled && "cursor-pointer"
+                      !isDisabled && "cursor-pointer",
+                      metadata.autoName && "italic"
                     )}
                     onDoubleClick={(e) => {
                       if (isDisabled) return;
