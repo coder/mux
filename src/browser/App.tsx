@@ -63,7 +63,9 @@ import { Button } from "./components/ui/button";
 import { ProjectPage } from "@/browser/components/ProjectPage";
 
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
+import { AboutDialogProvider } from "./contexts/AboutDialogContext";
 import { SettingsModal } from "./components/Settings/SettingsModal";
+import { AboutDialog } from "./components/About/AboutDialog";
 import { MuxGatewaySessionExpiredDialog } from "./components/MuxGatewaySessionExpiredDialog";
 import { SplashScreenProvider } from "./components/splashScreens/SplashScreenProvider";
 import { TutorialProvider } from "./contexts/TutorialContext";
@@ -1043,6 +1045,7 @@ function AppInner() {
           }}
         />
         <SettingsModal />
+        <AboutDialog />
         <MuxGatewaySessionExpiredDialog />
       </div>
     </>
@@ -1056,17 +1059,19 @@ function App() {
         <UILayoutsProvider>
           <TooltipProvider delayDuration={200}>
             <SettingsProvider>
-              <ProviderOptionsProvider>
-                <SplashScreenProvider>
-                  <TutorialProvider>
-                    <CommandRegistryProvider>
-                      <PowerModeProvider>
-                        <AppInner />
-                      </PowerModeProvider>
-                    </CommandRegistryProvider>
-                  </TutorialProvider>
-                </SplashScreenProvider>
-              </ProviderOptionsProvider>
+              <AboutDialogProvider>
+                <ProviderOptionsProvider>
+                  <SplashScreenProvider>
+                    <TutorialProvider>
+                      <CommandRegistryProvider>
+                        <PowerModeProvider>
+                          <AppInner />
+                        </PowerModeProvider>
+                      </CommandRegistryProvider>
+                    </TutorialProvider>
+                  </SplashScreenProvider>
+                </ProviderOptionsProvider>
+              </AboutDialogProvider>
             </SettingsProvider>
           </TooltipProvider>
         </UILayoutsProvider>
