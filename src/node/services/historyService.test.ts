@@ -1176,4 +1176,113 @@ describe("HistoryService", () => {
       expect(result).toBe(true);
     });
   });
+
+  describe("iterateFullHistory", () => {
+    const wsId = "workspace1";
+
+    it("should iterate forward in chronological order", async () => {
+      const msgs = Array.from({ length: 5 }, (_, i) =>
+        createMuxMessage(`msg-${i}`, "user", `Message ${i}`)
+      );
+      for (const msg of msgs) {
+        await service.appendToHistory(wsId, msg);
+      }
+
+      const collected: MuxMessage[] = [];
+      const result = await service.iterateFullHistory(wsId, "forward", (chunk) => {
+        collected.push(...chunk);
+      });
+      expect(result.success).toBe(true);
+      expect(collected.length).toBe(5);
+      expect(collected.map((m) => m.id)).toEqual(["msg-0", "msg-1", "msg-2", "msg-3", "msg-4"]);
+    });
+
+    it("should iterate backward with newest first", async () => {
+      const msgs = Array.from({ length: 5 }, (_, i) =>
+        createMuxMessage(`msg-${i}`, "user", `Message ${i}`)
+      );
+      for (const msg of msgs) {
+        await service.appendToHistory(wsId, msg);
+      }
+
+      const collected: MuxMessage[] = [];
+      const result = await service.iterateFullHistory(wsId, "backward", (chunk) => {
+        collected.push(...chunk);
+      });
+      expect(result.success).toBe(true);
+      expect(collected.length).toBe(5);
+      // Backward: newest first
+      expect(collected.map((m) => m.id)).toEqual(["msg-4", "msg-3", "msg-2", "msg-1", "msg-0"]);
+    });
+
+    it("should support early exit by returning false", async () => {
+      const msgs = Array.from({ length: 10 }, (_, i) =>
+        createMuxMessage(`msg-${i}`, "user", `Message ${i}`)
+      );
+      for (const msg of msgs) {
+        await service.appendToHistory(wsId, msg);
+      }
+
+      let found: MuxMessage | undefined;
+      await service.iterateFullHistory(wsId, "forward", (chunk) => {
+        for (const msg of chunk) {
+          if (msg.id === "msg-3") {
+            found = msg;
+            return false; // stop early
+          }
+        }
+      });
+      expect(found).toBeTruthy();
+      expect(found!.id).toBe("msg-3");
+    });
+
+    it("should support early exit in backward direction", async () => {
+      const msgs = Array.from({ length: 10 }, (_, i) =>
+        createMuxMessage(`msg-${i}`, "user", `Message ${i}`)
+      );
+      for (const msg of msgs) {
+        await service.appendToHistory(wsId, msg);
+      }
+
+      // Find the first message encountered when reading backward (should be msg-9)
+      let firstSeen: MuxMessage | undefined;
+      await service.iterateFullHistory(wsId, "backward", (chunk) => {
+        firstSeen = chunk[0];
+        return false; // stop after first chunk
+      });
+      expect(firstSeen).toBeTruthy();
+      expect(firstSeen!.id).toBe("msg-9");
+    });
+
+    it("should return success for empty history", async () => {
+      const collected: MuxMessage[] = [];
+      const result = await service.iterateFullHistory(wsId, "forward", (chunk) => {
+        collected.push(...chunk);
+      });
+      expect(result.success).toBe(true);
+      expect(collected.length).toBe(0);
+    });
+
+    it("should skip malformed lines during iteration", async () => {
+      const workspaceDir = config.getSessionDir(wsId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const validMsg = createMuxMessage("valid-1", "user", "Valid message");
+      const content = [
+        "not valid json",
+        JSON.stringify({ ...validMsg, workspaceId: wsId }),
+        "{malformed",
+      ].join("\n");
+
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), content + "\n");
+
+      const collected: MuxMessage[] = [];
+      const result = await service.iterateFullHistory(wsId, "forward", (chunk) => {
+        collected.push(...chunk);
+      });
+      expect(result.success).toBe(true);
+      expect(collected.length).toBe(1);
+      expect(collected[0].id).toBe("valid-1");
+    });
+  });
 });
