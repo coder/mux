@@ -1997,11 +1997,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           inputRef.current.style.height = "";
         }
 
-        // One-shot models shouldn't update the persisted session defaults.
+        // One-shot models/thinking shouldn't update the persisted session defaults.
+        const thinkingOverride = modelOneShot?.thinkingLevel;
         const sendOptions = {
           ...sendMessageOptions,
           ...compactionOptions,
           ...(modelOverride ? { model: modelOverride } : {}),
+          ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
           additionalSystemInstructions,
           editMessageId: editingMessage?.id,

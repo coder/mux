@@ -62,6 +62,45 @@ export function parseThinkingDisplayLabel(value: string): ThinkingLevel | undefi
 }
 
 /**
+ * Ordered thinking levels for numeric indexing (0=off, 1=low, 2=medium, 3=high, 4=max).
+ * "xhigh" is omitted — it's a provider-specific variant of "max" and not user-facing.
+ * Shared between `mux run --thinking` and `/model+N` oneshot syntax.
+ */
+export const NUMERIC_THINKING_LEVELS: readonly ThinkingLevel[] = [
+  "off",
+  "low",
+  "medium",
+  "high",
+  "max",
+] as const;
+
+/**
+ * Parse a thinking level from user input — accepts both named levels
+ * ("off", "low", "med", "medium", "high", "max", "xhigh") and numeric
+ * indices (0–4). Used by both `mux run --thinking` and `/model+level` oneshot.
+ */
+export function parseThinkingInput(value: string): ThinkingLevel | undefined {
+  const normalized = value.trim().toLowerCase();
+
+  // Named level first (e.g., "off", "low", "med", "high", "max", "xhigh")
+  const named = DISPLAY_LABEL_TO_LEVEL[normalized];
+  if (named) return named;
+
+  // Numeric index (0=off, 1=low, 2=medium, 3=high, 4=max)
+  const num = parseInt(normalized, 10);
+  if (
+    !Number.isNaN(num) &&
+    String(num) === normalized &&
+    num >= 0 &&
+    num < NUMERIC_THINKING_LEVELS.length
+  ) {
+    return NUMERIC_THINKING_LEVELS[num];
+  }
+
+  return undefined;
+}
+
+/**
  * Active thinking levels (excludes "off")
  * Used for storing/restoring the last-used thinking level per model
  */

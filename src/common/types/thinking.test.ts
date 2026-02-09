@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { coerceThinkingLevel, getThinkingDisplayLabel } from "./thinking";
+import {
+  coerceThinkingLevel,
+  getThinkingDisplayLabel,
+  parseThinkingInput,
+  NUMERIC_THINKING_LEVELS,
+} from "./thinking";
 
 describe("getThinkingDisplayLabel", () => {
   test("returns MAX for xhigh/max on Anthropic models", () => {
@@ -47,5 +52,55 @@ describe("coerceThinkingLevel", () => {
     expect(coerceThinkingLevel("invalid")).toBeUndefined();
     expect(coerceThinkingLevel(42)).toBeUndefined();
     expect(coerceThinkingLevel(null)).toBeUndefined();
+  });
+});
+
+describe("parseThinkingInput", () => {
+  test.each([
+    ["off", "off"],
+    ["low", "low"],
+    ["med", "medium"],
+    ["medium", "medium"],
+    ["high", "high"],
+    ["max", "max"],
+    ["xhigh", "xhigh"],
+    ["OFF", "off"],
+    ["MED", "medium"],
+    ["High", "high"],
+  ] as const)("parses named level %s → %s", (input, expected) => {
+    expect(parseThinkingInput(input)).toBe(expected);
+  });
+
+  test.each([
+    ["0", "off"],
+    ["1", "low"],
+    ["2", "medium"],
+    ["3", "high"],
+    ["4", "max"],
+  ] as const)("parses numeric level %s → %s", (input, expected) => {
+    expect(parseThinkingInput(input)).toBe(expected);
+  });
+
+  test.each(["5", "-1", "99", "foo", "mediun", "1.5", "", "  "])(
+    "returns undefined for invalid input %j",
+    (input) => {
+      expect(parseThinkingInput(input)).toBeUndefined();
+    }
+  );
+
+  test("trims whitespace", () => {
+    expect(parseThinkingInput("  high  ")).toBe("high");
+    expect(parseThinkingInput(" 2 ")).toBe("medium");
+  });
+});
+
+describe("NUMERIC_THINKING_LEVELS", () => {
+  test("has 5 levels (0–4)", () => {
+    expect(NUMERIC_THINKING_LEVELS).toHaveLength(5);
+  });
+
+  test("maps index 0 to off and index 4 to max", () => {
+    expect(NUMERIC_THINKING_LEVELS[0]).toBe("off");
+    expect(NUMERIC_THINKING_LEVELS[4]).toBe("max");
   });
 });

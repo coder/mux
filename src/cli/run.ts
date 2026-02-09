@@ -55,7 +55,7 @@ import { buildProvidersFromEnv, hasAnyConfiguredProvider } from "@/node/utils/pr
 import {
   DEFAULT_THINKING_LEVEL,
   THINKING_DISPLAY_LABELS,
-  parseThinkingDisplayLabel,
+  parseThinkingInput,
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -106,13 +106,12 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
 function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
   if (!value) return DEFAULT_THINKING_LEVEL; // Default for mux run
 
-  const level = parseThinkingDisplayLabel(value);
+  // Accepts named levels (off, low, med, high, max, xhigh) and numeric (0–4)
+  const level = parseThinkingInput(value);
   if (level) {
     return level;
   }
-  throw new Error(
-    `Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST} (or legacy: medium, max)`
-  );
+  throw new Error(`Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST}, or 0–4`);
 }
 
 function parseMode(value: string | undefined): CLIMode {
