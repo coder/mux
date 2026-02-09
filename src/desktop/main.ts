@@ -1,5 +1,6 @@
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // Fix PATH on macOS when launched from Finder (not terminal).
 // GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.
@@ -109,7 +110,7 @@ if (process.env.MUX_DEBUG_START_TIME === "1") {
 process.on("uncaughtException", (error: unknown) => {
   console.error("Uncaught Exception:", error);
 
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
   const stack = error instanceof Error ? error.stack : undefined;
 
   console.error("Stack:", stack);
@@ -128,7 +129,7 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Reason:", reason);
 
   if (app.isPackaged) {
-    const message = reason instanceof Error ? reason.message : String(reason);
+    const message = getErrorMessage(reason);
     const stack = reason instanceof Error ? reason.stack : undefined;
     dialog.showErrorBox(
       "Unhandled Promise Rejection",

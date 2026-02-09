@@ -3,6 +3,7 @@ import * as fsPromises from "fs/promises";
 import type { Config } from "@/node/config";
 import { isDockerRuntime, isSSHRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Quote a string for safe use in shell commands.
@@ -140,7 +141,7 @@ export class EditorService {
 
       return { success: true, data: undefined };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = getErrorMessage(err);
       log.error(`Failed to open in editor: ${message}`);
       return { success: false, error: message };
     }

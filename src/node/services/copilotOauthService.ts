@@ -4,6 +4,7 @@ import { Err, Ok } from "@/common/types/result";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const GITHUB_COPILOT_CLIENT_ID = "Ov23liCVKFN3jOo9R7HS";
 const SCOPE = "read:user";
@@ -101,7 +102,7 @@ export class CopilotOauthService {
         userCode: data.user_code,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start device flow: ${message}`);
     }
   }
@@ -247,7 +248,7 @@ export class CopilotOauthService {
         }
       } catch (error) {
         if (flow.cancelled) return;
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         log.warn(`Copilot OAuth polling error (will retry): ${message}`);
         // Transient errors — fall through to sleep, then retry
       }

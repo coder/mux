@@ -254,7 +254,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
           } else {
             controller.error(
               new RuntimeError(
-                `Failed to read file ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+                `Failed to read file ${filePath}: ${getErrorMessage(err)}`,
                 "file_io",
                 err instanceof Error ? err : undefined
               )

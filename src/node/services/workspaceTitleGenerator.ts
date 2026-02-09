@@ -6,6 +6,7 @@ import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import crypto from "crypto";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Schema for AI-generated workspace identity (area name + descriptive title) */
 const workspaceIdentitySchema = z.object({
@@ -140,7 +141,7 @@ Requirements:
       }
 
       // API error (invalid key, quota, network, etc.) - try next candidate
-      lastApiError = error instanceof Error ? error.message : String(error);
+      lastApiError = getErrorMessage(error);
       log.warn(`Name generation failed with ${modelString}, trying next candidate`, {
         error: lastApiError,
       });

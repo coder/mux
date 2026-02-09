@@ -13,6 +13,7 @@ import { convertNewlines, detectFileEol } from "./eol";
 import { fileExists } from "@/node/utils/runtime/fileExists";
 import { writeFileString } from "@/node/utils/runtime/helpers";
 import { RuntimeError } from "@/node/runtime/Runtime";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const READ_AND_RETRY_NOTE = `${EDIT_FAILED_NOTE_PREFIX} ${NOTE_READ_FILE_RETRY}`;
 
@@ -127,7 +128,7 @@ export const createFileEditInsertTool: ToolFactory = (config: ToolConfiguration)
           };
         }
 
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return {
           success: false,
           error: `Failed to insert content: ${message}`,

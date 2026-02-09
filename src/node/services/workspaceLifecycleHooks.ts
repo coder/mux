@@ -2,6 +2,7 @@ import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface BeforeArchiveHookArgs {
   workspaceId: string;
@@ -18,7 +19,7 @@ export interface AfterUnarchiveHookArgs {
 export type AfterUnarchiveHook = (args: AfterUnarchiveHookArgs) => Promise<Result<void>>;
 
 function sanitizeErrorMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = getErrorMessage(error);
   // Keep single-line, capped error messages to avoid leaking stack traces or long CLI output.
   const singleLine = raw.split("\n")[0]?.trim() ?? "";
   return singleLine.slice(0, 200) || "Unknown error";

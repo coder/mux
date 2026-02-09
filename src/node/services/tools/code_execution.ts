@@ -6,10 +6,9 @@
  * inference instead of multiple round-trips.
  */
 
-import { tool } from "ai";
+import { tool, type Tool } from "ai";
 import { z } from "zod";
-import type { Tool } from "ai";
-import { ToolBridge } from "@/node/services/ptc/toolBridge";
+import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 
@@ -26,16 +25,6 @@ const MAX_TIMEOUT_SECS = 60 * 60; // 1 hour
  */
 export function clearTypeCaches(): void {
   clearTypeCache();
-}
-
-/**
- * Pre-generate type definitions for the given tools.
- * Call during workspace initialization to avoid first-call latency.
- * Integration with workspace initialization is handled in Phase 6.
- */
-export async function preGenerateMuxTypes(tools: Record<string, Tool>): Promise<void> {
-  const toolBridge = new ToolBridge(tools);
-  await getCachedMuxTypes(toolBridge.getBridgeableTools());
 }
 
 /** PTC event with parentToolCallId attached by code_execution */

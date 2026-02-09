@@ -9,6 +9,7 @@ import {
   MAX_INHERITANCE_DEPTH,
   readAgentDefinition,
 } from "./agentDefinitionsService";
+import { getErrorMessage } from "@/common/utils/errors";
 
 export interface AgentForInheritance {
   id: AgentId;
@@ -84,7 +85,7 @@ export async function resolveAgentInheritanceChain(
         workspaceId,
         agentId,
         baseId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       break;
     }

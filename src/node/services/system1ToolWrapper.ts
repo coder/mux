@@ -34,6 +34,7 @@ import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { log } from "./log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -333,7 +334,7 @@ async function maybeFilterBashOutput(
     } catch (error) {
       log.debug("[system1] Failed to save full bash output to temp file", {
         workspaceId: opts.workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       fullOutputPath = undefined;
     }
@@ -402,7 +403,7 @@ async function maybeFilterBashOutput(
       }
     } catch (error) {
       lastErrorName = error instanceof Error ? error.name : undefined;
-      lastErrorMessage = error instanceof Error ? error.message : String(error);
+      lastErrorMessage = getErrorMessage(error);
     }
 
     if (!applied || applied.keptLines === 0) {
@@ -480,7 +481,7 @@ async function maybeFilterBashOutput(
 
     return { filteredOutput: applied.filteredOutput, notice };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = getErrorMessage(error);
     const errorName = error instanceof Error ? error.name : undefined;
     const upstreamAborted = filterParams.abortSignal?.aborted ?? false;
     const isAbortError = errorName === "AbortError";
@@ -573,7 +574,7 @@ function wrapBashTool(
     } catch (error) {
       log.debug("[system1] Failed to filter bash tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }
@@ -608,7 +609,7 @@ function wrapBashOutputTool(
     } catch (error) {
       log.debug("[system1] Failed to filter bash_output tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }
@@ -696,7 +697,7 @@ function wrapTaskAwaitTool(
     } catch (error) {
       log.debug("[system1] Failed to filter task_await tool output", {
         workspaceId,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       });
       return result;
     }

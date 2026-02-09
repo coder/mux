@@ -1,5 +1,6 @@
 import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /**
  * Voice input service using OpenAI's Whisper API for transcription.
@@ -69,7 +70,7 @@ export class VoiceService {
       const text = await response.text();
       return { success: true, data: text };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return { success: false, error: `Transcription failed: ${message}` };
     }
   }

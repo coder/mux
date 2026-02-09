@@ -18,6 +18,7 @@ import { parseBearerWwwAuthenticate, type McpOauthService } from "@/node/service
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
 import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const TEST_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -373,7 +374,7 @@ async function runServerTest(
       log.info(`[MCP] ${logContext} test successful`, { toolCount: toolNames.length });
       return { success: true, tools: toolNames };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       log.warn(`[MCP] ${logContext} test failed`, { error: message });
 
       if (client) {
@@ -1006,7 +1007,7 @@ export class MCPServerManager {
           `server "${trimmedName}"`
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return { success: false, error: message };
       }
     }
@@ -1049,7 +1050,7 @@ export class MCPServerManager {
           trimmedName ? `server "${trimmedName}" (url)` : "url"
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         return { success: false, error: message };
       }
     }
@@ -1161,7 +1162,7 @@ export class MCPServerManager {
           result.set(name, instance);
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = getErrorMessage(error);
         log.error("Failed to start MCP server", { name, error: message });
       }
     }

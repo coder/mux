@@ -1,5 +1,6 @@
 import type { IPty } from "node-pty";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 interface PtySpawnRequest {
   runtimeLabel: string;
@@ -80,7 +81,7 @@ export function spawnPtyProcess(request: PtySpawnRequest): IPty {
     const printableArgs = request.args.length > 0 ? ` ${request.args.join(" ")}` : "";
     const cmd = `${request.command}${printableArgs}`;
     const details = `cmd="${cmd}", cwd="${request.cwd}", platform="${process.platform}"`;
-    const errMessage = err instanceof Error ? err.message : String(err);
+    const errMessage = getErrorMessage(err);
 
     if (request.logLocalEnv) {
       log.error(`Local PTY spawn config: ${cmd} (cwd: ${request.cwd})`);

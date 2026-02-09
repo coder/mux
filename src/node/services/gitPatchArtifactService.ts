@@ -21,6 +21,7 @@ import {
 } from "@/node/services/subagentGitPatchArtifacts";
 import { shellQuote } from "@/common/utils/shell";
 import { streamToString } from "@/node/runtime/streamUtils";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Callback invoked after patch generation completes (success or failure). */
 export type OnPatchGenerationComplete = (childWorkspaceId: string) => Promise<void>;
@@ -221,7 +222,7 @@ export class GitPatchArtifactService {
                   createdAtMs: existing?.createdAtMs ?? failedAtMs,
                   updatedAtMs: failedAtMs,
                   status: "failed",
-                  error: error instanceof Error ? error.message : String(error),
+                  error: getErrorMessage(error),
                 };
               },
             });
@@ -255,7 +256,7 @@ export class GitPatchArtifactService {
             createdAtMs: existing?.createdAtMs ?? failedAtMs,
             updatedAtMs: failedAtMs,
             status: "failed",
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           };
         },
       });
@@ -519,7 +520,7 @@ export class GitPatchArtifactService {
         createdAtMs: existing?.createdAtMs ?? nowMs,
         updatedAtMs: Date.now(),
         status: "failed",
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
       }));
     } finally {
       // Unblock auto-cleanup once the patch generation attempt has finished.

@@ -10,6 +10,7 @@ import {
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
+import { getErrorMessage } from "@/common/utils/errors";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_SERVER_TIMEOUT_MS = 10 * 60 * 1000;
@@ -100,7 +101,7 @@ export class MuxGatewayOauthService {
         server.listen(0, "127.0.0.1", () => resolve());
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to start OAuth callback listener: ${message}`);
     }
 
@@ -402,7 +403,7 @@ export class MuxGatewayOauthService {
 
       return Ok(token);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Mux Gateway exchange failed: ${message}`);
     }
   }

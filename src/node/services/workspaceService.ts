@@ -27,17 +27,13 @@ import {
   runBackgroundInit,
 } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
+import { PostCompactionService } from "@/node/services/postCompactionService";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
-import { shellQuote } from "@/node/runtime/backgroundCommands";
-import { extractEditedFilePaths } from "@/common/utils/messages/extractEditedFiles";
-import { fileExists } from "@/node/utils/runtime/fileExists";
+
 import { applyForkRuntimeUpdates } from "@/node/services/utils/forkRuntimeUpdates";
 import type { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { getDevcontainerContainerName } from "@/node/runtime/devcontainerCli";
-import { expandTilde, expandTildeForSSH } from "@/node/runtime/tildeExpansion";
 
-import type { PostCompactionExclusions } from "@/common/types/attachment";
 import type {
   SendMessageOptions,
   DeleteMessage,
@@ -61,13 +57,8 @@ import {
 import type { UIMode } from "@/common/types/mode";
 import type { MuxMessage } from "@/common/types/message";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import {
-  hasSrcBaseDir,
-  getSrcBaseDir,
-  isSSHRuntime,
-  isDockerRuntime,
-} from "@/common/types/runtime";
-import { isValidModelFormat, normalizeGatewayModel } from "@/common/utils/ai/models";
+import { hasSrcBaseDir, getSrcBaseDir, isDockerRuntime } from "@/common/types/runtime";
+
 import { coerceThinkingLevel, type ThinkingLevel } from "@/common/types/thinking";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { StreamEndEvent, StreamAbortEvent } from "@/common/types/stream";
@@ -78,6 +69,12 @@ import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
+import {
+  normalizeSendMessageAgentId as normalizeAgentId,
+  maybePersistAISettingsFromOptions as maybePersistAISettings,
+  updateAgentAISettings as updateAgentAISettingsFn,
+  type EmitMetadataFn,
+} from "@/node/services/workspaceAISettings";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
@@ -92,23 +89,8 @@ import {
   type FileCompletionsIndex,
 } from "@/node/services/fileCompletionsIndex";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
-import {
-  getSubagentGitPatchMboxPath,
-  readSubagentGitPatchArtifactsFile,
-  updateSubagentGitPatchArtifactsFile,
-} from "@/node/services/subagentGitPatchArtifacts";
-import {
-  getSubagentReportArtifactPath,
-  readSubagentReportArtifactsFile,
-  updateSubagentReportArtifactsFile,
-} from "@/node/services/subagentReportArtifacts";
-import {
-  getSubagentTranscriptChatPath,
-  getSubagentTranscriptPartialPath,
-  readSubagentTranscriptArtifactsFile,
-  updateSubagentTranscriptArtifactsFile,
-  upsertSubagentTranscriptArtifactIndexEntry,
-} from "@/node/services/subagentTranscriptArtifacts";
+import { archiveChildSessionArtifactsIntoParentSessionDir } from "@/node/services/subagentArtifactArchival";
+import { getErrorMessage } from "@/common/utils/errors";
 
 /** Maximum number of retry attempts when workspace name collides */
 const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
@@ -117,7 +99,6 @@ const MAX_WORKSPACE_NAME_COLLISION_RETRIES = 3;
 
 // Shared type for workspace-scoped AI settings (model + thinking)
 type WorkspaceAISettings = z.infer<typeof WorkspaceAISettingsSchema>;
-const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 interface FileCompletionsCacheEntry {
   index: FileCompletionsIndex;
@@ -144,451 +125,6 @@ function isWorkspaceNameCollision(error: string | undefined): boolean {
 function appendCollisionSuffix(baseName: string): string {
   const suffix = Math.random().toString(36).substring(2, 6);
   return `${baseName}-${suffix}`;
-}
-
-function isErrnoWithCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
-}
-
-function isPathInsideDir(dirPath: string, filePath: string): boolean {
-  const resolvedDir = path.resolve(dirPath);
-  const resolvedFile = path.resolve(filePath);
-  const relative = path.relative(resolvedDir, resolvedFile);
-
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-async function copyFileBestEffort(params: {
-  srcPath: string;
-  destPath: string;
-  logContext: Record<string, unknown>;
-}): Promise<boolean> {
-  try {
-    await fsPromises.mkdir(path.dirname(params.destPath), { recursive: true });
-    await fsPromises.copyFile(params.srcPath, params.destPath);
-    return true;
-  } catch (error: unknown) {
-    if (isErrnoWithCode(error, "ENOENT")) {
-      return false;
-    }
-
-    log.error("Failed to copy session artifact file", {
-      ...params.logContext,
-      srcPath: params.srcPath,
-      destPath: params.destPath,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return false;
-  }
-}
-
-async function copyDirIfMissingBestEffort(params: {
-  srcDir: string;
-  destDir: string;
-  logContext: Record<string, unknown>;
-}): Promise<void> {
-  try {
-    try {
-      const stat = await fsPromises.stat(params.destDir);
-      if (stat.isDirectory()) {
-        return;
-      }
-      // If it's a file, fall through and try to copy (will likely fail).
-    } catch (error: unknown) {
-      if (!isErrnoWithCode(error, "ENOENT")) {
-        throw error;
-      }
-    }
-
-    await fsPromises.mkdir(path.dirname(params.destDir), { recursive: true });
-    await fsPromises.cp(params.srcDir, params.destDir, { recursive: true });
-  } catch (error: unknown) {
-    if (isErrnoWithCode(error, "ENOENT")) {
-      return;
-    }
-
-    log.error("Failed to copy session artifact directory", {
-      ...params.logContext,
-      srcDir: params.srcDir,
-      destDir: params.destDir,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-function coerceUpdatedAtMs(entry: { createdAtMs?: number; updatedAtMs?: number }): number {
-  if (typeof entry.updatedAtMs === "number" && Number.isFinite(entry.updatedAtMs)) {
-    return entry.updatedAtMs;
-  }
-
-  if (typeof entry.createdAtMs === "number" && Number.isFinite(entry.createdAtMs)) {
-    return entry.createdAtMs;
-  }
-
-  return 0;
-}
-
-function rollUpAncestorWorkspaceIds(params: {
-  ancestorWorkspaceIds: string[];
-  removedWorkspaceId: string;
-  newParentWorkspaceId: string;
-}): string[] {
-  const filtered = params.ancestorWorkspaceIds.filter((id) => id !== params.removedWorkspaceId);
-
-  // Ensure the roll-up target is first (parent-first ordering).
-  if (filtered[0] === params.newParentWorkspaceId) {
-    return filtered;
-  }
-
-  return [
-    params.newParentWorkspaceId,
-    ...filtered.filter((id) => id !== params.newParentWorkspaceId),
-  ];
-}
-
-async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
-  parentWorkspaceId: string;
-  parentSessionDir: string;
-  childWorkspaceId: string;
-  childSessionDir: string;
-  /** Task-level model string for the child workspace (optional; persists into transcript artifacts). */
-  childTaskModelString?: string;
-  /** Task-level thinking/reasoning level for the child workspace (optional; persists into transcript artifacts). */
-  childTaskThinkingLevel?: ThinkingLevel;
-}): Promise<void> {
-  if (params.parentWorkspaceId.length === 0) {
-    return;
-  }
-
-  if (params.childWorkspaceId.length === 0) {
-    return;
-  }
-
-  if (params.parentSessionDir.length === 0 || params.childSessionDir.length === 0) {
-    return;
-  }
-
-  // 1) Archive the child session transcript (chat.jsonl + partial.json) into the parent session dir
-  // BEFORE deleting ~/.mux/sessions/<childWorkspaceId>.
-  try {
-    const childChatPath = path.join(params.childSessionDir, "chat.jsonl");
-    const childPartialPath = path.join(params.childSessionDir, "partial.json");
-
-    const archivedChatPath = getSubagentTranscriptChatPath(
-      params.parentSessionDir,
-      params.childWorkspaceId
-    );
-    const archivedPartialPath = getSubagentTranscriptPartialPath(
-      params.parentSessionDir,
-      params.childWorkspaceId
-    );
-
-    // Defensive: avoid path traversal in workspace IDs.
-    if (!isPathInsideDir(params.parentSessionDir, archivedChatPath)) {
-      log.error("Refusing to archive session transcript outside parent session dir", {
-        parentWorkspaceId: params.parentWorkspaceId,
-        childWorkspaceId: params.childWorkspaceId,
-        parentSessionDir: params.parentSessionDir,
-        archivedChatPath,
-      });
-    } else {
-      const didCopyChat = await copyFileBestEffort({
-        srcPath: childChatPath,
-        destPath: archivedChatPath,
-        logContext: {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          artifact: "chat.jsonl",
-        },
-      });
-
-      const didCopyPartial = await copyFileBestEffort({
-        srcPath: childPartialPath,
-        destPath: archivedPartialPath,
-        logContext: {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          artifact: "partial.json",
-        },
-      });
-
-      if (didCopyChat || didCopyPartial) {
-        const nowMs = Date.now();
-
-        const model =
-          typeof params.childTaskModelString === "string" &&
-          params.childTaskModelString.trim().length > 0
-            ? params.childTaskModelString.trim()
-            : undefined;
-        const thinkingLevel = coerceThinkingLevel(params.childTaskThinkingLevel);
-
-        await upsertSubagentTranscriptArtifactIndexEntry({
-          workspaceId: params.parentWorkspaceId,
-          workspaceSessionDir: params.parentSessionDir,
-          childTaskId: params.childWorkspaceId,
-          updater: (existing) => ({
-            childTaskId: params.childWorkspaceId,
-            parentWorkspaceId: params.parentWorkspaceId,
-            createdAtMs: existing?.createdAtMs ?? nowMs,
-            updatedAtMs: nowMs,
-            model: model ?? existing?.model,
-            thinkingLevel: thinkingLevel ?? existing?.thinkingLevel,
-            chatPath: didCopyChat ? archivedChatPath : existing?.chatPath,
-            partialPath: didCopyPartial ? archivedPartialPath : existing?.partialPath,
-          }),
-        });
-      }
-    }
-  } catch (error: unknown) {
-    log.error("Failed to archive child transcript into parent session dir", {
-      parentWorkspaceId: params.parentWorkspaceId,
-      childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  // 2) Roll up nested subagent artifacts from the child session dir into the parent session dir.
-  // This preserves grandchild artifacts when intermediate subagent workspaces are cleaned up.
-
-  // --- subagent-patches.json + subagent-patches/<taskId>/...
-  try {
-    const childArtifacts = await readSubagentGitPatchArtifactsFile(params.childSessionDir);
-    const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
-
-    for (const [taskId] of childEntries) {
-      if (!taskId) continue;
-
-      const srcDir = path.dirname(getSubagentGitPatchMboxPath(params.childSessionDir, taskId));
-      const destDir = path.dirname(getSubagentGitPatchMboxPath(params.parentSessionDir, taskId));
-
-      if (!isPathInsideDir(params.childSessionDir, srcDir)) {
-        log.error("Refusing to roll up patch artifact outside child session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          childSessionDir: params.childSessionDir,
-          srcDir,
-        });
-        continue;
-      }
-
-      if (!isPathInsideDir(params.parentSessionDir, destDir)) {
-        log.error("Refusing to roll up patch artifact outside parent session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          parentSessionDir: params.parentSessionDir,
-          destDir,
-        });
-        continue;
-      }
-
-      await copyDirIfMissingBestEffort({
-        srcDir,
-        destDir,
-        logContext: {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          artifact: "subagent-patches",
-          taskId,
-        },
-      });
-    }
-
-    if (childEntries.length > 0) {
-      await updateSubagentGitPatchArtifactsFile({
-        workspaceId: params.parentWorkspaceId,
-        workspaceSessionDir: params.parentSessionDir,
-        update: (parentFile) => {
-          for (const [taskId, childEntry] of childEntries) {
-            if (!taskId) continue;
-            const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
-
-            const childUpdated = coerceUpdatedAtMs(childEntry);
-            const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
-
-            if (!existing || childUpdated > existingUpdated) {
-              parentFile.artifactsByChildTaskId[taskId] = {
-                ...childEntry,
-                childTaskId: taskId,
-                parentWorkspaceId: params.parentWorkspaceId,
-                mboxPath: getSubagentGitPatchMboxPath(params.parentSessionDir, taskId),
-              };
-            }
-          }
-        },
-      });
-    }
-  } catch (error: unknown) {
-    log.error("Failed to roll up subagent patch artifacts into parent", {
-      parentWorkspaceId: params.parentWorkspaceId,
-      childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  // --- subagent-reports.json + subagent-reports/<taskId>/...
-  try {
-    const childArtifacts = await readSubagentReportArtifactsFile(params.childSessionDir);
-    const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
-
-    for (const [taskId] of childEntries) {
-      if (!taskId) continue;
-
-      const srcDir = path.dirname(getSubagentReportArtifactPath(params.childSessionDir, taskId));
-      const destDir = path.dirname(getSubagentReportArtifactPath(params.parentSessionDir, taskId));
-
-      if (!isPathInsideDir(params.childSessionDir, srcDir)) {
-        log.error("Refusing to roll up report artifact outside child session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          childSessionDir: params.childSessionDir,
-          srcDir,
-        });
-        continue;
-      }
-
-      if (!isPathInsideDir(params.parentSessionDir, destDir)) {
-        log.error("Refusing to roll up report artifact outside parent session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          parentSessionDir: params.parentSessionDir,
-          destDir,
-        });
-        continue;
-      }
-
-      await copyDirIfMissingBestEffort({
-        srcDir,
-        destDir,
-        logContext: {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          artifact: "subagent-reports",
-          taskId,
-        },
-      });
-    }
-
-    if (childEntries.length > 0) {
-      await updateSubagentReportArtifactsFile({
-        workspaceId: params.parentWorkspaceId,
-        workspaceSessionDir: params.parentSessionDir,
-        update: (parentFile) => {
-          for (const [taskId, childEntry] of childEntries) {
-            if (!taskId) continue;
-
-            const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
-            const childUpdated = coerceUpdatedAtMs(childEntry);
-            const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
-
-            if (!existing || childUpdated > existingUpdated) {
-              parentFile.artifactsByChildTaskId[taskId] = {
-                ...childEntry,
-                childTaskId: taskId,
-                parentWorkspaceId: params.parentWorkspaceId,
-                ancestorWorkspaceIds: rollUpAncestorWorkspaceIds({
-                  ancestorWorkspaceIds: childEntry.ancestorWorkspaceIds,
-                  removedWorkspaceId: params.childWorkspaceId,
-                  newParentWorkspaceId: params.parentWorkspaceId,
-                }),
-              };
-            }
-          }
-        },
-      });
-    }
-  } catch (error: unknown) {
-    log.error("Failed to roll up subagent report artifacts into parent", {
-      parentWorkspaceId: params.parentWorkspaceId,
-      childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  // --- subagent-transcripts.json + subagent-transcripts/<taskId>/...
-  try {
-    const childArtifacts = await readSubagentTranscriptArtifactsFile(params.childSessionDir);
-    const childEntries = Object.entries(childArtifacts.artifactsByChildTaskId);
-
-    for (const [taskId] of childEntries) {
-      if (!taskId) continue;
-
-      const srcDir = path.dirname(getSubagentTranscriptChatPath(params.childSessionDir, taskId));
-      const destDir = path.dirname(getSubagentTranscriptChatPath(params.parentSessionDir, taskId));
-
-      if (!isPathInsideDir(params.childSessionDir, srcDir)) {
-        log.error("Refusing to roll up transcript artifact outside child session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          childSessionDir: params.childSessionDir,
-          srcDir,
-        });
-        continue;
-      }
-
-      if (!isPathInsideDir(params.parentSessionDir, destDir)) {
-        log.error("Refusing to roll up transcript artifact outside parent session dir", {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          taskId,
-          parentSessionDir: params.parentSessionDir,
-          destDir,
-        });
-        continue;
-      }
-
-      await copyDirIfMissingBestEffort({
-        srcDir,
-        destDir,
-        logContext: {
-          parentWorkspaceId: params.parentWorkspaceId,
-          childWorkspaceId: params.childWorkspaceId,
-          artifact: "subagent-transcripts",
-          taskId,
-        },
-      });
-    }
-
-    if (childEntries.length > 0) {
-      await updateSubagentTranscriptArtifactsFile({
-        workspaceId: params.parentWorkspaceId,
-        workspaceSessionDir: params.parentSessionDir,
-        update: (parentFile) => {
-          for (const [taskId, childEntry] of childEntries) {
-            if (!taskId) continue;
-
-            const existing = parentFile.artifactsByChildTaskId[taskId] ?? null;
-            const childUpdated = coerceUpdatedAtMs(childEntry);
-            const existingUpdated = existing ? coerceUpdatedAtMs(existing) : -1;
-
-            if (!existing || childUpdated > existingUpdated) {
-              parentFile.artifactsByChildTaskId[taskId] = {
-                ...childEntry,
-                childTaskId: taskId,
-                parentWorkspaceId: params.parentWorkspaceId,
-                chatPath: childEntry.chatPath
-                  ? getSubagentTranscriptChatPath(params.parentSessionDir, taskId)
-                  : undefined,
-                partialPath: childEntry.partialPath
-                  ? getSubagentTranscriptPartialPath(params.parentSessionDir, taskId)
-                  : undefined,
-              };
-            }
-          }
-        },
-      });
-    }
-  } catch (error: unknown) {
-    log.error("Failed to roll up subagent transcript artifacts into parent", {
-      parentWorkspaceId: params.parentWorkspaceId,
-      childWorkspaceId: params.childWorkspaceId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 async function forEachWithConcurrencyLimit<T>(
@@ -637,8 +173,7 @@ export class WorkspaceService extends EventEmitter {
     { chat: () => void; metadata: () => void }
   >();
 
-  // Debounce post-compaction metadata refreshes (file_edit_* can fire rapidly)
-  private readonly postCompactionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  public readonly postCompactionService: PostCompactionService;
   // Tracks workspaces currently being renamed to prevent streaming during rename
   private readonly renamingWorkspaces = new Set<string>();
 
@@ -675,6 +210,12 @@ export class WorkspaceService extends EventEmitter {
     this.telemetryService = telemetryService;
     this.experimentsService = experimentsService;
     this.sessionTimingService = sessionTimingService;
+    this.postCompactionService = new PostCompactionService(
+      config,
+      historyService,
+      this.sessions,
+      (wsId) => this.getInfo(wsId)
+    );
     this.setupMetadataListeners();
   }
 
@@ -847,42 +388,7 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private schedulePostCompactionMetadataRefresh(workspaceId: string): void {
-    assert(typeof workspaceId === "string", "workspaceId must be a string");
-    const trimmed = workspaceId.trim();
-    assert(trimmed.length > 0, "workspaceId must not be empty");
-
-    const existing = this.postCompactionRefreshTimers.get(trimmed);
-    if (existing) {
-      clearTimeout(existing);
-    }
-
-    const timer = setTimeout(() => {
-      this.postCompactionRefreshTimers.delete(trimmed);
-      void this.emitPostCompactionMetadata(trimmed);
-    }, POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS);
-
-    this.postCompactionRefreshTimers.set(trimmed, timer);
-  }
-
-  private async emitPostCompactionMetadata(workspaceId: string): Promise<void> {
-    try {
-      const session = this.sessions.get(workspaceId);
-      if (!session) {
-        return;
-      }
-
-      const metadata = await this.getInfo(workspaceId);
-      if (!metadata) {
-        return;
-      }
-
-      const postCompaction = await this.getPostCompactionState(workspaceId);
-      const enrichedMetadata = { ...metadata, postCompaction };
-      session.emitMetadata(enrichedMetadata);
-    } catch (error) {
-      // Workspace runtime unavailable (e.g., SSH unreachable) - skip emitting post-compaction state.
-      log.debug("Failed to emit post-compaction metadata", { workspaceId, error });
-    }
+    this.postCompactionService.schedulePostCompactionMetadataRefresh(workspaceId);
   }
 
   public getOrCreateSession(workspaceId: string): AgentSession {
@@ -965,11 +471,7 @@ export class WorkspaceService extends EventEmitter {
   public disposeSession(workspaceId: string): void {
     const trimmed = workspaceId.trim();
     const session = this.sessions.get(trimmed);
-    const refreshTimer = this.postCompactionRefreshTimers.get(trimmed);
-    if (refreshTimer) {
-      clearTimeout(refreshTimer);
-      this.postCompactionRefreshTimers.delete(trimmed);
-    }
+    this.postCompactionService.cancelPendingRefresh(trimmed);
 
     if (!session) {
       return;
@@ -986,170 +488,16 @@ export class WorkspaceService extends EventEmitter {
     this.sessions.delete(trimmed);
   }
 
-  private async getPersistedPostCompactionDiffPaths(workspaceId: string): Promise<string[] | null> {
-    const postCompactionPath = path.join(
-      this.config.getSessionDir(workspaceId),
-      "post-compaction.json"
-    );
-
-    try {
-      const raw = await fsPromises.readFile(postCompactionPath, "utf-8");
-      const parsed: unknown = JSON.parse(raw);
-      const diffsRaw = (parsed as { diffs?: unknown }).diffs;
-      if (!Array.isArray(diffsRaw)) {
-        return null;
-      }
-
-      const result: string[] = [];
-      for (const diff of diffsRaw) {
-        if (!diff || typeof diff !== "object") continue;
-        const p = (diff as { path?: unknown }).path;
-        if (typeof p !== "string") continue;
-        const trimmed = p.trim();
-        if (trimmed.length === 0) continue;
-        result.push(trimmed);
-      }
-
-      return result;
-    } catch {
-      return null;
-    }
+  public async getPostCompactionState(workspaceId: string) {
+    return this.postCompactionService.getPostCompactionState(workspaceId);
   }
 
-  /**
-   * Get post-compaction context state for a workspace.
-   * Returns info about what will be injected after compaction.
-   * Prefers cached paths from pending compaction, falls back to history extraction.
-   */
-  public async getPostCompactionState(workspaceId: string): Promise<{
-    planPath: string | null;
-    trackedFilePaths: string[];
-    excludedItems: string[];
-  }> {
-    // Get workspace metadata to create runtime for plan file check
-    const metadata = await this.getInfo(workspaceId);
-    if (!metadata) {
-      // Can't get metadata, return empty state
-      const exclusions = await this.getPostCompactionExclusions(workspaceId);
-      return { planPath: null, trackedFilePaths: [], excludedItems: exclusions.excludedItems };
-    }
-
-    const runtime = createRuntimeForWorkspace(metadata);
-    const muxHome = runtime.getMuxHome();
-    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
-    // For local/SSH: expand tilde for comparison with message history paths
-    // For Docker: paths are already absolute (/var/mux/...), no expansion needed
-    const expandedPlanPath = muxHome.startsWith("~") ? expandTilde(planPath) : planPath;
-    // Legacy plan path (stored by workspace ID) for filtering
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
-    const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
-
-    // Check both new and legacy plan paths, prefer new path
-    const newPlanExists = await fileExists(runtime, planPath);
-    const legacyPlanExists = !newPlanExists && (await fileExists(runtime, legacyPlanPath));
-    // Resolve plan path via runtime to get correct absolute path for deep links.
-    // Local: expands ~ to local home. SSH: expands ~ on remote host.
-    const activePlanPath = newPlanExists
-      ? await runtime.resolvePath(planPath)
-      : legacyPlanExists
-        ? await runtime.resolvePath(legacyPlanPath)
-        : null;
-
-    // Load exclusions
-    const exclusions = await this.getPostCompactionExclusions(workspaceId);
-
-    // Helper to check if a path is a plan file (new or legacy format)
-    const isPlanPath = (p: string) =>
-      p === planPath ||
-      p === expandedPlanPath ||
-      p === legacyPlanPath ||
-      p === expandedLegacyPlanPath;
-
-    // If session has pending compaction attachments, use cached paths
-    // (history is cleared after compaction, but cache survives)
-    const session = this.sessions.get(workspaceId);
-    const pendingPaths = session?.getPendingTrackedFilePaths();
-    if (pendingPaths) {
-      // Filter out both new and legacy plan file paths
-      const trackedFilePaths = pendingPaths.filter((p) => !isPlanPath(p));
-      return {
-        planPath: activePlanPath,
-        trackedFilePaths,
-        excludedItems: exclusions.excludedItems,
-      };
-    }
-
-    // Fallback (crash-safe): if a post-compaction snapshot exists on disk, use it.
-    const persistedPaths = await this.getPersistedPostCompactionDiffPaths(workspaceId);
-    if (persistedPaths !== null) {
-      const trackedFilePaths = persistedPaths.filter((p) => !isPlanPath(p));
-      return {
-        planPath: activePlanPath,
-        trackedFilePaths,
-        excludedItems: exclusions.excludedItems,
-      };
-    }
-
-    // Fallback: compute tracked files from message history (survives reloads)
-    const historyResult = await this.historyService.getHistory(workspaceId);
-    const messages = historyResult.success ? historyResult.data : [];
-    const allPaths = extractEditedFilePaths(messages);
-
-    // Exclude plan file from tracked files since it has its own section
-    // Filter out both new and legacy plan file paths
-    const trackedFilePaths = allPaths.filter((p) => !isPlanPath(p));
-    return {
-      planPath: activePlanPath,
-      trackedFilePaths,
-      excludedItems: exclusions.excludedItems,
-    };
+  public async getPostCompactionExclusions(workspaceId: string) {
+    return this.postCompactionService.getPostCompactionExclusions(workspaceId);
   }
 
-  /**
-   * Get post-compaction exclusions for a workspace.
-   * Returns empty exclusions if file doesn't exist.
-   */
-  public async getPostCompactionExclusions(workspaceId: string): Promise<PostCompactionExclusions> {
-    const exclusionsPath = path.join(this.config.getSessionDir(workspaceId), "exclusions.json");
-    try {
-      const data = await fsPromises.readFile(exclusionsPath, "utf-8");
-      return JSON.parse(data) as PostCompactionExclusions;
-    } catch {
-      return { excludedItems: [] };
-    }
-  }
-
-  /**
-   * Set whether an item is excluded from post-compaction context.
-   * Item IDs: "plan" for plan file, "file:<path>" for tracked files.
-   */
-  public async setPostCompactionExclusion(
-    workspaceId: string,
-    itemId: string,
-    excluded: boolean
-  ): Promise<Result<void>> {
-    try {
-      const exclusions = await this.getPostCompactionExclusions(workspaceId);
-      const set = new Set(exclusions.excludedItems);
-
-      if (excluded) {
-        set.add(itemId);
-      } else {
-        set.delete(itemId);
-      }
-
-      const sessionDir = this.config.getSessionDir(workspaceId);
-      await fsPromises.mkdir(sessionDir, { recursive: true });
-      const exclusionsPath = path.join(sessionDir, "exclusions.json");
-      await fsPromises.writeFile(
-        exclusionsPath,
-        JSON.stringify({ excludedItems: [...set] }, null, 2)
-      );
-      return Ok(undefined);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Err(`Failed to set exclusion: ${message}`);
-    }
+  public async setPostCompactionExclusion(workspaceId: string, itemId: string, excluded: boolean) {
+    return this.postCompactionService.setPostCompactionExclusion(workspaceId, itemId, excluded);
   }
 
   async create(
@@ -1212,7 +560,7 @@ export class WorkspaceService extends EventEmitter {
         }
       }
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorMsg = getErrorMessage(error);
       return Err(errorMsg);
     }
 
@@ -1353,7 +701,7 @@ export class WorkspaceService extends EventEmitter {
       return Ok({ metadata: completeMetadata });
     } catch (error) {
       initLogger.logComplete(-1);
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to create workspace: ${message}`);
     }
   }
@@ -1491,7 +839,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session timing into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1523,7 +871,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session usage into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1555,7 +903,7 @@ export class WorkspaceService extends EventEmitter {
             log.error("Failed to roll up child session artifacts into parent", {
               workspaceId,
               parentWorkspaceId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -1583,7 +931,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to remove workspace: ${message}`);
     } finally {
       this.removingWorkspaces.delete(workspaceId);
@@ -1758,7 +1106,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok({ newWorkspaceId: workspaceId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to rename workspace: ${message}`);
     } finally {
       // Always clear renaming flag, even on error
@@ -1805,7 +1153,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to update workspace title: ${message}`);
     }
   }
@@ -1890,7 +1238,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to archive workspace: ${message}`);
     } finally {
       this.archivingWorkspaces.delete(workspaceId);
@@ -1981,7 +1329,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to unarchive workspace: ${message}`);
     }
   }
@@ -2050,7 +1398,7 @@ export class WorkspaceService extends EventEmitter {
           try {
             parsed = JSON.parse(output);
           } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+            const message = getErrorMessage(error);
             errors.push({ workspaceId, error: `Failed to parse gh output: ${message}` });
             return;
           }
@@ -2074,7 +1422,7 @@ export class WorkspaceService extends EventEmitter {
 
           skippedWorkspaceIds.push(workspaceId);
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = getErrorMessage(error);
           errors.push({ workspaceId, error: message });
         }
       });
@@ -2099,169 +1447,37 @@ export class WorkspaceService extends EventEmitter {
         errors,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to archive merged workspaces: ${message}`);
     }
   }
 
-  private normalizeWorkspaceAISettings(
-    aiSettings: WorkspaceAISettings
-  ): Result<WorkspaceAISettings, string> {
-    const rawModel = aiSettings.model;
-    const model = normalizeGatewayModel(rawModel).trim();
-    if (!model) {
-      return Err("Model is required");
+  /** Callback that routes metadata emission through active sessions or fallback event. */
+  private readonly emitWorkspaceMetadata: EmitMetadataFn = (workspaceId, metadata) => {
+    const session = this.sessions.get(workspaceId);
+    if (session) {
+      session.emitMetadata(metadata);
+    } else {
+      this.emit("metadata", { workspaceId, metadata });
     }
-    if (!isValidModelFormat(model)) {
-      return Err(`Invalid model format: ${rawModel}`);
-    }
-
-    return Ok({
-      model,
-      thinkingLevel: aiSettings.thinkingLevel,
-    });
-  }
+  };
 
   private normalizeSendMessageAgentId(options: SendMessageOptions): SendMessageOptions {
-    // agentId is required by the schema, so this just normalizes the value.
-    const rawAgentId = options.agentId;
-    const normalizedAgentId =
-      typeof rawAgentId === "string" && rawAgentId.trim().length > 0
-        ? rawAgentId.trim().toLowerCase()
-        : WORKSPACE_DEFAULTS.agentId;
-
-    if (normalizedAgentId === options.agentId) {
-      return options;
-    }
-
-    return {
-      ...options,
-      agentId: normalizedAgentId,
-    };
+    return normalizeAgentId(options);
   }
 
-  private extractWorkspaceAISettingsFromSendOptions(
-    options: SendMessageOptions | undefined
-  ): WorkspaceAISettings | null {
-    const rawModel = options?.model;
-    if (typeof rawModel !== "string" || rawModel.trim().length === 0) {
-      return null;
-    }
-
-    const model = normalizeGatewayModel(rawModel).trim();
-    if (!isValidModelFormat(model)) {
-      return null;
-    }
-
-    const requestedThinking = options?.thinkingLevel;
-    // Be defensive: if a (very) old client doesn't send thinkingLevel, don't overwrite
-    // any existing workspace-scoped value.
-    if (requestedThinking === undefined) {
-      return null;
-    }
-
-    const thinkingLevel = requestedThinking;
-
-    return { model, thinkingLevel };
-  }
-
-  /**
-   * Best-effort persist AI settings from send/resume options.
-   * Skips requests explicitly marked to avoid persistence.
-   */
   private async maybePersistAISettingsFromOptions(
     workspaceId: string,
     options: SendMessageOptions | undefined,
     context: "send" | "resume"
   ): Promise<void> {
-    if (options?.skipAiSettingsPersistence) {
-      // One-shot/compaction sends shouldn't overwrite workspace defaults.
-      return;
-    }
-
-    const extractedSettings = this.extractWorkspaceAISettingsFromSendOptions(options);
-    if (!extractedSettings) return;
-
-    const rawAgentId = options?.agentId;
-    const agentId =
-      typeof rawAgentId === "string" && rawAgentId.trim().length > 0
-        ? rawAgentId.trim().toLowerCase()
-        : WORKSPACE_DEFAULTS.agentId;
-
-    const persistResult = await this.persistWorkspaceAISettingsForAgent(
+    return maybePersistAISettings(
+      this.config,
+      this.emitWorkspaceMetadata,
       workspaceId,
-      agentId,
-      extractedSettings,
-      {
-        emitMetadata: false,
-      }
+      options,
+      context
     );
-    if (!persistResult.success) {
-      log.debug(`Failed to persist workspace AI settings from ${context} options`, {
-        workspaceId,
-        error: persistResult.error,
-      });
-    }
-  }
-
-  private async persistWorkspaceAISettingsForAgent(
-    workspaceId: string,
-    agentId: string,
-    aiSettings: WorkspaceAISettings,
-    options?: { emitMetadata?: boolean }
-  ): Promise<Result<boolean, string>> {
-    const found = this.config.findWorkspace(workspaceId);
-    if (!found) {
-      return Err("Workspace not found");
-    }
-
-    const { projectPath, workspacePath } = found;
-
-    const config = this.config.loadConfigOrDefault();
-    const projectConfig = config.projects.get(projectPath);
-    if (!projectConfig) {
-      return Err(`Project not found: ${projectPath}`);
-    }
-
-    const workspaceEntry = projectConfig.workspaces.find((w) => w.id === workspaceId);
-    const workspaceEntryWithFallback =
-      workspaceEntry ?? projectConfig.workspaces.find((w) => w.path === workspacePath);
-    if (!workspaceEntryWithFallback) {
-      return Err("Workspace not found");
-    }
-
-    const normalizedAgentId = agentId.trim().toLowerCase();
-    if (!normalizedAgentId) {
-      return Err("Agent ID is required");
-    }
-
-    const prev = workspaceEntryWithFallback.aiSettingsByAgent?.[normalizedAgentId];
-    const changed =
-      prev?.model !== aiSettings.model || prev?.thinkingLevel !== aiSettings.thinkingLevel;
-    if (!changed) {
-      return Ok(false);
-    }
-
-    workspaceEntryWithFallback.aiSettingsByAgent = {
-      ...(workspaceEntryWithFallback.aiSettingsByAgent ?? {}),
-      [normalizedAgentId]: aiSettings,
-    };
-
-    await this.config.saveConfig(config);
-
-    if (options?.emitMetadata !== false) {
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const updatedMetadata = allMetadata.find((m) => m.id === workspaceId) ?? null;
-
-      const session = this.sessions.get(workspaceId);
-      if (session) {
-        session.emitMetadata(updatedMetadata);
-      } else {
-        this.emit("metadata", { workspaceId, metadata: updatedMetadata });
-      }
-    }
-
-    return Ok(true);
   }
 
   async updateModeAISettings(
@@ -2278,29 +1494,13 @@ export class WorkspaceService extends EventEmitter {
     agentId: string,
     aiSettings: WorkspaceAISettings
   ): Promise<Result<void, string>> {
-    try {
-      const normalized = this.normalizeWorkspaceAISettings(aiSettings);
-      if (!normalized.success) {
-        return Err(normalized.error);
-      }
-
-      const persistResult = await this.persistWorkspaceAISettingsForAgent(
-        workspaceId,
-        agentId,
-        normalized.data,
-        {
-          emitMetadata: true,
-        }
-      );
-      if (!persistResult.success) {
-        return Err(persistResult.error);
-      }
-
-      return Ok(undefined);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return Err(`Failed to update workspace AI settings: ${message}`);
-    }
+    return updateAgentAISettingsFn(
+      this.config,
+      this.emitWorkspaceMetadata,
+      workspaceId,
+      agentId,
+      aiSettings
+    );
   }
 
   async fork(
@@ -2435,7 +1635,7 @@ export class WorkspaceService extends EventEmitter {
           log.error(`Failed to clean up session dir ${newSessionDir}:`, cleanupError);
         }
         initLogger.logComplete(-1);
-        const message = copyError instanceof Error ? copyError.message : String(copyError);
+        const message = getErrorMessage(copyError);
         return Err(`Failed to copy chat history: ${message}`);
       }
 
@@ -2481,9 +1681,62 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok({ metadata, projectPath: foundProjectPath });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to fork workspace: ${message}`);
     }
+  }
+
+  /**
+   * Shared guard for sendMessage/resumeStream — blocks streaming when the
+   * workspace is in an incompatible state (renaming, removing, deleted, queued).
+   * Returns an error result if blocked, or null if streaming is allowed.
+   */
+  private guardStreamingAllowed(
+    workspaceId: string,
+    caller: "sendMessage" | "resumeStream",
+    internal?: { allowQueuedAgentTask?: boolean }
+  ): Result<void, SendMessageError> | null {
+    if (this.renamingWorkspaces.has(workspaceId)) {
+      log.debug(`${caller} blocked: workspace is being renamed`, { workspaceId });
+      return Err({
+        type: "unknown",
+        raw: "Workspace is being renamed. Please wait and try again.",
+      });
+    }
+    if (this.removingWorkspaces.has(workspaceId)) {
+      log.debug(`${caller} blocked: workspace is being removed`, { workspaceId });
+      return Err({
+        type: "unknown",
+        raw: "Workspace is being deleted. Please wait and try again.",
+      });
+    }
+    if (!this.config.findWorkspace(workspaceId)) {
+      return Err({ type: "unknown", raw: "Workspace not found. It may have been deleted." });
+    }
+    if (!internal?.allowQueuedAgentTask) {
+      const config = this.config.loadConfigOrDefault();
+      for (const [_projectPath, project] of config.projects) {
+        const ws = project.workspaces.find((w) => w.id === workspaceId);
+        if (!ws) continue;
+        if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+          taskQueueDebug(`WorkspaceService.${caller} blocked (queued task)`, {
+            workspaceId,
+            stack: new Error(`${caller} blocked`).stack,
+          });
+          return Err({
+            type: "unknown",
+            raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+          });
+        }
+        break;
+      }
+    } else {
+      taskQueueDebug(`WorkspaceService.${caller} allowed (internal dequeue)`, {
+        workspaceId,
+        stack: new Error(`${caller} internal`).stack,
+      });
+    }
+    return null;
   }
 
   async sendMessage(
@@ -2506,57 +1759,8 @@ export class WorkspaceService extends EventEmitter {
     });
 
     try {
-      // Block streaming while workspace is being renamed to prevent path conflicts
-      if (this.renamingWorkspaces.has(workspaceId)) {
-        log.debug("sendMessage blocked: workspace is being renamed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being renamed. Please wait and try again.",
-        });
-      }
-
-      // Block streaming while workspace is being removed to prevent races with config/session deletion.
-      if (this.removingWorkspaces.has(workspaceId)) {
-        log.debug("sendMessage blocked: workspace is being removed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being deleted. Please wait and try again.",
-        });
-      }
-
-      // Guard: avoid creating sessions for workspaces that don't exist anymore.
-      if (!this.config.findWorkspace(workspaceId)) {
-        return Err({
-          type: "unknown",
-          raw: "Workspace not found. It may have been deleted.",
-        });
-      }
-
-      // Guard: queued agent tasks must not start streaming via generic sendMessage calls.
-      // They should only be started by TaskService once a parallel slot is available.
-      if (!internal?.allowQueuedAgentTask) {
-        const config = this.config.loadConfigOrDefault();
-        for (const [_projectPath, project] of config.projects) {
-          const ws = project.workspaces.find((w) => w.id === workspaceId);
-          if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.sendMessage blocked (queued task)", {
-              workspaceId,
-              stack: new Error("sendMessage blocked").stack,
-            });
-            return Err({
-              type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
-            });
-          }
-          break;
-        }
-      } else {
-        taskQueueDebug("WorkspaceService.sendMessage allowed (internal dequeue)", {
-          workspaceId,
-          stack: new Error("sendMessage internal").stack,
-        });
-      }
+      const guardErr = this.guardStreamingAllowed(workspaceId, "sendMessage", internal);
+      if (guardErr) return guardErr;
 
       const session = this.getOrCreateSession(workspaceId);
 
@@ -2628,7 +1832,7 @@ export class WorkspaceService extends EventEmitter {
             log.debug("Failed to cancel pending ask_user_question", {
               workspaceId,
               toolCallId: pendingAskUserQuestion.toolCallId,
-              error: error instanceof Error ? error.message : String(error),
+              error: getErrorMessage(error),
             });
           }
         }
@@ -2677,57 +1881,8 @@ export class WorkspaceService extends EventEmitter {
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     try {
-      // Block streaming while workspace is being renamed to prevent path conflicts
-      if (this.renamingWorkspaces.has(workspaceId)) {
-        log.debug("resumeStream blocked: workspace is being renamed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being renamed. Please wait and try again.",
-        });
-      }
-
-      // Block streaming while workspace is being removed to prevent races with config/session deletion.
-      if (this.removingWorkspaces.has(workspaceId)) {
-        log.debug("resumeStream blocked: workspace is being removed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being deleted. Please wait and try again.",
-        });
-      }
-
-      // Guard: avoid creating sessions for workspaces that don't exist anymore.
-      if (!this.config.findWorkspace(workspaceId)) {
-        return Err({
-          type: "unknown",
-          raw: "Workspace not found. It may have been deleted.",
-        });
-      }
-
-      // Guard: queued agent tasks must not be resumed by generic UI/API calls.
-      // TaskService is responsible for dequeuing and starting them.
-      if (!internal?.allowQueuedAgentTask) {
-        const config = this.config.loadConfigOrDefault();
-        for (const [_projectPath, project] of config.projects) {
-          const ws = project.workspaces.find((w) => w.id === workspaceId);
-          if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.resumeStream blocked (queued task)", {
-              workspaceId,
-              stack: new Error("resumeStream blocked").stack,
-            });
-            return Err({
-              type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
-            });
-          }
-          break;
-        }
-      } else {
-        taskQueueDebug("WorkspaceService.resumeStream allowed (internal dequeue)", {
-          workspaceId,
-          stack: new Error("resumeStream internal").stack,
-        });
-      }
+      const guardErr = this.guardStreamingAllowed(workspaceId, "resumeStream", internal);
+      if (guardErr) return guardErr;
 
       const session = this.getOrCreateSession(workspaceId);
 
@@ -2745,7 +1900,7 @@ export class WorkspaceService extends EventEmitter {
       }
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in resumeStream handler:", error);
 
       // Handle incompatible workspace errors from downgraded configs
@@ -2796,7 +1951,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in interruptStream handler:", error);
       return Err(`Failed to interrupt stream: ${errorMessage}`);
     }
@@ -2937,7 +2092,7 @@ export class WorkspaceService extends EventEmitter {
         }
 
         if (!best) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
+          const errorMessage = getErrorMessage(error);
           return Err(`Failed to answer ask_user_question: ${errorMessage}`);
         }
 
@@ -2979,7 +2134,7 @@ export class WorkspaceService extends EventEmitter {
 
         return Ok(undefined);
       } catch (innerError) {
-        const errorMessage = innerError instanceof Error ? innerError.message : String(innerError);
+        const errorMessage = getErrorMessage(innerError);
         return Err(errorMessage);
       }
     }
@@ -2991,7 +2146,7 @@ export class WorkspaceService extends EventEmitter {
       session.clearQueue();
       return Ok(undefined);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.error("Unexpected error in clearQueue handler:", error);
       return Err(`Failed to clear queue: ${errorMessage}`);
     }
@@ -3006,63 +2161,7 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     metadata: FrontendWorkspaceMetadata
   ): Promise<void> {
-    // Create runtime to get correct muxHome (Docker uses /var/mux, others use ~/.mux)
-    const runtime = createRuntimeForWorkspace(metadata);
-    const muxHome = runtime.getMuxHome();
-    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
-
-    const isDocker = isDockerRuntime(metadata.runtimeConfig);
-    const isSSH = isSSHRuntime(metadata.runtimeConfig);
-
-    // For Docker: paths are already absolute (/var/mux/...), just quote
-    // For SSH: use $HOME expansion so the runtime shell resolves to the runtime home directory
-    // For local: expand tilde locally since shellQuote prevents shell expansion
-    const quotedPlanPath = isDocker
-      ? shellQuote(planPath)
-      : isSSH
-        ? expandTildeForSSH(planPath)
-        : shellQuote(expandTilde(planPath));
-    // For legacy path: SSH/Docker use $HOME expansion, local expands tilde
-    const quotedLegacyPlanPath =
-      isDocker || isSSH
-        ? expandTildeForSSH(legacyPlanPath)
-        : shellQuote(expandTilde(legacyPlanPath));
-
-    if (isDocker || isSSH) {
-      try {
-        // Use exec to delete files since runtime doesn't have a deleteFile method.
-        // Use runtime workspace path (not host projectPath) for Docker containers.
-        const workspacePath = runtime.getWorkspacePath(metadata.projectPath, metadata.name);
-        const execStream = await runtime.exec(`rm -f ${quotedPlanPath} ${quotedLegacyPlanPath}`, {
-          cwd: workspacePath,
-          timeout: 10,
-        });
-
-        try {
-          await execStream.stdin.close();
-        } catch {
-          // Ignore stdin-close errors (e.g. already closed).
-        }
-
-        await execStream.exitCode.catch(() => {
-          // Best-effort: ignore failures.
-        });
-      } catch {
-        // Plan files don't exist or can't be deleted - ignore
-      }
-
-      return;
-    }
-
-    // Local runtimes: delete directly on the local filesystem.
-    const planPathAbs = expandTilde(planPath);
-    const legacyPlanPathAbs = expandTilde(legacyPlanPath);
-
-    await Promise.allSettled([
-      fsPromises.rm(planPathAbs, { force: true }),
-      fsPromises.rm(legacyPlanPathAbs, { force: true }),
-    ]);
+    return this.postCompactionService.deletePlanFilesForWorkspace(workspaceId, metadata);
   }
 
   async truncateHistory(workspaceId: string, percentage?: number): Promise<Result<void>> {
@@ -3168,7 +2267,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to replace history: ${message}`);
     }
   }
@@ -3250,7 +2349,7 @@ export class WorkspaceService extends EventEmitter {
         } catch (error) {
           log.debug("getFileCompletions: failed to list files", {
             workspaceId,
-            error: error instanceof Error ? error.message : String(error),
+            error: getErrorMessage(error),
           });
 
           // Keep any previously indexed data, but avoid retrying in a tight loop.
@@ -3370,7 +2469,7 @@ export class WorkspaceService extends EventEmitter {
     } catch (error) {
       // bashTool.execute returns error results instead of throwing, so this only catches
       // failures from setup code (getWorkspaceMetadata, findWorkspace, createRuntime, etc.)
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       return Err(`Failed to execute bash command: ${message}`);
     }
   }

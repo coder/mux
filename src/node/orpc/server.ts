@@ -24,6 +24,7 @@ import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler, isIgnorableStreamError } from "@/node/utils/streamErrors";
+import { getErrorMessage } from "@/common/utils/errors";
 
 type AliveWebSocket = WebSocket & { isAlive?: boolean };
 
@@ -755,7 +756,7 @@ export async function createOrpcServer({
       return;
     }
 
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     const code =
       error && typeof error === "object" && "code" in error && typeof error.code === "string"
         ? error.code

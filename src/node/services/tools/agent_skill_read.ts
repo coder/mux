@@ -8,9 +8,10 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import { getErrorMessage } from "@/common/utils/errors";
 
 function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return getErrorMessage(error);
 }
 
 /**

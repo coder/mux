@@ -389,12 +389,22 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
       () => Promise.resolve(postCompactionState)
     );
 
-    svc.getInfo = getInfoMock;
-    svc.getPostCompactionState = getPostCompactionStateMock;
+    // Patch the PostCompactionService's internal methods, not WorkspaceService's delegation wrappers
+    const pcs = (
+      workspaceService as unknown as {
+        postCompactionService: {
+          getInfo: unknown;
+          getPostCompactionState: unknown;
+          schedulePostCompactionMetadataRefresh: (wsId: string) => void;
+        };
+      }
+    ).postCompactionService;
+    (pcs as unknown as Record<string, unknown>).getInfo = getInfoMock;
+    pcs.getPostCompactionState = getPostCompactionStateMock;
 
-    svc.schedulePostCompactionMetadataRefresh(workspaceId);
-    svc.schedulePostCompactionMetadataRefresh(workspaceId);
-    svc.schedulePostCompactionMetadataRefresh(workspaceId);
+    pcs.schedulePostCompactionMetadataRefresh(workspaceId);
+    pcs.schedulePostCompactionMetadataRefresh(workspaceId);
+    pcs.schedulePostCompactionMetadataRefresh(workspaceId);
 
     // Debounce is short, but use a safe buffer.
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -430,11 +440,20 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
+    // Provide enough config mocking for persistWorkspaceAISettingsForAgent to
+    // reach its editConfig/saveConfig call (needs findWorkspace + loadConfigOrDefault)
+    const wsEntry = { id: "ws", path: "/tmp/test/src/ws", name: "ws" };
+    const projectConfig = { workspaces: [wsEntry] };
+    const projectsConfig = { projects: new Map([["/tmp/test", projectConfig]]) };
+
     const mockConfig: Partial<Config> = {
       srcDir: "/tmp/test",
       getSessionDir: mock(() => "/tmp/test/sessions"),
       generateStableId: mock(() => "test-id"),
-      findWorkspace: mock(() => null),
+      findWorkspace: mock(() => ({ projectPath: "/tmp/test", workspacePath: "/tmp/test/src/ws" })),
+      loadConfigOrDefault: mock(() => projectsConfig),
+      saveConfig: mock(() => Promise.resolve()),
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([])),
     };
 
     const mockPartialService: Partial<PartialService> = {
@@ -459,19 +478,19 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
   });
 
   test("persists agent AI settings for custom agent", async () => {
-    const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
-
+    // After extraction, maybePersistAISettingsFromOptions calls the standalone
+    // function directly. Verify it calls config.saveConfig (the real side effect).
     interface WorkspaceServiceTestAccess {
       maybePersistAISettingsFromOptions: (
         workspaceId: string,
         options: unknown,
         context: "send" | "resume"
       ) => Promise<void>;
-      persistWorkspaceAISettingsForAgent: (...args: unknown[]) => unknown;
     }
 
     const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
-    svc.persistWorkspaceAISettingsForAgent = persistSpy;
+    const cfg = (workspaceService as unknown as { config: { saveConfig: ReturnType<typeof mock> } })
+      .config;
 
     await svc.maybePersistAISettingsFromOptions(
       "ws",
@@ -483,23 +502,21 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       "send"
     );
 
-    expect(persistSpy).toHaveBeenCalledTimes(1);
+    expect(cfg.saveConfig).toHaveBeenCalledTimes(1);
   });
 
   test("persists agent AI settings when agentId matches", async () => {
-    const persistSpy = mock(() => Promise.resolve({ success: true as const, data: true }));
-
     interface WorkspaceServiceTestAccess {
       maybePersistAISettingsFromOptions: (
         workspaceId: string,
         options: unknown,
         context: "send" | "resume"
       ) => Promise<void>;
-      persistWorkspaceAISettingsForAgent: (...args: unknown[]) => unknown;
     }
 
     const svc = workspaceService as unknown as WorkspaceServiceTestAccess;
-    svc.persistWorkspaceAISettingsForAgent = persistSpy;
+    const cfg = (workspaceService as unknown as { config: { saveConfig: ReturnType<typeof mock> } })
+      .config;
 
     await svc.maybePersistAISettingsFromOptions(
       "ws",
@@ -511,7 +528,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
       "send"
     );
 
-    expect(persistSpy).toHaveBeenCalledTimes(1);
+    expect(cfg.saveConfig).toHaveBeenCalledTimes(1);
   });
 });
 describe("WorkspaceService remove timing rollup", () => {

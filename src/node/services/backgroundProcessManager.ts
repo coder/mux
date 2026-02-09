@@ -883,7 +883,7 @@ export class BackgroundProcessManager extends EventEmitter<BackgroundProcessMana
       this.emitChange(proc.workspaceId);
       return { success: true };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage = getErrorMessage(error);
       log.debug(`Error terminating process ${processId}: ${errorMessage}`);
       // Mark as killed even if there was an error (process likely already dead)
       proc.status = "killed";
