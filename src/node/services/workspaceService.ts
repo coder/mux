@@ -1686,6 +1686,59 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Shared guard for sendMessage/resumeStream — blocks streaming when the
+   * workspace is in an incompatible state (renaming, removing, deleted, queued).
+   * Returns an error result if blocked, or null if streaming is allowed.
+   */
+  private guardStreamingAllowed(
+    workspaceId: string,
+    caller: "sendMessage" | "resumeStream",
+    internal?: { allowQueuedAgentTask?: boolean }
+  ): Result<void, SendMessageError> | null {
+    if (this.renamingWorkspaces.has(workspaceId)) {
+      log.debug(`${caller} blocked: workspace is being renamed`, { workspaceId });
+      return Err({
+        type: "unknown",
+        raw: "Workspace is being renamed. Please wait and try again.",
+      });
+    }
+    if (this.removingWorkspaces.has(workspaceId)) {
+      log.debug(`${caller} blocked: workspace is being removed`, { workspaceId });
+      return Err({
+        type: "unknown",
+        raw: "Workspace is being deleted. Please wait and try again.",
+      });
+    }
+    if (!this.config.findWorkspace(workspaceId)) {
+      return Err({ type: "unknown", raw: "Workspace not found. It may have been deleted." });
+    }
+    if (!internal?.allowQueuedAgentTask) {
+      const config = this.config.loadConfigOrDefault();
+      for (const [_projectPath, project] of config.projects) {
+        const ws = project.workspaces.find((w) => w.id === workspaceId);
+        if (!ws) continue;
+        if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
+          taskQueueDebug(`WorkspaceService.${caller} blocked (queued task)`, {
+            workspaceId,
+            stack: new Error(`${caller} blocked`).stack,
+          });
+          return Err({
+            type: "unknown",
+            raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
+          });
+        }
+        break;
+      }
+    } else {
+      taskQueueDebug(`WorkspaceService.${caller} allowed (internal dequeue)`, {
+        workspaceId,
+        stack: new Error(`${caller} internal`).stack,
+      });
+    }
+    return null;
+  }
+
   async sendMessage(
     workspaceId: string,
     message: string,
@@ -1706,57 +1759,8 @@ export class WorkspaceService extends EventEmitter {
     });
 
     try {
-      // Block streaming while workspace is being renamed to prevent path conflicts
-      if (this.renamingWorkspaces.has(workspaceId)) {
-        log.debug("sendMessage blocked: workspace is being renamed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being renamed. Please wait and try again.",
-        });
-      }
-
-      // Block streaming while workspace is being removed to prevent races with config/session deletion.
-      if (this.removingWorkspaces.has(workspaceId)) {
-        log.debug("sendMessage blocked: workspace is being removed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being deleted. Please wait and try again.",
-        });
-      }
-
-      // Guard: avoid creating sessions for workspaces that don't exist anymore.
-      if (!this.config.findWorkspace(workspaceId)) {
-        return Err({
-          type: "unknown",
-          raw: "Workspace not found. It may have been deleted.",
-        });
-      }
-
-      // Guard: queued agent tasks must not start streaming via generic sendMessage calls.
-      // They should only be started by TaskService once a parallel slot is available.
-      if (!internal?.allowQueuedAgentTask) {
-        const config = this.config.loadConfigOrDefault();
-        for (const [_projectPath, project] of config.projects) {
-          const ws = project.workspaces.find((w) => w.id === workspaceId);
-          if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.sendMessage blocked (queued task)", {
-              workspaceId,
-              stack: new Error("sendMessage blocked").stack,
-            });
-            return Err({
-              type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
-            });
-          }
-          break;
-        }
-      } else {
-        taskQueueDebug("WorkspaceService.sendMessage allowed (internal dequeue)", {
-          workspaceId,
-          stack: new Error("sendMessage internal").stack,
-        });
-      }
+      const guardErr = this.guardStreamingAllowed(workspaceId, "sendMessage", internal);
+      if (guardErr) return guardErr;
 
       const session = this.getOrCreateSession(workspaceId);
 
@@ -1877,57 +1881,8 @@ export class WorkspaceService extends EventEmitter {
     internal?: { allowQueuedAgentTask?: boolean }
   ): Promise<Result<void, SendMessageError>> {
     try {
-      // Block streaming while workspace is being renamed to prevent path conflicts
-      if (this.renamingWorkspaces.has(workspaceId)) {
-        log.debug("resumeStream blocked: workspace is being renamed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being renamed. Please wait and try again.",
-        });
-      }
-
-      // Block streaming while workspace is being removed to prevent races with config/session deletion.
-      if (this.removingWorkspaces.has(workspaceId)) {
-        log.debug("resumeStream blocked: workspace is being removed", { workspaceId });
-        return Err({
-          type: "unknown",
-          raw: "Workspace is being deleted. Please wait and try again.",
-        });
-      }
-
-      // Guard: avoid creating sessions for workspaces that don't exist anymore.
-      if (!this.config.findWorkspace(workspaceId)) {
-        return Err({
-          type: "unknown",
-          raw: "Workspace not found. It may have been deleted.",
-        });
-      }
-
-      // Guard: queued agent tasks must not be resumed by generic UI/API calls.
-      // TaskService is responsible for dequeuing and starting them.
-      if (!internal?.allowQueuedAgentTask) {
-        const config = this.config.loadConfigOrDefault();
-        for (const [_projectPath, project] of config.projects) {
-          const ws = project.workspaces.find((w) => w.id === workspaceId);
-          if (!ws) continue;
-          if (ws.parentWorkspaceId && ws.taskStatus === "queued") {
-            taskQueueDebug("WorkspaceService.resumeStream blocked (queued task)", {
-              workspaceId,
-              stack: new Error("resumeStream blocked").stack,
-            });
-            return Err({
-              type: "unknown",
-              raw: "This agent task is queued and cannot start yet. Wait for a slot to free.",
-            });
-          }
-          break;
-        }
-      } else {
-        taskQueueDebug("WorkspaceService.resumeStream allowed (internal dequeue)", {
-          workspaceId,
-          stack: new Error("resumeStream internal").stack,
-        });
-      }
+      const guardErr = this.guardStreamingAllowed(workspaceId, "resumeStream", internal);
+      if (guardErr) return guardErr;
 
       const session = this.getOrCreateSession(workspaceId);
 
