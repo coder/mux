@@ -1,4 +1,6 @@
 import { describe, it, expect } from "bun:test";
+import { anthropic } from "@ai-sdk/anthropic";
+import { openai } from "@ai-sdk/openai";
 import type { ModelMessage, Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
@@ -213,6 +215,19 @@ describe("cacheStrategy", () => {
       }),
     };
 
+    const expectProviderToolToRemainProviderNative = (cachedTool: Tool, originalTool: Tool) => {
+      const cachedProviderTool = cachedTool as Extract<Tool, { type: "provider" }>;
+      const originalProviderTool = originalTool as Extract<Tool, { type: "provider" }>;
+
+      expect(cachedProviderTool.type).toBe("provider");
+      expect(cachedProviderTool.id).toBe(originalProviderTool.id);
+      expect(cachedProviderTool.args).toEqual(originalProviderTool.args);
+      expect(cachedProviderTool.providerOptions).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+      // Regression guard: if this ever becomes a createTool() result, execute will be defined.
+      expect((cachedProviderTool as { execute?: unknown }).execute).toBeUndefined();
+    };
     it("should not modify tools for non-Anthropic models", () => {
       const result = applyCacheControlToTools(mockTools, "openai:gpt-4");
       expect(result).toEqual(mockTools);
@@ -260,47 +275,33 @@ describe("cacheStrategy", () => {
       expect(mockTools).toEqual(originalTools);
     });
 
-    it("should handle provider-defined tools without recreating them", () => {
-      // Provider-defined tools (like Anthropic's webSearch) have type: "provider-defined"
-      // and cannot be recreated with createTool() - they have special internal properties
-      const providerDefinedTool = {
-        type: "provider-defined" as const,
-        id: "web_search",
-        name: "web_search_20250305",
-        args: { maxUses: 1000 },
-        // Note: no description or execute - these are handled internally by the SDK
+    it("should keep Anthropic provider-native tools as provider tools", () => {
+      const providerTool = anthropic.tools.webSearch_20250305({ maxUses: 1000 }) as unknown as Tool;
+      const toolsWithProviderTool: Record<string, Tool> = {
+        readFile: mockTools.readFile,
+        web_search: providerTool,
       };
 
-      const toolsWithProviderDefined: Record<string, Tool> = {
-        readFile: tool({
-          description: "Read a file",
-          inputSchema: z.object({ path: z.string() }),
-          execute: () => Promise.resolve({ success: true }),
-        }),
-        // Provider-defined tool as last tool (typical for Anthropic web search)
-        web_search: providerDefinedTool as unknown as Tool,
+      const result = applyCacheControlToTools(toolsWithProviderTool, "anthropic:claude-3-5-sonnet");
+
+      // Verify all tools are present and non-provider tools are unchanged.
+      expect(Object.keys(result)).toEqual(Object.keys(toolsWithProviderTool));
+      expect(result.readFile).toEqual(toolsWithProviderTool.readFile);
+
+      expectProviderToolToRemainProviderNative(result.web_search, providerTool);
+    });
+
+    it("should avoid createTool fallback for any provider-native tool", () => {
+      const providerTool = openai.tools.webSearch({ searchContextSize: "high" }) as unknown as Tool;
+      const toolsWithProviderTool: Record<string, Tool> = {
+        readFile: mockTools.readFile,
+        web_search: providerTool,
       };
 
-      const result = applyCacheControlToTools(
-        toolsWithProviderDefined,
-        "anthropic:claude-3-5-sonnet"
-      );
+      const result = applyCacheControlToTools(toolsWithProviderTool, "anthropic:claude-3-5-sonnet");
 
-      // Verify all tools are present
-      expect(Object.keys(result)).toEqual(Object.keys(toolsWithProviderDefined));
-
-      // First tool should be unchanged
-      expect(result.readFile).toEqual(toolsWithProviderDefined.readFile);
-
-      // Provider-defined tool should have cache control added but retain its type
-      const cachedWebSearch = result.web_search as unknown as {
-        type: string;
-        providerOptions: unknown;
-      };
-      expect(cachedWebSearch.type).toBe("provider-defined");
-      expect(cachedWebSearch.providerOptions).toEqual({
-        anthropic: { cacheControl: { type: "ephemeral" } },
-      });
+      expect(Object.keys(result)).toEqual(Object.keys(toolsWithProviderTool));
+      expectProviderToolToRemainProviderNative(result.web_search, providerTool);
     });
   });
 });
