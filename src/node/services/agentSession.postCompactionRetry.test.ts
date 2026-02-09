@@ -61,8 +61,12 @@ describe("AgentSession post-compaction context retry", () => {
     ];
 
     const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true as const, data: history })),
-      getLastMessages: mock((_: string, n: number) => Promise.resolve({ success: true as const, data: history.slice(-n) })),
+      getHistoryFromLatestBoundary: mock(() =>
+        Promise.resolve({ success: true as const, data: history })
+      ),
+      getLastMessages: mock((_: string, n: number) =>
+        Promise.resolve({ success: true as const, data: history.slice(-n) })
+      ),
       deleteMessage: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     } as unknown as HistoryService;
 
@@ -218,8 +222,12 @@ describe("AgentSession execSubagentHardRestart", () => {
     ];
 
     const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true as const, data: history })),
-      getLastMessages: mock((_: string, n: number) => Promise.resolve({ success: true as const, data: history.slice(-n) })),
+      getHistoryFromLatestBoundary: mock(() =>
+        Promise.resolve({ success: true as const, data: history })
+      ),
+      getLastMessages: mock((_: string, n: number) =>
+        Promise.resolve({ success: true as const, data: history.slice(-n) })
+      ),
       clearHistory: mock(() => {
         history = [];
         return Promise.resolve({ success: true as const, data: [] });
@@ -421,8 +429,12 @@ describe("AgentSession execSubagentHardRestart", () => {
     ];
 
     const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true as const, data: history })),
-      getLastMessages: mock((_: string, n: number) => Promise.resolve({ success: true as const, data: history.slice(-n) })),
+      getHistoryFromLatestBoundary: mock(() =>
+        Promise.resolve({ success: true as const, data: history })
+      ),
+      getLastMessages: mock((_: string, n: number) =>
+        Promise.resolve({ success: true as const, data: history.slice(-n) })
+      ),
       clearHistory: mock(() => {
         history = [];
         return Promise.resolve({ success: true as const, data: [] });
@@ -618,8 +630,12 @@ describe("AgentSession execSubagentHardRestart", () => {
     ];
 
     const historyService: HistoryService = {
-      getHistoryFromLatestBoundary: mock(() => Promise.resolve({ success: true as const, data: history })),
-      getLastMessages: mock((_: string, n: number) => Promise.resolve({ success: true as const, data: history.slice(-n) })),
+      getHistoryFromLatestBoundary: mock(() =>
+        Promise.resolve({ success: true as const, data: history })
+      ),
+      getLastMessages: mock((_: string, n: number) =>
+        Promise.resolve({ success: true as const, data: history.slice(-n) })
+      ),
       clearHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
       appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     } as unknown as HistoryService;
