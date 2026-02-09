@@ -374,13 +374,9 @@ export function useWorkspaceName(options: UseWorkspaceNameOptions): UseWorkspace
         setError("Please enter a workspace name");
         return null;
       }
-      // Generate identity for the message to get the title, then override name with manual
-      const identity = await generateIdentity(message);
-      if (identity) {
-        // Use manual name with AI-generated title
-        return { name: manualName.trim(), title: identity.title };
-      }
-      // Fallback: if generation fails, use manual name as title too
+      // Manual name provided — skip LLM call entirely.
+      // The manual name doubles as the display title; users who type a custom
+      // name expect to see exactly that in the sidebar.
       return { name: manualName.trim(), title: manualName.trim() };
     }
 

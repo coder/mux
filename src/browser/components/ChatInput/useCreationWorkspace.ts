@@ -352,7 +352,14 @@ export function useCreationWorkspace({
 
       setIsSending(true);
       setToast(null);
-      setCreatingWithIdentity(null);
+      // If user provided a manual name, show it immediately in the overlay
+      // instead of "Generating name…". Auto-generated names still show the
+      // loading text until generation resolves.
+      setCreatingWithIdentity(
+        !workspaceNameState.autoGenerate && workspaceNameState.name.trim()
+          ? { name: workspaceNameState.name.trim(), title: workspaceNameState.name.trim() }
+          : null
+      );
 
       try {
         // Wait for identity generation to complete (blocks if still in progress)
@@ -569,6 +576,8 @@ export function useCreationWorkspace({
       settings.thinkingLevel,
       settings.trunkBranch,
       waitForGeneration,
+      workspaceNameState.autoGenerate,
+      workspaceNameState.name,
       sectionId,
       draftId,
       promoteWorkspaceDraft,
