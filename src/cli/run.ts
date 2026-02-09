@@ -56,8 +56,9 @@ import {
   DEFAULT_THINKING_LEVEL,
   THINKING_DISPLAY_LABELS,
   parseThinkingInput,
-  type ThinkingLevel,
+  type ParsedThinkingInput,
 } from "@/common/types/thinking";
+import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { parseRuntimeModeAndHost, RUNTIME_MODE } from "@/common/types/runtime";
 import assert from "@/common/utils/assert";
@@ -103,15 +104,15 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
   }
 }
 
-function parseThinkingLevel(value: string | undefined): ThinkingLevel | undefined {
+function parseThinkingLevel(value: string | undefined): ParsedThinkingInput {
   if (!value) return DEFAULT_THINKING_LEVEL; // Default for mux run
 
-  // Accepts named levels (off, low, med, high, max, xhigh) and numeric (0–4)
+  // Accepts named levels (off, low, med, high, max, xhigh) and numeric (0–N)
   const level = parseThinkingInput(value);
-  if (level) {
+  if (level != null) {
     return level;
   }
-  throw new Error(`Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST}, or 0–4`);
+  throw new Error(`Invalid thinking level "${value}". Expected: ${THINKING_LABELS_LIST}, or 0–N`);
 }
 
 function parseMode(value: string | undefined): CLIMode {
@@ -353,7 +354,8 @@ async function main(): Promise<number> {
 
   const model: string = resolveModelAlias(opts.model);
   const runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
-  const thinkingLevel = parseThinkingLevel(opts.thinking);
+  // Resolve thinking: numeric indices map to the model's allowed levels (0 = lowest)
+  const thinkingLevel = resolveThinkingInput(parseThinkingLevel(opts.thinking), model);
   const initialMode = parseMode(opts.mode);
   const emitJson = opts.json === true;
   const quiet = opts.quiet === true;

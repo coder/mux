@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getThinkingPolicyForModel, enforceThinkingPolicy } from "./policy";
+import { getThinkingPolicyForModel, enforceThinkingPolicy, resolveThinkingInput } from "./policy";
 
 describe("getThinkingPolicyForModel", () => {
   test("returns 5 levels including xhigh for gpt-5.1-codex-max", () => {
@@ -320,3 +320,43 @@ describe("enforceThinkingPolicy", () => {
 
 // Note: Tests for invalid levels removed - TypeScript type system prevents invalid
 // ThinkingLevel values at compile time, making runtime invalid-level tests unnecessary.
+describe("resolveThinkingInput", () => {
+  test("passes through named levels directly", () => {
+    expect(resolveThinkingInput("off", "anthropic:claude-opus-4-1")).toBe("off");
+    expect(resolveThinkingInput("high", "anthropic:claude-opus-4-1")).toBe("high");
+    expect(resolveThinkingInput("medium", "openai:gpt-5.2-pro")).toBe("medium");
+  });
+
+  test("numeric 0 maps to model's lowest allowed level", () => {
+    // Default models: lowest = "off"
+    expect(resolveThinkingInput(0, "anthropic:claude-opus-4-1")).toBe("off");
+    // gpt-5.2-pro: lowest = "medium"
+    expect(resolveThinkingInput(0, "openai:gpt-5.2-pro")).toBe("medium");
+    // gpt-5-pro: only "high"
+    expect(resolveThinkingInput(0, "openai:gpt-5-pro")).toBe("high");
+    // gemini-3: lowest = "low"
+    expect(resolveThinkingInput(0, "google:gemini-3")).toBe("low");
+  });
+
+  test("numeric indices map through model's sorted allowed levels", () => {
+    // Default: [off, low, medium, high] → 0=off, 1=low, 2=medium, 3=high
+    expect(resolveThinkingInput(0, "anthropic:claude-sonnet-4-5")).toBe("off");
+    expect(resolveThinkingInput(1, "anthropic:claude-sonnet-4-5")).toBe("low");
+    expect(resolveThinkingInput(2, "anthropic:claude-sonnet-4-5")).toBe("medium");
+    expect(resolveThinkingInput(3, "anthropic:claude-sonnet-4-5")).toBe("high");
+
+    // gpt-5.2-pro: [medium, high, xhigh] → 0=medium, 1=high, 2=xhigh
+    expect(resolveThinkingInput(0, "openai:gpt-5.2-pro")).toBe("medium");
+    expect(resolveThinkingInput(1, "openai:gpt-5.2-pro")).toBe("high");
+    expect(resolveThinkingInput(2, "openai:gpt-5.2-pro")).toBe("xhigh");
+  });
+
+  test("out-of-range numeric index clamps to model's highest level", () => {
+    // Default has 4 levels, index 9 clamps to "high"
+    expect(resolveThinkingInput(9, "anthropic:claude-sonnet-4-5")).toBe("high");
+    // gpt-5-pro only has "high", any index clamps to "high"
+    expect(resolveThinkingInput(5, "openai:gpt-5-pro")).toBe("high");
+    // gpt-5.2-pro has 3 levels, index 4 clamps to "xhigh"
+    expect(resolveThinkingInput(4, "openai:gpt-5.2-pro")).toBe("xhigh");
+  });
+});

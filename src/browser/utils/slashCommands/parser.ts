@@ -6,7 +6,7 @@ import type { ParsedCommand, SlashCommandDefinition } from "./types";
 import { SLASH_COMMAND_DEFINITION_MAP } from "./registry";
 import { MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { normalizeModelInput } from "@/browser/utils/models/normalizeModelInput";
-import { parseThinkingInput, type ThinkingLevel } from "@/common/types/thinking";
+import { parseThinkingInput, type ParsedThinkingInput } from "@/common/types/thinking";
 
 export { SLASH_COMMAND_DEFINITIONS } from "./registry";
 
@@ -133,7 +133,7 @@ export function getSlashCommandDefinitions(): readonly SlashCommandDefinition[] 
  */
 function parseOneshotCommandKey(
   key: string
-): { modelString?: string; thinkingLevel?: ThinkingLevel } | null {
+): { modelString?: string; thinkingLevel?: ParsedThinkingInput } | null {
   const plusIndex = key.indexOf("+");
 
   if (plusIndex === -1) {
@@ -151,7 +151,7 @@ function parseOneshotCommandKey(
   if (!thinkingPart) return null;
 
   const thinkingLevel = parseThinkingInput(thinkingPart);
-  if (!thinkingLevel) return null;
+  if (thinkingLevel == null) return null;
 
   // Thinking-only override (e.g., "+0", "+high")
   if (!modelPart) {

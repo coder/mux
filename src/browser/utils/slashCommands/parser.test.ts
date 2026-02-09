@@ -166,20 +166,20 @@ describe("commandParser", () => {
 });
 
 describe("thinking oneshot (/model+level syntax)", () => {
-  it("parses /opus+2 as model + numeric thinking level", () => {
+  it("parses /opus+2 as model + numeric thinking index", () => {
     expectParse("/opus+2 deep review", {
       type: "model-oneshot",
       modelString: KNOWN_MODELS.OPUS.id,
-      thinkingLevel: "medium",
+      thinkingLevel: 2, // Numeric: resolved against model policy at send time
       message: "deep review",
     });
   });
 
-  it("parses /haiku+0 as model with thinking off", () => {
+  it("parses /haiku+0 as model with thinking at lowest level", () => {
     expectParse("/haiku+0 quick answer", {
       type: "model-oneshot",
       modelString: KNOWN_MODELS.HAIKU.id,
-      thinkingLevel: "off",
+      thinkingLevel: 0, // Numeric: resolved to model's lowest allowed level at send time
       message: "quick answer",
     });
   });
@@ -205,7 +205,7 @@ describe("thinking oneshot (/model+level syntax)", () => {
   it("parses /+0 as thinking-only override (no model)", () => {
     expectParse("/+0 quick question", {
       type: "model-oneshot",
-      thinkingLevel: "off",
+      thinkingLevel: 0, // Numeric: resolved at send time
       message: "quick question",
     });
   });
@@ -218,10 +218,10 @@ describe("thinking oneshot (/model+level syntax)", () => {
     });
   });
 
-  it("parses /+4 as thinking-only override at max", () => {
+  it("parses /+4 as thinking-only override (numeric)", () => {
     expectParse("/+4 analyze deeply", {
       type: "model-oneshot",
-      thinkingLevel: "max",
+      thinkingLevel: 4, // Numeric: resolved at send time
       message: "analyze deeply",
     });
   });

@@ -461,12 +461,12 @@ export function ModelsSection() {
             </div>
             <div>
               <span className="text-accent">/+2</span> analyze this
-              <span className="text-muted/60 ml-2">— current model at medium thinking</span>
+              <span className="text-muted/60 ml-2">— current model, thinking level 2</span>
             </div>
           </div>
           <p className="text-muted mt-1.5">
-            Thinking levels: 0=off, 1=low, 2=med, 3=high, 4=max (or use names: off, low, med, high,
-            max).
+            Numeric levels are relative to each model (0=lowest allowed, 1=next, etc.). Named
+            levels: off, low, med, high, max.
           </p>
         </div>
       </div>

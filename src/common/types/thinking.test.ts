@@ -3,7 +3,7 @@ import {
   coerceThinkingLevel,
   getThinkingDisplayLabel,
   parseThinkingInput,
-  NUMERIC_THINKING_LEVELS,
+  MAX_THINKING_INDEX,
 } from "./thinking";
 
 describe("getThinkingDisplayLabel", () => {
@@ -71,17 +71,19 @@ describe("parseThinkingInput", () => {
     expect(parseThinkingInput(input)).toBe(expected);
   });
 
+  // Numeric indices are returned as raw numbers (resolved against model policy at send time)
   test.each([
-    ["0", "off"],
-    ["1", "low"],
-    ["2", "medium"],
-    ["3", "high"],
-    ["4", "max"],
+    ["0", 0],
+    ["1", 1],
+    ["2", 2],
+    ["3", 3],
+    ["4", 4],
+    ["9", 9],
   ] as const)("parses numeric level %s → %s", (input, expected) => {
     expect(parseThinkingInput(input)).toBe(expected);
   });
 
-  test.each(["5", "-1", "99", "foo", "mediun", "1.5", "", "  "])(
+  test.each(["-1", "10", "99", "foo", "mediun", "1.5", "", "  "])(
     "returns undefined for invalid input %j",
     (input) => {
       expect(parseThinkingInput(input)).toBeUndefined();
@@ -90,17 +92,13 @@ describe("parseThinkingInput", () => {
 
   test("trims whitespace", () => {
     expect(parseThinkingInput("  high  ")).toBe("high");
-    expect(parseThinkingInput(" 2 ")).toBe("medium");
+    // Numeric with whitespace returns a number
+    expect(parseThinkingInput(" 2 ")).toBe(2);
   });
 });
 
-describe("NUMERIC_THINKING_LEVELS", () => {
-  test("has 5 levels (0–4)", () => {
-    expect(NUMERIC_THINKING_LEVELS).toHaveLength(5);
-  });
-
-  test("maps index 0 to off and index 4 to max", () => {
-    expect(NUMERIC_THINKING_LEVELS[0]).toBe("off");
-    expect(NUMERIC_THINKING_LEVELS[4]).toBe("max");
+describe("MAX_THINKING_INDEX", () => {
+  test("is 9 (generous upper bound for numeric indices)", () => {
+    expect(MAX_THINKING_INDEX).toBe(9);
   });
 });
