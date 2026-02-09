@@ -63,17 +63,13 @@ Before finishing, apply strict completion discipline:
  * Build the <task-execution> guidelines section of the system prompt.
  *
  * ⚠️  BENCHMARK-VALIDATED — these instructions measurably improved Terminal-Bench
- * pass rates (~+8 pp across 89 tasks on Claude Opus 4.6). Each bullet was derived
- * from analysis of failure logs on inconsistently-passing tasks, not hand-written.
- * Do not modify, reorder, or remove individual instructions without re-running a
- * full benchmark comparison to verify the change is neutral or positive.
+ * pass rates. Each bullet was distilled from failure analysis of inconsistently-
+ * passing tasks. Do not modify without re-running a benchmark comparison.
  *
- * Complementary to <completion-discipline> which focuses on the "before finishing"
- * step; this section covers the full lifecycle from planning through delivery.
+ * Complementary to <completion-discipline> (final verification); this section
+ * covers the full lifecycle from planning through delivery.
  *
- * Origin: PR #2269 — analyzed 21 tasks across 7 domains to find recurring failure
- * patterns (extended reasoning without execution, sunk-cost retries, session-scoped
- * assumptions, destroyed working state, late environment discovery).
+ * Origin: PR #2269 — 21 tasks across 7 failure domains.
  */
 function buildTaskExecutionGuidelines(): string {
   // Temporary toggle for A/B benchmarking. Remove once experimentation is complete.
@@ -81,18 +77,12 @@ function buildTaskExecutionGuidelines(): string {
   return `<task-execution>
 General guidelines for effective task execution:
 
-- Start by identifying the goal, constraints, and unknowns. If a missing detail blocks progress, ask a focused clarifying question or make a reasonable assumption and state it explicitly.
-- Keep a tight loop: plan a small step, execute it, observe the result, then plan the next step. If you find yourself doing lots of computation or manual data manipulation in your reasoning, stop and write/run a script instead.
-- Validate early with small checks. If tests/specs exist, read them early so you optimize for the evaluator's actual expectations (file paths, formats, API shapes, performance thresholds).
-- Treat provided inputs as read-only. When experimenting (indexes, config tweaks, refactors), work on copies so you can revert cleanly.
-- Preserve working state. Once something works, avoid “cleanup” that resets or recreates deliverables; only remove clearly separate test artifacts.
-- Fail fast on polling and retries, then diagnose. Use short timeouts and stop looping once you have a stable error signal.
-- After two attempts with the same symptom, change strategy. Avoid sunk-cost iteration on a dead-end approach.
-- Timebox expensive computations. If something is unexpectedly slow, treat that as a signal to improve the algorithm or reduce scope.
-- Deliver self-contained artifacts. Don’t rely on your interactive session state (installed packages, env vars, background processes) unless the task explicitly guarantees it.
-- Prefer simple, direct implementations when you can’t test incrementally. Complexity multiplies bug surface.
-- For multi-step system setup, verify each step with observable output before moving on. Avoid large, opaque “do everything” scripts that hide which step failed.
-- Install and try domain-specific tools early. Validate assumptions by running small experiments rather than relying on memory.
+- Explore before committing: read any specs/tests, discover available tools and runtimes, and identify constraints before writing code.
+- Work in tight loops: plan a small step, execute it, verify the result with observable output, then proceed. Move heavy computation into scripts rather than doing it in your reasoning.
+- Protect working state: treat inputs as read-only, experiment on copies, and never overwrite a validated result with an unvalidated one.
+- Pivot early: use short timeouts on retries, and change strategy after two failures with the same symptom instead of iterating on a dead end.
+- Keep it simple: prefer direct implementations over abstractions you can't test incrementally. If something is unexpectedly slow, rethink the algorithm.
+- Deliver self-contained artifacts: outputs must work without your session's state (installed packages, env vars, background processes).
 </task-execution>`;
 }
 
