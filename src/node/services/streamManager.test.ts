@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, mock } from "bun:test";
 import * as fs from "node:fs/promises";
 
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { StreamManager } from "./streamManager";
+import { StreamManager, stripEncryptedContent } from "./streamManager";
 import { APICallError, RetryError, type ModelMessage } from "ai";
 import type { HistoryService } from "./historyService";
 import type { PartialService } from "./partialService";
@@ -145,6 +145,72 @@ describe("StreamManager - stopWhen configuration", () => {
 
     const [, queuedMessageCondition] = stopWhen;
     expect(queuedMessageCondition({ steps: [] })).toBe(false);
+  });
+});
+
+describe("StreamManager - stripEncryptedContent", () => {
+  test("strips encryptedContent from array output shape", () => {
+    const output = [
+      {
+        url: "https://example.com/a",
+        title: "Result A",
+        pageAge: "2d",
+        encryptedContent: "secret-a",
+      },
+      {
+        url: "https://example.com/b",
+        title: "Result B",
+      },
+      "non-object-item",
+    ];
+
+    expect(stripEncryptedContent(output)).toEqual([
+      {
+        url: "https://example.com/a",
+        title: "Result A",
+        pageAge: "2d",
+      },
+      {
+        url: "https://example.com/b",
+        title: "Result B",
+      },
+      "non-object-item",
+    ]);
+  });
+
+  test("strips encryptedContent from json value output shape", () => {
+    const output = {
+      type: "json",
+      value: [
+        {
+          url: "https://example.com/c",
+          title: "Result C",
+          encryptedContent: "secret-c",
+        },
+        {
+          url: "https://example.com/d",
+          title: "Result D",
+          pageAge: "5h",
+        },
+      ],
+      source: "web_search",
+    };
+
+    expect(stripEncryptedContent(output)).toEqual({
+      type: "json",
+      value: [
+        {
+          url: "https://example.com/c",
+          title: "Result C",
+        },
+        {
+          url: "https://example.com/d",
+          title: "Result D",
+          pageAge: "5h",
+        },
+      ],
+      source: "web_search",
+    });
   });
 });
 
