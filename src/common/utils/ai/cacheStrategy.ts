@@ -138,9 +138,10 @@ export function createCachedSystemMessage(
  * 3. Last tool only (1 breakpoint) - caches all tools up to and including this one
  * = 3 total, leaving 1 for future use
  *
- * NOTE: For function/dynamic tools, the SDK requires providerOptions during tool()
- * creation, so we re-create the last tool. Provider-native tools (type: "provider")
- * keep provider metadata and are cloned with descriptors before attaching options.
+ * NOTE: Function tools with execute handlers are recreated so providerOptions is set
+ * at creation time. Provider-native tools (type: "provider") and execute-less
+ * dynamic/MCP tools keep their runtime metadata and are descriptor-cloned before
+ * attaching providerOptions.
  */
 export function applyCacheControlToTools<T extends Record<string, Tool>>(
   tools: T,
@@ -161,13 +162,6 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
   const cachedTools = {} as unknown as T;
   for (const [key, existingTool] of Object.entries(tools)) {
     if (key === lastToolKey) {
-      if (existingTool.execute == null) {
-        assert(
-          isProviderNativeTool(existingTool),
-          `Tool "${key}" without execute must be provider-native (type="provider")`
-        );
-      }
-
       if (isProviderNativeTool(existingTool)) {
         // Provider-native tools (e.g. Anthropic/OpenAI web search) cannot be recreated with
         // createTool(). Clone while preserving descriptors/getters and attach providerOptions.
@@ -176,13 +170,19 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
         ) as ProviderNativeTool;
         cachedProviderTool.providerOptions = ANTHROPIC_CACHE_CONTROL;
         cachedTools[key as keyof T] = cachedProviderTool as unknown as T[keyof T];
+      } else if (existingTool.execute == null) {
+        // Some MCP/dynamic tools are valid without execute handlers (provider-/client-executed).
+        // Keep their runtime shape and attach cache control without forcing recreation.
+        const cachedDynamicTool = cloneToolPreservingDescriptors(existingTool);
+        cachedDynamicTool.providerOptions = ANTHROPIC_CACHE_CONTROL;
+        cachedTools[key as keyof T] = cachedDynamicTool as unknown as T[keyof T];
       } else {
         assert(
           existingTool.execute != null,
           `Tool "${key}" must define execute before cache control is applied`
         );
 
-        // Function/dynamic tools: re-create with providerOptions (SDK requires this at creation time)
+        // Function tools with execute handlers: re-create with providerOptions (SDK requires this at creation time)
         const cachedTool = createTool({
           description: existingTool.description,
           inputSchema: existingTool.inputSchema,

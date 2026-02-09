@@ -303,5 +303,32 @@ describe("cacheStrategy", () => {
       expect(Object.keys(result)).toEqual(Object.keys(toolsWithProviderTool));
       expectProviderToolToRemainProviderNative(result.web_search, providerTool);
     });
+
+    it("should handle execute-less dynamic tools without throwing", () => {
+      const dynamicToolWithoutExecute = {
+        type: "dynamic" as const,
+        description: "MCP dynamic tool",
+        inputSchema: z.object({ query: z.string() }),
+      } as unknown as Tool;
+
+      const toolsWithDynamicTool: Record<string, Tool> = {
+        readFile: mockTools.readFile,
+        mcp_dynamic_tool: dynamicToolWithoutExecute,
+      };
+
+      const result = applyCacheControlToTools(toolsWithDynamicTool, "anthropic:claude-3-5-sonnet");
+
+      const cachedDynamicTool = result.mcp_dynamic_tool as {
+        type?: string;
+        execute?: unknown;
+        providerOptions?: unknown;
+      };
+      expect(cachedDynamicTool.type).toBe("dynamic");
+      expect(cachedDynamicTool.execute).toBeUndefined();
+      expect(cachedDynamicTool.providerOptions).toEqual({
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+      expect(result.readFile).toEqual(toolsWithDynamicTool.readFile);
+    });
   });
 });
