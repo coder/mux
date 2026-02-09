@@ -1405,7 +1405,10 @@ export class AgentSession {
       agentId,
     });
 
-    const historyResult = await this.historyService.getFullHistory(this.workspaceId);
+    // Only need the current compaction epoch — if compaction already happened, the
+    // original task prompt is summarized in the boundary and pre-boundary messages
+    // aren't useful for replaying.
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
     if (!historyResult.success) {
       return false;
     }
