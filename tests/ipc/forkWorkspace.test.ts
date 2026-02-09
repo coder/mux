@@ -27,7 +27,18 @@ import {
 import type { RuntimeConfig } from "../../src/common/types/runtime";
 import { HistoryService } from "../../src/node/services/historyService";
 import { PartialService } from "../../src/node/services/partialService";
-import { createMuxMessage } from "../../src/common/types/message";
+import { createMuxMessage, type MuxMessage } from "../../src/common/types/message";
+import assert from "node:assert";
+
+/** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
+async function collectFullHistory(service: HistoryService, workspaceId: string) {
+  const messages: MuxMessage[] = [];
+  const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
+    messages.push(...chunk);
+  });
+  assert(result.success, `collectFullHistory failed: ${result.success ? "" : result.error}`);
+  return messages;
+}
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -231,11 +242,9 @@ describeIntegration("Workspace fork", () => {
             const forkedWorkspaceId = forkResult.metadata.id;
 
             // User expects: forked workspace has access to history
-            const forkedHistoryResult = await historyService.getFullHistory(forkedWorkspaceId);
-            expect(forkedHistoryResult.success).toBe(true);
-            if (!forkedHistoryResult.success) return;
+            const forkedMessages = await collectFullHistory(historyService, forkedWorkspaceId);
 
-            const assistantContent = forkedHistoryResult.data
+            const assistantContent = forkedMessages
               .filter((msg) => msg.role === "assistant")
               .flatMap((msg) =>
                 msg.parts
@@ -395,11 +404,9 @@ describeIntegration("Workspace fork", () => {
             if (!forkResult.success) return;
             const forkedWorkspaceId = forkResult.metadata.id;
 
-            const forkedHistoryResult = await historyService.getFullHistory(forkedWorkspaceId);
-            expect(forkedHistoryResult.success).toBe(true);
-            if (!forkedHistoryResult.success) return;
+            const forkedMessages = await collectFullHistory(historyService, forkedWorkspaceId);
 
-            const forkedAssistantText = forkedHistoryResult.data
+            const forkedAssistantText = forkedMessages
               .filter((msg) => msg.role === "assistant")
               .flatMap((msg) =>
                 msg.parts
@@ -597,12 +604,10 @@ describeIntegration("Workspace fork", () => {
         const forkedWorkspaceId = forkResult.metadata.id;
 
         // Verify forked workspace has copied history
-        const forkedHistoryResult = await historyService.getFullHistory(forkedWorkspaceId);
-        expect(forkedHistoryResult.success).toBe(true);
-        if (!forkedHistoryResult.success) return;
+        const forkedMessages = await collectFullHistory(historyService, forkedWorkspaceId);
 
         // Check that history contains our unique word
-        const historyContent = forkedHistoryResult.data
+        const historyContent = forkedMessages
           .map((msg) => {
             if ("parts" in msg && Array.isArray(msg.parts)) {
               return msg.parts
