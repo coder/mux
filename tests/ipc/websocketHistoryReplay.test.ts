@@ -7,6 +7,21 @@ import {
 } from "./helpers";
 import { HistoryService } from "@/node/services/historyService";
 import { createMuxMessage } from "@/common/types/message";
+import type { MuxMessage } from "@/common/types/message";
+import assert from "node:assert";
+
+/** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
+async function collectFullHistory(
+  service: HistoryService,
+  workspaceId: string
+): Promise<MuxMessage[]> {
+  const messages: MuxMessage[] = [];
+  const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
+    messages.push(...chunk);
+  });
+  assert(result.success, `collectFullHistory failed: ${result.success ? "" : result.error}`);
+  return messages;
+}
 
 /**
  * Integration test for WebSocket history replay bug
@@ -71,13 +86,11 @@ describe("WebSocket history replay", () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Read history directly via HistoryService (not ORPC - testing that direct reads don't broadcast)
-        const history = await historyService.getFullHistory(workspaceId);
+        const messages = await collectFullHistory(historyService, workspaceId);
 
         // Verify we got history back
-        expect(history.success).toBe(true);
-        if (!history.success) throw new Error("Failed to load history");
-        expect(history.data.length).toBeGreaterThan(0);
-        console.log(`getHistory returned ${history.data.length} messages`);
+        expect(messages.length).toBeGreaterThan(0);
+        console.log(`iterateFullHistory returned ${messages.length} messages`);
 
         // Note: Direct history read should not trigger ORPC subscription events
         // This is implicitly verified by the fact that we're reading from HistoryService directly

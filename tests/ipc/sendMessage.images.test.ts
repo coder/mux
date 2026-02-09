@@ -16,7 +16,22 @@ import {
   configureTestRetries,
 } from "./sendMessageTestHelpers";
 import { HistoryService } from "@/node/services/historyService";
+import type { MuxMessage } from "@/common/types/message";
 import { KNOWN_MODELS } from "../../src/common/constants/knownModels";
+import assert from "node:assert";
+
+/** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
+async function collectFullHistory(
+  service: HistoryService,
+  workspaceId: string
+): Promise<MuxMessage[]> {
+  const messages: MuxMessage[] = [];
+  const result = await service.iterateFullHistory(workspaceId, "forward", (chunk) => {
+    messages.push(...chunk);
+  });
+  assert(result.success, `collectFullHistory failed: ${result.success ? "" : result.error}`);
+  return messages;
+}
 
 // Skip all tests if TEST_INTEGRATION is not set
 const describeIntegration = shouldRunIntegrationTests() ? describe : describe.skip;
@@ -182,12 +197,10 @@ describeIntegration("sendMessage image handling tests", () => {
           // focuses on verifying that Mux *persists* image parts and does not lose them across
           // messages in the same workspace.
           const historyService = new HistoryService(env.config);
-          const historyResult = await historyService.getFullHistory(workspaceId);
-          expect(historyResult.success).toBe(true);
-          if (!historyResult.success) return;
+          const messages = await collectFullHistory(historyService, workspaceId);
 
-          const imageMsg = historyResult.data.find(
-            (msg) =>
+          const imageMsg = messages.find(
+            (msg: MuxMessage) =>
               msg.role === "user" &&
               msg.parts.some(
                 (part) =>
