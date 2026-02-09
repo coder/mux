@@ -32,7 +32,7 @@ describe("HistoryService", () => {
 
   describe("getHistory", () => {
     it("should return empty array when no history exists", async () => {
-      const result = await service.getHistory("workspace1");
+      const result = await service.getFullHistory("workspace1");
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -59,7 +59,7 @@ describe("HistoryService", () => {
           "\n"
       );
 
-      const result = await service.getHistory(workspaceId);
+      const result = await service.getFullHistory(workspaceId);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -89,7 +89,7 @@ describe("HistoryService", () => {
           "\n"
       );
 
-      const result = await service.getHistory(workspaceId);
+      const result = await service.getFullHistory(workspaceId);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -112,7 +112,7 @@ describe("HistoryService", () => {
       const chatPath = path.join(workspaceDir, "chat.jsonl");
       await fs.writeFile(chatPath, JSON.stringify({ ...legacyMessage, workspaceId }) + "\n");
 
-      const result = await service.getHistory(workspaceId);
+      const result = await service.getFullHistory(workspaceId);
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data[0].metadata?.muxMetadata?.type).toBe("normal");
@@ -131,7 +131,7 @@ describe("HistoryService", () => {
         JSON.stringify({ ...msg1, workspaceId }) + "\n\n\n" // Extra empty lines
       );
 
-      const result = await service.getHistory(workspaceId);
+      const result = await service.getFullHistory(workspaceId);
 
       expect(result.success).toBe(true);
       if (result.success) {
@@ -165,7 +165,7 @@ describe("HistoryService", () => {
 
       expect(result.success).toBe(true);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data[0].metadata?.historySequence).toBe(0);
       }
@@ -181,7 +181,7 @@ describe("HistoryService", () => {
       await service.appendToHistory(workspaceId, msg2);
       await service.appendToHistory(workspaceId, msg3);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data).toHaveLength(3);
         expect(history.data[0].metadata?.historySequence).toBe(0);
@@ -198,7 +198,7 @@ describe("HistoryService", () => {
 
       expect(result.success).toBe(true);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data[0].metadata?.historySequence).toBe(5);
       }
@@ -224,7 +224,7 @@ describe("HistoryService", () => {
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data[0].metadata?.historySequence).toBe(10);
         expect(history.data[1].metadata?.historySequence).toBe(11);
@@ -241,7 +241,7 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data[0].metadata?.timestamp).toBe(123456);
         expect(history.data[0].metadata?.model).toBe("claude-opus-4");
@@ -278,7 +278,7 @@ describe("HistoryService", () => {
       await service.appendToHistory(workspaceId, msg1);
       await service.appendToHistory(workspaceId, msg2);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         const updatedMsg = createMuxMessage("msg1", "user", "Updated Hello", {
           historySequence: history.data[0].metadata?.historySequence,
@@ -287,7 +287,7 @@ describe("HistoryService", () => {
         const result = await service.updateHistory(workspaceId, updatedMsg);
         expect(result.success).toBe(true);
 
-        const newHistory = await service.getHistory(workspaceId);
+        const newHistory = await service.getFullHistory(workspaceId);
         if (newHistory.success) {
           expect(newHistory.data[0].parts[0]).toMatchObject({
             type: "text",
@@ -331,7 +331,7 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         const originalSequence = history.data[0].metadata?.historySequence;
         const updatedMsg = createMuxMessage("msg1", "user", "Updated", {
@@ -340,7 +340,7 @@ describe("HistoryService", () => {
 
         await service.updateHistory(workspaceId, updatedMsg);
 
-        const newHistory = await service.getHistory(workspaceId);
+        const newHistory = await service.getFullHistory(workspaceId);
         if (newHistory.success) {
           expect(newHistory.data[0].metadata?.historySequence).toBe(originalSequence);
         }
@@ -355,7 +355,7 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, placeholder);
 
-      const historyAfterAppend = await service.getHistory(workspaceId);
+      const historyAfterAppend = await service.getFullHistory(workspaceId);
       expect(historyAfterAppend.success).toBe(true);
       if (!historyAfterAppend.success) {
         return;
@@ -392,7 +392,7 @@ describe("HistoryService", () => {
       const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
       expect(lateRewriteResult.success).toBe(true);
 
-      const finalHistory = await service.getHistory(workspaceId);
+      const finalHistory = await service.getFullHistory(workspaceId);
       expect(finalHistory.success).toBe(true);
       if (!finalHistory.success) {
         return;
@@ -418,7 +418,7 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, placeholder);
 
-      const historyAfterAppend = await service.getHistory(workspaceId);
+      const historyAfterAppend = await service.getFullHistory(workspaceId);
       expect(historyAfterAppend.success).toBe(true);
       if (!historyAfterAppend.success) {
         return;
@@ -455,7 +455,7 @@ describe("HistoryService", () => {
       const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
       expect(lateRewriteResult.success).toBe(true);
 
-      const finalHistory = await service.getHistory(workspaceId);
+      const finalHistory = await service.getFullHistory(workspaceId);
       expect(finalHistory.success).toBe(true);
       if (!finalHistory.success) {
         return;
@@ -474,7 +474,7 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, placeholder);
 
-      const historyAfterAppend = await service.getHistory(workspaceId);
+      const historyAfterAppend = await service.getFullHistory(workspaceId);
       expect(historyAfterAppend.success).toBe(true);
       if (!historyAfterAppend.success) {
         return;
@@ -513,7 +513,7 @@ describe("HistoryService", () => {
       const lateRewriteResult = await service.updateHistory(workspaceId, lateRewrite);
       expect(lateRewriteResult.success).toBe(true);
 
-      const finalHistory = await service.getHistory(workspaceId);
+      const finalHistory = await service.getFullHistory(workspaceId);
       expect(finalHistory.success).toBe(true);
       if (!finalHistory.success) {
         return;
@@ -540,7 +540,7 @@ describe("HistoryService", () => {
       const result = await service.deleteMessage(workspaceId, "msg2");
       expect(result.success).toBe(true);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data).toHaveLength(2);
         expect(history.data.map((message) => message.id)).toEqual(["msg1", "msg3"]);
@@ -549,7 +549,7 @@ describe("HistoryService", () => {
       const msg4 = createMuxMessage("msg4", "assistant", "Fourth");
       await service.appendToHistory(workspaceId, msg4);
 
-      const historyAfterAppend = await service.getHistory(workspaceId);
+      const historyAfterAppend = await service.getFullHistory(workspaceId);
       if (historyAfterAppend.success) {
         const msg3Seq = historyAfterAppend.data.find((message) => message.id === "msg3")?.metadata
           ?.historySequence;
@@ -594,7 +594,7 @@ describe("HistoryService", () => {
 
       expect(result.success).toBe(true);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data).toHaveLength(1);
         expect(history.data[0].id).toBe("msg1");
@@ -617,7 +617,7 @@ describe("HistoryService", () => {
       const msg4 = createMuxMessage("msg4", "user", "New message");
       await service.appendToHistory(workspaceId, msg4);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data).toHaveLength(2);
         expect(history.data[0].metadata?.historySequence).toBe(0);
@@ -638,7 +638,7 @@ describe("HistoryService", () => {
       const msg3 = createMuxMessage("msg3", "user", "New");
       await service.appendToHistory(workspaceId, msg3);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data).toHaveLength(1);
         expect(history.data[0].metadata?.historySequence).toBe(0);
@@ -690,7 +690,7 @@ describe("HistoryService", () => {
       const msg2 = createMuxMessage("msg2", "user", "New message");
       await service.appendToHistory(workspaceId, msg2);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data[0].metadata?.historySequence).toBe(0);
       }
@@ -712,7 +712,7 @@ describe("HistoryService", () => {
       const msg = createMuxMessage("msg1", "user", "First");
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data[0].metadata?.historySequence).toBe(0);
       }
@@ -745,7 +745,7 @@ describe("HistoryService", () => {
       const msg3 = createMuxMessage("msg3", "user", "How are you?");
       await newService.appendToHistory(workspaceId, msg3);
 
-      const history = await newService.getHistory(workspaceId);
+      const history = await newService.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data).toHaveLength(3);
         expect(history.data[2].metadata?.historySequence).toBe(2);
@@ -779,7 +779,7 @@ describe("HistoryService", () => {
       const appendResult = await newService.appendToHistory(workspaceId, msg3);
       expect(appendResult.success).toBe(true);
 
-      const history = await newService.getHistory(workspaceId);
+      const history = await newService.getFullHistory(workspaceId);
       expect(history.success).toBe(true);
       if (history.success) {
         expect(history.data).toHaveLength(3);
@@ -794,10 +794,365 @@ describe("HistoryService", () => {
 
       await service.appendToHistory(workspaceId, msg);
 
-      const history = await service.getHistory(workspaceId);
+      const history = await service.getFullHistory(workspaceId);
       if (history.success) {
         expect(history.data[0].metadata?.historySequence).toBe(0);
       }
+    });
+  });
+
+  // ── Optimized read path tests ──────────────────────────────────────────────
+
+  /**
+   * Helper: write a chat.jsonl file with messages that include a compaction boundary.
+   * Returns { preBoundaryIds, boundaryId, postBoundaryIds }.
+   */
+  async function writeChatWithBoundary(
+    cfg: Config,
+    workspaceId: string,
+    opts: { preBoundaryCount: number; postBoundaryCount: number; epoch?: number }
+  ) {
+    const workspaceDir = cfg.getSessionDir(workspaceId);
+    await fs.mkdir(workspaceDir, { recursive: true });
+
+    const epoch = opts.epoch ?? 1;
+    const lines: string[] = [];
+    const preBoundaryIds: string[] = [];
+    const postBoundaryIds: string[] = [];
+    let seq = 0;
+
+    // Pre-boundary messages
+    for (let i = 0; i < opts.preBoundaryCount; i++) {
+      const id = `pre-${i}`;
+      preBoundaryIds.push(id);
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage(id, "user", `message ${i}`, { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+    }
+
+    // Compaction boundary message
+    const boundaryId = `boundary-${epoch}`;
+    lines.push(
+      JSON.stringify({
+        ...createMuxMessage(boundaryId, "assistant", "Compaction summary", {
+          historySequence: seq++,
+          compactionBoundary: true,
+          compacted: "user",
+          compactionEpoch: epoch,
+        }),
+        workspaceId,
+      })
+    );
+
+    // Post-boundary messages
+    for (let i = 0; i < opts.postBoundaryCount; i++) {
+      const id = `post-${i}`;
+      postBoundaryIds.push(id);
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage(id, "user", `post message ${i}`, { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+    }
+
+    await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+    return { preBoundaryIds, boundaryId, postBoundaryIds };
+  }
+
+  describe("getHistoryFromLatestBoundary", () => {
+    it("should return full history when no boundary exists", async () => {
+      const workspaceId = "ws-no-boundary";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
+      const msg2 = createMuxMessage("msg2", "assistant", "Hi", { historySequence: 1 });
+      await fs.writeFile(
+        path.join(workspaceDir, "chat.jsonl"),
+        JSON.stringify({ ...msg1, workspaceId }) +
+          "\n" +
+          JSON.stringify({ ...msg2, workspaceId }) +
+          "\n"
+      );
+
+      const result = await service.getHistoryFromLatestBoundary(workspaceId);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(2);
+        expect(result.data[0].id).toBe("msg1");
+        expect(result.data[1].id).toBe("msg2");
+      }
+    });
+
+    it("should return empty array when no history exists", async () => {
+      const result = await service.getHistoryFromLatestBoundary("nonexistent");
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual([]);
+      }
+    });
+
+    it("should return only messages from the latest boundary onward", async () => {
+      const workspaceId = "ws-with-boundary";
+      const { boundaryId, postBoundaryIds } = await writeChatWithBoundary(config, workspaceId, {
+        preBoundaryCount: 5,
+        postBoundaryCount: 3,
+      });
+
+      const result = await service.getHistoryFromLatestBoundary(workspaceId);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        // Should include boundary + post-boundary messages
+        expect(result.data).toHaveLength(4); // 1 boundary + 3 post
+        expect(result.data[0].id).toBe(boundaryId);
+        for (let i = 0; i < postBoundaryIds.length; i++) {
+          expect(result.data[i + 1].id).toBe(postBoundaryIds[i]);
+        }
+      }
+    });
+
+    it("should find the latest boundary with multiple compaction epochs", async () => {
+      const workspaceId = "ws-multi-epoch";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const lines: string[] = [];
+      let seq = 0;
+
+      // Epoch 1 messages + boundary
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e1-user", "user", "msg", { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e1-boundary", "assistant", "Summary 1", {
+            historySequence: seq++,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          }),
+          workspaceId,
+        })
+      );
+
+      // Epoch 2 messages + boundary
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e2-user", "user", "msg", { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("e2-boundary", "assistant", "Summary 2", {
+            historySequence: seq++,
+            compactionBoundary: true,
+            compacted: "idle",
+            compactionEpoch: 2,
+          }),
+          workspaceId,
+        })
+      );
+
+      // Post-epoch-2 message
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("post-e2", "user", "after both", { historySequence: seq++ }),
+          workspaceId,
+        })
+      );
+
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      const result = await service.getHistoryFromLatestBoundary(workspaceId);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(2); // epoch-2 boundary + post message
+        expect(result.data[0].id).toBe("e2-boundary");
+        expect(result.data[1].id).toBe("post-e2");
+      }
+    });
+
+    it("should skip malformed lines in boundary region", async () => {
+      const workspaceId = "ws-malformed";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const boundary = createMuxMessage("boundary", "assistant", "Summary", {
+        historySequence: 0,
+        compactionBoundary: true,
+        compacted: "user",
+        compactionEpoch: 1,
+      });
+      const post = createMuxMessage("post", "user", "after", { historySequence: 1 });
+
+      await fs.writeFile(
+        path.join(workspaceDir, "chat.jsonl"),
+        JSON.stringify({ ...boundary, workspaceId }) +
+          "\n" +
+          "MALFORMED LINE\n" +
+          JSON.stringify({ ...post, workspaceId }) +
+          "\n"
+      );
+
+      const result = await service.getHistoryFromLatestBoundary(workspaceId);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(2); // boundary + post (malformed skipped)
+        expect(result.data[0].id).toBe("boundary");
+        expect(result.data[1].id).toBe("post");
+      }
+    });
+  });
+
+  describe("getLastMessages", () => {
+    it("should return empty array when no history exists", async () => {
+      const result = await service.getLastMessages("nonexistent", 5);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual([]);
+      }
+    });
+
+    it("should return the last N messages in chronological order", async () => {
+      const workspaceId = "ws-last-n";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const lines: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        lines.push(
+          JSON.stringify({
+            ...createMuxMessage(`msg-${i}`, "user", `message ${i}`, { historySequence: i }),
+            workspaceId,
+          })
+        );
+      }
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      const result = await service.getLastMessages(workspaceId, 3);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(3);
+        expect(result.data[0].id).toBe("msg-7");
+        expect(result.data[1].id).toBe("msg-8");
+        expect(result.data[2].id).toBe("msg-9");
+      }
+    });
+
+    it("should return all messages when N exceeds total count", async () => {
+      const workspaceId = "ws-last-all";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const lines: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        lines.push(
+          JSON.stringify({
+            ...createMuxMessage(`msg-${i}`, "user", `message ${i}`, { historySequence: i }),
+            workspaceId,
+          })
+        );
+      }
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      const result = await service.getLastMessages(workspaceId, 100);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(3);
+        expect(result.data[0].id).toBe("msg-0");
+        expect(result.data[1].id).toBe("msg-1");
+        expect(result.data[2].id).toBe("msg-2");
+      }
+    });
+
+    it("should return exactly 1 message when requested", async () => {
+      const workspaceId = "ws-last-1";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const lines: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        lines.push(
+          JSON.stringify({
+            ...createMuxMessage(`msg-${i}`, "user", `message ${i}`, { historySequence: i }),
+            workspaceId,
+          })
+        );
+      }
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      const result = await service.getLastMessages(workspaceId, 1);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(1);
+        expect(result.data[0].id).toBe("msg-4");
+      }
+    });
+
+    it("should skip malformed lines", async () => {
+      const workspaceId = "ws-last-malformed";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const msg1 = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
+      const msg2 = createMuxMessage("msg2", "assistant", "Hi", { historySequence: 1 });
+
+      await fs.writeFile(
+        path.join(workspaceDir, "chat.jsonl"),
+        JSON.stringify({ ...msg1, workspaceId }) +
+          "\n" +
+          "BAD LINE\n" +
+          JSON.stringify({ ...msg2, workspaceId }) +
+          "\n"
+      );
+
+      const result = await service.getLastMessages(workspaceId, 2);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(2);
+        expect(result.data[0].id).toBe("msg1");
+        expect(result.data[1].id).toBe("msg2");
+      }
+    });
+  });
+
+  describe("hasHistory", () => {
+    it("should return false when no history file exists", async () => {
+      const result = await service.hasHistory("nonexistent");
+      expect(result).toBe(false);
+    });
+
+    it("should return false for empty file", async () => {
+      const workspaceId = "ws-empty";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), "");
+
+      const result = await service.hasHistory(workspaceId);
+      expect(result).toBe(false);
+    });
+
+    it("should return true when history exists", async () => {
+      const workspaceId = "ws-has-history";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const msg = createMuxMessage("msg1", "user", "Hello", { historySequence: 0 });
+      await fs.writeFile(
+        path.join(workspaceDir, "chat.jsonl"),
+        JSON.stringify({ ...msg, workspaceId }) + "\n"
+      );
+
+      const result = await service.hasHistory(workspaceId);
+      expect(result).toBe(true);
     });
   });
 });

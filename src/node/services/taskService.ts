@@ -2131,7 +2131,9 @@ export class TaskService {
       if (text.length > 0) return text;
     }
 
-    const historyResult = await this.historyService.getHistory(workspaceId);
+    // Only need recent messages to find last assistant text — avoid full-file read.
+    // readLastMessages already returns messages in chronological order.
+    const historyResult = await this.historyService.getLastMessages(workspaceId, 20);
     if (!historyResult.success) {
       log.error("Failed to read history for fallback report", {
         workspaceId,
@@ -2140,14 +2142,8 @@ export class TaskService {
       return null;
     }
 
-    const ordered = [...historyResult.data].sort((a, b) => {
-      const aSeq = a.metadata?.historySequence ?? -1;
-      const bSeq = b.metadata?.historySequence ?? -1;
-      return aSeq - bSeq;
-    });
-
-    for (let i = ordered.length - 1; i >= 0; i--) {
-      const msg = ordered[i];
+    for (let i = historyResult.data.length - 1; i >= 0; i--) {
+      const msg = historyResult.data[i];
       if (msg?.role !== "assistant") continue;
       const text = this.concatTextParts(msg).trim();
       if (text.length > 0) return text;
@@ -2455,7 +2451,9 @@ export class TaskService {
       if (args) return args;
     }
 
-    const historyResult = await this.historyService.getHistory(workspaceId);
+    // Only need recent messages to find agent_report — avoid full-file read.
+    // readLastMessages returns chronological order; scan in reverse for newest-first.
+    const historyResult = await this.historyService.getLastMessages(workspaceId, 20);
     if (!historyResult.success) {
       log.error("Failed to read history for agent_report args", {
         workspaceId,
@@ -2464,15 +2462,8 @@ export class TaskService {
       return null;
     }
 
-    // Scan newest-first.
-    const ordered = [...historyResult.data].sort((a, b) => {
-      const aSeq = a.metadata?.historySequence ?? -1;
-      const bSeq = b.metadata?.historySequence ?? -1;
-      return bSeq - aSeq;
-    });
-
-    for (const msg of ordered) {
-      const args = this.findAgentReportArgsInMessage(msg);
+    for (let i = historyResult.data.length - 1; i >= 0; i--) {
+      const args = this.findAgentReportArgsInMessage(historyResult.data[i]);
       if (args) return args;
     }
 

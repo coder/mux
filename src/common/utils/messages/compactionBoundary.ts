@@ -12,7 +12,7 @@ function hasDurableCompactedMarker(value: unknown): value is true | "user" | "id
   return value === true || value === "user" || value === "idle";
 }
 
-function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boolean {
+export function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boolean {
   if (message?.metadata?.compactionBoundary !== true) {
     return false;
   }
@@ -44,8 +44,6 @@ function isDurableCompactionBoundaryMarker(message: MuxMessage | undefined): boo
 export function findLatestCompactionBoundaryIndex(messages: MuxMessage[]): number {
   assert(Array.isArray(messages), "findLatestCompactionBoundaryIndex requires a message array");
 
-  // TODO(Approach B): Consider persisting a sidecar compaction index so provider-request
-  // slicing can skip reverse-scanning chat history on every request.
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (isDurableCompactionBoundaryMarker(messages[i])) {
       return i;

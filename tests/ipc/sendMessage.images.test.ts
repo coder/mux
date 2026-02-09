@@ -182,7 +182,7 @@ describeIntegration("sendMessage image handling tests", () => {
           // focuses on verifying that Mux *persists* image parts and does not lose them across
           // messages in the same workspace.
           const historyService = new HistoryService(env.config);
-          const historyResult = await historyService.getHistory(workspaceId);
+          const historyResult = await historyService.getFullHistory(workspaceId);
           expect(historyResult.success).toBe(true);
           if (!historyResult.success) return;
 

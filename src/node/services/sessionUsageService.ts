@@ -156,7 +156,7 @@ export class SessionUsageService {
         log.warn(
           `session-usage.json unreadable for ${workspaceId}, rebuilding before token stats cache update`
         );
-        const historyResult = await this.historyService.getHistory(workspaceId);
+        const historyResult = await this.historyService.getFullHistory(workspaceId);
         if (historyResult.success && historyResult.data.length > 0) {
           await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
           current = await this.readFile(workspaceId);
@@ -210,7 +210,7 @@ export class SessionUsageService {
         log.warn(
           `session-usage.json unreadable for ${parentWorkspaceId}, rebuilding before roll-up`
         );
-        const historyResult = await this.historyService.getHistory(parentWorkspaceId);
+        const historyResult = await this.historyService.getFullHistory(parentWorkspaceId);
         if (historyResult.success && historyResult.data.length > 0) {
           await this.rebuildFromMessagesInternal(parentWorkspaceId, historyResult.data);
           current = await this.readFile(parentWorkspaceId);
@@ -248,7 +248,7 @@ export class SessionUsageService {
       } catch (error) {
         // File missing or corrupted - try to rebuild from messages
         if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-          const historyResult = await this.historyService.getHistory(workspaceId);
+          const historyResult = await this.historyService.getFullHistory(workspaceId);
           if (historyResult.success && historyResult.data.length > 0) {
             await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
             return this.readFile(workspaceId);
@@ -257,7 +257,7 @@ export class SessionUsageService {
         }
         // Parse error - try rebuild
         log.warn(`session-usage.json corrupted for ${workspaceId}, rebuilding`);
-        const historyResult = await this.historyService.getHistory(workspaceId);
+        const historyResult = await this.historyService.getFullHistory(workspaceId);
         if (historyResult.success && historyResult.data.length > 0) {
           await this.rebuildFromMessagesInternal(workspaceId, historyResult.data);
           return this.readFile(workspaceId);

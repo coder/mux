@@ -1988,7 +1988,7 @@ describe("TaskService", () => {
       expect.objectContaining({ abandonPartial: false })
     );
 
-    const childHistory = await historyService.getHistory(childId);
+    const childHistory = await historyService.getFullHistory(childId);
     expect(childHistory.success).toBe(true);
     if (childHistory.success) {
       // Ensure the in-flight assistant message (tool calls + agent_report) was committed to history
@@ -2024,7 +2024,7 @@ describe("TaskService", () => {
     const updatedChildPartial = await partialService.readPartial(childId);
     expect(updatedChildPartial).toBeNull();
 
-    const parentHistory = await historyService.getHistory(parentId);
+    const parentHistory = await historyService.getFullHistory(parentId);
     expect(parentHistory.success).toBe(true);
 
     const updatedParentPartial = await partialService.readPartial(parentId);
@@ -2531,7 +2531,7 @@ describe("TaskService", () => {
       timestamp: Date.now(),
     });
 
-    const parentHistory = await historyService.getHistory(parentId);
+    const parentHistory = await historyService.getFullHistory(parentId);
     expect(parentHistory.success).toBe(true);
     if (parentHistory.success) {
       // Original task tool call remains immutable ("running"), and a synthetic report message is appended.
@@ -2801,7 +2801,7 @@ describe("TaskService", () => {
     });
     expect(metadataEmitsForChild).toHaveLength(2);
 
-    const parentHistory = await historyService.getHistory(parentId);
+    const parentHistory = await historyService.getFullHistory(parentId);
     expect(parentHistory.success).toBe(true);
 
     const updatedParentPartial = await partialService.readPartial(parentId);

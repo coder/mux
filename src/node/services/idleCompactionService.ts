@@ -133,7 +133,7 @@ export class IdleCompactionService {
     now: number
   ): Promise<{ eligible: boolean; reason?: string }> {
     // 1. Has messages?
-    const historyResult = await this.historyService.getHistory(workspaceId);
+    const historyResult = await this.historyService.getFullHistory(workspaceId);
     if (!historyResult.success || historyResult.data.length === 0) {
       return { eligible: false, reason: "no_messages" };
     }

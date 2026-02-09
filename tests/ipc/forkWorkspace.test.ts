@@ -231,7 +231,7 @@ describeIntegration("Workspace fork", () => {
             const forkedWorkspaceId = forkResult.metadata.id;
 
             // User expects: forked workspace has access to history
-            const forkedHistoryResult = await historyService.getHistory(forkedWorkspaceId);
+            const forkedHistoryResult = await historyService.getFullHistory(forkedWorkspaceId);
             expect(forkedHistoryResult.success).toBe(true);
             if (!forkedHistoryResult.success) return;
 
@@ -395,7 +395,7 @@ describeIntegration("Workspace fork", () => {
             if (!forkResult.success) return;
             const forkedWorkspaceId = forkResult.metadata.id;
 
-            const forkedHistoryResult = await historyService.getHistory(forkedWorkspaceId);
+            const forkedHistoryResult = await historyService.getFullHistory(forkedWorkspaceId);
             expect(forkedHistoryResult.success).toBe(true);
             if (!forkedHistoryResult.success) return;
 
@@ -597,7 +597,7 @@ describeIntegration("Workspace fork", () => {
         const forkedWorkspaceId = forkResult.metadata.id;
 
         // Verify forked workspace has copied history
-        const forkedHistoryResult = await historyService.getHistory(forkedWorkspaceId);
+        const forkedHistoryResult = await historyService.getFullHistory(forkedWorkspaceId);
         expect(forkedHistoryResult.success).toBe(true);
         if (!forkedHistoryResult.success) return;
 

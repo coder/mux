@@ -71,7 +71,7 @@ describe("WebSocket history replay", () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
 
         // Read history directly via HistoryService (not ORPC - testing that direct reads don't broadcast)
-        const history = await historyService.getHistory(workspaceId);
+        const history = await historyService.getFullHistory(workspaceId);
 
         // Verify we got history back
         expect(history.success).toBe(true);

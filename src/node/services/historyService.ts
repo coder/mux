@@ -16,6 +16,7 @@ import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyForCounting";
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
+import { isDurableCompactionBoundaryMarker } from "@/common/utils/messages/compactionBoundary";
 
 function isPositiveInteger(value: unknown): value is number {
   return (
@@ -124,6 +125,192 @@ export class HistoryService {
     return path.join(this.config.getSessionDir(workspaceId), this.CHAT_FILE);
   }
 
+  // ── Reverse-read infrastructure ─────────────────────────────────────────────
+  // Reads chat.jsonl from the tail to avoid O(total-history) parsing on hot paths.
+  // \n (0x0A) never appears inside multi-byte UTF-8 sequences, so chunked reverse
+  // reading is byte-safe. JSON.stringify escapes prevent false positives for the
+  // needle inside user-content strings.
+
+  /** Size of each chunk when scanning the file in reverse (256KB covers typical post-compaction content). */
+  private static readonly REVERSE_READ_CHUNK_SIZE = 256 * 1024;
+  /** String-search needle for compaction boundary lines. */
+  private static readonly BOUNDARY_NEEDLE = '"compactionBoundary":true';
+
+  /**
+   * Scan chat.jsonl in reverse to find the byte offset of the last durable compaction boundary.
+   * Returns `null` when no boundary exists (new/uncompacted workspace or file missing).
+   */
+  private async findLastBoundaryByteOffset(workspaceId: string): Promise<number | null> {
+    const filePath = this.getChatHistoryPath(workspaceId);
+
+    let fileSize: number;
+    try {
+      const stat = await fs.stat(filePath);
+      fileSize = stat.size;
+    } catch {
+      return null;
+    }
+    if (fileSize === 0) return null;
+
+    const fh = await fs.open(filePath, "r");
+    try {
+      let readEnd = fileSize;
+      let carryover = ""; // incomplete first line from previous chunk
+
+      while (readEnd > 0) {
+        const readStart = Math.max(0, readEnd - HistoryService.REVERSE_READ_CHUNK_SIZE);
+        const chunkSize = readEnd - readStart;
+        const buffer = Buffer.alloc(chunkSize);
+        await fh.read(buffer, 0, chunkSize, readStart);
+
+        const text = buffer.toString("utf-8") + carryover;
+        const lines = text.split("\n");
+        // First element may be a partial line split at chunk boundary — carry it forward
+        carryover = lines[0] ?? "";
+
+        // Precompute byte offsets for each line relative to the start of the text
+        // (which starts at file position readStart). lineByteOffsets[i] gives the
+        // byte position of lines[i] from the start of text.
+        const lineByteOffsets: number[] = [0];
+        for (let i = 1; i < lines.length; i++) {
+          // Previous line's offset + its byte length + 1 for the \n separator
+          lineByteOffsets.push(
+            lineByteOffsets[i - 1] + Buffer.byteLength(lines[i - 1], "utf-8") + 1
+          );
+        }
+
+        // Scan complete lines in reverse
+        for (let i = lines.length - 1; i >= 1; i--) {
+          const line = lines[i];
+          if (line.length > 0 && line.includes(HistoryService.BOUNDARY_NEEDLE)) {
+            try {
+              const msg = JSON.parse(line) as MuxMessage;
+              if (isDurableCompactionBoundaryMarker(msg)) {
+                return readStart + lineByteOffsets[i];
+              }
+            } catch {
+              // Malformed line — not a real boundary, skip
+            }
+          }
+        }
+
+        readEnd = readStart;
+      }
+
+      // Check the very first line (accumulated in carryover)
+      if (carryover.length > 0 && carryover.includes(HistoryService.BOUNDARY_NEEDLE)) {
+        try {
+          const msg = JSON.parse(carryover) as MuxMessage;
+          if (isDurableCompactionBoundaryMarker(msg)) return 0;
+        } catch {
+          // skip
+        }
+      }
+
+      return null;
+    } finally {
+      await fh.close();
+    }
+  }
+
+  /**
+   * Read and parse messages from a byte offset to the end of chat.jsonl.
+   * Self-healing: skips malformed JSON lines the same way readChatHistory does.
+   */
+  private async readHistoryFromOffset(
+    workspaceId: string,
+    byteOffset: number
+  ): Promise<MuxMessage[]> {
+    const filePath = this.getChatHistoryPath(workspaceId);
+    const stat = await fs.stat(filePath);
+    const tailSize = stat.size - byteOffset;
+    if (tailSize <= 0) return [];
+
+    const fh = await fs.open(filePath, "r");
+    try {
+      const buffer = Buffer.alloc(tailSize);
+      await fh.read(buffer, 0, tailSize, byteOffset);
+      const lines = buffer
+        .toString("utf-8")
+        .split("\n")
+        .filter((l) => l.trim());
+      const messages: MuxMessage[] = [];
+      for (const line of lines) {
+        try {
+          messages.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
+        } catch {
+          // Skip malformed lines — same self-healing behavior as readChatHistory
+        }
+      }
+      return messages;
+    } finally {
+      await fh.close();
+    }
+  }
+
+  /**
+   * Read the last N messages from chat.jsonl by scanning the file in reverse.
+   * Much cheaper than a full read when only the tail is needed.
+   */
+  private async readLastMessages(workspaceId: string, n: number): Promise<MuxMessage[]> {
+    const filePath = this.getChatHistoryPath(workspaceId);
+
+    let fileSize: number;
+    try {
+      const stat = await fs.stat(filePath);
+      fileSize = stat.size;
+    } catch {
+      return [];
+    }
+    if (fileSize === 0) return [];
+
+    const fh = await fs.open(filePath, "r");
+    try {
+      const collected: MuxMessage[] = [];
+      let readEnd = fileSize;
+      let carryover = "";
+
+      while (readEnd > 0 && collected.length < n) {
+        const readStart = Math.max(0, readEnd - HistoryService.REVERSE_READ_CHUNK_SIZE);
+        const chunkSize = readEnd - readStart;
+        const buffer = Buffer.alloc(chunkSize);
+        await fh.read(buffer, 0, chunkSize, readStart);
+
+        const text = buffer.toString("utf-8") + carryover;
+        const lines = text.split("\n");
+        carryover = lines[0] ?? "";
+
+        // Parse complete lines in reverse, stopping once we have enough
+        for (let i = lines.length - 1; i >= 1 && collected.length < n; i--) {
+          const line = lines[i];
+          if (line.trim().length === 0) continue;
+          try {
+            collected.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
+          } catch {
+            // Skip malformed lines
+          }
+        }
+
+        readEnd = readStart;
+      }
+
+      // Check the very first line if we still need more
+      if (collected.length < n && carryover.trim().length > 0) {
+        try {
+          collected.push(normalizeLegacyMuxMetadata(JSON.parse(carryover) as MuxMessage));
+        } catch {
+          // skip
+        }
+      }
+
+      // Reverse to restore chronological order
+      collected.reverse();
+      return collected;
+    } finally {
+      await fh.close();
+    }
+  }
+
   /**
    * Read raw messages from chat.jsonl (does not include partial.json)
    * Returns empty array if file doesn't exist
@@ -133,8 +320,12 @@ export class HistoryService {
     try {
       const chatHistoryPath = this.getChatHistoryPath(workspaceId);
       const data = await fs.readFile(chatHistoryPath, "utf-8");
-      // TODO(Approach B): keep append-only chat.jsonl, but add a sidecar compaction index so
-      // latest-boundary request assembly can avoid full-file scans/parsing on long histories.
+      if (data.length > 5 * 1024 * 1024) {
+        log.warn("chat.jsonl exceeds 5MB — full read may be slow, consider compaction", {
+          workspaceId,
+          sizeBytes: data.length,
+        });
+      }
       const lines = data.split("\n").filter((line) => line.trim());
       const messages: MuxMessage[] = [];
 
@@ -162,17 +353,76 @@ export class HistoryService {
     }
   }
 
-  async getHistory(workspaceId: string): Promise<Result<MuxMessage[]>> {
+  /**
+   * Read ALL messages from chat.jsonl — O(file-size) I/O + parse.
+   *
+   * ⚠️  Prefer targeted alternatives for hot paths:
+   *   - getHistoryFromLatestBoundary() — for provider-request assembly
+   *   - getLastMessages(n)            — when only the tail matters
+   *   - hasHistory()                  — for emptiness checks
+   *
+   * This method is appropriate for: transcript export, usage rebuild,
+   * structural rewrites (updateHistory/deleteMessage/truncate), and
+   * full UI replay (emitHistoricalEvents).
+   */
+  async getFullHistory(workspaceId: string): Promise<Result<MuxMessage[]>> {
     try {
       // Read chat history from disk
       // Note: partial.json is NOT merged here - it's managed by PartialService
-      // TODO(Approach B): add a boundary-aware read path (backed by the sidecar compaction
-      // index) for provider-request assembly while keeping this full replay read for debug/replay.
       const messages = await this.readChatHistory(workspaceId);
       return Ok(messages);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return Err(`Failed to read history: ${message}`);
+    }
+  }
+  /**
+   * Read only messages from the latest compaction boundary onward.
+   * Falls back to full history if no boundary exists (new/uncompacted workspace).
+   *
+   * Prefer this over getFullHistory() for provider-request assembly and any path
+   * that only needs the active compaction epoch.
+   */
+  async getHistoryFromLatestBoundary(workspaceId: string): Promise<Result<MuxMessage[]>> {
+    try {
+      const offset = await this.findLastBoundaryByteOffset(workspaceId);
+      if (offset === null) {
+        // No boundary — workspace is uncompacted, full read is the only option
+        return this.getFullHistory(workspaceId);
+      }
+      const messages = await this.readHistoryFromOffset(workspaceId, offset);
+      return Ok(messages);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to read history from boundary: ${message}`);
+    }
+  }
+
+  /**
+   * Read the last N messages from chat.jsonl by reading the file in reverse.
+   * Much cheaper than getFullHistory() when only the tail is needed.
+   */
+  async getLastMessages(workspaceId: string, n: number): Promise<Result<MuxMessage[]>> {
+    try {
+      const messages = await this.readLastMessages(workspaceId, n);
+      return Ok(messages);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return Err(`Failed to read last ${n} messages: ${message}`);
+    }
+  }
+
+  /**
+   * Check if a workspace has any chat history without parsing the file.
+   * Much cheaper than getFullHistory() when only an emptiness check is needed.
+   */
+  async hasHistory(workspaceId: string): Promise<boolean> {
+    const filePath = this.getChatHistoryPath(workspaceId);
+    try {
+      const stat = await fs.stat(filePath);
+      return stat.size > 0;
+    } catch {
+      return false;
     }
   }
 
@@ -186,7 +436,7 @@ export class HistoryService {
     }
 
     // Initialize from history
-    const historyResult = await this.getHistory(workspaceId);
+    const historyResult = await this.getFullHistory(workspaceId);
     if (historyResult.success) {
       const messages = historyResult.data;
       // Find max history sequence number.
@@ -326,7 +576,7 @@ export class HistoryService {
         const historyPath = this.getChatHistoryPath(workspaceId);
 
         // Read all messages
-        const historyResult = await this.getHistory(workspaceId);
+        const historyResult = await this.getFullHistory(workspaceId);
         if (!historyResult.success) {
           return historyResult; // Return the error
         }
@@ -401,7 +651,7 @@ export class HistoryService {
   async deleteMessage(workspaceId: string, messageId: string): Promise<Result<void>> {
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
-        const historyResult = await this.getHistory(workspaceId);
+        const historyResult = await this.getFullHistory(workspaceId);
         if (!historyResult.success) {
           return historyResult;
         }
@@ -468,7 +718,7 @@ export class HistoryService {
   async truncateAfterMessage(workspaceId: string, messageId: string): Promise<Result<void>> {
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
-        const historyResult = await this.getHistory(workspaceId);
+        const historyResult = await this.getFullHistory(workspaceId);
         if (!historyResult.success) {
           return historyResult;
         }
@@ -545,7 +795,7 @@ export class HistoryService {
 
         // Fast path: 100% truncation = delete entire file
         if (percentage >= 1.0) {
-          const historyResult = await this.getHistory(workspaceId);
+          const historyResult = await this.getFullHistory(workspaceId);
           const deletedSequences = historyResult.success
             ? historyResult.data
                 .map((msg) => msg.metadata?.historySequence)
@@ -569,7 +819,7 @@ export class HistoryService {
         }
 
         // Read all messages
-        const historyResult = await this.getHistory(workspaceId);
+        const historyResult = await this.getFullHistory(workspaceId);
         if (!historyResult.success) {
           return Err(historyResult.error);
         }
@@ -694,7 +944,7 @@ export class HistoryService {
     return this.fileLocks.withLock(newWorkspaceId, async () => {
       try {
         // Read messages from the NEW workspace location (directory was already renamed)
-        const historyResult = await this.getHistory(newWorkspaceId);
+        const historyResult = await this.getFullHistory(newWorkspaceId);
         if (!historyResult.success) {
           return historyResult;
         }

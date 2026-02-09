@@ -329,15 +329,8 @@ export class ServiceContainer {
   }
 
   private async ensureMuxChatWelcomeMessage(): Promise<void> {
-    const historyResult = await this.historyService.getHistory(MUX_HELP_CHAT_WORKSPACE_ID);
-    if (!historyResult.success) {
-      log.warn("[ServiceContainer] Failed to read mux-chat history for welcome message", {
-        error: historyResult.error,
-      });
-      return;
-    }
-
-    if (historyResult.data.length > 0) {
+    // Only need to check if any history exists — avoid parsing the entire file
+    if (await this.historyService.hasHistory(MUX_HELP_CHAT_WORKSPACE_ID)) {
       return;
     }
 

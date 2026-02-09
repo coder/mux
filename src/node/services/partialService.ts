@@ -146,7 +146,7 @@ export class PartialService {
       // Check if this partial has already been finalized in chat.jsonl
       // A partial with MORE parts than what's in history means it's newer and should be committed
       // (placeholder has empty parts, interrupted stream has accumulated parts)
-      const historyResult = await this.historyService.getHistory(workspaceId);
+      const historyResult = await this.historyService.getFullHistory(workspaceId);
       if (!historyResult.success) {
         return Err(`Failed to read history: ${historyResult.error}`);
       }

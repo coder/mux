@@ -1218,7 +1218,7 @@ export class WorkspaceService extends EventEmitter {
     }
 
     // Fallback: compute tracked files from message history (survives reloads)
-    const historyResult = await this.historyService.getHistory(workspaceId);
+    const historyResult = await this.historyService.getFullHistory(workspaceId);
     const messages = historyResult.success ? historyResult.data : [];
     const allPaths = extractEditedFilePaths(messages);
 
@@ -3139,7 +3139,7 @@ export class WorkspaceService extends EventEmitter {
         }
 
         // 2) Fall back to chat history (partial may have already been committed)
-        const historyResult = await this.historyService.getHistory(workspaceId);
+        const historyResult = await this.historyService.getFullHistory(workspaceId);
         if (!historyResult.success) {
           return Err(historyResult.error);
         }
@@ -3360,7 +3360,7 @@ export class WorkspaceService extends EventEmitter {
           "append-compaction-boundary replace mode requires an assistant summary message"
         );
 
-        const historyResult = await this.historyService.getHistory(workspaceId);
+        const historyResult = await this.historyService.getFullHistory(workspaceId);
         if (!historyResult.success) {
           return Err(
             `Failed to read history for append-compaction-boundary mode: ${historyResult.error}`
@@ -3471,7 +3471,7 @@ export class WorkspaceService extends EventEmitter {
   }
   async getChatHistory(workspaceId: string): Promise<MuxMessage[]> {
     try {
-      const history = await this.historyService.getHistory(workspaceId);
+      const history = await this.historyService.getFullHistory(workspaceId);
       return history.success ? history.data : [];
     } catch (error) {
       log.error("Failed to get chat history:", error);

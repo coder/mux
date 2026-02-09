@@ -552,7 +552,7 @@ export class MockAiStreamPlayer {
 
         // Update history with completed message (mirrors real StreamManager behavior)
         // Fetch the current message from history to get its historySequence
-        const historyResult = await this.deps.historyService.getHistory(workspaceId);
+        const historyResult = await this.deps.historyService.getFullHistory(workspaceId);
         if (active.cancelled) return;
         if (historyResult.success) {
           const existingMessage = historyResult.data.find((msg) => msg.id === messageId);

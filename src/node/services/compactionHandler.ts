@@ -397,8 +397,9 @@ export class CompactionHandler {
    * and appends a durable compaction boundary message.
    */
   async handleCompletion(event: StreamEndEvent): Promise<boolean> {
-    // Check if the last user message is a compaction-request
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    // Check if the last user message is a compaction-request.
+    // Only need recent messages — the compaction-request is always near the tail.
+    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 10);
     if (!historyResult.success) {
       return false;
     }
@@ -718,8 +719,6 @@ export class CompactionHandler {
       "Compaction summary must not persist stale contextProviderMetadata"
     );
 
-    // TODO(Approach B): Persist/update a sidecar compaction index so provider-request
-    // assembly can avoid rescanning/parsing full chat.jsonl to find the latest boundary.
     const persistenceResult = persistedStreamSummary
       ? await this.historyService.updateHistory(this.workspaceId, summaryMessage)
       : await this.historyService.appendToHistory(this.workspaceId, summaryMessage);

@@ -80,7 +80,7 @@ describe("WorkspaceService rename lock", () => {
     } as unknown as AIService;
 
     const mockHistoryService: Partial<HistoryService> = {
-      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      getFullHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
       appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
@@ -194,7 +194,7 @@ describe("WorkspaceService executeBash archive guards", () => {
     } as unknown as AIService;
 
     const mockHistoryService: Partial<HistoryService> = {
-      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      getFullHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
       appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
@@ -292,7 +292,7 @@ describe("WorkspaceService post-compaction metadata refresh", () => {
     } as unknown as AIService;
 
     const mockHistoryService: Partial<HistoryService> = {
-      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      getFullHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
       appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 
@@ -436,7 +436,7 @@ describe("WorkspaceService maybePersistAISettingsFromOptions", () => {
     } as unknown as AIService;
 
     const mockHistoryService: Partial<HistoryService> = {
-      getHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
+      getFullHistory: mock(() => Promise.resolve({ success: true as const, data: [] })),
       appendToHistory: mock(() => Promise.resolve({ success: true as const, data: undefined })),
     };
 

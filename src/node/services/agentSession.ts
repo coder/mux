@@ -69,7 +69,7 @@ import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
-import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
+
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
@@ -366,7 +366,7 @@ export class AgentSession {
       const partialHistorySequence = partial?.metadata?.historySequence;
 
       // Load chat history (persisted messages from chat.jsonl)
-      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      const historyResult = await this.historyService.getFullHistory(this.workspaceId);
       if (historyResult.success) {
         for (const message of historyResult.data) {
           // Skip the placeholder message if we have a partial with the same historySequence.
@@ -506,7 +506,7 @@ export class AgentSession {
     // preserve the original message's attachments.
     let preservedEditFileParts: MuxFilePart[] | undefined;
     if (editMessageId && fileParts === undefined) {
-      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      const historyResult = await this.historyService.getFullHistory(this.workspaceId);
       if (historyResult.success) {
         const targetMessage: MuxMessage | undefined = historyResult.data.find(
           (msg) => msg.id === editMessageId
@@ -544,7 +544,7 @@ export class AgentSession {
       // Find the truncation target: the edited message or any immediately-preceding snapshots.
       // (snapshots are persisted immediately before their corresponding user message)
       let truncateTargetId = editMessageId;
-      const historyResult = await this.historyService.getHistory(this.workspaceId);
+      const historyResult = await this.historyService.getFullHistory(this.workspaceId);
       if (historyResult.success) {
         const messages = historyResult.data;
         const editIndex = messages.findIndex((m) => m.id === editMessageId);
@@ -908,13 +908,10 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(commitResult.error));
     }
 
-    let historyResult = await this.historyService.getHistory(this.workspaceId);
+    let historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
-    // TODO(Approach B): streamMessage still receives full replay history from chat.jsonl.
-    // Latest-boundary slicing happens downstream; a sidecar compaction index could let this
-    // call path load only the newest compaction epoch for provider requests.
 
     if (historyResult.data.length === 0) {
       return Err(
@@ -940,7 +937,7 @@ export class AgentSession {
         synthetic: true,
       });
       await this.historyService.appendToHistory(this.workspaceId, sentinelMessage);
-      const refreshed = await this.historyService.getHistory(this.workspaceId);
+      const refreshed = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
       if (refreshed.success) {
         historyResult = refreshed;
       }
@@ -1395,7 +1392,7 @@ export class AgentSession {
       agentId,
     });
 
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    const historyResult = await this.historyService.getFullHistory(this.workspaceId);
     if (!historyResult.success) {
       return false;
     }
@@ -1875,13 +1872,13 @@ export class AgentSession {
       return;
     }
 
-    // Read the last message from history
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    // Read the last message from history — only need 1 message, avoid full-file read
+    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 1);
     if (!historyResult.success || historyResult.data.length === 0) {
       return;
     }
 
-    const lastMessage = historyResult.data[historyResult.data.length - 1];
+    const lastMessage = historyResult.data[0];
     const muxMeta = lastMessage.metadata?.muxMetadata;
 
     // Check if it's a compaction summary with a pending follow-up
@@ -2052,18 +2049,14 @@ export class AgentSession {
    * Generate post-compaction attachments by extracting diffs from message history.
    */
   private async generatePostCompactionAttachments(): Promise<PostCompactionAttachment[]> {
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    // getHistoryFromLatestBoundary already returns only the active compaction epoch,
+    // so the downstream sliceMessagesFromLatestCompactionBoundary is a no-op identity.
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
     if (!historyResult.success) {
       return [];
     }
 
-    // Periodic reinjection must stay within the latest durable compaction epoch so
-    // append-only history does not re-introduce stale pre-boundary edits.
-    // Malformed boundary markers self-heal via helper fallback to full history.
-    const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(
-      historyResult.data
-    );
-    const fileDiffs = extractEditedFileDiffs(latestCompactionEpochMessages);
+    const fileDiffs = extractEditedFileDiffs(historyResult.data);
 
     // Load exclusions and persistent TODO state (local workspace session data)
     const excludedItems = await this.loadExcludedItems();
@@ -2234,10 +2227,10 @@ export class AgentSession {
       .digest("hex");
 
     // Dedupe: if we recently persisted the same snapshot, avoid inserting again.
-    const historyResult = await this.historyService.getHistory(this.workspaceId);
+    // Only need last 5 messages — avoid full-file read.
+    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 5);
     if (historyResult.success) {
-      const recentMessages = historyResult.data.slice(Math.max(0, historyResult.data.length - 5));
-      const recentSnapshot = [...recentMessages]
+      const recentSnapshot = [...historyResult.data]
         .reverse()
         .find((msg) => msg.metadata?.synthetic && msg.metadata?.agentSkillSnapshot);
       const recentMeta = recentSnapshot?.metadata?.agentSkillSnapshot;
