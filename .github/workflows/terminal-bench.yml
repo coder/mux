@@ -48,6 +48,11 @@ on:
         required: false
         type: string
         default: ""
+      disable_prompt_sections:
+        description: "Comma-separated prompt sections to disable for A/B testing (e.g., task-execution,completion-discipline)"
+        required: false
+        type: string
+        default: ""
       mux_project_path:
         description: "Project path inside the task container (e.g., /testbed, /app/src)"
         required: false
@@ -168,6 +173,9 @@ jobs:
             ${{ inputs.max_tasks && format('--n-tasks {0}', inputs.max_tasks) || '' }}
             ${{ inputs.extra_args || '' }}
           MUX_EXPERIMENTS: ${{ inputs.experiments }}
+          # Temporary A/B toggles — set to "1" when the section name appears in disable_prompt_sections
+          MUX_DISABLE_TASK_EXECUTION_GUIDELINES: ${{ contains(inputs.disable_prompt_sections || '', 'task-execution') && '1' || '' }}
+          MUX_DISABLE_COMPLETION_DISCIPLINE: ${{ contains(inputs.disable_prompt_sections || '', 'completion-discipline') && '1' || '' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
