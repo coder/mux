@@ -945,6 +945,19 @@ export class StreamManager extends EventEmitter {
     };
   }
 
+  private createStopWhenCondition(
+    request: Pick<StreamRequestConfig, "toolChoice" | "hasQueuedMessage">
+  ): ReturnType<typeof stepCountIs> | Array<ReturnType<typeof stepCountIs>> {
+    if (request.toolChoice) {
+      // Required tool calls must stop after a single step to avoid recursive loops.
+      return stepCountIs(1);
+    }
+
+    // Allow effectively unlimited autonomous steps while still yielding quickly
+    // when a queued user message should interrupt at the next step boundary.
+    return [stepCountIs(100000), () => request.hasQueuedMessage?.() ?? false];
+  }
+
   private createStreamResult(
     request: StreamRequestConfig,
     abortController: AbortController,
@@ -969,14 +982,9 @@ export class StreamManager extends EventEmitter {
       tools: request.tools,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       toolChoice: request.toolChoice as any, // Force tool use when required by policy
-      // When toolChoice is set (required tool), limit to 1 step to prevent infinite loops
-      // Otherwise allow effectively unlimited steps (100k) for autonomous multi-turn workflows.
-      // IMPORTANT: Models should be able to run for hours or even days calling tools repeatedly
-      // to complete complex tasks. The stopWhen condition allows the model to decide when it's done.
-      // Also stop at step boundaries when a message is queued to allow immediate handling.
-      ...(request.toolChoice
-        ? { maxSteps: 1 }
-        : { stopWhen: [stepCountIs(100000), () => request.hasQueuedMessage?.() ?? false] }),
+      // Explicit stopWhen configuration keeps continuation policy visible for both
+      // required-tool and autonomous tool-loop flows.
+      stopWhen: this.createStopWhenCondition(request),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment
       providerOptions: request.providerOptions as any, // Pass provider-specific options (thinking/reasoning config)
       maxOutputTokens: request.maxOutputTokens,

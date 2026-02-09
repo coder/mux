@@ -84,6 +84,70 @@ describe("StreamManager - createTempDirForStream", () => {
   });
 });
 
+describe("StreamManager - stopWhen configuration", () => {
+  type StopWhenCondition = (options: { steps: unknown[] }) => boolean;
+  type BuildStopWhenCondition = (request: {
+    toolChoice?: { type: "tool"; toolName: string } | "required";
+    hasQueuedMessage?: () => boolean;
+  }) => StopWhenCondition | StopWhenCondition[];
+
+  test("uses single-step stopWhen when a tool is required", () => {
+    const streamManager = new StreamManager(createMockHistoryService(), createMockPartialService());
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({ toolChoice: { type: "tool", toolName: "bash" } });
+    if (typeof stopWhen !== "function") {
+      throw new Error("Expected required-tool stopWhen to be a single condition function");
+    }
+
+    expect(stopWhen({ steps: [] })).toBe(false);
+    expect(stopWhen({ steps: [{}] })).toBe(true);
+    expect(stopWhen({ steps: [{}, {}] })).toBe(false);
+  });
+
+  test("uses autonomous step cap and queued-message interrupt conditions", () => {
+    const streamManager = new StreamManager(createMockHistoryService(), createMockPartialService());
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    let queued = false;
+    const stopWhen = buildStopWhen!({ hasQueuedMessage: () => queued });
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to be an array of conditions");
+    }
+    expect(stopWhen).toHaveLength(2);
+
+    const [maxStepCondition, queuedMessageCondition] = stopWhen;
+    expect(maxStepCondition({ steps: new Array(99999) })).toBe(false);
+    expect(maxStepCondition({ steps: new Array(100000) })).toBe(true);
+
+    expect(queuedMessageCondition({ steps: [] })).toBe(false);
+    queued = true;
+    expect(queuedMessageCondition({ steps: [] })).toBe(true);
+  });
+
+  test("treats missing queued-message callback as not queued", () => {
+    const streamManager = new StreamManager(createMockHistoryService(), createMockPartialService());
+    const buildStopWhen = Reflect.get(streamManager, "createStopWhenCondition") as
+      | BuildStopWhenCondition
+      | undefined;
+    expect(typeof buildStopWhen).toBe("function");
+
+    const stopWhen = buildStopWhen!({});
+    if (!Array.isArray(stopWhen)) {
+      throw new Error("Expected autonomous stopWhen to remain array-based without callback");
+    }
+
+    const [, queuedMessageCondition] = stopWhen;
+    expect(queuedMessageCondition({ steps: [] })).toBe(false);
+  });
+});
+
 describe("StreamManager - Concurrent Stream Prevention", () => {
   let streamManager: StreamManager;
   let mockHistoryService: HistoryService;
