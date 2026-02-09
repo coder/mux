@@ -246,16 +246,6 @@ class MuxAgent(BaseInstalledAgent):
             target_path=f"/installed-agent/{self._RUNNER_NAME}",
         )
 
-        # Upload global AGENTS.md (task execution guidelines) if it exists.
-        # The setup template copies it to MUX_CONFIG_ROOT so mux loads it as
-        # global instructions for every task.
-        agents_md_path = Path(__file__).with_name("AGENTS.md")
-        if agents_md_path.is_file():
-            await environment.upload_file(
-                source_path=agents_md_path,
-                target_path="/installed-agent/AGENTS.md",
-            )
-
         # Now run parent setup which executes mux_setup.sh.j2 template
         # (extracts archive, installs bun/deps, chmod +x runner)
         await super().setup(environment)
