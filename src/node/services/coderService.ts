@@ -655,7 +655,8 @@ export class CoderService {
       );
       const { stdout } = await proc.result;
 
-      if (!stdout.trim()) {
+      // Same non-JSON guard as listPresets (CLI prints info message for no presets)
+      if (!stdout.trim() || !stdout.trimStart().startsWith("[")) {
         return new Set();
       }
 
@@ -878,8 +879,10 @@ export class CoderService {
       );
       const { stdout } = await proc.result;
 
-      // Handle empty output (no presets)
-      if (!stdout.trim()) {
+      // Handle empty output or non-JSON info messages (no presets).
+      // CLI prints "No presets found for template ..." to stdout even with --output=json
+      // because the Go handler returns early before the formatter runs.
+      if (!stdout.trim() || !stdout.trimStart().startsWith("[")) {
         return { ok: true, presets: [] };
       }
 

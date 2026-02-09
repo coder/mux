@@ -473,6 +473,14 @@ describe("CoderService", () => {
       expect(presets).toEqual({ ok: true, presets: [] });
     });
 
+    it("returns empty array when CLI prints info message instead of JSON", async () => {
+      mockExecOk('No presets found for template "my-template" and template-version "v1".\n');
+
+      const presets = await service.listPresets("my-template");
+
+      expect(presets).toEqual({ ok: true, presets: [] });
+    });
+
     it("returns error result on error", async () => {
       mockExecError(new Error("template not found"));
 
