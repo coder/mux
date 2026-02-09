@@ -48,6 +48,8 @@ function buildTaggedSection(
  * Origin: PR #2273.
  */
 function buildCompletionDiscipline(): string {
+  // Temporary toggle for A/B benchmarking. Remove once experimentation is complete.
+  if (process.env.MUX_DISABLE_COMPLETION_DISCIPLINE === "1") return "";
   return `<completion-discipline>
 Before finishing, apply strict completion discipline:
 - Re-check the user's request and confirm every required change is fully implemented.
@@ -74,6 +76,8 @@ Before finishing, apply strict completion discipline:
  * assumptions, destroyed working state, late environment discovery).
  */
 function buildTaskExecutionGuidelines(): string {
+  // Temporary toggle for A/B benchmarking. Remove once experimentation is complete.
+  if (process.env.MUX_DISABLE_TASK_EXECUTION_GUIDELINES === "1") return "";
   return `<task-execution>
 General guidelines for effective task execution:
 

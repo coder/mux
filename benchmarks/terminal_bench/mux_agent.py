@@ -68,6 +68,9 @@ class MuxAgent(BaseInstalledAgent):
         "MUX_MODE",
         "MUX_RUNTIME",
         "MUX_EXPERIMENTS",
+        # Temporary A/B toggles for benchmark experimentation
+        "MUX_DISABLE_TASK_EXECUTION_GUIDELINES",
+        "MUX_DISABLE_COMPLETION_DISCIPLINE",
     )
 
     def __init__(
