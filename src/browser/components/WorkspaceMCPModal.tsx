@@ -256,11 +256,22 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Server className="h-5 w-5" />
-            Workspace MCP Configuration
-          </DialogTitle>
+        <DialogHeader className="space-y-0">
+          <div className="flex items-start justify-between gap-3 pr-8">
+            <DialogTitle className="flex items-center gap-2">
+              <Server className="h-5 w-5" />
+              Workspace MCP Configuration
+            </DialogTitle>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={() => void handleSave()} disabled={saving || loading || !hasServers}>
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Save
+              </Button>
+            </div>
+          </div>
         </DialogHeader>
 
         {loading ? (
@@ -370,16 +381,6 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                   </div>
                 );
               })}
-            </div>
-
-            <div className="flex justify-end gap-2 pt-4">
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => void handleSave()} disabled={saving}>
-                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Save
-              </Button>
             </div>
           </div>
         )}
