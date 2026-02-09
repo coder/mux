@@ -177,55 +177,15 @@ export interface TypeValidationResult {
  */
 
 /**
- * Check if a TS2339 diagnostic is for a property WRITE on an empty object literal.
- * Returns true only for patterns like `results.foo = x` where `results` is typed as `{}`.
- * Returns false for reads like `return results.foo` or `fn(results.foo)`.
+ * Check if a TS2339 diagnostic is for a property access on an empty object literal.
+ * Agent code frequently uses `const results = {}; results[key] = val; ... results.key`
+ * which is valid JS but TS can't track dynamic property additions to `{}`.
+ * Suppress all such errors since TS has no useful type info for `{}` anyway.
  */
-function isEmptyObjectWriteError(d: ts.Diagnostic, sourceFile: ts.SourceFile): boolean {
-  if (d.code !== 2339 || d.start === undefined) return false;
+function isEmptyObjectPropertyError(d: ts.Diagnostic): boolean {
+  if (d.code !== 2339) return false;
   const message = ts.flattenDiagnosticMessageText(d.messageText, "");
-  if (!message.includes("on type '{}'")) return false;
-
-  // Find the node at the error position and walk up to find context
-  const token = findTokenAtPosition(sourceFile, d.start);
-  if (!token) return false;
-
-  // Walk up to find PropertyAccessExpression containing this token
-  let propAccess: ts.PropertyAccessExpression | undefined;
-  let node: ts.Node = token;
-  while (node.parent) {
-    if (ts.isPropertyAccessExpression(node.parent)) {
-      propAccess = node.parent;
-      break;
-    }
-    node = node.parent;
-  }
-  if (!propAccess) return false;
-
-  // Check if this PropertyAccessExpression is on the left side of an assignment
-  const parent = propAccess.parent;
-  if (
-    ts.isBinaryExpression(parent) &&
-    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    parent.left === propAccess
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-/** Find the innermost token at a position in the source file */
-function findTokenAtPosition(sourceFile: ts.SourceFile, position: number): ts.Node | undefined {
-  function find(node: ts.Node): ts.Node | undefined {
-    if (position < node.getStart(sourceFile) || position >= node.getEnd()) {
-      return undefined;
-    }
-    // Try to find a more specific child
-    const child = ts.forEachChild(node, find);
-    return child ?? node;
-  }
-  return find(sourceFile);
+  return message.includes("on type '{}'");
 }
 
 /** Returns true if the type resolves to a non-tuple never[] (including unions). */
@@ -408,7 +368,6 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
     program = ts.createProgram(ROOT_FILE_NAMES, compilerOptions, host, originalProgram);
   }
 
-  const sourceFile = program.getSourceFile("agent.ts") ?? getSourceFile();
   const diagnostics = ts.getPreEmitDiagnostics(program);
 
   // Filter to errors in our code only (not lib files)
@@ -417,11 +376,10 @@ export function validateTypes(code: string, muxTypes: string): TypeValidationRes
     .filter((d) => d.category === ts.DiagnosticCategory.Error)
     .filter((d) => !d.file || d.file.fileName === "agent.ts")
     .filter((d) => !ts.flattenDiagnosticMessageText(d.messageText, "").includes("console"))
-    // Allow dynamic property WRITES on empty object literals - Claude frequently uses
-    // `const results = {}; results.foo = mux.file_read(...)` to collate parallel reads.
-    // Only suppress when the property access is on the LEFT side of an assignment.
-    // Reads like `return results.typo` must still error.
-    .filter((d) => !isEmptyObjectWriteError(d, sourceFile))
+    // Suppress all TS2339 on `{}` - agent code frequently builds objects dynamically
+    // (e.g., `const r = {}; r[key] = val; return r.key`) which is valid JS but TS
+    // can't track. No useful type info exists for `{}` so these errors are noise.
+    .filter((d) => !isEmptyObjectPropertyError(d))
     .map((d) => {
       const message = ts.flattenDiagnosticMessageText(d.messageText, " ");
       // Extract line number if available
