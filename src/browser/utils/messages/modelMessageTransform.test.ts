@@ -1803,7 +1803,12 @@ describe("injectPostCompactionAttachments", () => {
         id: "compaction-summary",
         role: "assistant",
         parts: [{ type: "text", text: "Compacted summary" }],
-        metadata: { timestamp: 1000, compacted: "user" },
+        metadata: {
+          timestamp: 1000,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        },
       },
       {
         id: "user-1",
@@ -1839,5 +1844,157 @@ describe("injectPostCompactionAttachments", () => {
     const text = (injected.parts[0] as { type: "text"; text: string }).text;
     expect(text.length).toBeLessThanOrEqual(MAX_POST_COMPACTION_INJECTION_CHARS);
     expect(text).toContain("post-compaction context truncated");
+  });
+
+  it("falls back to a legacy compacted summary when durable boundary metadata is missing", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "legacy-summary",
+        role: "assistant",
+        parts: [{ type: "text", text: "Legacy compacted summary" }],
+        metadata: {
+          timestamp: 1000,
+          compacted: true,
+        },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Assistant context after summary" }],
+        metadata: { timestamp: 1050 },
+      },
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+        metadata: { timestamp: 1100 },
+      },
+    ];
+
+    const attachments = [
+      {
+        type: "plan_file_reference" as const,
+        planFilePath: "PLAN.md",
+        planContent: "Legacy plan",
+      },
+    ];
+
+    const result = injectPostCompactionAttachments(messages, attachments);
+
+    expect(result).toHaveLength(4);
+    expect(result[0].id).toBe("legacy-summary");
+
+    const injected = result[1];
+    expect(injected.metadata?.synthetic).toBe(true);
+    expect(injected.metadata?.timestamp).toBe(1000);
+    const text = (injected.parts[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("<system-update>");
+
+    expect(result[2].id).toBe("assistant-1");
+    expect(result[3].id).toBe("user-1");
+  });
+
+  it("appends at the end when no compaction indicators are present", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Initial question" }],
+        metadata: { timestamp: 1000 },
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Initial response" }],
+        metadata: { timestamp: 1010 },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Follow-up" }],
+        metadata: { timestamp: 1020 },
+      },
+    ];
+
+    const attachments = [
+      {
+        type: "plan_file_reference" as const,
+        planFilePath: "PLAN.md",
+        planContent: "Fallback plan",
+      },
+    ];
+
+    const result = injectPostCompactionAttachments(messages, attachments);
+
+    expect(result).toHaveLength(4);
+    expect(result[0].id).toBe("user-1");
+    expect(result[1].id).toBe("assistant-1");
+    expect(result[2].id).toBe("user-2");
+
+    const appended = result[3];
+    expect(appended.metadata?.synthetic).toBe(true);
+    const text = (appended.parts[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("<system-update>");
+  });
+
+  it("inserts after the latest compaction boundary when multiple summaries exist", () => {
+    const messages: MuxMessage[] = [
+      {
+        id: "summary-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Older summary" }],
+        metadata: {
+          timestamp: 1000,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
+        },
+      },
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Between summaries" }],
+        metadata: { timestamp: 1100 },
+      },
+      {
+        id: "summary-2",
+        role: "assistant",
+        parts: [{ type: "text", text: "Latest summary" }],
+        metadata: {
+          timestamp: 2000,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 2,
+        },
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+        metadata: { timestamp: 2100 },
+      },
+    ];
+
+    const attachments = [
+      {
+        type: "plan_file_reference" as const,
+        planFilePath: "PLAN.md",
+        planContent: "Latest plan",
+      },
+    ];
+
+    const result = injectPostCompactionAttachments(messages, attachments);
+
+    expect(result).toHaveLength(5);
+    expect(result[0].id).toBe("summary-1");
+    expect(result[1].id).toBe("user-1");
+    expect(result[2].id).toBe("summary-2");
+
+    const injected = result[3];
+    expect(injected.metadata?.synthetic).toBe(true);
+    const text = (injected.parts[0] as { type: "text"; text: string }).text;
+    expect(text).toContain("<system-update>");
+
+    expect(result[4].id).toBe("user-2");
   });
 });

@@ -28,11 +28,42 @@ const createMockHistoryService = () => {
   let getHistoryResult: Result<MuxMessage[], string> = Ok([]);
   let clearHistoryResult: Result<number[], string> = Ok([]);
   let appendToHistoryResult: Result<void, string> = Ok(undefined);
+  let nextHistorySequence = 0;
+
+  const isNonNegativeInteger = (value: unknown): value is number => {
+    return (
+      typeof value === "number" && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+    );
+  };
+
+  const updateNextHistorySequenceFromMessages = (messages: MuxMessage[]): void => {
+    nextHistorySequence = messages.reduce((next, message) => {
+      const sequence = message.metadata?.historySequence;
+      if (!isNonNegativeInteger(sequence)) {
+        return next;
+      }
+      return Math.max(next, sequence + 1);
+    }, 0);
+  };
 
   const getHistory = mock((_) => Promise.resolve(getHistoryResult));
   const clearHistory = mock((_) => Promise.resolve(clearHistoryResult));
-  const appendToHistory = mock((_, __) => Promise.resolve(appendToHistoryResult));
-  const updateHistory = mock(() => Promise.resolve(Ok(undefined)));
+  const appendToHistory = mock((_, message: MuxMessage) => {
+    if (appendToHistoryResult.success) {
+      const currentSequence = message.metadata?.historySequence;
+      if (isNonNegativeInteger(currentSequence)) {
+        nextHistorySequence = Math.max(nextHistorySequence, currentSequence + 1);
+      } else {
+        message.metadata = {
+          ...(message.metadata ?? {}),
+          historySequence: nextHistorySequence,
+        };
+        nextHistorySequence += 1;
+      }
+    }
+    return Promise.resolve(appendToHistoryResult);
+  });
+  const updateHistory = mock((_, __: MuxMessage) => Promise.resolve(Ok(undefined)));
   const truncateAfterMessage = mock(() => Promise.resolve(Ok(undefined)));
 
   return {
@@ -44,6 +75,9 @@ const createMockHistoryService = () => {
     // Allow setting mock return values
     mockGetHistory: (result: Result<MuxMessage[], string>) => {
       getHistoryResult = result;
+      if (result.success) {
+        updateNextHistorySequenceFromMessages(result.data);
+      }
     },
     mockClearHistory: (result: Result<number[], string>) => {
       clearHistoryResult = result;
@@ -91,6 +125,30 @@ const createCompactionRequest = (id = "req-1"): MuxMessage =>
     muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
   });
 
+const createSuccessfulFileEditMessage = (
+  id: string,
+  filePath: string,
+  diff: string,
+  metadata?: MuxMessage["metadata"]
+): MuxMessage => ({
+  id,
+  role: "assistant",
+  parts: [
+    {
+      type: "dynamic-tool",
+      toolCallId: `tool-${id}`,
+      toolName: "file_edit_replace_string",
+      state: "output-available",
+      input: { file_path: filePath },
+      output: { success: true, diff },
+    },
+  ],
+  metadata: {
+    timestamp: 1234,
+    ...(metadata ?? {}),
+  },
+});
+
 const createStreamEndEvent = (
   summary: string,
   metadata?: Record<string, unknown>
@@ -107,14 +165,25 @@ const createStreamEndEvent = (
   },
 });
 
+const getEmittedStreamEndEvent = (events: EmittedEvent[]): StreamEndEvent | undefined => {
+  return events
+    .map((event) => event.data.message)
+    .find((message): message is StreamEndEvent => {
+      return (
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        (message as { type?: unknown }).type === "stream-end"
+      );
+    });
+};
+
 // DRY helper to set up successful compaction scenario
 const setupSuccessfulCompaction = (
   mockHistoryService: ReturnType<typeof createMockHistoryService>,
-  messages: MuxMessage[] = [createCompactionRequest()],
-  clearedSequences?: number[]
+  messages: MuxMessage[] = [createCompactionRequest()]
 ) => {
   mockHistoryService.mockGetHistory(Ok(messages));
-  mockHistoryService.mockClearHistory(Ok(clearedSequences ?? messages.map((_, i) => i)));
   mockHistoryService.mockAppendToHistory(Ok(undefined));
 };
 
@@ -212,21 +281,11 @@ describe("CompactionHandler", () => {
     it("persists pending diffs to disk and reloads them on restart", async () => {
       const compactionReq = createCompactionRequest();
 
-      const fileEditMessage: MuxMessage = {
-        id: "assistant-edit",
-        role: "assistant",
-        parts: [
-          {
-            type: "dynamic-tool",
-            toolCallId: "t1",
-            toolName: "file_edit_replace_string",
-            state: "output-available",
-            input: { file_path: "/tmp/foo.ts" },
-            output: { success: true, diff: "@@ -1 +1 @@\n-foo\n+bar\n" },
-          },
-        ],
-        metadata: { timestamp: 1234 },
-      };
+      const fileEditMessage = createSuccessfulFileEditMessage(
+        "assistant-edit",
+        "/tmp/foo.ts",
+        "@@ -1 +1 @@\n-foo\n+bar\n"
+      );
 
       setupSuccessfulCompaction(mockHistoryService, [fileEditMessage, compactionReq]);
 
@@ -271,6 +330,97 @@ describe("CompactionHandler", () => {
       }
       expect(exists).toBe(false);
     });
+
+    it("persists only latest-epoch diffs when a durable compaction boundary exists", async () => {
+      const staleEditMessage = createSuccessfulFileEditMessage(
+        "assistant-stale-edit",
+        "/tmp/stale.ts",
+        "@@ -1 +1 @@\n-old\n+stale\n",
+        { historySequence: 0 }
+      );
+      const latestBoundary = createMuxMessage("summary-boundary", "assistant", "Older summary", {
+        historySequence: 1,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      });
+      const recentEditMessage = createSuccessfulFileEditMessage(
+        "assistant-recent-edit",
+        "/tmp/recent.ts",
+        "@@ -1 +1 @@\n-before\n+after\n",
+        { historySequence: 2 }
+      );
+      const compactionReq = createMuxMessage("req-latest-epoch", "user", "Please summarize", {
+        historySequence: 3,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      setupSuccessfulCompaction(mockHistoryService, [
+        staleEditMessage,
+        latestBoundary,
+        recentEditMessage,
+        compactionReq,
+      ]);
+
+      const handled = await handler.handleCompletion(createStreamEndEvent("Summary"));
+      expect(handled).toBe(true);
+
+      const pending = await handler.peekPendingDiffs();
+      expect(pending?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts"]);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const raw = await fsPromises.readFile(persistedPath, "utf-8");
+      const parsed = JSON.parse(raw) as { diffs?: Array<{ path: string }> };
+      expect(parsed.diffs?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts"]);
+    });
+
+    it("falls back to full-history diff extraction when boundary marker is malformed", async () => {
+      const staleEditMessage = createSuccessfulFileEditMessage(
+        "assistant-stale-edit",
+        "/tmp/stale.ts",
+        "@@ -1 +1 @@\n-old\n+stale\n",
+        { historySequence: 0 }
+      );
+      const malformedBoundaryMissingEpoch = createMuxMessage(
+        "summary-malformed-boundary",
+        "assistant",
+        "Malformed summary",
+        {
+          historySequence: 1,
+          compacted: "user",
+          compactionBoundary: true,
+          // Missing compactionEpoch should be treated as malformed and ignored.
+        }
+      );
+      const recentEditMessage = createSuccessfulFileEditMessage(
+        "assistant-recent-edit",
+        "/tmp/recent.ts",
+        "@@ -1 +1 @@\n-before\n+after\n",
+        { historySequence: 2 }
+      );
+      const compactionReq = createMuxMessage("req-malformed-boundary", "user", "Please summarize", {
+        historySequence: 3,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      setupSuccessfulCompaction(mockHistoryService, [
+        staleEditMessage,
+        malformedBoundaryMissingEpoch,
+        recentEditMessage,
+        compactionReq,
+      ]);
+
+      const handled = await handler.handleCompletion(createStreamEndEvent("Summary"));
+      expect(handled).toBe(true);
+
+      const pending = await handler.peekPendingDiffs();
+      expect(pending?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts", "/tmp/stale.ts"]);
+
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      const raw = await fsPromises.readFile(persistedPath, "utf-8");
+      const parsed = JSON.parse(raw) as { diffs?: Array<{ path: string }> };
+      expect(parsed.diffs?.map((diff) => diff.path)).toEqual(["/tmp/recent.ts", "/tmp/stale.ts"]);
+    });
     it("should return true when successful", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
@@ -305,7 +455,7 @@ describe("CompactionHandler", () => {
       };
       await handler.handleCompletion(event);
 
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
       expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe(
         "Part 1 Part 2 Part 3"
       );
@@ -320,13 +470,13 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("This is the summary");
       await handler.handleCompletion(event);
 
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
       expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe(
         "This is the summary"
       );
     });
 
-    it("should delete partial.json before clearing history (race condition fix)", async () => {
+    it("should delete partial.json before appending summary (race condition fix)", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
       mockHistoryService.mockClearHistory(Ok([0]));
@@ -335,7 +485,7 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
 
-      // deletePartial should be called once before clearHistory
+      // deletePartial should be called once before appendToHistory
       expect(mockPartialService.deletePartial.mock.calls).toHaveLength(1);
       expect(mockPartialService.deletePartial.mock.calls[0][0]).toBe(workspaceId);
 
@@ -343,7 +493,7 @@ describe("CompactionHandler", () => {
       // but the important thing is that it IS called during compaction)
     });
 
-    it("should call clearHistory() and appendToHistory()", async () => {
+    it("should append summary without clearing history", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
       mockHistoryService.mockClearHistory(Ok([0]));
@@ -352,16 +502,15 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
 
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
-      expect(mockHistoryService.clearHistory.mock.calls[0][0]).toBe(workspaceId);
+      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(0);
       expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
       expect(mockHistoryService.appendToHistory.mock.calls[0][0]).toBe(workspaceId);
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
       expect(appendedMsg.role).toBe("assistant");
       expect((appendedMsg.parts[0] as { type: "text"; text: string }).text).toBe("Summary");
     });
 
-    it("should emit delete event for old messages", async () => {
+    it("should not emit delete events when compaction is append-only", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
       mockHistoryService.mockClearHistory(Ok([0, 1, 2, 3]));
@@ -373,9 +522,7 @@ describe("CompactionHandler", () => {
       const deleteEvent = emittedEvents.find(
         (_e) => (_e.data.message as { type?: string })?.type === "delete"
       );
-      expect(deleteEvent).toBeDefined();
-      const delMsg = deleteEvent?.data.message as { type: "delete"; historySequences: number[] };
-      expect(delMsg.historySequences).toEqual([0, 1, 2, 3]);
+      expect(deleteEvent).toBeUndefined();
     });
 
     it("should emit summary message with complete metadata", async () => {
@@ -407,6 +554,8 @@ describe("CompactionHandler", () => {
         duration: 2000,
         systemMessageTokens: 100,
         compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
       });
       expect(sevt.metadata?.providerMetadata).toBeUndefined();
     });
@@ -420,24 +569,244 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary", { duration: 1234 });
       await handler.handleCompletion(event);
 
-      const streamEndEvent = emittedEvents.find((_e) => _e.data.message === event);
-      expect(streamEndEvent).toBeDefined();
-      expect(streamEndEvent?.data.workspaceId).toBe(workspaceId);
-      const streamMsg = streamEndEvent?.data.message as StreamEndEvent;
-      expect(streamMsg.metadata.duration).toBe(1234);
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect(streamMsg?.workspaceId).toBe(workspaceId);
+      expect(streamMsg?.metadata.duration).toBe(1234);
     });
 
-    it("should set compacted in summary metadata", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
+    it("should set boundary metadata and keep historySequence monotonic", async () => {
+      const priorMessage = createMuxMessage("user-1", "user", "Earlier", {
+        historySequence: 4,
+      });
+      const compactionReq = createMuxMessage("req-1", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      mockHistoryService.mockGetHistory(Ok([priorMessage, compactionReq]));
       mockHistoryService.mockClearHistory(Ok([0]));
       mockHistoryService.mockAppendToHistory(Ok(undefined));
 
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
 
-      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1] as MuxMessage;
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
       expect(appendedMsg.metadata?.compacted).toBe("user");
+      expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
+      expect(appendedMsg.metadata?.compactionEpoch).toBe(1);
+      expect(appendedMsg.metadata?.historySequence).toBe(6);
+    });
+    it("should ignore malformed persisted historySequence values when deriving monotonic bounds", async () => {
+      const malformedNegativeSequence = createMuxMessage(
+        "assistant-malformed-negative-sequence",
+        "assistant",
+        "Corrupted persisted metadata",
+        {
+          historySequence: -7,
+        }
+      );
+      const malformedFractionalSequence = createMuxMessage(
+        "assistant-malformed-fractional-sequence",
+        "assistant",
+        "Corrupted persisted metadata",
+        {
+          historySequence: 99.5,
+        }
+      );
+      const priorMessage = createMuxMessage("user-1", "user", "Earlier", {
+        historySequence: 4,
+      });
+      const compactionReq = createMuxMessage("req-1", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      mockHistoryService.mockGetHistory(
+        Ok([malformedNegativeSequence, malformedFractionalSequence, priorMessage, compactionReq])
+      );
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
+
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
+      expect(appendedMsg.metadata?.historySequence).toBe(6);
+      expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
+      expect(appendedMsg.metadata?.compactionEpoch).toBe(1);
+    });
+
+    it("should derive next compaction epoch from legacy compacted summaries", async () => {
+      const legacySummary = createMuxMessage("summary-legacy", "assistant", "Older summary", {
+        historySequence: 2,
+        compacted: "user",
+      });
+      const compactionReq = createMuxMessage("req-epoch", "user", "Please summarize", {
+        historySequence: 3,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      mockHistoryService.mockGetHistory(Ok([legacySummary, compactionReq]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      await handler.handleCompletion(event);
+
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
+      expect(appendedMsg.metadata?.compactionEpoch).toBe(2);
+      expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
+      expect(appendedMsg.metadata?.historySequence).toBe(4);
+    });
+
+    it("should update streamed summaries in-place without carrying stale provider metadata", async () => {
+      const compactionReq = createMuxMessage("req-streamed", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+        historySequence: 6,
+        timestamp: Date.now(),
+        model: "claude-3-5-sonnet-20241022",
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
+        contextProviderMetadata: { anthropic: { cacheReadInputTokens: 10_000 } },
+      });
+
+      mockHistoryService.mockGetHistory(Ok([compactionReq, streamedSummary]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary");
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.updateHistory.mock.calls).toHaveLength(1);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(0);
+
+      const updatedSummary = mockHistoryService.updateHistory.mock.calls[0][1];
+      expect(updatedSummary.id).toBe("msg-id");
+      expect(updatedSummary.metadata?.historySequence).toBe(6);
+      expect(updatedSummary.metadata?.compactionBoundary).toBe(true);
+      expect(updatedSummary.metadata?.compactionEpoch).toBe(1);
+      expect(updatedSummary.metadata?.providerMetadata).toBeUndefined();
+      expect(updatedSummary.metadata?.contextProviderMetadata).toBeUndefined();
+
+      const summaryEvent = emittedEvents.find((_e) => {
+        const m = _e.data.message as MuxMessage | undefined;
+        return m?.id === "msg-id" && m?.metadata?.compactionBoundary === true;
+      });
+      expect(summaryEvent).toBeDefined();
+    });
+
+    it("should strip stale provider metadata from emitted stream-end when reusing streamed summary ID", async () => {
+      const compactionReq = createMuxMessage("req-streamed-sanitize", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+      const streamedSummary = createMuxMessage("msg-id", "assistant", "Summary", {
+        historySequence: 6,
+        timestamp: Date.now(),
+        model: "claude-3-5-sonnet-20241022",
+      });
+
+      mockHistoryService.mockGetHistory(Ok([compactionReq, streamedSummary]));
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const event = createStreamEndEvent("Summary", {
+        providerMetadata: { anthropic: { cacheCreationInputTokens: 50_000 } },
+        contextProviderMetadata: { anthropic: { cacheReadInputTokens: 10_000 } },
+        customField: "preserved",
+      });
+
+      const result = await handler.handleCompletion(event);
+
+      expect(result).toBe(true);
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect(streamMsg?.messageId).toBe("msg-id");
+      expect(streamMsg?.metadata.providerMetadata).toBeUndefined();
+      expect(streamMsg?.metadata.contextProviderMetadata).toBeUndefined();
+      expect((streamMsg?.metadata as Record<string, unknown> | undefined)?.customField).toBe(
+        "preserved"
+      );
+    });
+
+    it("should skip malformed compaction boundary markers when deriving next epoch", async () => {
+      const validBoundary = createMuxMessage("summary-valid", "assistant", "Valid summary", {
+        historySequence: 1,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 3,
+      });
+      const malformedBoundaryMissingEpoch = createMuxMessage(
+        "summary-malformed-1",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 2,
+          compacted: "user",
+          compactionBoundary: true,
+        }
+      );
+      const malformedBoundaryMissingCompacted = createMuxMessage(
+        "summary-malformed-2",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 3,
+          compactionBoundary: true,
+          compactionEpoch: 99,
+        }
+      );
+      const malformedBoundaryInvalidCompacted = createMuxMessage(
+        "summary-malformed-invalid-compacted",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 4,
+          compactionBoundary: true,
+          compactionEpoch: 200,
+        }
+      );
+      if (malformedBoundaryInvalidCompacted.metadata) {
+        (malformedBoundaryInvalidCompacted.metadata as Record<string, unknown>).compacted =
+          "corrupted";
+      }
+      const malformedBoundaryInvalidEpoch = createMuxMessage(
+        "summary-malformed-3",
+        "assistant",
+        "Malformed boundary",
+        {
+          historySequence: 4,
+          compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 0,
+        }
+      );
+      const compactionReq = createMuxMessage("req-malformed", "user", "Please summarize", {
+        historySequence: 5,
+        muxMetadata: { type: "compaction-request", rawCommand: "/compact", parsed: {} },
+      });
+
+      mockHistoryService.mockGetHistory(
+        Ok([
+          validBoundary,
+          malformedBoundaryMissingEpoch,
+          malformedBoundaryMissingCompacted,
+          malformedBoundaryInvalidCompacted,
+          malformedBoundaryInvalidEpoch,
+          compactionReq,
+        ])
+      );
+      mockHistoryService.mockAppendToHistory(Ok(undefined));
+
+      const result = await handler.handleCompletion(createStreamEndEvent("Summary"));
+
+      expect(result).toBe(true);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
+      const appendedMsg = mockHistoryService.appendToHistory.mock.calls[0][1];
+      expect(appendedMsg.metadata?.compactionEpoch).toBe(4);
+      expect(appendedMsg.metadata?.compactionBoundary).toBe(true);
     });
   });
 
@@ -451,7 +820,8 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
 
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
+      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(0);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
     });
 
     it("should return true without re-processing when same request ID seen twice", async () => {
@@ -466,7 +836,8 @@ describe("CompactionHandler", () => {
 
       expect(result1).toBe(true);
       expect(result2).toBe(true);
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
+      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(0);
+      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
     });
 
     it("should not emit duplicate events", async () => {
@@ -485,7 +856,7 @@ describe("CompactionHandler", () => {
       expect(eventCountAfterSecond).toBe(eventCountAfterFirst);
     });
 
-    it("should not clear history twice", async () => {
+    it("should not append summary twice", async () => {
       const compactionReq = createCompactionRequest("req-dupe-3");
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
       mockHistoryService.mockClearHistory(Ok([0]));
@@ -495,34 +866,12 @@ describe("CompactionHandler", () => {
       await handler.handleCompletion(event);
       await handler.handleCompletion(event);
 
-      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(1);
+      expect(mockHistoryService.clearHistory.mock.calls).toHaveLength(0);
       expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(1);
     });
   });
 
   describe("Error Handling", () => {
-    it("should return false when clearHistory() fails", async () => {
-      const compactionReq = createCompactionRequest();
-      mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Err("Clear failed"));
-
-      const event = createStreamEndEvent("Summary");
-      const result = await handler.handleCompletion(event);
-
-      expect(result).toBe(false);
-      expect(mockHistoryService.appendToHistory.mock.calls).toHaveLength(0);
-
-      // Ensure we don't keep a persisted snapshot when compaction didn't clear history.
-      const persistedPath = path.join(sessionDir, "post-compaction.json");
-      let exists = true;
-      try {
-        await fsPromises.stat(persistedPath);
-      } catch {
-        exists = false;
-      }
-      expect(exists).toBe(false);
-    });
-
     it("should return false when appendToHistory() fails", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
@@ -533,12 +882,22 @@ describe("CompactionHandler", () => {
       const result = await handler.handleCompletion(event);
 
       expect(result).toBe(false);
+
+      // Ensure we don't keep a persisted snapshot when summary append fails.
+      const persistedPath = path.join(sessionDir, "post-compaction.json");
+      let exists = true;
+      try {
+        await fsPromises.stat(persistedPath);
+      } catch {
+        exists = false;
+      }
+      expect(exists).toBe(false);
     });
 
     it("should log errors but not throw", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Err("Database corruption"));
+      mockHistoryService.mockAppendToHistory(Err("Database corruption"));
 
       const event = createStreamEndEvent("Summary");
 
@@ -550,7 +909,7 @@ describe("CompactionHandler", () => {
     it("should not emit events when compaction fails mid-process", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
-      mockHistoryService.mockClearHistory(Err("Clear failed"));
+      mockHistoryService.mockAppendToHistory(Err("Append failed"));
 
       const event = createStreamEndEvent("Summary");
       await handler.handleCompletion(event);
@@ -576,7 +935,7 @@ describe("CompactionHandler", () => {
       });
     });
 
-    it("should emit DeleteMessage with correct type and historySequences array", async () => {
+    it("should not emit DeleteMessage events during append-only compaction", async () => {
       const compactionReq = createCompactionRequest();
       mockHistoryService.mockGetHistory(Ok([compactionReq]));
       mockHistoryService.mockClearHistory(Ok([5, 10, 15]));
@@ -588,10 +947,7 @@ describe("CompactionHandler", () => {
       const deleteEvent = emittedEvents.find(
         (_e) => (_e.data.message as { type?: string })?.type === "delete"
       );
-      expect(deleteEvent?.data.message).toEqual({
-        type: "delete",
-        historySequences: [5, 10, 15],
-      });
+      expect(deleteEvent).toBeUndefined();
     });
 
     it("should emit summary message with proper MuxMessage structure", async () => {
@@ -615,6 +971,8 @@ describe("CompactionHandler", () => {
         parts: [{ type: "text", text: "Summary text" }],
         metadata: expect.objectContaining({
           compacted: "user",
+          compactionBoundary: true,
+          compactionEpoch: 1,
           muxMetadata: { type: "compaction-summary" },
         }) as MuxMessage["metadata"],
       });
@@ -629,10 +987,11 @@ describe("CompactionHandler", () => {
       const event = createStreamEndEvent("Summary", { customField: "test" });
       await handler.handleCompletion(event);
 
-      const streamEndEvent = emittedEvents.find((_e) => _e.data.message === event);
-      expect(streamEndEvent).toBeDefined();
-      const streamMsg = streamEndEvent?.data.message as StreamEndEvent;
-      expect((streamMsg.metadata as Record<string, unknown>).customField).toBe("test");
+      const streamMsg = getEmittedStreamEndEvent(emittedEvents);
+      expect(streamMsg).toBeDefined();
+      expect((streamMsg?.metadata as Record<string, unknown> | undefined)?.customField).toBe(
+        "test"
+      );
     });
   });
 
@@ -909,7 +1268,8 @@ describe("CompactionHandler", () => {
 
       const result = await handler.handleCompletion(event);
       expect(result).toBe(true);
-      expect(mockHistoryService.clearHistory).toHaveBeenCalled();
+      expect(mockHistoryService.clearHistory).not.toHaveBeenCalled();
+      expect(mockHistoryService.appendToHistory).toHaveBeenCalled();
     });
 
     it("should accept summary with embedded JSON as part of prose", async () => {

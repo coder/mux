@@ -8,6 +8,7 @@ import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
+import { findLatestCompactionBoundaryIndex } from "@/common/utils/messages/compactionBoundary";
 import { renderAttachmentsToContentWithBudget } from "./attachmentRenderer";
 
 /**
@@ -300,6 +301,24 @@ export function injectFileChangeNotifications(
   return [...messages, syntheticMessage];
 }
 
+function findLatestLegacyCompactionSummaryIndex(messages: MuxMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "assistant") {
+      continue;
+    }
+
+    const compacted = message.metadata?.compacted;
+    if (compacted === undefined || compacted === false) {
+      continue;
+    }
+
+    return i;
+  }
+
+  return -1;
+}
+
 /**
  * Inject post-compaction attachments as a synthetic user message.
  * When compaction occurs, this injects a message containing plan file content
@@ -320,8 +339,13 @@ export function injectPostCompactionAttachments(
     return messages;
   }
 
-  // Find the compaction summary message (marked with metadata.compacted)
-  const compactionIndex = messages.findIndex((msg) => msg.metadata?.compacted);
+  const durableCompactionIndex = findLatestCompactionBoundaryIndex(messages);
+  // Durable boundaries are authoritative for current histories. Legacy histories
+  // only have metadata.compacted, so fall back to that marker when needed.
+  const compactionIndex =
+    durableCompactionIndex !== -1
+      ? durableCompactionIndex
+      : findLatestLegacyCompactionSummaryIndex(messages);
 
   if (compactionIndex === -1) {
     // No compaction message found - this shouldn't happen if attachments are provided,

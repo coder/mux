@@ -386,6 +386,18 @@ export interface MuxMetadata {
   // Compaction source: "user" (manual /compact), "idle" (auto-triggered), or legacy boolean `true`
   // Readers should use helper: isCompacted = compacted !== undefined && compacted !== false
   compacted?: "user" | "idle" | boolean;
+  /**
+   * Monotonic compaction epoch identifier.
+   *
+   * Legacy histories may omit this; compaction code backfills by counting historical compacted summaries.
+   */
+  compactionEpoch?: number;
+  /**
+   * Durable boundary marker for compaction summaries.
+   *
+   * This lets downstream logic identify compaction boundaries without mutating history.
+   */
+  compactionBoundary?: boolean;
   toolPolicy?: ToolPolicy; // Tool policy active when this message was sent (user messages only)
   agentId?: string; // Agent id active when this message was sent (assistant messages only)
   cmuxMetadata?: MuxFrontendMetadata; // Frontend-defined metadata, backend treats as black-box
@@ -568,6 +580,13 @@ export type DisplayedMessage =
       model?: string;
       routedThroughGateway?: boolean;
       errorCount?: number; // Number of consecutive identical errors merged into this message
+    }
+  | {
+      type: "compaction-boundary";
+      id: string; // Display ID for UI/React keys
+      historySequence: number; // Sequence of the compaction summary this boundary belongs to
+      position: "start" | "end";
+      compactionEpoch?: number;
     }
   | {
       type: "history-hidden";

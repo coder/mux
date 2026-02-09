@@ -23,6 +23,17 @@ describe("shouldShowInterruptedBarrier", () => {
     expect(shouldShowInterruptedBarrier(msg)).toBe(false);
   });
 
+  it("returns false for decorative compaction boundary rows", () => {
+    const msg: DisplayedMessage = {
+      type: "compaction-boundary",
+      id: "boundary-1",
+      historySequence: 2,
+      position: "start",
+    };
+
+    expect(shouldShowInterruptedBarrier(msg)).toBe(false);
+  });
+
   it("returns true for interrupted tool (non ask_user_question)", () => {
     const msg: DisplayedMessage = {
       type: "tool",

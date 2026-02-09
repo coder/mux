@@ -49,6 +49,7 @@ import type { MCPServerManager, MCPWorkspaceStats } from "@/node/services/mcpSer
 import { WorkspaceMcpOverridesService } from "./workspaceMcpOverridesService";
 import type { TaskService } from "@/node/services/taskService";
 import { buildProviderOptions } from "@/common/utils/ai/providerOptions";
+import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 
 import { THINKING_LEVEL_OFF, type ThinkingLevel } from "@/common/types/thinking";
 
@@ -427,8 +428,25 @@ export class AIService extends EventEmitter {
       log.debug(`Filtered ${messages.length - filteredMessages.length} empty assistant messages`);
       log.debug_obj(`${workspaceId}/1a_filtered_messages.json`, filteredMessages);
 
+      // WS2 request slicing: only send the latest compaction epoch to providers.
+      // This is request-only; persisted history remains append-only for replay/debugging.
+      const providerRequestMessages = sliceMessagesFromLatestCompactionBoundary(filteredMessages);
+      if (providerRequestMessages !== filteredMessages) {
+        log.debug("Sliced provider history from latest compaction boundary", {
+          workspaceId,
+          originalCount: filteredMessages.length,
+          slicedCount: providerRequestMessages.length,
+        });
+      }
+      log.debug_obj(`${workspaceId}/1b_provider_request_messages.json`, providerRequestMessages);
+
+      // OpenAI-specific: Keep reasoning parts in history
+      // OpenAI manages conversation state via previousResponseId
+      if (canonicalProviderName === "openai") {
+        log.debug("Keeping reasoning parts for OpenAI (managed via previousResponseId)");
+      }
       // Add [CONTINUE] sentinel to partial messages (for model context)
-      const messagesWithSentinel = addInterruptedSentinel(filteredMessages);
+      const messagesWithSentinel = addInterruptedSentinel(providerRequestMessages);
 
       // Get workspace metadata to retrieve workspace path
       const metadataResult = await this.getWorkspaceMetadata(workspaceId);
@@ -569,6 +587,8 @@ export class AIService extends EventEmitter {
           : undefined;
 
       // Build plan-aware instructions and determine plan→exec transition content.
+      // IMPORTANT: Derive this from the same boundary-sliced message payload that is sent to
+      // the model so plan hints/handoffs cannot be suppressed by pre-boundary history.
       const { effectiveAdditionalInstructions, planFilePath, planContentForTransition } =
         await buildPlanInstructions({
           runtime,
@@ -583,7 +603,7 @@ export class AIService extends EventEmitter {
           shouldDisableTaskToolsForDepth,
           taskDepth,
           taskSettings,
-          filteredMessages,
+          requestPayloadMessages: providerRequestMessages,
         });
 
       // Run the full message preparation pipeline (inject context, transform, validate).
@@ -820,15 +840,16 @@ export class AIService extends EventEmitter {
         return Ok(undefined);
       }
 
-      // Build provider options based on thinking level and message history
+      // Build provider options based on thinking level and request-sliced message history.
       const truncationMode = openaiTruncationModeOverride;
-      // Pass filtered messages so OpenAI can extract previousResponseId for persistence
-      // Also pass callback to filter out lost responseIds (OpenAI invalidated them)
-      // Pass workspaceId to derive stable promptCacheKey for OpenAI caching
+      // Use the same boundary-sliced payload history that we send to the provider.
+      // This prevents previousResponseId lookup from reaching pre-compaction epochs.
+      // Also pass callback to filter out lost responseIds (OpenAI invalidated them).
+      // Pass workspaceId to derive stable promptCacheKey for OpenAI caching.
       const providerOptions = buildProviderOptions(
         modelString,
         effectiveThinkingLevel,
-        filteredMessages,
+        providerRequestMessages,
         (id) => this.streamManager.isResponseIdLost(id),
         effectiveMuxProviderOptions,
         workspaceId,

@@ -77,6 +77,26 @@ function shouldSuppressAutoRetry(
   return lastAbortReason?.reason === "user" || lastAbortReason?.reason === "startup";
 }
 
+function isDecorativeTranscriptMessage(message: DisplayedMessage): boolean {
+  return (
+    message.type === "history-hidden" ||
+    message.type === "workspace-init" ||
+    message.type === "compaction-boundary"
+  );
+}
+
+export function getLastNonDecorativeMessage(
+  messages: DisplayedMessage[]
+): DisplayedMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const candidate = messages[i];
+    if (!isDecorativeTranscriptMessage(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Check if messages contain an interrupted stream
  *
@@ -107,7 +127,8 @@ function computeHasInterruptedStream(
     if (elapsed < PENDING_STREAM_START_GRACE_PERIOD_MS) return false;
   }
 
-  const lastMessage = messages[messages.length - 1];
+  const lastMessage = getLastNonDecorativeMessage(messages);
+  if (!lastMessage) return false;
 
   // Don't show retry barrier if workspace init is still running AND no error has occurred yet.
   // The backend waits for init to complete before starting the stream.
@@ -181,7 +202,11 @@ export function getInterruptionContext(
     return { hasInterruptedStream: false, isEligibleForAutoRetry: false };
   }
 
-  const lastMessage = messages[messages.length - 1];
+  const lastMessage = getLastNonDecorativeMessage(messages);
+  if (!lastMessage) {
+    return { hasInterruptedStream: false, isEligibleForAutoRetry: false };
+  }
+
   if (lastMessage.type === "stream-error") {
     // Debug flag: force all errors to be retryable
     if (isForceAllRetryableEnabled()) {

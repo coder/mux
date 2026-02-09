@@ -69,6 +69,7 @@ import { AttachmentService } from "./attachmentService";
 import type { TodoItem } from "@/common/types/tools";
 import type { PostCompactionAttachment, PostCompactionExclusions } from "@/common/types/attachment";
 import { TURNS_BETWEEN_ATTACHMENTS } from "@/common/constants/attachments";
+import { sliceMessagesFromLatestCompactionBoundary } from "@/common/utils/messages/compactionBoundary";
 import { extractEditedFileDiffs } from "@/common/utils/messages/extractEditedFiles";
 import { getModelCapabilities } from "@/common/utils/ai/modelCapabilities";
 import { normalizeGatewayModel, isValidModelFormat } from "@/common/utils/ai/models";
@@ -911,6 +912,9 @@ export class AgentSession {
     if (!historyResult.success) {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
+    // TODO(Approach B): streamMessage still receives full replay history from chat.jsonl.
+    // Latest-boundary slicing happens downstream; a sidecar compaction index could let this
+    // call path load only the newest compaction epoch for provider requests.
 
     if (historyResult.data.length === 0) {
       return Err(
@@ -2052,7 +2056,14 @@ export class AgentSession {
     if (!historyResult.success) {
       return [];
     }
-    const fileDiffs = extractEditedFileDiffs(historyResult.data);
+
+    // Periodic reinjection must stay within the latest durable compaction epoch so
+    // append-only history does not re-introduce stale pre-boundary edits.
+    // Malformed boundary markers self-heal via helper fallback to full history.
+    const latestCompactionEpochMessages = sliceMessagesFromLatestCompactionBoundary(
+      historyResult.data
+    );
+    const fileDiffs = extractEditedFileDiffs(latestCompactionEpochMessages);
 
     // Load exclusions and persistent TODO state (local workspace session data)
     const excludedItems = await this.loadExcludedItems();

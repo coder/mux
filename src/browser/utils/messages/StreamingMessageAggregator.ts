@@ -88,6 +88,7 @@ const ALWAYS_KEEP_MESSAGE_TYPES = new Set<DisplayedMessage["type"]>([
   "user",
   "assistant",
   "stream-error",
+  "compaction-boundary",
   "plan-display",
   "workspace-init",
 ]);
@@ -1993,6 +1994,41 @@ export class StreamingMessageAggregator {
     }
   }
 
+  private isCompactionBoundarySummaryMessage(message: MuxMessage): boolean {
+    const muxMeta = message.metadata?.muxMetadata;
+    return (
+      message.role === "assistant" &&
+      (message.metadata?.compactionBoundary === true || muxMeta?.type === "compaction-summary")
+    );
+  }
+
+  private createCompactionBoundaryRow(
+    message: MuxMessage,
+    historySequence: number
+  ): Extract<DisplayedMessage, { type: "compaction-boundary" }> {
+    assert(
+      message.role === "assistant",
+      "compaction boundaries must belong to assistant summaries"
+    );
+
+    const rawCompactionEpoch = message.metadata?.compactionEpoch;
+    const compactionEpoch =
+      typeof rawCompactionEpoch === "number" &&
+      Number.isInteger(rawCompactionEpoch) &&
+      rawCompactionEpoch > 0
+        ? rawCompactionEpoch
+        : undefined;
+
+    // Self-healing read path: malformed persisted compactionEpoch should not crash transcript rendering.
+    return {
+      type: "compaction-boundary",
+      id: `${message.id}-compaction-boundary`,
+      historySequence,
+      position: "start",
+      compactionEpoch,
+    };
+  }
+
   private buildDisplayedMessagesForMessage(
     message: MuxMessage,
     agentSkillSnapshot?: { frontmatterYaml?: string; body?: string }
@@ -2121,6 +2157,11 @@ export class StreamingMessageAggregator {
           lastPartIndex = i;
           break;
         }
+      }
+
+      const isCompactionBoundarySummary = this.isCompactionBoundarySummaryMessage(message);
+      if (isCompactionBoundarySummary) {
+        displayedMessages.push(this.createCompactionBoundaryRow(message, historySequence));
       }
 
       mergedParts.forEach((part, partIndex) => {

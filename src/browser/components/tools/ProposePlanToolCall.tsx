@@ -346,6 +346,7 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       const result = await api.workspace.replaceChatHistory({
         workspaceId,
         summaryMessage,
+        mode: "append-compaction-boundary",
         deletePlanFile: false,
       });
 
@@ -425,31 +426,10 @@ export const ProposePlanToolCall: React.FC<ProposePlanToolCallProps> = (props) =
       }
 
       if (shouldReplaceChatHistory) {
-        try {
-          const summaryMessage = createMuxMessage(
-            `start-here-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-            "assistant",
-            startHereContent,
-            {
-              timestamp: Date.now(),
-              compacted: "user",
-              // Preserve the source agent so exec can detect a plan→exec transition.
-              agentId: "plan",
-            }
-          );
-
-          const result = await api.workspace.replaceChatHistory({
-            workspaceId,
-            summaryMessage,
-            deletePlanFile: false,
-          });
-
-          if (!result.success) {
-            console.error("Failed to replace chat history before implementing:", result.error);
-          }
-        } catch (err) {
-          console.error("Failed to replace chat history before implementing:", err);
-        }
+        await replaceChatHistoryWithPlan({
+          idPrefix: "start-here",
+          errorContext: "Failed to replace chat history before implementing:",
+        });
       }
 
       // Switch to exec before sending so send options (agentId/mode) match.

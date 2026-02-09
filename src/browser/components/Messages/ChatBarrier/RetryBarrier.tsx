@@ -10,6 +10,7 @@ import {
 } from "@/browser/utils/messages/autoRetryPreference";
 import {
   getInterruptionContext,
+  getLastNonDecorativeMessage,
   isNonRetryableSendError,
 } from "@/browser/utils/messages/retryEligibility";
 import { calculateBackoffDelay, createManualRetryState } from "@/browser/utils/messages/retryState";
@@ -141,7 +142,9 @@ export const RetryBarrier: React.FC<RetryBarrierProps> = (props) => {
     props.className
   );
 
-  const lastMessage = workspaceState?.messages.at(-1);
+  const lastMessage = workspaceState
+    ? getLastNonDecorativeMessage(workspaceState.messages)
+    : undefined;
   const lastStreamError = lastMessage?.type === "stream-error" ? lastMessage : null;
 
   const interruptionReason = lastStreamError?.errorType === "rate_limit" ? "Rate limited" : null;
