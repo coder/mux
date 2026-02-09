@@ -175,6 +175,8 @@ let mainWindowFinishedLoading = false;
 function focusMainWindow() {
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
+  // Closing Mux on Windows hides to tray; show it again when a second-instance launch occurs.
+  mainWindow.show();
   mainWindow.focus();
 }
 
