@@ -1,9 +1,12 @@
 import React from "react";
-import { AlertTriangle, Check, EyeOff } from "lucide-react";
+import { AlertTriangle, Check, EyeOff, XCircle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SkillIcon } from "@/browser/components/icons/SkillIcon";
 import { HoverClickPopover } from "@/browser/components/ui/hover-click-popover";
-import type { LoadedSkill } from "@/browser/utils/messages/StreamingMessageAggregator";
+import type {
+  LoadedSkill,
+  SkillLoadError,
+} from "@/browser/utils/messages/StreamingMessageAggregator";
 import type {
   AgentSkillDescriptor,
   AgentSkillIssue,
@@ -17,6 +20,8 @@ interface SkillIndicatorProps {
   availableSkills: AgentSkillDescriptor[];
   /** Skills that were discovered but couldn't be loaded (SKILL.md parse errors, etc.) */
   invalidSkills?: AgentSkillIssue[];
+  /** Runtime skill load failures (agent_skill_read returned an error) */
+  skillLoadErrors?: SkillLoadError[];
   className?: string;
 }
 
@@ -31,6 +36,7 @@ interface SkillsPopoverContentProps {
   loadedSkills: LoadedSkill[];
   availableSkills: AgentSkillDescriptor[];
   invalidSkills: AgentSkillIssue[];
+  skillLoadErrors: SkillLoadError[];
 }
 
 const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
@@ -137,6 +143,27 @@ const SkillsPopoverContent: React.FC<SkillsPopoverContentProps> = (props) => {
           </div>
         </div>
       )}
+      {props.skillLoadErrors.length > 0 && (
+        <div className="border-separator-light border-t pt-2">
+          <div className="text-danger-soft flex items-center gap-1 text-[10px] font-medium tracking-wider uppercase">
+            <XCircle className="h-3 w-3" />
+            Load errors
+          </div>
+          <div className="mt-1.5 flex flex-col gap-1.5">
+            {props.skillLoadErrors.map((err) => (
+              <div key={err.name} className="flex items-start gap-2">
+                <div className="bg-muted-foreground/30 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">{err.name}</span>
+                  <span className="text-muted-foreground text-[11px] leading-snug">
+                    {err.error}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -150,21 +177,27 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
   const loadedCount = props.loadedSkills.length;
   const totalCount = props.availableSkills.length;
   const invalidCount = props.invalidSkills?.length ?? 0;
+  const loadErrorCount = props.skillLoadErrors?.length ?? 0;
+  const errorCount = invalidCount + loadErrorCount;
 
   // Don't render if there's nothing to show.
-  if (totalCount === 0 && invalidCount === 0) {
+  if (totalCount === 0 && errorCount === 0) {
     return null;
   }
 
-  const ariaLabelBase =
-    totalCount > 0
-      ? `${loadedCount} of ${totalCount} skill${totalCount === 1 ? "" : "s"} loaded`
-      : `${invalidCount} invalid skill${invalidCount === 1 ? "" : "s"}`;
-
-  const ariaLabel =
-    invalidCount > 0 && totalCount > 0
-      ? `${ariaLabelBase} (${invalidCount} invalid skill${invalidCount === 1 ? "" : "s"})`
-      : ariaLabelBase;
+  const ariaLabelParts: string[] = [];
+  if (totalCount > 0) {
+    ariaLabelParts.push(
+      `${loadedCount} of ${totalCount} skill${totalCount === 1 ? "" : "s"} loaded`
+    );
+  }
+  if (invalidCount > 0) {
+    ariaLabelParts.push(`${invalidCount} invalid`);
+  }
+  if (loadErrorCount > 0) {
+    ariaLabelParts.push(`${loadErrorCount} load error${loadErrorCount === 1 ? "" : "s"}`);
+  }
+  const ariaLabel = ariaLabelParts.join(", ");
 
   // Hover previews skills; click pins the list open to match the context indicator behavior.
   return (
@@ -174,6 +207,7 @@ export const SkillIndicator: React.FC<SkillIndicatorProps> = (props) => {
           loadedSkills={props.loadedSkills}
           availableSkills={props.availableSkills}
           invalidSkills={props.invalidSkills ?? []}
+          skillLoadErrors={props.skillLoadErrors ?? []}
         />
       }
       side="bottom"

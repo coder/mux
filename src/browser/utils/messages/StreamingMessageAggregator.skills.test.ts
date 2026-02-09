@@ -241,7 +241,7 @@ describe("Loaded skills tracking", () => {
     expect(skills.map((s) => s.name).sort()).toEqual(["mux-docs", "pull-requests", "tests"]);
   });
 
-  it("ignores failed agent_skill_read calls", () => {
+  it("ignores failed agent_skill_read calls for loadedSkills", () => {
     const agg = createAggregator();
     const messageId = "msg-1";
 
@@ -378,6 +378,188 @@ describe("Loaded skills tracking", () => {
     // Replay with empty history should clear skills
     agg.loadHistoricalMessages([]);
     expect(agg.getLoadedSkills()).toEqual([]);
+  });
+});
+
+describe("Skill load error tracking", () => {
+  const createAggregator = () => {
+    return new StreamingMessageAggregator(TEST_CREATED_AT);
+  };
+
+  /** Helper to emit a failed agent_skill_read tool call */
+  const emitFailedSkillRead = (
+    agg: StreamingMessageAggregator,
+    messageId: string,
+    toolCallId: string,
+    skillName: string,
+    error: string
+  ) => {
+    agg.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId: WORKSPACE_ID,
+      messageId,
+      toolCallId,
+      toolName: "agent_skill_read",
+      args: { name: skillName },
+      tokens: 10,
+      timestamp: Date.now(),
+    });
+    agg.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId: WORKSPACE_ID,
+      messageId,
+      toolCallId,
+      toolName: "agent_skill_read",
+      result: { success: false, error },
+      timestamp: Date.now(),
+    });
+  };
+
+  /** Helper to emit a successful agent_skill_read tool call */
+  const emitSuccessfulSkillRead = (
+    agg: StreamingMessageAggregator,
+    messageId: string,
+    toolCallId: string,
+    skillName: string
+  ) => {
+    agg.handleToolCallStart({
+      type: "tool-call-start",
+      workspaceId: WORKSPACE_ID,
+      messageId,
+      toolCallId,
+      toolName: "agent_skill_read",
+      args: { name: skillName },
+      tokens: 10,
+      timestamp: Date.now(),
+    });
+    agg.handleToolCallEnd({
+      type: "tool-call-end",
+      workspaceId: WORKSPACE_ID,
+      messageId,
+      toolCallId,
+      toolName: "agent_skill_read",
+      result: {
+        success: true,
+        skill: {
+          scope: "project",
+          directoryName: skillName,
+          frontmatter: { name: skillName, description: "A skill" },
+          body: "# Content",
+        },
+      },
+      timestamp: Date.now(),
+    });
+  };
+
+  const startStream = (agg: StreamingMessageAggregator, messageId: string) => {
+    agg.handleStreamStart({
+      type: "stream-start",
+      workspaceId: WORKSPACE_ID,
+      messageId,
+      historySequence: 1,
+      model: "test-model",
+      startTime: Date.now(),
+    });
+  };
+
+  it("returns empty array when no errors", () => {
+    const agg = createAggregator();
+    expect(agg.getSkillLoadErrors()).toEqual([]);
+  });
+
+  it("tracks failed agent_skill_read calls", () => {
+    const agg = createAggregator();
+    startStream(agg, "msg-1");
+    emitFailedSkillRead(agg, "msg-1", "tc-1", "nonexistent", "Agent skill not found: nonexistent");
+
+    expect(agg.getSkillLoadErrors()).toEqual([
+      { name: "nonexistent", error: "Agent skill not found: nonexistent" },
+    ]);
+  });
+
+  it("deduplicates errors by skill name", () => {
+    const agg = createAggregator();
+    startStream(agg, "msg-1");
+    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "Parse error");
+    emitFailedSkillRead(agg, "msg-1", "tc-2", "broken", "Parse error");
+
+    expect(agg.getSkillLoadErrors()).toHaveLength(1);
+  });
+
+  it("updates error message on subsequent failure", () => {
+    const agg = createAggregator();
+    startStream(agg, "msg-1");
+    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "First error");
+    emitFailedSkillRead(agg, "msg-1", "tc-2", "broken", "Second error");
+
+    expect(agg.getSkillLoadErrors()).toEqual([{ name: "broken", error: "Second error" }]);
+  });
+
+  it("clears error when skill later loads successfully", () => {
+    const agg = createAggregator();
+    startStream(agg, "msg-1");
+    emitFailedSkillRead(agg, "msg-1", "tc-1", "flaky", "Temporary failure");
+
+    expect(agg.getSkillLoadErrors()).toHaveLength(1);
+
+    emitSuccessfulSkillRead(agg, "msg-1", "tc-2", "flaky");
+
+    expect(agg.getSkillLoadErrors()).toEqual([]);
+    expect(agg.getLoadedSkills()).toHaveLength(1);
+  });
+
+  it("does not record error for already-loaded skill", () => {
+    const agg = createAggregator();
+    startStream(agg, "msg-1");
+    emitSuccessfulSkillRead(agg, "msg-1", "tc-1", "good-skill");
+    emitFailedSkillRead(agg, "msg-1", "tc-2", "good-skill", "Some error");
+
+    // The skill loaded successfully first, so the later error is ignored
+    expect(agg.getSkillLoadErrors()).toEqual([]);
+    expect(agg.getLoadedSkills()).toHaveLength(1);
+  });
+
+  it("clears errors on loadHistoricalMessages replay", () => {
+    const agg = createAggregator();
+    startStream(agg, "msg-1");
+    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "Error");
+
+    expect(agg.getSkillLoadErrors()).toHaveLength(1);
+
+    agg.loadHistoricalMessages([]);
+    expect(agg.getSkillLoadErrors()).toEqual([]);
+  });
+
+  it("returns stable array reference for memoization", () => {
+    const agg = createAggregator();
+    startStream(agg, "msg-1");
+    emitFailedSkillRead(agg, "msg-1", "tc-1", "broken", "Error");
+
+    const ref1 = agg.getSkillLoadErrors();
+    const ref2 = agg.getSkillLoadErrors();
+    expect(ref1).toBe(ref2);
+  });
+
+  it("tracks errors from historical tool calls", () => {
+    const agg = createAggregator();
+
+    // Simulate loading a historical message with a failed agent_skill_read tool part
+    agg.loadHistoricalMessages([
+      createMuxMessage("msg-1", "assistant", "", undefined, [
+        {
+          type: "dynamic-tool",
+          toolCallId: "tc-1",
+          toolName: "agent_skill_read",
+          input: { name: "missing-skill" },
+          state: "output-available",
+          output: { success: false, error: "Agent skill not found: missing-skill" },
+        },
+      ]),
+    ]);
+
+    expect(agg.getSkillLoadErrors()).toEqual([
+      { name: "missing-skill", error: "Agent skill not found: missing-skill" },
+    ]);
   });
 });
 

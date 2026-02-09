@@ -68,7 +68,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
   const openTerminalPopout = useOpenTerminal();
   const openInEditor = useOpenInEditor();
   const gitStatus = useGitStatus(workspaceId);
-  const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills } =
+  const { canInterrupt, isStarting, awaitingUserQuestion, loadedSkills, skillLoadErrors } =
     useWorkspaceSidebarState(workspaceId);
   const isWorking = (canInterrupt || isStarting) && !awaitingUserQuestion;
   const { startSequence: startTutorial } = useTutorial();
@@ -349,6 +349,7 @@ export const WorkspaceHeader: React.FC<WorkspaceHeaderProps> = ({
           loadedSkills={loadedSkills}
           availableSkills={availableSkills}
           invalidSkills={invalidSkills}
+          skillLoadErrors={skillLoadErrors}
         />
         {editorError && <span className="text-danger-soft text-xs">{editorError}</span>}
         <Tooltip>
