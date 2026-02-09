@@ -48,6 +48,41 @@ Alternatively, use the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`):
 
 Models are specified in the format: `provider:model-name`
 
+## One-shot Overrides
+
+Override the model or thinking level for a single message using slash commands. The override applies only to that message — workspace settings stay unchanged.
+
+### Syntax
+
+| Command                     | Effect                                   |
+| --------------------------- | ---------------------------------------- |
+| `/sonnet explain this code` | Use Sonnet for one message               |
+| `/opus+high deep review`    | Use Opus with high thinking              |
+| `/haiku+0 quick answer`     | Use Haiku at its lowest thinking level   |
+| `/+2 analyze this`          | Keep current model, set thinking level 2 |
+
+### Thinking levels
+
+Append `+level` to any model alias. Levels can be **named** (`off`, `low`, `medium`/`med`, `high`, `max`) or **numeric** (`0`–`9`).
+
+Numeric levels are **model-relative** — they map to the model's allowed thinking range:
+
+- `0` = model's lowest allowed level (e.g., `off` for Sonnet, `medium` for GPT-5.2 Pro)
+- Higher numbers select progressively higher levels, clamped to the model's maximum
+
+This means `/sonnet+0` disables thinking while `/gpt-pro+0` sets thinking to medium (GPT-5.2 Pro's minimum).
+
+Use `/+level` (no model) to override thinking on the current model: `/+0 quick answer`
+
+### CLI
+
+The `mux run` CLI accepts the same thinking levels via `--thinking`:
+
+```bash
+mux run -t 0 "Quick fix"          # Lowest thinking for the model
+mux run -t high "Deep analysis"   # Named level
+```
+
 ## Next Steps
 
 <Card title="Configure Providers" icon="key" href="/config/providers">
