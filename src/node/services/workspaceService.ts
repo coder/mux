@@ -1931,7 +1931,30 @@ export class WorkspaceService extends EventEmitter {
           initAbortController.abort();
           this.initAbortControllers.delete(workspaceId);
         }
+
         this.initStateManager.clearInMemoryState(workspaceId);
+
+        // Clearing init state prevents init-end from firing (createInitLogger.logComplete() bails when
+        // state is missing). If archiving fails before we persist archivedAt (e.g., beforeArchive hook
+        // error), ensure the sidebar doesn't stay stuck on isInitializing/"Cancel creation".
+        try {
+          const allMetadata = await this.config.getAllWorkspaceMetadata();
+          const updatedMetadata = allMetadata.find((m) => m.id === workspaceId);
+          if (updatedMetadata) {
+            const enrichedMetadata = this.enrichFrontendMetadata(updatedMetadata);
+            const session = this.sessions.get(workspaceId);
+            if (session) {
+              session.emitMetadata(enrichedMetadata);
+            } else {
+              this.emit("metadata", { workspaceId, metadata: enrichedMetadata });
+            }
+          }
+        } catch (error) {
+          log.debug("Failed to emit metadata after init cancellation during archive", {
+            workspaceId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
       const { projectPath, workspacePath } = workspace;

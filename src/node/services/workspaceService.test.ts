@@ -781,6 +781,150 @@ describe("WorkspaceService archive lifecycle hooks", () => {
   });
 });
 
+describe("WorkspaceService archive init cancellation", () => {
+  test("emits metadata when it cancels init but beforeArchive hook fails", async () => {
+    const workspaceId = "ws-archive-init-cancel";
+    const projectPath = "/tmp/project";
+    const workspacePath = "/tmp/project/ws-archive-init-cancel";
+
+    const initStates = new Map<string, InitStatus>([
+      [
+        workspaceId,
+        {
+          status: "running",
+          hookPath: projectPath,
+          startTime: 0,
+          lines: [],
+          exitCode: null,
+          endTime: null,
+        },
+      ],
+    ]);
+
+    const clearInMemoryStateMock = mock((id: string) => {
+      initStates.delete(id);
+    });
+
+    const mockInitStateManager: Partial<InitStateManager> = {
+      on: mock(() => undefined as unknown as InitStateManager),
+      getInitState: mock((id: string) => initStates.get(id)),
+      clearInMemoryState: clearInMemoryStateMock,
+    };
+
+    let configState: ProjectsConfig = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              {
+                path: workspacePath,
+                id: workspaceId,
+              },
+            ],
+          },
+        ],
+      ]),
+    };
+
+    const editConfigSpy = mock((fn: (config: ProjectsConfig) => ProjectsConfig) => {
+      configState = fn(configState);
+      return Promise.resolve();
+    });
+
+    const frontendMetadata: FrontendWorkspaceMetadata = {
+      id: workspaceId,
+      name: "ws-archive-init-cancel",
+      projectName: "proj",
+      projectPath,
+      runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+      namedWorkspacePath: workspacePath,
+    };
+
+    const workspaceMetadata: WorkspaceMetadata = {
+      id: workspaceId,
+      name: "ws-archive-init-cancel",
+      projectName: "proj",
+      projectPath,
+      runtimeConfig: { type: "local", srcBaseDir: "/tmp" },
+    };
+
+    const mockConfig: Partial<Config> = {
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: mock(() => "test-id"),
+      findWorkspace: mock((id: string) => {
+        if (id !== workspaceId) {
+          return null;
+        }
+
+        return { projectPath, workspacePath };
+      }),
+      editConfig: editConfigSpy,
+      getAllWorkspaceMetadata: mock(() => Promise.resolve([frontendMetadata])),
+    };
+
+    const mockAIService: AIService = {
+      isStreaming: mock(() => false),
+      getWorkspaceMetadata: mock(() => Promise.resolve(Ok(workspaceMetadata))),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      on: mock(() => {}),
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      off: mock(() => {}),
+    } as unknown as AIService;
+
+    const workspaceService = new WorkspaceService(
+      mockConfig as Config,
+      {} as HistoryService,
+      {} as PartialService,
+      mockAIService,
+      mockInitStateManager as InitStateManager,
+      {} as ExtensionMetadataService,
+      { cleanup: mock(() => Promise.resolve()) } as unknown as BackgroundProcessManager
+    );
+
+    // Seed abort controller so archive() can cancel init.
+    const abortController = new AbortController();
+    const initAbortControllers = (
+      workspaceService as unknown as { initAbortControllers: Map<string, AbortController> }
+    ).initAbortControllers;
+    initAbortControllers.set(workspaceId, abortController);
+
+    const metadataEvents: Array<FrontendWorkspaceMetadata | null> = [];
+    workspaceService.on("metadata", (event: unknown) => {
+      if (!event || typeof event !== "object") {
+        return;
+      }
+      const parsed = event as { workspaceId: string; metadata: FrontendWorkspaceMetadata | null };
+      if (parsed.workspaceId === workspaceId) {
+        metadataEvents.push(parsed.metadata);
+      }
+    });
+
+    const hooks = new WorkspaceLifecycleHooks();
+    hooks.registerBeforeArchive(() => Promise.resolve(Err("hook failed")));
+    workspaceService.setWorkspaceLifecycleHooks(hooks);
+
+    const result = await workspaceService.archive(workspaceId);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toBe("hook failed");
+    }
+
+    // Ensure we didn't persist archivedAt on hook failure.
+    expect(editConfigSpy).toHaveBeenCalledTimes(0);
+    const entry = configState.projects.get(projectPath)?.workspaces[0];
+    expect(entry?.archivedAt).toBeUndefined();
+
+    expect(abortController.signal.aborted).toBe(true);
+    expect(clearInMemoryStateMock).toHaveBeenCalledWith(workspaceId);
+
+    expect(metadataEvents.length).toBeGreaterThanOrEqual(1);
+    expect(metadataEvents.at(-1)?.isInitializing).toBe(undefined);
+  });
+});
+
 describe("WorkspaceService unarchive lifecycle hooks", () => {
   const workspaceId = "ws-unarchive";
   const projectPath = "/tmp/project";
