@@ -1124,6 +1124,101 @@ describe("HistoryService", () => {
     });
   });
 
+  describe("multi-byte UTF-8 handling", () => {
+    it("should correctly find boundary and read messages with non-ASCII content", async () => {
+      const workspaceId = "ws-utf8";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      // Use multi-byte UTF-8 characters (emoji, CJK) in message content
+      // to verify byte offset calculations handle non-ASCII correctly.
+      const lines: string[] = [];
+      let seq = 0;
+
+      // Pre-boundary: message with emoji (4-byte UTF-8 chars)
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("emoji-msg", "user", "Hello 🌍🔥💻 world", {
+            historySequence: seq++,
+          }),
+          workspaceId,
+        })
+      );
+
+      // Boundary with CJK characters (3-byte UTF-8 chars)
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("boundary-utf8", "assistant", "要約：会話の概要", {
+            historySequence: seq++,
+            compactionBoundary: true,
+            compacted: "user",
+            compactionEpoch: 1,
+          }),
+          workspaceId,
+        })
+      );
+
+      // Post-boundary: message with mixed scripts
+      lines.push(
+        JSON.stringify({
+          ...createMuxMessage("post-utf8", "user", "Ñoño café résumé über 日本語", {
+            historySequence: seq++,
+          }),
+          workspaceId,
+        })
+      );
+
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      // getHistoryFromLatestBoundary should find the boundary correctly
+      const boundaryResult = await service.getHistoryFromLatestBoundary(workspaceId);
+      expect(boundaryResult.success).toBe(true);
+      if (boundaryResult.success) {
+        expect(boundaryResult.data).toHaveLength(2); // boundary + post
+        expect(boundaryResult.data[0].id).toBe("boundary-utf8");
+        expect(boundaryResult.data[1].id).toBe("post-utf8");
+      }
+
+      // getLastMessages should also handle multi-byte content correctly
+      const lastResult = await service.getLastMessages(workspaceId, 2);
+      expect(lastResult.success).toBe(true);
+      if (lastResult.success) {
+        expect(lastResult.data).toHaveLength(2);
+        expect(lastResult.data[0].id).toBe("boundary-utf8");
+        expect(lastResult.data[1].id).toBe("post-utf8");
+      }
+    });
+
+    it("should handle messages where all content is multi-byte", async () => {
+      const workspaceId = "ws-utf8-all";
+      const workspaceDir = config.getSessionDir(workspaceId);
+      await fs.mkdir(workspaceDir, { recursive: true });
+
+      const lines: string[] = [];
+      // Every message uses multi-byte characters exclusively
+      for (let i = 0; i < 5; i++) {
+        lines.push(
+          JSON.stringify({
+            ...createMuxMessage(`utf8-${i}`, "user", `メッセージ ${i} 🎯`, {
+              historySequence: i,
+            }),
+            workspaceId,
+          })
+        );
+      }
+      await fs.writeFile(path.join(workspaceDir, "chat.jsonl"), lines.join("\n") + "\n");
+
+      const result = await service.getLastMessages(workspaceId, 3);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toHaveLength(3);
+        expect(result.data[0].id).toBe("utf8-2");
+        expect(result.data[1].id).toBe("utf8-3");
+        expect(result.data[2].id).toBe("utf8-4");
+      }
+    });
+  });
+
   describe("hasHistory", () => {
     it("should return false when no history file exists", async () => {
       const result = await service.hasHistory("nonexistent");

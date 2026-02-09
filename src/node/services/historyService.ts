@@ -139,6 +139,10 @@ export class HistoryService {
   /**
    * Scan chat.jsonl in reverse to find the byte offset of the last durable compaction boundary.
    * Returns `null` when no boundary exists (new/uncompacted workspace or file missing).
+   *
+   * Byte offsets are computed from raw \n positions in the buffer (not from decoded string
+   * lengths) so that chunk boundaries splitting multi-byte UTF-8 sequences don't corrupt
+   * the returned offset.
    */
   private async findLastBoundaryByteOffset(workspaceId: string): Promise<number | null> {
     const filePath = this.getChatHistoryPath(workspaceId);
@@ -155,38 +159,56 @@ export class HistoryService {
     const fh = await fs.open(filePath, "r");
     try {
       let readEnd = fileSize;
-      let carryover = ""; // incomplete first line from previous chunk
+      // Raw bytes of the incomplete first line from the previous (rightward) chunk.
+      // Kept as Buffer (not string) so multi-byte chars split at chunk boundaries
+      // don't corrupt byte offsets via UTF-8 replacement characters.
+      let carryoverBytes = Buffer.alloc(0);
 
       while (readEnd > 0) {
         const readStart = Math.max(0, readEnd - HistoryService.REVERSE_READ_CHUNK_SIZE);
         const chunkSize = readEnd - readStart;
-        const buffer = Buffer.alloc(chunkSize);
-        await fh.read(buffer, 0, chunkSize, readStart);
+        const rawChunk = Buffer.alloc(chunkSize);
+        await fh.read(rawChunk, 0, chunkSize, readStart);
 
-        const text = buffer.toString("utf-8") + carryover;
-        const lines = text.split("\n");
-        // First element may be a partial line split at chunk boundary — carry it forward
-        carryover = lines[0] ?? "";
+        // Combine with carryover (the start of a line whose tail was in the previous chunk).
+        // The combined buffer represents contiguous file bytes [readStart, readStart + buffer.length).
+        const buffer =
+          carryoverBytes.length > 0 ? Buffer.concat([rawChunk, carryoverBytes]) : rawChunk;
 
-        // Precompute byte offsets for each line relative to the start of the text
-        // (which starts at file position readStart). lineByteOffsets[i] gives the
-        // byte position of lines[i] from the start of text.
-        const lineByteOffsets: number[] = [0];
-        for (let i = 1; i < lines.length; i++) {
-          // Previous line's offset + its byte length + 1 for the \n separator
-          lineByteOffsets.push(
-            lineByteOffsets[i - 1] + Buffer.byteLength(lines[i - 1], "utf-8") + 1
-          );
+        // Find \n byte positions in the raw buffer for accurate byte offsets.
+        // 0x0A never appears inside multi-byte UTF-8 sequences, so this is byte-safe
+        // even when a chunk boundary splits a multibyte character.
+        const newlinePositions: number[] = [];
+        for (let b = 0; b < buffer.length; b++) {
+          if (buffer[b] === 0x0a) {
+            newlinePositions.push(b);
+          }
         }
 
-        // Scan complete lines in reverse
-        for (let i = lines.length - 1; i >= 1; i--) {
-          const line = lines[i];
-          if (line.length > 0 && line.includes(HistoryService.BOUNDARY_NEEDLE)) {
+        if (newlinePositions.length === 0) {
+          // No newlines — entire buffer is one partial line, carry it all forward
+          carryoverBytes = Buffer.from(buffer);
+          readEnd = readStart;
+          continue;
+        }
+
+        // Bytes before the first \n are an incomplete line — carry forward
+        carryoverBytes = Buffer.from(buffer.subarray(0, newlinePositions[0]));
+
+        // Scan complete lines in reverse. Each line occupies
+        // [newlinePositions[nl] + 1, nextNewline) in the buffer.
+        for (let nl = newlinePositions.length - 1; nl >= 0; nl--) {
+          const lineStart = newlinePositions[nl] + 1;
+          const lineEnd =
+            nl < newlinePositions.length - 1 ? newlinePositions[nl + 1] : buffer.length;
+          if (lineEnd <= lineStart) continue; // empty line
+
+          const line = buffer.subarray(lineStart, lineEnd).toString("utf-8");
+          if (line.includes(HistoryService.BOUNDARY_NEEDLE)) {
             try {
               const msg = JSON.parse(line) as MuxMessage;
               if (isDurableCompactionBoundaryMarker(msg)) {
-                return readStart + lineByteOffsets[i];
+                return readStart + lineStart;
               }
             } catch {
               // Malformed line — not a real boundary, skip
@@ -198,12 +220,15 @@ export class HistoryService {
       }
 
       // Check the very first line (accumulated in carryover)
-      if (carryover.length > 0 && carryover.includes(HistoryService.BOUNDARY_NEEDLE)) {
-        try {
-          const msg = JSON.parse(carryover) as MuxMessage;
-          if (isDurableCompactionBoundaryMarker(msg)) return 0;
-        } catch {
-          // skip
+      if (carryoverBytes.length > 0) {
+        const line = carryoverBytes.toString("utf-8");
+        if (line.includes(HistoryService.BOUNDARY_NEEDLE)) {
+          try {
+            const msg = JSON.parse(line) as MuxMessage;
+            if (isDurableCompactionBoundaryMarker(msg)) return 0;
+          } catch {
+            // skip
+          }
         }
       }
 
@@ -251,6 +276,9 @@ export class HistoryService {
   /**
    * Read the last N messages from chat.jsonl by scanning the file in reverse.
    * Much cheaper than a full read when only the tail is needed.
+   *
+   * Uses raw byte scanning for \n positions (same approach as findLastBoundaryByteOffset)
+   * so that chunk boundaries splitting multi-byte UTF-8 sequences don't corrupt lines.
    */
   private async readLastMessages(workspaceId: string, n: number): Promise<MuxMessage[]> {
     const filePath = this.getChatHistoryPath(workspaceId);
@@ -268,22 +296,41 @@ export class HistoryService {
     try {
       const collected: MuxMessage[] = [];
       let readEnd = fileSize;
-      let carryover = "";
+      let carryoverBytes = Buffer.alloc(0);
 
       while (readEnd > 0 && collected.length < n) {
         const readStart = Math.max(0, readEnd - HistoryService.REVERSE_READ_CHUNK_SIZE);
         const chunkSize = readEnd - readStart;
-        const buffer = Buffer.alloc(chunkSize);
-        await fh.read(buffer, 0, chunkSize, readStart);
+        const rawChunk = Buffer.alloc(chunkSize);
+        await fh.read(rawChunk, 0, chunkSize, readStart);
 
-        const text = buffer.toString("utf-8") + carryover;
-        const lines = text.split("\n");
-        carryover = lines[0] ?? "";
+        const buffer =
+          carryoverBytes.length > 0 ? Buffer.concat([rawChunk, carryoverBytes]) : rawChunk;
+
+        const newlinePositions: number[] = [];
+        for (let b = 0; b < buffer.length; b++) {
+          if (buffer[b] === 0x0a) {
+            newlinePositions.push(b);
+          }
+        }
+
+        if (newlinePositions.length === 0) {
+          carryoverBytes = Buffer.from(buffer);
+          readEnd = readStart;
+          continue;
+        }
+
+        carryoverBytes = Buffer.from(buffer.subarray(0, newlinePositions[0]));
 
         // Parse complete lines in reverse, stopping once we have enough
-        for (let i = lines.length - 1; i >= 1 && collected.length < n; i--) {
-          const line = lines[i];
-          if (line.trim().length === 0) continue;
+        for (let nl = newlinePositions.length - 1; nl >= 0 && collected.length < n; nl--) {
+          const lineStart = newlinePositions[nl] + 1;
+          const lineEnd =
+            nl < newlinePositions.length - 1 ? newlinePositions[nl + 1] : buffer.length;
+          if (lineEnd <= lineStart) continue;
+
+          const line = buffer.subarray(lineStart, lineEnd).toString("utf-8").trim();
+          if (line.length === 0) continue;
           try {
             collected.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
           } catch {
@@ -295,11 +342,14 @@ export class HistoryService {
       }
 
       // Check the very first line if we still need more
-      if (collected.length < n && carryover.trim().length > 0) {
-        try {
-          collected.push(normalizeLegacyMuxMetadata(JSON.parse(carryover) as MuxMessage));
-        } catch {
-          // skip
+      if (collected.length < n && carryoverBytes.length > 0) {
+        const line = carryoverBytes.toString("utf-8").trim();
+        if (line.length > 0) {
+          try {
+            collected.push(normalizeLegacyMuxMetadata(JSON.parse(line) as MuxMessage));
+          } catch {
+            // skip
+          }
         }
       }
 

@@ -132,8 +132,8 @@ export class IdleCompactionService {
     thresholdMs: number,
     now: number
   ): Promise<{ eligible: boolean; reason?: string }> {
-    // 1. Has messages?
-    const historyResult = await this.historyService.getFullHistory(workspaceId);
+    // 1. Has messages? Only need tail messages — recency + last-message checks don't need full history.
+    const historyResult = await this.historyService.getLastMessages(workspaceId, 50);
     if (!historyResult.success || historyResult.data.length === 0) {
       return { eligible: false, reason: "no_messages" };
     }
