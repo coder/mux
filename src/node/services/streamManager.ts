@@ -1007,7 +1007,8 @@ export class StreamManager extends EventEmitter {
     let finalMessages = messages;
     let finalTools = tools;
     let finalSystem: string | undefined = system;
-    const anthropicCacheTtl = getAnthropicCacheTtl(finalProviderOptions);
+    const anthropicCacheTtl =
+      anthropicCacheTtlOverride ?? getAnthropicCacheTtl(finalProviderOptions);
 
     // For Anthropic models, convert system message to a cached message at the start
     const cachedSystemMessage = createCachedSystemMessage(system, modelString, anthropicCacheTtl);
