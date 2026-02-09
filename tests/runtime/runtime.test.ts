@@ -24,11 +24,16 @@ import {
   stopSSHServer,
   type SSHServerConfig,
 } from "./test-fixtures/ssh-fixture";
-import { createTestRuntime, TestWorkspace, type RuntimeType } from "./test-fixtures/test-helpers";
+import {
+  createTestRuntime,
+  TestWorkspace,
+  noopInitLogger,
+  type RuntimeType,
+} from "./test-fixtures/test-helpers";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { RuntimeError } from "@/node/runtime/Runtime";
-import type { SSHRuntime } from "@/node/runtime/SSHRuntime";
+import { computeBaseRepoPath, type SSHRuntime } from "@/node/runtime/SSHRuntime";
 import { createSSHTransport } from "@/node/runtime/transports";
 import { runFullInit } from "@/node/runtime/runtimeFactory";
 import { sshConnectionPool } from "@/node/runtime/sshConnectionPool";
@@ -1209,16 +1214,8 @@ describeIntegration("Runtime integration tests", () => {
     const createSSHRuntime = (): SSHRuntime =>
       createTestRuntime("ssh", srcBaseDir, sshConfig) as SSHRuntime;
 
-    const noopInitLogger = {
-      logStep: () => {},
-      logStdout: () => {},
-      logStderr: () => {},
-      logComplete: () => {},
-    };
-
-    test("getBaseRepoPath returns correct path", async () => {
-      const runtime = createSSHRuntime();
-      const result = runtime.getBaseRepoPath("/some/path/my-project");
+    test("computeBaseRepoPath returns correct path", async () => {
+      const result = computeBaseRepoPath(srcBaseDir, "/some/path/my-project");
       expect(result).toBe(`${srcBaseDir}/my-project/.mux-base.git`);
     }, 10000);
 
@@ -1714,13 +1711,6 @@ describeIntegration("Runtime integration tests", () => {
         expect(localRefs).toContain("refs/remotes/origin/main");
         expect(localRefs).toContain("refs/remotes/origin/stale-branch");
 
-        const noopInitLogger = {
-          logStep: () => {},
-          logStdout: () => {},
-          logStderr: () => {},
-          logComplete: () => {},
-        };
-
         try {
           // initWorkspace triggers syncProjectToRemote (since workspace doesn't exist yet),
           // which creates the base repo, bundles the local project, and imports refs.
@@ -1788,12 +1778,6 @@ describeIntegration("Runtime integration tests", () => {
       const baseRepoPath = `${srcBaseDir}/${projectName}/.mux-base.git`;
 
       const { execSync } = await import("child_process");
-      const noopInitLogger = {
-        logStep: () => {},
-        logStdout: () => {},
-        logStderr: () => {},
-        logComplete: () => {},
-      };
 
       try {
         // Create a local git repo with two branches — simulates a project
@@ -1890,14 +1874,6 @@ describeIntegration("Runtime integration tests", () => {
         proc.stdout.on("data", (data) => (stdout += data.toString()));
         proc.on("close", (code) => resolve({ stdout, exitCode: code ?? 0 }));
       });
-    };
-
-    // Shared no-op logger for workspace operations
-    const noopInitLogger = {
-      logStep: () => {},
-      logStdout: () => {},
-      logStderr: () => {},
-      logComplete: () => {},
     };
 
     describe("createWorkspace + deleteWorkspace", () => {

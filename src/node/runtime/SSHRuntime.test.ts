@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, spyOn } from "bun:test";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
-import { SSHRuntime } from "./SSHRuntime";
+import { SSHRuntime, computeBaseRepoPath } from "./SSHRuntime";
 import { createSSHTransport } from "./transports";
 
 /**
@@ -101,22 +101,16 @@ describe("SSHRuntime.ensureReady repository checks", () => {
     }
   });
 });
-describe("SSHRuntime.getBaseRepoPath", () => {
+describe("computeBaseRepoPath", () => {
   it("computes the correct bare repo path", () => {
-    const config = { host: "example.com", srcBaseDir: "~/mux" };
-    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
-
-    // getBaseRepoPath uses getProjectName (basename) to compute:
+    // computeBaseRepoPath uses getProjectName (basename) to compute:
     // <srcBaseDir>/<projectName>/.mux-base.git
-    const result = runtime.getBaseRepoPath("/Users/me/code/my-project");
+    const result = computeBaseRepoPath("~/mux", "/Users/me/code/my-project");
     expect(result).toBe("~/mux/my-project/.mux-base.git");
   });
 
   it("handles absolute srcBaseDir", () => {
-    const config = { host: "example.com", srcBaseDir: "/home/user/src" };
-    const runtime = new SSHRuntime(config, createSSHTransport(config, false));
-
-    const result = runtime.getBaseRepoPath("/code/repo");
+    const result = computeBaseRepoPath("/home/user/src", "/code/repo");
     expect(result).toBe("/home/user/src/repo/.mux-base.git");
   });
 });

@@ -43,6 +43,13 @@ import { execAsync } from "@/node/utils/disposableExec";
 import type { PtyHandle, PtySessionParams, SSHTransport } from "./transports";
 import { streamToString, shescape } from "./streamUtils";
 
+/** Name of the shared bare repo directory under each project on the remote. */
+const BASE_REPO_DIR = ".mux-base.git";
+
+/** Staging namespace for bundle-imported branch refs. Branches land here instead
+ *  of refs/heads/* so they don't collide with branches checked out in worktrees. */
+const BUNDLE_REF_PREFIX = "refs/mux-bundle/";
+
 function logSSHBackoffWait(initLogger: InitLogger, waitMs: number): void {
   const secs = Math.max(1, Math.ceil(waitMs / 1000));
   initLogger.logStep(`SSH unavailable; retrying in ${secs}s...`);
@@ -135,6 +142,18 @@ function truncateSSHError(stderr: string): string {
 
 // Re-export SSHRuntimeConfig from connection pool (defined there to avoid circular deps)
 export type { SSHRuntimeConfig } from "./sshConnectionPool";
+
+/**
+ * Compute the path to the shared bare base repo for a project on the remote.
+ * Convention: <srcBaseDir>/<projectName>/.mux-base.git
+ *
+ * Exported for unit testing; runtime code should use the private
+ * `SSHRuntime.getBaseRepoPath()` method instead.
+ */
+export function computeBaseRepoPath(srcBaseDir: string, projectPath: string): string {
+  const projectName = getProjectName(projectPath);
+  return path.posix.join(srcBaseDir, projectName, BASE_REPO_DIR);
+}
 
 /**
  * SSH runtime implementation that executes commands and file operations
@@ -309,11 +328,9 @@ export class SSHRuntime extends RemoteRuntime {
   /**
    * Path to the shared bare repo for a project on the remote.
    * All worktree-based workspaces share this object store.
-   * Convention: ~/<srcBaseDir>/<projectName>/.mux-base.git
    */
-  getBaseRepoPath(projectPath: string): string {
-    const projectName = getProjectName(projectPath);
-    return path.posix.join(this.config.srcBaseDir, projectName, ".mux-base.git");
+  private getBaseRepoPath(projectPath: string): string {
+    return computeBaseRepoPath(this.config.srcBaseDir, projectPath);
   }
 
   /**
@@ -385,7 +402,7 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<string | null> {
     // Preferred: exact match for the expected trunk branch.
-    const preferredRef = `refs/mux-bundle/${trunkBranch}`;
+    const preferredRef = `${BUNDLE_REF_PREFIX}${trunkBranch}`;
     const check = await execBuffered(
       this,
       `git -C ${baseRepoPathArg} rev-parse --verify ${shescape.quote(preferredRef)}`,
@@ -398,7 +415,7 @@ export class SSHRuntime extends RemoteRuntime {
     // Fallback: pick the first ref under refs/mux-bundle/ (handles main↔master mismatch).
     const listResult = await execBuffered(
       this,
-      `git -C ${baseRepoPathArg} for-each-ref --format='%(refname)' refs/mux-bundle/ --count=1`,
+      `git -C ${baseRepoPathArg} for-each-ref --format='%(refname)' ${BUNDLE_REF_PREFIX} --count=1`,
       { cwd: "/tmp", timeout: 10, abortSignal }
     );
     const fallbackRef = listResult.stdout.trim();
@@ -673,7 +690,7 @@ export class SSHRuntime extends RemoteRuntime {
       initLogger.logStep("Importing bundle into shared base repository...");
       const fetchResult = await execBuffered(
         this,
-        `git -C ${baseRepoPathArg} fetch ${remoteBundlePathArg} '+refs/heads/*:refs/mux-bundle/*' '+refs/tags/*:refs/tags/*'`,
+        `git -C ${baseRepoPathArg} fetch ${remoteBundlePathArg} '+refs/heads/*:${BUNDLE_REF_PREFIX}*' '+refs/tags/*:refs/tags/*'`,
         { cwd: "/tmp", timeout: 300, abortSignal }
       );
       if (fetchResult.exitCode !== 0) {
@@ -1347,7 +1364,10 @@ export class SSHRuntime extends RemoteRuntime {
           const fallbackStream = await this.exec(
             // Use quoteForRemote (expandTildeForSSH) to match the quoting in the
             // worktree remove command above — shescape.quote doesn't expand tilde.
-            `rm -rf ${this.quoteForRemote(deletedPath)} && git -C ${baseRepoPathArg} worktree prune`,
+            // `worktree prune` is best-effort: if the base repo was externally
+            // deleted/corrupted the prune fails, but the workspace IS gone after
+            // rm -rf — don't report failure for a cosmetic prune error.
+            `rm -rf ${this.quoteForRemote(deletedPath)} && (git -C ${baseRepoPathArg} worktree prune 2>/dev/null || true)`,
             { cwd: this.config.srcBaseDir, timeout: 30, abortSignal }
           );
           await fallbackStream.stdin.abort();
@@ -1443,6 +1463,9 @@ export class SSHRuntime extends RemoteRuntime {
 
       if (hasBaseRepo.exitCode === 0) {
         initLogger.logStep("Creating worktree for forked workspace...");
+        // Use -b (not -B) so we fail instead of silently resetting an existing
+        // branch that another worktree might reference. initWorkspace uses -B
+        // because it owns the branch lifecycle; fork is creating a new name.
         const worktreeCmd = `git -C ${baseRepoPathArg} worktree add ${newWorkspacePathArg} -b ${shescape.quote(newWorkspaceName)} ${shescape.quote(sourceBranch)}`;
         const worktreeResult = await execBuffered(this, worktreeCmd, {
           cwd: "/tmp",
@@ -1453,7 +1476,16 @@ export class SSHRuntime extends RemoteRuntime {
           usedWorktree = true;
         } else {
           // Source branch likely doesn't exist in the base repo (legacy workspace).
-          // Fall through to the cp -R -P path below.
+          // Clean up any partial directory left by the failed `worktree add`
+          // before falling through to cp -R -P (which behaves differently if
+          // the target dir already exists — it copies *into* it, creating a
+          // nested mess instead of a clean clone).
+          await execBuffered(this, `rm -rf ${newWorkspacePathArg}`, {
+            cwd: "/tmp",
+            timeout: 10,
+            // Best-effort cleanup — ignore failures since we're about to fall
+            // through to the cp path which will overwrite the target anyway.
+          }).catch(() => undefined);
           log.info(
             `Worktree fork failed (${(worktreeResult.stderr || worktreeResult.stdout).trim()}); falling back to full copy`
           );
